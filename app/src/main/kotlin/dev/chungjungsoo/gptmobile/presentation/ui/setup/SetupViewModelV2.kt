@@ -132,9 +132,9 @@ class SetupViewModelV2 @Inject constructor(
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to save platform", e)
                 val errorMessage = when (e) {
-                    is android.database.sqlite.SQLiteConstraintException -> "A platform with this name already exists."
-                    is android.database.sqlite.SQLiteException -> "Database error: ${e.message}"
-                    else -> e.message ?: "Unknown error occurred while saving platform."
+                    is android.database.sqlite.SQLiteConstraintException -> "已存在同名平台。"
+                    is android.database.sqlite.SQLiteException -> "数据库错误：${e.message}"
+                    else -> e.message ?: "保存平台时发生未知错误。"
                 }
                 _saveStatus.value = SaveStatus.Error(errorMessage)
             }

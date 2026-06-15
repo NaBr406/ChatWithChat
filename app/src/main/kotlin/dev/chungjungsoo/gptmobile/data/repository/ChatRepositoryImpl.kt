@@ -56,6 +56,7 @@ import dev.chungjungsoo.gptmobile.data.network.GroqAPI
 import dev.chungjungsoo.gptmobile.data.network.OpenAIAPI
 import dev.chungjungsoo.gptmobile.util.AttachmentPayloadCache
 import dev.chungjungsoo.gptmobile.util.FileUtils
+import dev.chungjungsoo.gptmobile.util.isAssistantErrorMessage
 import dev.chungjungsoo.gptmobile.util.stripAssistantErrorNote
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
@@ -186,7 +187,7 @@ class ChatRepositoryImpl @Inject constructor(
                             is OutputTextDeltaEvent -> emit(ApiState.Success(event.delta))
 
                             is ResponseFailedEvent -> {
-                                val errorMessage = event.response.error?.message ?: "Response failed"
+                                val errorMessage = event.response.error?.message ?: "响应失败"
                                 emit(ApiState.Error(errorMessage))
                             }
 
@@ -198,12 +199,12 @@ class ChatRepositoryImpl @Inject constructor(
                 }
             }
         ).catch { e ->
-            emit(ApiState.Error(e.message ?: "Unknown error"))
+            emit(ApiState.Error(e.message ?: "未知错误"))
         }.onCompletion {
             emit(ApiState.Done)
         }
     } catch (e: Exception) {
-        flowOf(ApiState.Error(e.message ?: "Failed to complete chat"))
+        flowOf(ApiState.Error(e.message ?: "完成会话失败"))
     }
 
     private suspend fun completeChatWithGroq(
@@ -245,12 +246,12 @@ class ChatRepositoryImpl @Inject constructor(
                 }
             }
         ).catch { e ->
-            emit(ApiState.Error(e.message ?: "Unknown error"))
+            emit(ApiState.Error(e.message ?: "未知错误"))
         }.onCompletion {
             emit(ApiState.Done)
         }
     } catch (e: Exception) {
-        flowOf(ApiState.Error(e.message ?: "Failed to complete chat"))
+        flowOf(ApiState.Error(e.message ?: "完成会话失败"))
     }
 
     private suspend fun completeChatWithOpenAIChatCompletions(
@@ -289,12 +290,12 @@ class ChatRepositoryImpl @Inject constructor(
                 }
             }
         ).catch { e ->
-            emit(ApiState.Error(e.message ?: "Unknown error"))
+            emit(ApiState.Error(e.message ?: "未知错误"))
         }.onCompletion {
             emit(ApiState.Done)
         }
     } catch (e: Exception) {
-        flowOf(ApiState.Error(e.message ?: "Failed to complete chat"))
+        flowOf(ApiState.Error(e.message ?: "完成会话失败"))
     }
 
     private suspend fun buildContextTurns(
@@ -569,12 +570,12 @@ class ChatRepositoryImpl @Inject constructor(
                 }
             }
         ).catch { e ->
-            emit(ApiState.Error(e.message ?: "Unknown error"))
+            emit(ApiState.Error(e.message ?: "未知错误"))
         }.onCompletion {
             emit(ApiState.Done)
         }
     } catch (e: Exception) {
-        flowOf(ApiState.Error(e.message ?: "Failed to complete chat"))
+        flowOf(ApiState.Error(e.message ?: "完成会话失败"))
     }
 
     private suspend fun transformMessageV2ToAnthropic(message: MessageV2, role: MessageRole, platformUid: String): InputMessage {
@@ -672,12 +673,12 @@ class ChatRepositoryImpl @Inject constructor(
                 }
             }
         ).catch { e ->
-            emit(ApiState.Error(e.message ?: "Unknown error"))
+            emit(ApiState.Error(e.message ?: "未知错误"))
         }.onCompletion {
             emit(ApiState.Done)
         }
     } catch (e: Exception) {
-        flowOf(ApiState.Error(e.message ?: "Failed to complete chat"))
+        flowOf(ApiState.Error(e.message ?: "完成会话失败"))
     }
 
     private suspend fun transformMessageV2ToGoogle(message: MessageV2, role: GoogleRole, platformUid: String): Content {
@@ -894,7 +895,7 @@ class ChatRepositoryImpl @Inject constructor(
     }
 
     override suspend fun duplicateChatV2(chatRoom: ChatRoomV2): ChatRoomV2 {
-        val duplicatedTitle = "${chatRoom.title} (copy)".take(50)
+        val duplicatedTitle = "${chatRoom.title}（副本）".take(50)
         val duplicatedChatId = chatRoomV2Dao.addChatRoom(
             ChatRoomV2(
                 title = duplicatedTitle,
@@ -963,14 +964,14 @@ internal fun isGroqGptOssModel(model: String): Boolean = model.contains("gpt-oss
 
 internal fun MessageV2.sendableAssistantContent(): String {
     val strippedContent = stripAssistantErrorNote(effectiveContent()).trim()
-    return if (strippedContent.startsWith("Error: ")) "" else strippedContent
+    return if (isAssistantErrorMessage(strippedContent)) "" else strippedContent
 }
 
 internal fun MessageV2.hasSendableAssistantPayload(): Boolean = sendableAssistantContent().isNotBlank() || attachments.isNotEmpty()
 
 internal fun validateResponseInputPartsOrThrow(messageContent: String, partCount: Int, messageId: Int) {
     if (messageContent.isBlank() && partCount == 0) {
-        throw IllegalStateException("No encodable message content for messageId=$messageId")
+        throw IllegalStateException("消息没有可编码内容：messageId=$messageId")
     }
 }
 

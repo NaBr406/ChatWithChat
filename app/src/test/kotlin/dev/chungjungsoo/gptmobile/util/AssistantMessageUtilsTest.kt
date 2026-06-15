@@ -8,7 +8,7 @@ class AssistantMessageUtilsTest {
     @Test
     fun `buildAssistantErrorContent returns plain error when no content exists`() {
         assertEquals(
-            "Error: Request timed out.",
+            "错误：Request timed out.",
             buildAssistantErrorContent("", "Request timed out.")
         )
     }
@@ -16,21 +16,21 @@ class AssistantMessageUtilsTest {
     @Test
     fun `buildAssistantErrorContent appends stop marker when partial content exists`() {
         assertEquals(
-            "Partial answer\n\n[Response stopped: Request timed out.]",
+            "Partial answer\n\n[响应已停止：Request timed out.]",
             buildAssistantErrorContent("Partial answer", "Request timed out.")
         )
     }
 
     @Test
     fun `stripAssistantErrorNote removes appended stop note from assistant history`() {
-        val content = "Partial answer\n\n[Response stopped: Request timed out.]"
+        val content = "Partial answer\n\n[响应已停止：Request timed out.]"
         assertEquals("Partial answer", stripAssistantErrorNote(content))
     }
 
     @Test
     fun `isAssistantErrorMessage detects explicit error marker`() {
-        assertTrue(isAssistantErrorMessage("Error: Request timed out."))
+        assertTrue(isAssistantErrorMessage("错误：Request timed out."))
         assertTrue(isAssistantErrorMessage("  Error: Network unavailable."))
-        assertTrue(!isAssistantErrorMessage("Partial answer\n\n[Response stopped: Request timed out.]"))
+        assertTrue(!isAssistantErrorMessage("Partial answer\n\n[响应已停止：Request timed out.]"))
     }
 }

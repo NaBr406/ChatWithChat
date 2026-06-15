@@ -148,13 +148,13 @@ class AnthropicAPIImpl @Inject constructor(
             }
         } catch (e: Exception) {
             val errorMessage = when (e) {
-                is java.net.UnknownHostException -> "Network error: Unable to resolve host."
-                is java.nio.channels.UnresolvedAddressException -> "Network error: Unable to resolve address. Check your internet connection."
-                is java.net.ConnectException -> "Network error: Connection refused. Check the API URL."
-                is HttpRequestTimeoutException -> "Request timed out."
-                is java.net.SocketTimeoutException -> "Response timed out while waiting for the next chunk."
-                is javax.net.ssl.SSLException -> "Network error: SSL/TLS connection failed."
-                else -> e.message ?: "Unknown network error"
+                is java.net.UnknownHostException -> "网络错误：无法解析主机。"
+                is java.nio.channels.UnresolvedAddressException -> "网络错误：无法解析地址，请检查网络连接。"
+                is java.net.ConnectException -> "网络错误：连接被拒绝，请检查 API URL。"
+                is HttpRequestTimeoutException -> "请求超时。"
+                is java.net.SocketTimeoutException -> "等待下一段响应时超时。"
+                is javax.net.ssl.SSLException -> "网络错误：SSL/TLS 连接失败。"
+                else -> e.message ?: "未知网络错误"
             }
             emit(ErrorResponseChunk(error = ErrorDetail(type = "network_error", message = errorMessage)))
         }

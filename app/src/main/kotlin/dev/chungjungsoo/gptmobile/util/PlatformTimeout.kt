@@ -18,5 +18,5 @@ internal fun HttpRequestBuilder.applyPlatformStreamingTimeout(timeoutSeconds: In
 
 internal fun formatPlatformTimeout(timeoutSeconds: Int, offLabel: String): String = when {
     timeoutSeconds <= 0 -> offLabel
-    else -> "$timeoutSeconds sec"
+    else -> "$timeoutSeconds 秒"
 }

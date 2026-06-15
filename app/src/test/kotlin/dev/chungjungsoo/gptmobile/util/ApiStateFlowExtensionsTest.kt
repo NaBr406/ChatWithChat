@@ -18,7 +18,7 @@ class ApiStateFlowExtensionsTest {
     @Test
     fun `buildAssistantErrorContent returns plain error when no content exists`() {
         assertEquals(
-            "Error: Request timed out.",
+            "错误：Request timed out.",
             buildAssistantErrorContent("", "Request timed out.")
         )
     }
@@ -46,7 +46,7 @@ class ApiStateFlowExtensionsTest {
 
         val assistantContent = messageFlow.value.assistantMessages.last().first().content
         assertTrue(assistantContent.contains("Partial answer"))
-        assertTrue(assistantContent.contains("[Response stopped: Request timed out.]"))
+        assertTrue(assistantContent.contains("[响应已停止：Request timed out.]"))
     }
 
     @Test
@@ -112,7 +112,7 @@ class ApiStateFlowExtensionsTest {
 
     @Test
     fun `stripAssistantErrorNote removes appended stop note from assistant history`() {
-        val content = "Partial answer\n\n[Response stopped: Request timed out.]"
+        val content = "Partial answer\n\n[响应已停止：Request timed out.]"
 
         assertEquals("Partial answer", stripAssistantErrorNote(content))
     }

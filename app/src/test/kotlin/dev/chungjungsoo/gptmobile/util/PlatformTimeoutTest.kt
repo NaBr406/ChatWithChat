@@ -1,4 +1,4 @@
-package dev.chungjungsoo.gptmobile.util
+﻿package dev.chungjungsoo.gptmobile.util
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -19,5 +19,10 @@ class PlatformTimeoutTest {
     @Test
     fun `formatPlatformTimeout shows off when disabled`() {
         assertEquals("Off", formatPlatformTimeout(0, "Off"))
+    }
+
+    @Test
+    fun `formatPlatformTimeout shows seconds in chinese`() {
+        assertEquals("30 秒", formatPlatformTimeout(30, "关闭"))
     }
 }

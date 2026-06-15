@@ -71,7 +71,7 @@ class AttachmentUploadCoordinator @Inject constructor(
 
         if (totalPreparedBytes > maxInlineBytes) {
             throw IllegalStateException(
-                "These images are too large to upload safely on this provider. Remove some images or use OpenAI, Anthropic, or Google."
+                "这些图片太大，无法安全上传到当前提供商。请移除部分图片，或改用 OpenAI、Anthropic 或 Google。"
             )
         }
     }

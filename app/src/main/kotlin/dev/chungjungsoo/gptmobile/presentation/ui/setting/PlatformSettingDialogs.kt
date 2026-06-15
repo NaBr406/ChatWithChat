@@ -11,6 +11,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -32,6 +33,8 @@ import androidx.compose.ui.window.DialogProperties
 import dev.chungjungsoo.gptmobile.R
 import dev.chungjungsoo.gptmobile.util.isValidUrl
 import kotlin.math.roundToInt
+
+private const val MAX_VISIBLE_MODEL_OPTIONS = 50
 
 @Composable
 fun PlatformNameDialog(
@@ -85,11 +88,14 @@ fun APIKeyDialog(
 fun ModelDialog(
     dialogState: PlatformSettingViewModel.DialogState,
     model: String,
+    modelFetchState: PlatformSettingViewModel.ModelFetchState,
     settingViewModel: PlatformSettingViewModel
 ) {
     if (dialogState.isApiModelDialogOpen) {
         ModelDialog(
             initModel = model,
+            modelFetchState = modelFetchState,
+            onRefreshRequest = settingViewModel::fetchAvailableModels,
             onDismissRequest = settingViewModel::closeApiModelDialog
         ) { m ->
             settingViewModel.updateApiModel(m)
@@ -371,6 +377,8 @@ private fun TimeoutDialog(
 @Composable
 private fun ModelDialog(
     initModel: String,
+    modelFetchState: PlatformSettingViewModel.ModelFetchState,
+    onRefreshRequest: () -> Unit,
     onDismissRequest: () -> Unit,
     onConfirmRequest: (model: String) -> Unit
 ) {
@@ -386,17 +394,99 @@ private fun ModelDialog(
             .heightIn(max = screenHeight - 80.dp),
         title = { Text(text = stringResource(R.string.api_model)) },
         text = {
-            OutlinedTextField(
-                modifier = Modifier.fillMaxWidth(),
-                value = model,
-                onValueChange = { model = it },
-                label = { Text(stringResource(R.string.model_name)) },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                supportingText = {
-                    Text(stringResource(R.string.model_supporting))
+            val filterText = model.trim()
+            val matchedModels = modelFetchState.models.filter { apiModel ->
+                filterText.isBlank() ||
+                    apiModel.aliasValue.contains(filterText, ignoreCase = true) ||
+                    apiModel.name.contains(filterText, ignoreCase = true)
+            }
+            val visibleModels = matchedModels.take(MAX_VISIBLE_MODEL_OPTIONS)
+
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                OutlinedTextField(
+                    modifier = Modifier.fillMaxWidth(),
+                    value = model,
+                    onValueChange = { model = it },
+                    label = { Text(stringResource(R.string.model_name)) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    supportingText = {
+                        Text(stringResource(R.string.model_supporting))
+                    }
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(
+                        enabled = !modelFetchState.isLoading,
+                        onClick = onRefreshRequest
+                    ) {
+                        Text(stringResource(R.string.fetch_models))
+                    }
                 }
-            )
+
+                when {
+                    modelFetchState.isLoading -> {
+                        Text(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+                            text = stringResource(R.string.fetching_models),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+
+                    modelFetchState.errorMessage != null -> {
+                        Text(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+                            text = stringResource(R.string.model_fetch_failed, modelFetchState.errorMessage),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+
+                    modelFetchState.hasLoaded && modelFetchState.models.isEmpty() -> {
+                        Text(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+                            text = stringResource(R.string.no_models_found),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+
+                    visibleModels.isNotEmpty() -> {
+                        Text(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+                            text = stringResource(R.string.fetched_models_count, matchedModels.size),
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                        visibleModels.forEach { apiModel ->
+                            TextButton(
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = { model = apiModel.aliasValue }
+                            ) {
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    Text(
+                                        text = apiModel.name.ifBlank { apiModel.aliasValue },
+                                        style = MaterialTheme.typography.bodyLarge
+                                    )
+                                    Text(
+                                        text = apiModel.aliasValue,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                        if (matchedModels.size > visibleModels.size) {
+                            Text(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+                                text = stringResource(R.string.model_list_truncated, visibleModels.size),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                }
+            }
         },
         onDismissRequest = onDismissRequest,
         confirmButton = {

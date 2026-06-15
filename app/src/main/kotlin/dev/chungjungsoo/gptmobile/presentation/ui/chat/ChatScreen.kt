@@ -656,7 +656,7 @@ private fun exportChat(context: Context, chatViewModel: ChatViewModel) {
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        val chooser = Intent.createChooser(shareIntent, "Share Chat Export").apply {
+        val chooser = Intent.createChooser(shareIntent, context.getString(R.string.share_chat_export)).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         val resInfo = context.packageManager.queryIntentActivities(chooser, PackageManager.MATCH_DEFAULT_ONLY)
@@ -665,8 +665,8 @@ private fun exportChat(context: Context, chatViewModel: ChatViewModel) {
         }
         context.startActivity(chooser)
     } catch (e: Exception) {
-        Log.e("ChatExport", "Failed to export chat", e)
-        Toast.makeText(context, "Failed to export chat", Toast.LENGTH_SHORT).show()
+        Log.e("ChatExport", "导出会话失败", e)
+        Toast.makeText(context, context.getString(R.string.export_chat_failed), Toast.LENGTH_SHORT).show()
     }
 }
 

@@ -9,6 +9,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dev.chungjungsoo.gptmobile.R
 import dev.chungjungsoo.gptmobile.data.database.entity.ACTIVE_REVISION_LATEST
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatRoomV2
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
@@ -155,7 +156,7 @@ class ChatViewModel @Inject constructor(
         val hasPreparingAttachments = _selectedAttachments.value.any { it.status == ChatAttachmentDraft.Status.Preparing }
         if (questionText.isBlank() && !hasReadyAttachments && !hasPreparingAttachments) return
         if (_selectedAttachments.value.any { it.status == ChatAttachmentDraft.Status.Failed }) {
-            _attachmentNotice.update { "Remove failed attachments before sending." }
+            _attachmentNotice.update { context.getString(R.string.remove_failed_attachments_before_sending) }
             return
         }
 
@@ -359,7 +360,7 @@ class ChatViewModel @Inject constructor(
     }
 
     fun notifyAttachmentCopyFailed() {
-        _attachmentNotice.update { "Failed to copy attachment." }
+        _attachmentNotice.update { context.getString(R.string.failed_to_copy_attachment) }
     }
 
     fun saveUserMessageEdit(
@@ -367,7 +368,7 @@ class ChatViewModel @Inject constructor(
         attachments: List<ChatAttachmentDraft>
     ): Boolean {
         if (attachments.any { it.status != ChatAttachmentDraft.Status.Ready }) {
-            _attachmentNotice.update { "Wait for attachments to finish processing before saving." }
+            _attachmentNotice.update { context.getString(R.string.wait_for_attachments_before_saving) }
             return false
         }
 
@@ -425,7 +426,7 @@ class ChatViewModel @Inject constructor(
         attachments: List<ChatAttachmentDraft>
     ): Boolean {
         if (attachments.any { it.status != ChatAttachmentDraft.Status.Ready }) {
-            _attachmentNotice.update { "Wait for attachments to finish processing before saving." }
+            _attachmentNotice.update { context.getString(R.string.wait_for_attachments_before_saving) }
             return false
         }
 
@@ -493,24 +494,24 @@ class ChatViewModel @Inject constructor(
     fun exportChat(): Pair<String, String> {
         // Build the chat history in Markdown format
         val chatHistoryMarkdown = buildString {
-            appendLine("# Chat Export: \"${chatRoom.value.title}\"")
+            appendLine("# ${context.getString(R.string.chat_export_title)}: \"${chatRoom.value.title}\"")
             appendLine()
-            appendLine("**Exported on:** ${formatCurrentDateTime()}")
+            appendLine("**${context.getString(R.string.exported_on)}:** ${formatCurrentDateTime()}")
             appendLine()
             appendLine("---")
             appendLine()
-            appendLine("## Chat History")
+            appendLine("## ${context.getString(R.string.chat_history)}")
             appendLine()
             _groupedMessages.value.userMessages.forEachIndexed { i, message ->
-                appendLine("**User:**")
+                appendLine("**${context.getString(R.string.user_label)}:**")
                 appendLine(message.content)
                 appendLine()
 
                 _groupedMessages.value.assistantMessages[i].forEach { message ->
                     val platformName = message.platformType
                         ?.let { _platformsInApp.value.getPlatformName(it) }
-                        ?: "Unknown"
-                    appendLine("**Assistant ($platformName):**")
+                        ?: context.getString(R.string.unknown)
+                    appendLine("**${context.getString(R.string.assistant_label)} ($platformName):**")
                     appendLine(message.effectiveContent())
                     appendLine()
                 }
@@ -600,7 +601,7 @@ class ChatViewModel @Inject constructor(
                     currentAttachments = currentAttachments,
                     updateAttachments = updateAttachments,
                     filePath = filePath,
-                    notice = "Only image attachments are currently supported."
+                    notice = context.getString(R.string.only_image_attachments_supported)
                 )
                 trySendPendingQuestionIfReady()
                 return@launch
@@ -615,7 +616,7 @@ class ChatViewModel @Inject constructor(
                     currentAttachments = currentAttachments,
                     updateAttachments = updateAttachments,
                     filePath = filePath,
-                    notice = "Files larger than 50 MB cannot be attached."
+                    notice = context.getString(R.string.files_larger_than_50_mb_cannot_be_attached)
                 )
                 trySendPendingQuestionIfReady()
                 return@launch
@@ -632,7 +633,7 @@ class ChatViewModel @Inject constructor(
                     currentAttachments = currentAttachments,
                     updateAttachments = updateAttachments,
                     filePath = filePath,
-                    notice = "Total attachments cannot exceed 50 MB."
+                    notice = context.getString(R.string.total_attachments_cannot_exceed_50_mb)
                 )
                 trySendPendingQuestionIfReady()
                 return@launch
@@ -656,7 +657,7 @@ class ChatViewModel @Inject constructor(
                     } else if (preparationResult == null) {
                         attachment.copy(
                             status = ChatAttachmentDraft.Status.Failed,
-                            errorMessage = "Failed to prepare attachment."
+                            errorMessage = context.getString(R.string.failed_to_prepare_attachment)
                         )
                     } else {
                         attachment.copy(
@@ -666,7 +667,7 @@ class ChatViewModel @Inject constructor(
                             status = ChatAttachmentDraft.Status.Ready,
                             cleanupOnDiscard = true,
                             notice = if (preparationResult.wasResized) {
-                                "Large images are resized before upload."
+                                context.getString(R.string.large_images_resized_before_upload)
                             } else {
                                 null
                             },
@@ -677,9 +678,9 @@ class ChatViewModel @Inject constructor(
             )
 
             if (preparationResult?.wasResized == true) {
-                onNotice("Large images are resized before upload.")
+                onNotice(context.getString(R.string.large_images_resized_before_upload))
             } else if (preparationResult == null) {
-                onNotice("Failed to prepare attachment.")
+                onNotice(context.getString(R.string.failed_to_prepare_attachment))
             }
 
             trySendPendingQuestionIfReady()
@@ -775,7 +776,7 @@ class ChatViewModel @Inject constructor(
 
     private fun formatCurrentDateTime(): String {
         val currentDate = java.util.Date()
-        val format = java.text.SimpleDateFormat("yyyy-MM-dd hh:mm a", java.util.Locale.getDefault())
+        val format = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
         return format.format(currentDate)
     }
 
@@ -828,7 +829,7 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch {
             _chatRoom.update {
                 if (chatRoomId == 0) {
-                    ChatRoomV2(id = 0, title = "Untitled Chat", enabledPlatform = enabledPlatformsInChat)
+                    ChatRoomV2(id = 0, title = context.getString(R.string.untitled_chat), enabledPlatform = enabledPlatformsInChat)
                 } else {
                     chatRepository.fetchChatListV2().first { it.id == chatRoomId }
                 }

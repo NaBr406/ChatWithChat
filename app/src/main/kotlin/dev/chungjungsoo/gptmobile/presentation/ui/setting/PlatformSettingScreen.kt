@@ -69,6 +69,7 @@ fun PlatformSettingScreen(
     )
     val platform by settingViewModel.platformState.collectAsStateWithLifecycle()
     val dialogState by settingViewModel.dialogState.collectAsStateWithLifecycle()
+    val modelFetchState by settingViewModel.modelFetchState.collectAsStateWithLifecycle()
     val isDeleted by settingViewModel.isDeleted.collectAsStateWithLifecycle()
 
     LaunchedEffect(isDeleted) {
@@ -236,7 +237,7 @@ fun PlatformSettingScreen(
                 PlatformNameDialog(dialogState, platformData.name, settingViewModel)
                 APIUrlDialog(dialogState, platformData.apiUrl, settingViewModel)
                 APIKeyDialog(dialogState, settingViewModel)
-                ModelDialog(dialogState, platformData.model, settingViewModel)
+                ModelDialog(dialogState, platformData.model, modelFetchState, settingViewModel)
                 TemperatureDialog(dialogState, platformData.temperature, settingViewModel)
                 TopPDialog(dialogState, platformData.topP, settingViewModel)
                 SystemPromptDialog(dialogState, platformData.systemPrompt ?: "", settingViewModel)

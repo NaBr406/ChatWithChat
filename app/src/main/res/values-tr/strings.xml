@@ -1,195 +1,303 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">GPTMobile</string>
-    <string name="gpt_mobile_introduction_logo">GPT Mobile Tanıtım Logosu</string>
-    <string name="welcome_title">Akıllı telefonunuzda\nalabileceğiniz en iyi\nyapay zeka asistanı.</string>
-    <string name="welcome_description">Size en uygun modeli\nkullanın. İstediğiniz her şeyi sorun!</string>
-    <string name="get_started">Başla</string>
-    <string name="platform_select_description">Kullanmak istediğiniz platformu seçin. Bunu daha sonra ayarlardan değiştirebilirsiniz. Daha fazla platform desteklenecek.</string>
-    <string name="sample_item_title">Öğe 1</string>
-    <string name="sample_item_description">Öğe açıklaması</string>
+    <string name="gpt_mobile_introduction_logo">GPT Mobile 介绍图标</string>
+    <string name="welcome_title">可随身携带的\n强大 AI 助手</string>
+    <string name="welcome_description">选择适合你的模型，随时提问。</string>
+    <string name="get_started">开始使用</string>
+    <string name="platform_select_description">选择要使用的 AI 提供商。稍后可在设置中修改，未来会支持更多提供商。</string>
+    <string name="sample_item_title">项目 1</string>
+    <string name="sample_item_description">项目描述</string>
     <string name="openai" translatable="false">OpenAI</string>
     <string name="anthropic" translatable="false">Anthropic</string>
     <string name="google" translatable="false">Google</string>
-    <string name="openai_description">ChatGPT’nin yaratıcısı.</string>
-    <string name="anthropic_description">Claude burada doğdu.</string>
-    <string name="google_description">Gemini yolda.</string>
-    <string name="next">İleri</string>
-    <string name="enter_api_key">API Anahtarını Girin</string>
-    <string name="token_input_description">Seçtiğiniz platformun API anahtarını girin. Bu uygulama asla bu verileri toplamaz. Bu anahtarlar ve sohbet verileri yalnızca cihazınızda saklanır ve API uç noktaları dışında başka sunuculara gönderilmez.</string>
-    <string name="clear_token">Anahtarı Temizle</string>
-    <string name="need_help">Yardım mı lazım?</string>
-    <string name="openai_api_key">OpenAI API Anahtarı</string>
-    <string name="anthropic_api_key">Anthropic API Anahtarı</string>
-    <string name="google_api_key">Google API Anahtarı</string>
+    <string name="openai_description">ChatGPT 的创建者。</string>
+    <string name="anthropic_description">Claude 的诞生之地。</string>
+    <string name="google_description">Gemini 背后的团队。</string>
+    <string name="next">下一步</string>
+    <string name="enter_api_key">输入 API 密钥</string>
+    <string name="token_input_description">输入所选平台的 API 密钥。本应用不会收集这些数据；密钥和聊天记录只会保存在你的设备上，除 API 端点外不会发送到其他服务器。</string>
+    <string name="clear_token">清除密钥</string>
+    <string name="need_help">需要帮助？</string>
+    <string name="openai_api_key">OpenAI API 密钥</string>
+    <string name="anthropic_api_key">Anthropic API 密钥</string>
+    <string name="google_api_key">Google API 密钥</string>
     <string name="openai_api_help" translatable="false">https://platform.openai.com/account/api-keys</string>
     <string name="anthropic_api_help" translatable="false">https://console.anthropic.com/settings/keys</string>
     <string name="google_api_help" translatable="false">https://aistudio.google.com/app/apikey</string>
-    <string name="select_openai_model">OpenAI Sohbet Modelini Seçin</string>
-    <string name="select_openai_model_description">Lütfen OpenAI sohbet modelini seçin. Seçilen model çok modlu olsa bile, uygulama şu anda yalnızca metin girişlerini destekliyor. İleride desteklenebilir.</string>
+    <string name="select_openai_model">选择 OpenAI 聊天模型</string>
+    <string name="select_openai_model_description">请选择 OpenAI 聊天模型。即使所选模型支持多模态，当前应用也仅支持文本输入，更多能力可能会在后续版本加入。</string>
     <string name="gpt_4o" translatable="false">GPT-4o</string>
     <string name="gpt_4o_mini" translatable="false">GPT-4o mini</string>
     <string name="gpt_4_turbo" translatable="false">GPT-4 Turbo</string>
     <string name="gpt_4" translatable="false">GPT-4</string>
-    <string name="gpt_4o_description">En hızlı ve en uygun fiyatlı amiral gemisi model.</string>
-    <string name="gpt_4o_mini_description">Hızlı, hafif görevler için uygun fiyatlı ve akıllı küçük model.</string>
-    <string name="gpt_4_turbo_description">Makum güvenilirlik, GPT-4’ten 3 kat daha ucuz.</string>
-    <string name="gpt_4_description">Soyut problemleri çözmede en iyi performansı sergiler.</string>
-    <string name="select_anthropic_model">Anthropic Sohbet Modelini Seçin</string>
-    <string name="select_anthropic_model_description">Lütfen Anthropic sohbet modelini seçin. Şu anda yalnızca Claude 3 ailesi modellerini ve yalnızca metin girişlerini destekliyoruz.</string>
+    <string name="gpt_4o_description">速度快、价格友好的旗舰模型。</string>
+    <string name="gpt_4o_mini_description">适合快速轻量任务的经济型智能小模型。</string>
+    <string name="gpt_4_turbo_description">可靠性良好，价格约为 GPT-4 的三分之一。</string>
+    <string name="gpt_4_description">更擅长解决抽象问题。</string>
+    <string name="select_anthropic_model">选择 Anthropic 聊天模型</string>
+    <string name="select_anthropic_model_description">请选择 Anthropic 聊天模型。当前支持 Claude 3 系列模型，并且仅支持文本输入。</string>
     <string name="claude_3_5_sonnet" translatable="false">Claude 3.5 Sonnet</string>
     <string name="claude_3_opus" translatable="false">Claude 3 Opus</string>
     <string name="claude_3_sonnet" translatable="false">Claude 3 Sonnet</string>
     <string name="claude_3_haiku" translatable="false">Claude 3 Haiku</string>
-    <string name="claude_3_5_sonnet_description">Anthropic’in en zeki modeli.</string>
-    <string name="claude_3_opus_description">Yazma ve karmaşık görevlerde üstün.</string>
-    <string name="claude_3_sonnet_description">Zeka ve hız arasında dengeli model.</string>
-    <string name="claude_3_haiku_description">Anthropic’in en hızlı ve en kompakt modeli.</string>
-    <string name="select_google_model">Google Sohbet Modelini Seçin</string>
-    <string name="select_google_model_description">Gemini, Google tarafından geliştirilen bir yapay zeka model ailesidir. Yalnızca metin girişleri desteklenir.</string>
+    <string name="claude_3_5_sonnet_description">Anthropic 最智能的模型。</string>
+    <string name="claude_3_opus_description">擅长写作和复杂任务。</string>
+    <string name="claude_3_sonnet_description">在智能与速度之间取得平衡的模型。</string>
+    <string name="claude_3_haiku_description">Anthropic 速度最快、最轻量的模型。</string>
+    <string name="select_google_model">选择 Google 聊天模型</string>
+    <string name="select_google_model_description">Gemini 是 Google 推出的生成式 AI 模型系列。当前仅支持文本输入。</string>
     <string name="gemini_1_5_pro" translatable="false">Gemini 1.5 Pro</string>
     <string name="gemini_1_5_flash" translatable="false">Gemini 1.5 Flash</string>
     <string name="gemini_1_0_pro" translatable="false">Gemini 1.0 Pro</string>
-    <string name="gemini_1_5_pro_description">Kod ve metin oluşturma dahil akıl yürütme görevleri için optimize edilmiştir.</string>
-    <string name="gemini_1_5_flash_description">Çeşitli görevlerde hızlı ve çok yönlü performans.</string>
-    <string name="gemini_1_0_pro_description">Doğal dil görevleri, çok turlu metin ve kod sohbeti ve kod oluşturma.</string>
-    <string name="setup_complete">Her şey hazır!</string>
-    <string name="setup_complete_description">GPT Mobile’ı kullanmaya başlayalım!</string>
-    <string name="done">Tamam</string>
-    <string name="setup_complete_logo">Kurulum Tamamlandı Logosu</string>
-    <string name="chats">Sohbetler</string>
-    <string name="settings">Ayarlar</string>
-    <string name="new_chat">Yeni Sohbet</string>
-    <string name="select_platform">Platform Seçin</string>
-    <string name="select_platform_description">Bu sohbette kullanmak istediğiniz platformları seçin. Sohbet oluşturulduktan sonra bu ayar değiştirilemez. Değiştirmek isterseniz lütfen yeni bir sohbet oluşturun.</string>
-    <string name="enable_at_leat_one_platform">Sohbet oluşturmak için lütfen en az bir platformu etkinleştirin.</string>
-    <string name="chat_icon">Sohbet Simgesi</string>
-    <string name="using_certain_platform">%s kullanıyor</string>
-    <string name="confirm">Onayla</string>
-    <string name="cancel">İptal</string>
-    <string name="go_back">Geri dön</string>
-    <string name="arrow_icon">Ok Simgesi</string>
-    <string name="on">Açık</string>
-    <string name="off">Kapalı</string>
-    <string name="system_default">Sistem Varsayılanı</string>
-    <string name="theme_settings">Tema Ayarları</string>
-    <string name="supported_soon">Yakında Desteklenecek</string>
-    <string name="theme_description">Dinamik tema, Karanlık mod</string>
-    <string name="openai_setting">OpenAI Ayarları</string>
-    <string name="anthropic_setting">Anthropic Ayarları</string>
-    <string name="google_setting">Google Ayarları</string>
-    <string name="platform_setting_description">API Anahtarı, Model, Sistem Komutu</string>
-    <string name="enable_api">API’yi Etkinleştir</string>
-    <string name="api_key">API Anahtarı</string>
-    <string name="api_model">API Modeli</string>
-    <string name="dynamic_theme">Dinamik Tema</string>
-    <string name="dark_mode">Karanlık Mod</string>
-    <string name="key_icon">Anahtar Simgesi</string>
-    <string name="model_icon">Model Simgesi</string>
-    <string name="send">Gönder</string>
-    <string name="copy_text">Metni Kopyala</string>
-    <string name="retry">Tekrar Dene</string>
-    <string name="ask_a_question">Bir soru sor…</string>
-    <string name="some_platforms_disabled">Bazı API’ler devre dışı</string>
-    <string name="openai_brand_text" translatable="false">Powered by OpenAI</string>
-    <string name="anthropic_brand_text" translatable="false">Powered by Claude</string>
-    <string name="google_brand_text" translatable="false">Powered by Gemini</string>
-    <string name="token_not_set">Anahtar ayarlanmadı</string>
-    <string name="token_set">Anahtar %s***** olarak ayarlandı</string>
-    <string name="close">Kapat</string>
-    <string name="delete">Sil</string>
-    <string name="chats_selected">%d seçildi</string>
-    <string name="deleted_chats">%d sohbet silindi.</string>
-    <string name="delete_selected_chats">Seçilen sohbetleri sil?</string>
-    <string name="this_operation_can_t_be_undone">Bu işlem geri alınamaz.</string>
-    <string name="system_prompt">Sistem Komutu</string>
-    <string name="temperature">Sıcaklık</string>
-    <string name="top_p">Çekirdek örnekleme (Top p)</string>
-    <string name="system_prompt_setting">Sistem Komut Ayarı</string>
-    <string name="system_prompt_description">Sistem komutu, yapay zeka modellerine kullanıcı sorgularıyla etkileşime girmeden önce verilen bir dizi talimat, yönerge ve bağlamsal bilgidir.</string>
-    <string name="temperature_icon">Sıcaklık Simgesi</string>
-    <string name="top_p_icon">Çekirdek örnekleme simgesi</string>
-    <string name="system_prompt_icon">Sistem Komut Simgesi</string>
-    <string name="temperature_setting">Sıcaklık Ayarı</string>
-    <string name="temperature_setting_description">Sıcaklık, yanıta enjekte edilen rastgelelik miktarıdır. Genellikle varsayılan olarak 1.0’dır.\nDaha odaklı ve belirleyici cevaplar için düşük sıcaklık, rastgele cevaplar için yüksek sıcaklık ayarlayın.</string>
-    <string name="top_p_setting">Çekirdek Örnekleme Ayarı</string>
-    <string name="top_p_setting_description">Çekirdek örneklemede, her bir sonraki token için tüm seçenekler üzerinde azalan olasılık sırasına göre kümülatif dağılım hesaplanır ve bu değerle belirtilen belirli bir olasılığa ulaşıldığında kesilir.\nÇoğu model genellikle bunu veya sıcaklığı değiştirmeyi önerir, ancak ikisini birden değil.</string>
-    <string name="about">Hakkında</string>
-    <string name="about_description">Sürüm, Lisans, Geri Bildirim</string>
-    <string name="version">Sürüm</string>
-    <string name="license">Lisans</string>
+    <string name="gemini_1_5_pro_description">针对代码、文本生成等推理任务优化。</string>
+    <string name="gemini_1_5_flash_description">在多种任务中提供快速且灵活的表现。</string>
+    <string name="gemini_1_0_pro_description">适合自然语言任务、多轮文本和代码聊天，以及代码生成。</string>
+    <string name="setup_complete">全部设置完成！</string>
+    <string name="setup_complete_description">开始使用 GPTMobile 吧！</string>
+    <string name="done">完成</string>
+    <string name="setup_complete_logo">设置完成图标</string>
+    <string name="chats">会话</string>
+    <string name="settings">设置</string>
+    <string name="new_chat">新建会话</string>
+    <string name="select_platform">选择平台</string>
+    <string name="select_platform_description">选择此会话要使用的平台。会话创建后无法更改，如需更改请新建会话。</string>
+    <string name="enable_at_leat_one_platform">请至少启用一个平台才能创建会话。</string>
+    <string name="chat_icon">会话图标</string>
+    <string name="using_certain_platform">使用 %s</string>
+    <string name="confirm">确定</string>
+    <string name="cancel">取消</string>
+    <string name="go_back">返回</string>
+    <string name="more_options">更多选项</string>
+    <string name="arrow_icon">箭头图标</string>
+    <string name="on">开启</string>
+    <string name="off">关闭</string>
+    <string name="system_default">跟随系统</string>
+    <string name="theme_settings">主题设置</string>
+    <string name="supported_soon">即将支持</string>
+    <string name="theme_description">动态主题、深色模式</string>
+    <string name="openai_setting">OpenAI 设置</string>
+    <string name="anthropic_setting">Anthropic 设置</string>
+    <string name="google_setting">Google 设置</string>
+    <string name="platform_setting_description">API 密钥、模型、系统提示词</string>
+    <string name="enable_api">启用 API</string>
+    <string name="api_key">API 密钥</string>
+    <string name="api_model">API 模型</string>
+    <string name="dynamic_theme">动态主题</string>
+    <string name="dark_mode">深色模式</string>
+    <string name="key_icon">密钥图标</string>
+    <string name="model_icon">模型图标</string>
+    <string name="send">发送</string>
+    <string name="copy_text">复制文本</string>
+    <string name="copy_code">复制代码</string>
+    <string name="code">代码</string>
+    <string name="retry">重试</string>
+    <string name="ask_a_question">输入问题...</string>
+    <string name="some_platforms_disabled">部分 API 已禁用</string>
+    <string name="openai_brand_text">由 OpenAI 提供支持</string>
+    <string name="anthropic_brand_text">由 Claude 提供支持</string>
+    <string name="google_brand_text">由 Gemini 提供支持</string>
+    <string name="token_not_set">未设置密钥</string>
+    <string name="token_set">密钥已设置为 %s*****</string>
+    <string name="not_set">未设置</string>
+    <string name="close">关闭</string>
+    <string name="delete">删除</string>
+    <string name="duplicate">复制</string>
+    <string name="chats_selected">已选择 %d 个</string>
+    <string name="deleted_chats">已删除 %d 个会话。</string>
+    <string name="duplicated_chat">会话已复制。</string>
+    <string name="delete_selected_chats">要删除选中的会话吗？</string>
+    <string name="this_operation_can_t_be_undone">此操作无法撤销。</string>
+    <string name="system_prompt">系统提示词</string>
+    <string name="temperature">温度</string>
+    <string name="top_p">核采样 (Top p)</string>
+    <string name="system_prompt_setting">系统提示词设置</string>
+    <string name="system_prompt_description">系统提示词是在 AI 模型回答用户问题前提供给它的指令、规则和上下文信息。</string>
+    <string name="temperature_icon">温度图标</string>
+    <string name="top_p_icon">核采样图标</string>
+    <string name="system_prompt_icon">系统提示词图标</string>
+    <string name="temperature_setting">温度设置</string>
+    <string name="temperature_setting_description">温度用于控制回答中的随机性，默认通常为 1.0。\n低温度会让回答更聚焦、更确定；高温度会让回答更随机。</string>
+    <string name="top_p_setting">核采样设置</string>
+    <string name="top_p_setting_description">核采样会按概率从高到低累积候选 token，并在累积概率达到该值时截断。多数模型通常建议只调整它或温度中的一个。</string>
+    <string name="timeout">超时</string>
+    <string name="timeout_icon">超时图标</string>
+    <string name="timeout_seconds_label">超时（秒）</string>
+    <string name="timeout_setting_description">流式响应分块之间允许的最大空闲时间。设为 0 可关闭超时。</string>
+    <string name="timeout_invalid">请输入 0 或正数秒数。</string>
+    <string name="about">关于</string>
+    <string name="about_description">版本、许可、反馈</string>
+    <string name="version">版本</string>
+    <string name="license">许可证</string>
     <string name="github" translatable="false">GitHub</string>
     <string name="f_droid" translatable="false">F-Droid</string>
     <string name="play_store" translatable="false">Play Store</string>
-    <string name="feedback">Geri Bildirim</string>
-    <string name="license_description">Açık Kaynak Lisansları</string>
-    <string name="feedback_description">Her türlü geri bildirime açığız!</string>
-    <string name="version_icon">Sürüm Simgesi</string>
-    <string name="license_icon">Lisans Simgesi</string>
-    <string name="feedback_icon">Geri Bildirim Simgesi</string>
-    <string name="github_icon">GitHub Simgesi</string>
-    <string name="f_droid_icon">F-Droid Simgesi</string>
-    <string name="play_store_icon">Play Store Simgesi</string>
+    <string name="feedback">反馈</string>
+    <string name="license_description">开源许可证</string>
+    <string name="feedback_description">欢迎任何反馈！</string>
+    <string name="version_icon">版本图标</string>
+    <string name="license_icon">许可证图标</string>
+    <string name="feedback_icon">反馈图标</string>
+    <string name="github_icon">GitHub 图标</string>
+    <string name="f_droid_icon">F-Droid 图标</string>
+    <string name="play_store_icon">Play Store 图标</string>
     <string name="github_link" translatable="false">https://github.com/Taewan-P/gpt_mobile</string>
     <string name="f_droid_link" translatable="false">https://f-droid.org/packages/dev.chungjungsoo.gptmobile/</string>
     <string name="play_store_link" translatable="false">https://play.google.com/store/apps/details?id=dev.chungjungsoo.gptmobile</string>
     <string name="bug_report_link" translatable="false">https://github.com/Taewan-P/gpt_mobile/issues/new/choose</string>
     <string name="feedback_link" translatable="false">https://github.com/Taewan-P/gpt_mobile/discussions/new/choose</string>
-    <string name="api_url">API URL’si</string>
-    <string name="url_icon">URL Simgesi</string>
-    <string name="invalid_api_url">Lütfen geçerli bir URL girin.</string>
+    <string name="api_url">API URL</string>
+    <string name="url_icon">URL 图标</string>
+    <string name="invalid_api_url">请输入有效的 URL。</string>
     <string name="ollama" translatable="false">Ollama</string>
-    <string name="ollama_description">Kendi modelinizi kullanın.</string>
-    <string name="select_ollama_model">Ollama Sohbet Modelini Seçin</string>
-    <string name="ollama_setting">Ollama Ayarları</string>
-    <string name="ollama_brand_text" translatable="false">Powered by Ollama</string>
-    <string name="select_ollama_model_description">Lütfen Ollama modelini seçin. Desteklenen çok sayıda model ve etiket olduğundan, model değerini özelleştirebilirsiniz. Uç noktanın modeli gerçekten desteklediğinden ve çalışır durumda olduğundan emin olun. Aksi takdirde yanıt oluşturulmaz.</string>
-    <string name="custom">Özel</string>
-    <string name="custom_description">Listede olmayan modeli kullanın.</string>
-    <string name="model_name">Model Adı</string>
-    <string name="model_custom_example">ör. llama3.2, llava, llama3:latest, …</string>
-    <string name="custom_model_warning">Model adının API tarafından desteklenmesi gerektiğini unutmayın.</string>
-    <string name="enter_api_address">API Adresini Girin</string>
-    <string name="api_address_description">Lütfen Ollama API’nizin adresini, port numarası dahil olmak üzere girin. Uygulama v1/chat/completions uç noktasını kullanacağından, yalnızca adresin ön kısmını girin. Adres bir ‘/’ ile bitmelidir. ör.) http://192.168.1.100:11434/</string>
-    <string name="ollama_api_address">Ollama API Adresi</string>
+    <string name="ollama_description">使用你自己的模型。</string>
+    <string name="select_ollama_model">选择 Ollama 聊天模型</string>
+    <string name="ollama_setting">Ollama 设置</string>
+    <string name="ollama_brand_text">由 Ollama 提供支持</string>
+    <string name="select_ollama_model_description">请选择 Ollama 模型。Ollama 支持大量模型和标签，你可以自定义模型值。请确认端点确实支持并已运行该模型，否则不会生成响应。</string>
+    <string name="custom">自定义</string>
+    <string name="custom_description">使用列表之外的模型。</string>
+    <string name="model_name">模型标识符</string>
+    <string name="model_custom_example">例如 llama3.2、llava、llama3:latest、...</string>
+    <string name="custom_model_warning">请注意，模型名称必须受 API 支持。</string>
+    <string name="enter_api_address">输入 API 地址</string>
+    <string name="api_address_description">请输入 Ollama API 地址（包含端口号）。应用会使用 v1/chat/completions 端点，因此只需输入完整地址的前半部分。地址必须以 / 结尾，例如 http://192.168.1.100:11434/</string>
+    <string name="ollama_api_address">Ollama API 地址</string>
     <string name="ollama_api_help" translatable="false">https://ollama.com/blog/openai-compatibility</string>
-    <string name="reset">Sıfırla</string>
-    <string name="ollama_api_key">Ollama API Anahtarı</string>
-    <string name="api_url_cautions">URL bir ‘/’ ile bitmelidir.</string>
-    <string name="bug_report">Hata Raporu</string>
-    <string name="bug_report_description">Bir şey doğru çalışmıyor mu?</string>
-    <string name="bug_report_icon">Hata Raporu Simgesi</string>
-    <string name="scroll_to_bottom_icon">Aşağı kaydır simgesi</string>
+    <string name="reset">重置</string>
+    <string name="ollama_api_key">Ollama API 密钥</string>
+    <string name="api_url_cautions">URL 必须以 / 结尾。</string>
+    <string name="bug_report">问题反馈</string>
+    <string name="bug_report_description">有功能无法正常工作？</string>
+    <string name="bug_report_icon">问题反馈图标</string>
+    <string name="scroll_to_bottom_icon">滚动到底部图标</string>
     <string name="llama_3_2_3b" translatable="false">Llama 3.2 3B (Preview) 8k</string>
     <string name="llama_3_2_1b" translatable="false">Llama 3.2 1B (Preview) 8k</string>
     <string name="llama_3_1_70b_versatile" translatable="false">Llama 3.1 70B Versatile 128k</string>
     <string name="llama_3_1_8b_instant" translatable="false">Llama 3.1 8B Instant 128k</string>
     <string name="gemma_2_9b" translatable="false">Gemma 2 9B 8k</string>
-    <string name="llama_3_2_description">Meta’dan en son hafif açık kaynak dil modeli.</string>
-    <string name="llama_3_1_description">Meta’dan son teknoloji çok dilli açık kaynak büyük dil modeli.</string>
-    <string name="gemma2_description">Google tarafından piyasaya sürülen Küçük Dil Modeli.</string>
-    <string name="select_groq_model">Groq Sohbet Modelini Seçin</string>
-    <string name="select_groq_model_description">Lütfen Groq sohbet modelini seçin. Listede olmayan modelleri istiyorsanız, Groq API dokümantasyon web sitesine göz atın ve neler mevcut olduğunu görün.</string>
-    <string name="groq_setting">Groq Ayarları</string>
-    <string name="groq_brand_text" translatable="false">Powered by Groq</string>
+    <string name="llama_3_2_description">Meta 最新的轻量级开源语言模型。</string>
+    <string name="llama_3_1_description">Meta 推出的先进多语言开源大语言模型。</string>
+    <string name="gemma2_description">Google 发布的小型语言模型。</string>
+    <string name="select_groq_model">选择 Groq 聊天模型</string>
+    <string name="select_groq_model_description">请选择 Groq 聊天模型。如果想使用列表之外的模型，请查看 Groq API 文档了解可用模型。</string>
+    <string name="groq_setting">Groq 设置</string>
+    <string name="groq_brand_text">由 Groq 提供支持</string>
     <string name="groq" translatable="false">Groq</string>
-    <string name="groq_description">Açıkça mevcut modeller için hızlı yapay zeka çıkarımı.</string>
-    <string name="groq_api_key">Groq API Anahtarı</string>
+    <string name="groq_description">为开放可用模型提供快速 AI 推理。</string>
+    <string name="groq_api_key">Groq API 密钥</string>
     <string name="groq_api_help" translatable="false">https://console.groq.com/keys</string>
-    <string name="options">Seçenekler</string>
-    <string name="update_chat_title">Sohbet başlığını güncelle</string>
-    <string name="chat_title">Sohbet Başlığı</string>
-    <string name="chat_title_dialog_description">Yapay zeka tarafından oluşturulan başlık yalnızca AICore destekli cihazlarda kullanılabilir.</string>
-    <string name="default_mode">Varsayılan</string>
-    <string name="ai_generated">Yapay Zeka ile Oluşturulmuş (Beta)</string>
-    <string name="update">Güncelle</string>
-    <string name="untitled_chat">Başlıksız Sohbet</string>
-    <string name="title_length_limit">Başlık uzunluk sınırı: %1$s/50</string>
-    <string name="apply_generated_title">Oluşturulan başlığı uygula</string>
-    <string name="retry_ai_title">Yapay zeka ile oluşturulan başlığı tekrar dene</string>
-    <string name="token_input_warning">NOT: OpenAI ve Anthropic ön ödemeli faturalandırma kullanır, bu nedenle bunları kullanmadan önce her bir hesaba KREDİ YÜKLEMENİZ gerekir. Aksi takdirde yanıt bir hata döndürür.</string>
-    <string name="edit">Düzenle</string>
-    <string name="edit_question">Kullanıcı Mesajını Düzenle</string>
-    <string name="user_message">Kullanıcı Mesajı</string>
-    <string name="export_chat">Sohbeti Dışa Aktar</string>
+    <string name="options">选项</string>
+    <string name="chat_models">聊天模型</string>
+    <string name="chat_models_description">仅为当前会话设置各提供商的模型标识符。</string>
+    <string name="chat_model_for_platform">%1$s 的模型</string>
+    <string name="update_chat_models">更新模型</string>
+    <string name="update_chat_title">更新会话标题</string>
+    <string name="chat_title">会话标题</string>
+    <string name="chat_title_dialog_description">AI 生成标题仅适用于支持 AICore 的设备。</string>
+    <string name="default_mode">默认</string>
+    <string name="ai_generated">AI 生成（Beta）</string>
+    <string name="update">更新</string>
+    <string name="untitled_chat">未命名会话</string>
+    <string name="title_length_limit">标题长度：%1$s/50</string>
+    <string name="apply_generated_title">应用生成的标题</string>
+    <string name="retry_ai_title">重新生成 AI 标题</string>
+    <string name="token_input_warning">注意：OpenAI 和 Anthropic 使用预付费计费，使用前必须先为对应账户充值，否则请求会返回错误。</string>
+    <string name="edit">编辑</string>
+    <string name="edit_question">编辑用户消息</string>
+    <string name="edit_assistant_message">编辑助手消息</string>
+    <string name="user_message">用户消息</string>
+    <string name="assistant_message">助手消息</string>
+    <string name="assistant_thoughts">助手思考</string>
+    <string name="export_chat">导出会话</string>
+    <string name="migration_assistant">迁移助手</string>
+    <string name="migration_description">迁移助手将引导你顺利迁移到新版本升级后的数据库和数据结构。请按以下步骤操作。</string>
+    <string name="migrate_platform">迁移平台</string>
+    <string name="migrate">迁移</string>
+    <string name="migrate_chat">迁移会话</string>
+    <string name="enabled_platform_numbers">已启用平台：%1$d</string>
+    <string name="existing_chats">现有会话：%1$d</string>
+    <string name="migrating">迁移中</string>
+    <string name="migrated">已迁移</string>
+    <string name="error">错误</string>
+    <string name="select_text">选择文本</string>
+    <string name="unknown">未知</string>
+    <string name="search_chats">搜索会话</string>
+    <string name="no_search_results">未找到会话</string>
+    <string name="clear">清除</string>
+    <string name="attach_file">附加文件</string>
+    <string name="add_platform">添加平台</string>
+    <string name="add_platform_description">配置新的 API 平台</string>
+    <string name="platform_name">平台名称</string>
+    <string name="platform_name_hint">我的自定义平台</string>
+    <string name="platform_name_supporting">给平台起一个好记的名字</string>
+    <string name="platform_name_icon">平台名称图标</string>
+    <string name="api_type">API 类型</string>
+    <string name="client_type_openai_desc">OpenAI 聊天补全 API</string>
+    <string name="client_type_anthropic_desc">Anthropic 消息 API</string>
+    <string name="client_type_google_desc">Google Gemini 生成式 AI API</string>
+    <string name="client_type_groq_desc">Groq OpenAI 兼容 API</string>
+    <string name="client_type_ollama_desc">Ollama OpenAI 兼容 API</string>
+    <string name="client_type_openrouter_desc">OpenRouter OpenAI 兼容 API</string>
+    <string name="client_type_custom_desc">自定义 OpenAI 兼容端点</string>
+    <string name="api_url_hint" translatable="false">https://api.example.com</string>
+    <string name="api_key_hint" translatable="false">sk-...</string>
+    <string name="api_key_supporting">你的 API 密钥只会保存在本地</string>
+    <string name="model">模型</string>
+    <string name="model_supporting">请严格输入 API 规定的模型标识符</string>
+    <string name="save">保存</string>
+    <string name="enabled">已启用</string>
+    <string name="disabled">已禁用</string>
+    <string name="delete_platform">删除平台</string>
+    <string name="delete_platform_confirmation">确定要删除此平台吗？此操作无法撤销。</string>
+    <string name="view_thinking">查看思考过程</string>
+    <string name="hide_thinking">隐藏思考过程</string>
+    <string name="thinking_in_progress">思考中...</string>
+    <string name="expand">展开</string>
+    <string name="collapse">收起</string>
+    <string name="extended_thinking">深度思考</string>
+    <string name="extended_thinking_description">为推理模型启用（o1、o3、Claude 思考模式、Gemini 思考模式）</string>
+    <string name="your_platforms">你的平台</string>
+    <string name="no_platforms_yet">尚未添加平台</string>
+    <string name="add_your_first_platform">添加第一个 AI 平台即可开始</string>
+    <string name="add_another_platform">继续添加平台</string>
+    <string name="choose_platform_type">选择平台类型</string>
+    <string name="choose_platform_type_description">选择要添加的 AI 提供商</string>
+    <string name="configure_platform">配置平台</string>
+    <string name="step_basics">基本信息</string>
+    <string name="step_api_key">API 密钥</string>
+    <string name="step_model">模型</string>
+    <string name="step_x_of_y">第 %1$d 步，共 %2$d 步</string>
+    <string name="platform_basics_description">为平台命名并验证 API URL</string>
+    <string name="api_key_description">输入 API 密钥。它只会保存在你的设备上。</string>
+    <string name="api_key_optional_note">本地提供商（如 Ollama）可以不填 API 密钥</string>
+    <string name="model_description">输入要使用的模型标识符</string>
+    <string name="model_examples">示例：gpt-4o、claude-sonnet-4-20250514、gemini-1.5-pro</string>
+    <string name="back">返回</string>
+    <string name="finish">完成</string>
+    <string name="openrouter" translatable="false">OpenRouter</string>
+    <string name="openrouter_description">通过一个 API 访问多种 AI 模型</string>
+    <string name="custom_provider">自定义提供商</string>
+    <string name="custom_provider_description">连接任意 OpenAI 兼容 API</string>
+    <string name="platform_added_successfully">平台添加成功</string>
+    <string name="at_least_one_platform_required">请至少添加一个平台才能继续</string>
+    <string name="remove">移除</string>
+    <string name="revision_counter">版本 %1$d/%2$d</string>
+    <string name="previous_revision">上一个版本</string>
+    <string name="next_revision">下一个版本</string>
+    <string name="share_chat_export">分享会话导出</string>
+    <string name="export_chat_failed">导出会话失败</string>
+    <string name="chat_export_title">会话导出</string>
+    <string name="exported_on">导出时间</string>
+    <string name="chat_history">会话记录</string>
+    <string name="user_label">用户</string>
+    <string name="assistant_label">助手</string>
+    <string name="remove_failed_attachments_before_sending">请先移除处理失败的附件再发送。</string>
+    <string name="wait_for_attachments_before_saving">请等待附件处理完成后再保存。</string>
+    <string name="only_image_attachments_supported">当前仅支持图片附件。</string>
+    <string name="files_larger_than_50_mb_cannot_be_attached">无法附加大于 50 MB 的文件。</string>
+    <string name="total_attachments_cannot_exceed_50_mb">附件总大小不能超过 50 MB。</string>
+    <string name="large_images_resized_before_upload">上传前已压缩大图。</string>
+    <string name="failed_to_prepare_attachment">附件处理失败。</string>
+    <string name="failed_to_copy_attachment">附件复制失败。</string>
 </resources>

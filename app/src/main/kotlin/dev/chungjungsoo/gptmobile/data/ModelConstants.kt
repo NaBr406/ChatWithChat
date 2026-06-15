@@ -28,15 +28,15 @@ object ModelConstants {
     const val ANTHROPIC_MAXIMUM_TOKEN = 4096
 
     const val OPENAI_PROMPT =
-        "You are a helpful, clever, and very friendly assistant. " +
-            "You are familiar with various languages in the world. " +
-            "You are to answer my questions precisely. "
+        "你是一位乐于助人、聪明且非常友好的助手。" +
+            "你熟悉世界上的多种语言。" +
+            "请准确回答我的问题。"
 
-    const val DEFAULT_PROMPT = "Your task is to answer my questions precisely."
+    const val DEFAULT_PROMPT = "你的任务是准确回答我的问题。"
 
     const val CHAT_TITLE_GENERATE_PROMPT =
-        "Create a title that summarizes the chat. " +
-            "The output must match the language that the user and the opponent is using, and should be less than 50 letters. " +
-            "The output should only include the sentence in plain text without bullets or double asterisks. Do not use markdown syntax.\n" +
-            "[Chat Content]\n"
+        "请为这段聊天生成一个概括性标题。" +
+            "输出必须使用用户和助手正在使用的语言，并且少于 50 个字符。" +
+            "输出只能包含纯文本句子，不要使用项目符号、双星号或 Markdown 语法。\n" +
+            "[聊天内容]\n"
 }
