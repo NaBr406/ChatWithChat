@@ -21,6 +21,7 @@ import dev.chungjungsoo.gptmobile.data.database.entity.selectRevision
 import dev.chungjungsoo.gptmobile.data.database.entity.snapshotLatestAssistantRevision
 import dev.chungjungsoo.gptmobile.data.repository.AttachmentUploadCoordinator
 import dev.chungjungsoo.gptmobile.data.repository.ChatRepository
+import dev.chungjungsoo.gptmobile.data.repository.MemoryRepository
 import dev.chungjungsoo.gptmobile.data.repository.SettingRepository
 import dev.chungjungsoo.gptmobile.util.AttachmentPayloadCache
 import dev.chungjungsoo.gptmobile.util.FileUtils
@@ -40,7 +41,8 @@ class ChatViewModel @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val chatRepository: ChatRepository,
     private val settingRepository: SettingRepository,
-    private val attachmentUploadCoordinator: AttachmentUploadCoordinator
+    private val attachmentUploadCoordinator: AttachmentUploadCoordinator,
+    private val memoryRepository: MemoryRepository
 ) : ViewModel() {
     sealed class LoadingState {
         data object Idle : LoadingState()
@@ -130,6 +132,7 @@ class ChatViewModel @Inject constructor(
     val isLoaded = _isLoaded.asStateFlow()
 
     private var pendingQuestionText: String? = null
+    private val learnedMemoryTurnKeys = mutableSetOf<String>()
 
     init {
         fetchChatRoom()
@@ -276,6 +279,7 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch {
             val retryContext = groupedMessagesThroughTurn(_groupedMessages.value, turnIndex)
             chatRepository.completeChat(
+                _chatRoom.value,
                 retryContext.userMessages,
                 retryContext.assistantMessages,
                 platformWithChatModel
@@ -284,6 +288,7 @@ class ChatViewModel @Inject constructor(
                 turnIndex = turnIndex,
                 platformIdx = platformIndex,
                 onLoadingComplete = {
+                    learnMemoryForTurnAfterRequest(turnIndex)
                     _loadingStates.update { it.toMutableList().apply { this[platformIndex] = LoadingState.Idle } }
                 },
                 revisionToAppendOnSuccess = revisionToAppendOnSuccess
@@ -534,6 +539,7 @@ class ChatViewModel @Inject constructor(
             val platformWithChatModel = resolvePlatformModel(platform)
             viewModelScope.launch {
                 chatRepository.completeChat(
+                    _chatRoom.value,
                     _groupedMessages.value.userMessages,
                     _groupedMessages.value.assistantMessages,
                     platformWithChatModel
@@ -542,6 +548,7 @@ class ChatViewModel @Inject constructor(
                     turnIndex = turnIndex,
                     platformIdx = idx,
                     onLoadingComplete = {
+                        learnMemoryForTurnAfterRequest(turnIndex)
                         _loadingStates.update { it.toMutableList().apply { this[idx] = LoadingState.Idle } }
                     }
                 )
@@ -925,6 +932,29 @@ class ChatViewModel @Inject constructor(
             }
         }
     }
+
+    private fun learnMemoryForTurnAfterRequest(turnIndex: Int) {
+        val groupedMessages = groupedMessagesThroughTurn(_groupedMessages.value, turnIndex)
+        val userMessage = groupedMessages.userMessages.getOrNull(turnIndex) ?: return
+        val turnKey = memoryLearningTurnKey(turnIndex, userMessage)
+        if (!learnedMemoryTurnKeys.add(turnKey)) return
+
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    memoryRepository.learnFromChat(
+                        chatRoom = _chatRoom.value,
+                        userMessages = groupedMessages.userMessages,
+                        assistantMessages = groupedMessages.assistantMessages
+                    )
+                }
+            }
+
+            if (result.isFailure) {
+                learnedMemoryTurnKeys.remove(turnKey)
+            }
+        }
+    }
 }
 
 internal fun groupedMessagesThroughTurn(
@@ -934,6 +964,12 @@ internal fun groupedMessagesThroughTurn(
     userMessages = groupedMessages.userMessages.take(turnIndex + 1),
     assistantMessages = groupedMessages.assistantMessages.take(turnIndex + 1)
 )
+
+internal fun memoryLearningTurnKey(turnIndex: Int, userMessage: MessageV2): String = listOf(
+    turnIndex,
+    userMessage.createdAt,
+    userMessage.content.hashCode()
+).joinToString(":")
 
 internal fun persistableMessages(groupedMessages: ChatViewModel.GroupedMessages): List<MessageV2> {
     val merged = groupedMessages.userMessages + groupedMessages.assistantMessages.flatten()

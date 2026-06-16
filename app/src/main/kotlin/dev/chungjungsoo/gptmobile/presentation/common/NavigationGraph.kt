@@ -17,6 +17,7 @@ import androidx.navigation.navigation
 import dev.chungjungsoo.gptmobile.presentation.ui.chat.ChatScreen
 import dev.chungjungsoo.gptmobile.presentation.ui.home.HomeScreen
 import dev.chungjungsoo.gptmobile.presentation.ui.migrate.MigrateScreen
+import dev.chungjungsoo.gptmobile.presentation.ui.memory.MemoryScreen
 import dev.chungjungsoo.gptmobile.presentation.ui.setting.AboutScreen
 import dev.chungjungsoo.gptmobile.presentation.ui.setting.AddPlatformScreen
 import dev.chungjungsoo.gptmobile.presentation.ui.setting.LicenseScreen
@@ -172,6 +173,7 @@ fun NavGraphBuilder.settingNavigation(navController: NavHostController) {
                         Route.PLATFORM_SETTINGS.replace("{platformUid}", platformUid)
                     )
                 },
+                onNavigateToMemory = { navController.navigate(Route.MEMORY) },
                 onNavigateToAboutPage = { navController.navigate(Route.ABOUT_PAGE) }
             )
         }
@@ -201,6 +203,9 @@ fun NavGraphBuilder.settingNavigation(navController: NavHostController) {
                 onNavigationClick = { navController.navigateUp() },
                 onNavigationToLicense = { navController.navigate(Route.LICENSE) }
             )
+        }
+        composable(Route.MEMORY) {
+            MemoryScreen(onNavigationClick = { navController.navigateUp() })
         }
         composable(Route.LICENSE) {
             LicenseScreen(onNavigationClick = { navController.navigateUp() })

@@ -18,6 +18,7 @@ import dev.chungjungsoo.gptmobile.data.network.GroqAPI
 import dev.chungjungsoo.gptmobile.data.network.OpenAIAPI
 import dev.chungjungsoo.gptmobile.data.repository.ChatRepository
 import dev.chungjungsoo.gptmobile.data.repository.ChatRepositoryImpl
+import dev.chungjungsoo.gptmobile.data.repository.MemoryRepository
 import dev.chungjungsoo.gptmobile.data.repository.SettingRepository
 import javax.inject.Singleton
 
@@ -40,7 +41,8 @@ object ChatRepositoryModule {
         anthropicAPI: AnthropicAPI,
         googleAPI: GoogleAPI,
         attachmentUploadCoordinator: dev.chungjungsoo.gptmobile.data.repository.AttachmentUploadCoordinator,
-        contextBuilder: ContextBuilder
+        contextBuilder: ContextBuilder,
+        memoryRepository: MemoryRepository
     ): ChatRepository = ChatRepositoryImpl(
         context,
         chatRoomDao,
@@ -54,6 +56,7 @@ object ChatRepositoryModule {
         anthropicAPI,
         googleAPI,
         attachmentUploadCoordinator,
-        contextBuilder
+        contextBuilder,
+        memoryRepository
     )
 }

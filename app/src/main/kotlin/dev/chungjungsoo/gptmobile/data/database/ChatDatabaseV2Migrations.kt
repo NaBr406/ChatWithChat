@@ -213,6 +213,49 @@ object ChatDatabaseV2Migrations {
         }
     }
 
+    val MIGRATION_4_5 = object : Migration(4, 5) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            memoryTableSql().forEach(db::execSQL)
+        }
+    }
+
+    internal fun memoryTableSql(): List<String> = listOf(
+        """
+        CREATE TABLE IF NOT EXISTS `personal_memory` (
+            `memory_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+            `content` TEXT NOT NULL,
+            `type` TEXT NOT NULL,
+            `scope` TEXT NOT NULL,
+            `tags` TEXT NOT NULL,
+            `importance` REAL NOT NULL,
+            `confidence` REAL NOT NULL,
+            `source` TEXT NOT NULL,
+            `sensitivity` TEXT NOT NULL,
+            `status` TEXT NOT NULL,
+            `created_at` INTEGER NOT NULL,
+            `updated_at` INTEGER NOT NULL,
+            `last_accessed_at` INTEGER,
+            `expires_at` INTEGER
+        )
+        """.trimIndent(),
+        "CREATE INDEX IF NOT EXISTS `index_personal_memory_status` ON `personal_memory` (`status`)",
+        "CREATE INDEX IF NOT EXISTS `index_personal_memory_type` ON `personal_memory` (`type`)",
+        "CREATE INDEX IF NOT EXISTS `index_personal_memory_sensitivity` ON `personal_memory` (`sensitivity`)",
+        """
+        CREATE TABLE IF NOT EXISTS `chat_classification` (
+            `chat_id` INTEGER NOT NULL,
+            `mode` TEXT NOT NULL,
+            `domains` TEXT NOT NULL,
+            `memory_needs` TEXT NOT NULL,
+            `entities` TEXT NOT NULL,
+            `sensitivity` TEXT NOT NULL,
+            `confidence` REAL NOT NULL,
+            `updated_at` INTEGER NOT NULL,
+            PRIMARY KEY(`chat_id`)
+        )
+        """.trimIndent()
+    )
+
     internal fun legacyFilesToAttachmentsJson(filesValue: String): String {
         val attachments = filesValue
             .split(",")

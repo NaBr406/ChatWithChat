@@ -2,7 +2,11 @@ package dev.chungjungsoo.gptmobile.data.repository
 
 import android.content.ContextWrapper
 import dev.chungjungsoo.gptmobile.data.context.ContextBuilder
+import dev.chungjungsoo.gptmobile.data.database.entity.ChatClassification
+import dev.chungjungsoo.gptmobile.data.database.entity.ChatMode
+import dev.chungjungsoo.gptmobile.data.database.entity.ChatRoomV2
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
+import dev.chungjungsoo.gptmobile.data.database.entity.PersonalMemory
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
 import dev.chungjungsoo.gptmobile.data.dto.ApiState
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.request.MessageRequest
@@ -97,6 +101,7 @@ class ChatRepositoryImplTest {
         )
 
         val states = repository.completeChat(
+            chatRoom = testChatRoom(),
             userMessages = listOf(MessageV2(content = "Hi", platformType = null)),
             assistantMessages = emptyList(),
             platform = groqPlatform(reasoning = true, model = "qwen/qwen3-32b")
@@ -132,6 +137,7 @@ class ChatRepositoryImplTest {
         val repository = createRepository(groqAPI = groqAPI)
 
         val states = repository.completeChat(
+            chatRoom = testChatRoom(),
             userMessages = listOf(MessageV2(content = "Hi", platformType = null)),
             assistantMessages = emptyList(),
             platform = groqPlatform(reasoning = true, model = "qwen/qwen3-32b")
@@ -154,6 +160,7 @@ class ChatRepositoryImplTest {
         val repository = createRepository(groqAPI = groqAPI)
 
         repository.completeChat(
+            chatRoom = testChatRoom(),
             userMessages = listOf(MessageV2(content = "Hi", platformType = null)),
             assistantMessages = emptyList(),
             platform = groqPlatform(reasoning = false, model = "qwen/qwen3-32b")
@@ -171,6 +178,7 @@ class ChatRepositoryImplTest {
         val repository = createRepository(groqAPI = groqAPI)
 
         repository.completeChat(
+            chatRoom = testChatRoom(),
             userMessages = listOf(MessageV2(content = "Hi", platformType = null)),
             assistantMessages = emptyList(),
             platform = groqPlatform(reasoning = false, model = "openai/gpt-oss-20b")
@@ -204,6 +212,7 @@ class ChatRepositoryImplTest {
         val customPlatform = customPlatform()
 
         val states = repository.completeChat(
+            chatRoom = testChatRoom(),
             userMessages = listOf(
                 MessageV2(
                     id = 1,
@@ -260,7 +269,14 @@ class ChatRepositoryImplTest {
             FakeAnthropicAPI(),
             FakeGoogleAPI()
         ),
-        contextBuilder = ContextBuilder()
+        contextBuilder = ContextBuilder(),
+        memoryRepository = FakeMemoryRepository()
+    )
+
+    private fun testChatRoom() = ChatRoomV2(
+        id = 1,
+        title = "Test",
+        enabledPlatform = listOf("groq-platform", "custom-platform")
     )
 
     private fun groqPlatform(reasoning: Boolean, model: String) = PlatformV2(
@@ -377,5 +393,40 @@ class ChatRepositoryImplTest {
         ): UploadedProviderFile = UploadedProviderFile(id = "google-file", mimeType = mimeType)
 
         override suspend fun isFileAvailable(fileName: String): Boolean = false
+    }
+
+    private class FakeMemoryRepository : MemoryRepository {
+        override suspend fun classifyChat(
+            chatId: Int,
+            latestUserMessage: MessageV2,
+            allUserMessages: List<MessageV2>
+        ): ChatClassification = ChatClassification(chatId = chatId, mode = ChatMode.CASUAL_CHAT)
+
+        override suspend fun retrieveMemories(
+            classification: ChatClassification,
+            latestUserMessage: MessageV2,
+            limit: Int
+        ): List<PersonalMemory> = emptyList()
+
+        override fun buildMemoryPrompt(
+            memories: List<PersonalMemory>,
+            classification: ChatClassification
+        ): String? = null
+
+        override suspend fun learnFromChat(
+            chatRoom: ChatRoomV2,
+            userMessages: List<MessageV2>,
+            assistantMessages: List<List<MessageV2>>
+        ) = Unit
+
+        override suspend fun getAllMemories(): List<PersonalMemory> = emptyList()
+
+        override suspend fun updateMemoryContent(memoryId: Int, content: String) = Unit
+
+        override suspend fun markMemoryResolved(memoryId: Int) = Unit
+
+        override suspend fun archiveMemory(memoryId: Int) = Unit
+
+        override suspend fun deleteMemory(memoryId: Int) = Unit
     }
 }

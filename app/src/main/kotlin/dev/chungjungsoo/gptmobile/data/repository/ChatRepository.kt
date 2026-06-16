@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.Flow
 
 interface ChatRepository {
 
-    suspend fun completeChat(userMessages: List<MessageV2>, assistantMessages: List<List<MessageV2>>, platform: PlatformV2): Flow<ApiState>
+    suspend fun completeChat(chatRoom: ChatRoomV2, userMessages: List<MessageV2>, assistantMessages: List<List<MessageV2>>, platform: PlatformV2): Flow<ApiState>
     suspend fun fetchChatList(): List<ChatRoom>
     suspend fun fetchChatListV2(): List<ChatRoomV2>
     suspend fun searchChatsV2(query: String): List<ChatRoomV2>

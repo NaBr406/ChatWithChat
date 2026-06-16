@@ -11,10 +11,12 @@ import dev.chungjungsoo.gptmobile.data.database.ChatDatabase
 import dev.chungjungsoo.gptmobile.data.database.ChatDatabaseV2
 import dev.chungjungsoo.gptmobile.data.database.ChatDatabaseV2Migrations
 import dev.chungjungsoo.gptmobile.data.database.dao.ChatPlatformModelV2Dao
+import dev.chungjungsoo.gptmobile.data.database.dao.ChatClassificationDao
 import dev.chungjungsoo.gptmobile.data.database.dao.ChatRoomDao
 import dev.chungjungsoo.gptmobile.data.database.dao.ChatRoomV2Dao
 import dev.chungjungsoo.gptmobile.data.database.dao.MessageDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MessageV2Dao
+import dev.chungjungsoo.gptmobile.data.database.dao.PersonalMemoryDao
 import dev.chungjungsoo.gptmobile.data.database.dao.PlatformV2Dao
 import javax.inject.Singleton
 
@@ -26,6 +28,12 @@ object DatabaseModule {
 
     @Provides
     fun provideChatPlatformModelV2Dao(chatDatabaseV2: ChatDatabaseV2): ChatPlatformModelV2Dao = chatDatabaseV2.chatPlatformModelDao()
+
+    @Provides
+    fun provideChatClassificationDao(chatDatabaseV2: ChatDatabaseV2): ChatClassificationDao = chatDatabaseV2.chatClassificationDao()
+
+    @Provides
+    fun providePersonalMemoryDao(chatDatabaseV2: ChatDatabaseV2): PersonalMemoryDao = chatDatabaseV2.personalMemoryDao()
 
     @Provides
     fun providePlatformV2Dao(chatDatabaseV2: ChatDatabaseV2): PlatformV2Dao = chatDatabaseV2.platformDao()
@@ -59,6 +67,7 @@ object DatabaseModule {
     ).addMigrations(
         ChatDatabaseV2Migrations.MIGRATION_1_2,
         ChatDatabaseV2Migrations.MIGRATION_2_3,
-        ChatDatabaseV2Migrations.MIGRATION_3_4
+        ChatDatabaseV2Migrations.MIGRATION_3_4,
+        ChatDatabaseV2Migrations.MIGRATION_4_5
     ).build()
 }

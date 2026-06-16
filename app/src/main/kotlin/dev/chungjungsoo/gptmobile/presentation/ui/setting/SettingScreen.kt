@@ -10,6 +10,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -56,6 +57,7 @@ fun SettingScreen(
     onNavigationClick: () -> Unit,
     onNavigateToAddPlatform: () -> Unit,
     onNavigateToPlatformSetting: (String) -> Unit,
+    onNavigateToMemory: () -> Unit,
     onNavigateToAboutPage: () -> Unit
 ) {
     val scrollState = rememberScrollState()
@@ -119,6 +121,8 @@ fun SettingScreen(
                     onDeleteClick = { settingViewModel.openDeleteDialog(platform.id) }
                 )
             }
+
+            MemoryPageItem(onItemClick = onNavigateToMemory)
 
             AboutPageItem(onItemClick = onNavigateToAboutPage)
 
@@ -187,6 +191,26 @@ fun AboutPageItem(
         onItemClick = onItemClick,
         showTrailingIcon = true,
         showLeadingIcon = false
+    )
+}
+
+@Composable
+fun MemoryPageItem(
+    onItemClick: () -> Unit
+) {
+    SettingItem(
+        title = "Memory",
+        description = "View, edit, resolve, archive, or delete learned memories",
+        onItemClick = onItemClick,
+        showTrailingIcon = true,
+        showLeadingIcon = true,
+        leadingIcon = {
+            Icon(
+                imageVector = Icons.Filled.Memory,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary
+            )
+        }
     )
 }
 

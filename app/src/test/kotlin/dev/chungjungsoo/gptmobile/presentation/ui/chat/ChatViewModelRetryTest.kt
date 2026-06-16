@@ -243,4 +243,21 @@ class ChatViewModelRetryTest {
         assertEquals(true, partialErrorMessage.hasSendableAssistantPayload())
         assertEquals(true, attachmentOnlyMessage.hasSendableAssistantPayload())
     }
+
+    @Test
+    fun `memory learning turn key changes when edited user content changes`() {
+        val firstMessage = MessageV2(
+            chatId = 5,
+            content = "以后别太说教",
+            platformType = null,
+            createdAt = 100L
+        )
+        val editedMessage = firstMessage.copy(content = "以后用中文")
+
+        assertEquals(
+            memoryLearningTurnKey(0, firstMessage),
+            memoryLearningTurnKey(0, firstMessage)
+        )
+        assertTrue(memoryLearningTurnKey(0, firstMessage) != memoryLearningTurnKey(0, editedMessage))
+    }
 }
