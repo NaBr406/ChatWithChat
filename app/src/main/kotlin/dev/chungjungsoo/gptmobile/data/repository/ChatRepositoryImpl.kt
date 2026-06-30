@@ -123,35 +123,37 @@ class ChatRepositoryImpl @Inject constructor(
     override suspend fun completeChat(
         userMessages: List<MessageV2>,
         assistantMessages: List<List<MessageV2>>,
-        platform: PlatformV2
+        platform: PlatformV2,
+        memoryPrompt: String?
     ): Flow<ApiState> = when (platform.compatibleType) {
         ClientType.OPENAI -> {
             // Use Responses API for OpenAI (supports reasoning/thinking)
-            completeChatWithOpenAIResponses(userMessages, assistantMessages, platform)
+            completeChatWithOpenAIResponses(userMessages, assistantMessages, platform, memoryPrompt)
         }
 
         ClientType.GROQ -> {
-            completeChatWithGroq(userMessages, assistantMessages, platform)
+            completeChatWithGroq(userMessages, assistantMessages, platform, memoryPrompt)
         }
 
         ClientType.OLLAMA, ClientType.OPENROUTER, ClientType.CUSTOM -> {
             // Use Chat Completions API for OpenAI-compatible services
-            completeChatWithOpenAIChatCompletions(userMessages, assistantMessages, platform)
+            completeChatWithOpenAIChatCompletions(userMessages, assistantMessages, platform, memoryPrompt)
         }
 
         ClientType.ANTHROPIC -> {
-            completeChatWithAnthropic(userMessages, assistantMessages, platform)
+            completeChatWithAnthropic(userMessages, assistantMessages, platform, memoryPrompt)
         }
 
         ClientType.GOOGLE -> {
-            completeChatWithGoogle(userMessages, assistantMessages, platform)
+            completeChatWithGoogle(userMessages, assistantMessages, platform, memoryPrompt)
         }
     }
 
     private suspend fun completeChatWithOpenAIResponses(
         userMessages: List<MessageV2>,
         assistantMessages: List<List<MessageV2>>,
-        platform: PlatformV2
+        platform: PlatformV2,
+        memoryPrompt: String?
     ): Flow<ApiState> = try {
         openAIAPI.setToken(platform.token)
         openAIAPI.setAPIUrl(platform.apiUrl)
@@ -165,7 +167,7 @@ class ChatRepositoryImpl @Inject constructor(
                     model = platform.model,
                     input = inputMessages,
                     stream = true,
-                    instructions = platform.systemPrompt?.takeIf { it.isNotBlank() },
+                    instructions = mergeSystemPrompt(platform.systemPrompt, memoryPrompt),
                     temperature = if (platform.reasoning) null else platform.temperature,
                     topP = if (platform.reasoning) null else platform.topP,
                     reasoning = if (platform.reasoning) {
@@ -210,13 +212,14 @@ class ChatRepositoryImpl @Inject constructor(
     private suspend fun completeChatWithGroq(
         userMessages: List<MessageV2>,
         assistantMessages: List<List<MessageV2>>,
-        platform: PlatformV2
+        platform: PlatformV2,
+        memoryPrompt: String?
     ): Flow<ApiState> = try {
         streamPreparedApiState(
             prepare = {
                 val contextTurns = buildContextTurns(userMessages, assistantMessages, platform)
                 validateInlineBudgetIfNeeded(contextTurns, platform)
-                val messages = buildOpenAIChatMessages(contextTurns, platform.systemPrompt)
+                val messages = buildOpenAIChatMessages(contextTurns, mergeSystemPrompt(platform.systemPrompt, memoryPrompt))
 
                 createGroqChatCompletionRequest(messages, platform)
             },
@@ -257,7 +260,8 @@ class ChatRepositoryImpl @Inject constructor(
     private suspend fun completeChatWithOpenAIChatCompletions(
         userMessages: List<MessageV2>,
         assistantMessages: List<List<MessageV2>>,
-        platform: PlatformV2
+        platform: PlatformV2,
+        memoryPrompt: String?
     ): Flow<ApiState> = try {
         openAIAPI.setToken(platform.token)
         openAIAPI.setAPIUrl(platform.apiUrl)
@@ -266,7 +270,7 @@ class ChatRepositoryImpl @Inject constructor(
             prepare = {
                 val contextTurns = buildContextTurns(userMessages, assistantMessages, platform)
                 validateInlineBudgetIfNeeded(contextTurns, platform)
-                val messages = buildOpenAIChatMessages(contextTurns, platform.systemPrompt)
+                val messages = buildOpenAIChatMessages(contextTurns, mergeSystemPrompt(platform.systemPrompt, memoryPrompt))
 
                 ChatCompletionRequest(
                     model = platform.model,
@@ -514,7 +518,8 @@ class ChatRepositoryImpl @Inject constructor(
     private suspend fun completeChatWithAnthropic(
         userMessages: List<MessageV2>,
         assistantMessages: List<List<MessageV2>>,
-        platform: PlatformV2
+        platform: PlatformV2,
+        memoryPrompt: String?
     ): Flow<ApiState> = try {
         anthropicAPI.setToken(platform.token)
         anthropicAPI.setAPIUrl(platform.apiUrl)
@@ -529,7 +534,7 @@ class ChatRepositoryImpl @Inject constructor(
                     messages = messages,
                     maxTokens = if (platform.reasoning) 16000 else 4096,
                     stream = platform.stream,
-                    systemPrompt = platform.systemPrompt,
+                    systemPrompt = mergeSystemPrompt(platform.systemPrompt, memoryPrompt),
                     temperature = if (platform.reasoning) null else platform.temperature,
                     topP = if (platform.reasoning) null else platform.topP,
                     thinking = if (platform.reasoning) {
@@ -620,7 +625,8 @@ class ChatRepositoryImpl @Inject constructor(
     private suspend fun completeChatWithGoogle(
         userMessages: List<MessageV2>,
         assistantMessages: List<List<MessageV2>>,
-        platform: PlatformV2
+        platform: PlatformV2,
+        memoryPrompt: String?
     ): Flow<ApiState> = try {
         googleAPI.setToken(platform.token)
         googleAPI.setAPIUrl(platform.apiUrl)
@@ -643,7 +649,7 @@ class ChatRepositoryImpl @Inject constructor(
                             null
                         }
                     ),
-                    systemInstruction = platform.systemPrompt?.takeIf { it.isNotBlank() }?.let {
+                    systemInstruction = mergeSystemPrompt(platform.systemPrompt, memoryPrompt)?.let {
                         Content(
                             parts = listOf(Part.text(it))
                         )
@@ -961,6 +967,22 @@ internal fun createGroqChatCompletionRequest(
 }
 
 internal fun isGroqGptOssModel(model: String): Boolean = model.contains("gpt-oss", ignoreCase = true)
+
+internal fun mergeSystemPrompt(basePrompt: String?, memoryPrompt: String?): String? {
+    val base = basePrompt?.trim().orEmpty()
+    val memory = memoryPrompt?.trim().orEmpty()
+
+    return when {
+        base.isBlank() && memory.isBlank() -> null
+        base.isBlank() -> memory
+        memory.isBlank() -> base
+        else -> buildString {
+            appendLine(base)
+            appendLine()
+            append(memory)
+        }
+    }
+}
 
 internal fun MessageV2.sendableAssistantContent(): String {
     val strippedContent = stripAssistantErrorNote(effectiveContent()).trim()

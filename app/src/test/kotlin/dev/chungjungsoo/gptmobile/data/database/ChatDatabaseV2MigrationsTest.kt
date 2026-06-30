@@ -2,6 +2,9 @@ package dev.chungjungsoo.gptmobile.data.database
 
 import dev.chungjungsoo.gptmobile.data.database.entity.AssistantRevisionListConverter
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatAttachmentListConverter
+import java.lang.reflect.InvocationHandler
+import java.lang.reflect.Proxy
+import androidx.sqlite.db.SupportSQLiteDatabase
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -72,4 +75,37 @@ class ChatDatabaseV2MigrationsTest {
 
         assertTrue(revisions.isEmpty())
     }
+
+    @Test
+    fun `migration 4 to 5 creates memory tables`() {
+        val executedSql = mutableListOf<String>()
+        val db = recordingDatabase(executedSql)
+
+        ChatDatabaseV2Migrations.MIGRATION_4_5.migrate(db)
+
+        assertTrue(executedSql.any { it.contains("CREATE TABLE IF NOT EXISTS `personal_memory`") })
+        assertTrue(executedSql.any { it.contains("CREATE TABLE IF NOT EXISTS `chat_classification`") })
+    }
+
+    @Test
+    fun `migration 5 to 6 preserves memory tables for development v5 databases`() {
+        val executedSql = mutableListOf<String>()
+        val db = recordingDatabase(executedSql)
+
+        ChatDatabaseV2Migrations.MIGRATION_5_6.migrate(db)
+
+        assertTrue(executedSql.any { it.contains("CREATE TABLE IF NOT EXISTS `personal_memory`") })
+        assertTrue(executedSql.any { it.contains("CREATE TABLE IF NOT EXISTS `chat_classification`") })
+    }
+
+    private fun recordingDatabase(executedSql: MutableList<String>): SupportSQLiteDatabase = Proxy.newProxyInstance(
+        SupportSQLiteDatabase::class.java.classLoader,
+        arrayOf(SupportSQLiteDatabase::class.java),
+        InvocationHandler { _, method, args ->
+            if (method.name == "execSQL" && args?.firstOrNull() is String) {
+                executedSql += args.first() as String
+            }
+            null
+        }
+    ) as SupportSQLiteDatabase
 }

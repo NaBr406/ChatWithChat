@@ -10,11 +10,13 @@ import dagger.hilt.components.SingletonComponent
 import dev.chungjungsoo.gptmobile.data.database.ChatDatabase
 import dev.chungjungsoo.gptmobile.data.database.ChatDatabaseV2
 import dev.chungjungsoo.gptmobile.data.database.ChatDatabaseV2Migrations
+import dev.chungjungsoo.gptmobile.data.database.dao.ChatClassificationDao
 import dev.chungjungsoo.gptmobile.data.database.dao.ChatPlatformModelV2Dao
 import dev.chungjungsoo.gptmobile.data.database.dao.ChatRoomDao
 import dev.chungjungsoo.gptmobile.data.database.dao.ChatRoomV2Dao
 import dev.chungjungsoo.gptmobile.data.database.dao.MessageDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MessageV2Dao
+import dev.chungjungsoo.gptmobile.data.database.dao.PersonalMemoryDao
 import dev.chungjungsoo.gptmobile.data.database.dao.PlatformV2Dao
 import javax.inject.Singleton
 
@@ -43,6 +45,12 @@ object DatabaseModule {
     fun provideMessageV2Dao(chatDatabaseV2: ChatDatabaseV2): MessageV2Dao = chatDatabaseV2.messageDao()
 
     @Provides
+    fun providePersonalMemoryDao(chatDatabaseV2: ChatDatabaseV2): PersonalMemoryDao = chatDatabaseV2.personalMemoryDao()
+
+    @Provides
+    fun provideChatClassificationDao(chatDatabaseV2: ChatDatabaseV2): ChatClassificationDao = chatDatabaseV2.chatClassificationDao()
+
+    @Provides
     @Singleton
     fun provideChatDatabase(@ApplicationContext appContext: Context): ChatDatabase = Room.databaseBuilder(
         appContext,
@@ -59,6 +67,8 @@ object DatabaseModule {
     ).addMigrations(
         ChatDatabaseV2Migrations.MIGRATION_1_2,
         ChatDatabaseV2Migrations.MIGRATION_2_3,
-        ChatDatabaseV2Migrations.MIGRATION_3_4
+        ChatDatabaseV2Migrations.MIGRATION_3_4,
+        ChatDatabaseV2Migrations.MIGRATION_4_5,
+        ChatDatabaseV2Migrations.MIGRATION_5_6
     ).build()
 }

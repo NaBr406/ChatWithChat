@@ -460,8 +460,9 @@ private fun ChatMessagePair(
                             .horizontalScroll(rememberScrollState())
                     ) {
                         enabledPlatformsInChat.forEachIndexed { platformIndex, uid ->
+                            val platformLoadingState = loadingStates.getOrElse(platformIndex) { ChatViewModel.LoadingState.Idle }
                             PlatformButton(
-                                isLoading = isActiveMessage && loadingStates[platformIndex] == ChatViewModel.LoadingState.Loading,
+                                isLoading = isActiveMessage && platformLoadingState == ChatViewModel.LoadingState.Loading,
                                 name = enabledPlatformLookup[uid]?.name ?: stringResource(R.string.unknown),
                                 selected = platformIndexState == platformIndex,
                                 onPlatformClick = { onPlatformClick(messageIndex, platformIndex) }

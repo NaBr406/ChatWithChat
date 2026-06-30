@@ -218,7 +218,7 @@ fun GPTMobileIcon(loading: Boolean) {
             )
         }
         Image(
-            painter = painterResource(R.drawable.ic_gpt_mobile_no_padding),
+            painter = painterResource(R.drawable.chatwithchat_logo),
             contentDescription = null,
             modifier = Modifier.size(24.dp)
         )

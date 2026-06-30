@@ -6,6 +6,7 @@ param(
     [string]$ActivityName = ".presentation.ui.main.MainActivity",
     [int]$BootTimeoutSeconds = 480,
     [switch]$NoBuild,
+    [switch]$ClearData,
     [switch]$Headless
 )
 
@@ -178,6 +179,41 @@ function Get-DebugApkPath {
     throw "Debug APK not found. Run without -NoBuild first."
 }
 
+function Get-FirstOutputLine {
+    param([object]$Output)
+
+    $lines = @($Output) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    if (-not $lines) { return "" }
+
+    return "$($lines[0])"
+}
+
+function Get-LaunchDiagnosticLines {
+    param(
+        [string]$AdbPath,
+        [string]$Serial,
+        [string]$PackageName
+    )
+
+    $logLines = @(& $AdbPath -s $Serial logcat -d -v time)
+    $pattern = "FATAL EXCEPTION|ANR in $([regex]::Escape($PackageName))|Process $([regex]::Escape($PackageName)) has died|$([regex]::Escape($PackageName)).*(Exception|Error)"
+    $fatalIndexes = New-Object System.Collections.Generic.List[int]
+
+    for ($i = 0; $i -lt $logLines.Count; $i++) {
+        if ($logLines[$i] -match $pattern) {
+            $fatalIndexes.Add($i)
+        }
+    }
+
+    if ($fatalIndexes.Count -eq 0) {
+        return @()
+    }
+
+    $start = $fatalIndexes[$fatalIndexes.Count - 1]
+    $end = [Math]::Min($start + 80, $logLines.Count - 1)
+    return $logLines[$start..$end]
+}
+
 function Install-And-Launch {
     param(
         [string]$AdbPath,
@@ -189,6 +225,12 @@ function Install-And-Launch {
     & $AdbPath -s $Serial install -r $ApkPath
     if ($LASTEXITCODE -ne 0) { throw "adb install failed with exit code $LASTEXITCODE." }
 
+    if ($ClearData) {
+        Write-Step "Clearing app data for $PackageName"
+        & $AdbPath -s $Serial shell pm clear $PackageName | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "pm clear failed with exit code $LASTEXITCODE." }
+    }
+
     Write-Step "Launching $PackageName/$ActivityName"
     & $AdbPath -s $Serial logcat -c
     & $AdbPath -s $Serial shell am force-stop $PackageName
@@ -196,18 +238,29 @@ function Install-And-Launch {
     if ($LASTEXITCODE -ne 0) { throw "am start failed with exit code $LASTEXITCODE." }
 
     Start-Sleep -Seconds 8
-    $appPid = (& $AdbPath -s $Serial shell pidof $PackageName 2>$null).Trim()
-    $focus = (& $AdbPath -s $Serial shell dumpsys window | Select-String -Pattern "mCurrentFocus" | Select-Object -First 1).Line.Trim()
+    $appPid = ((& $AdbPath -s $Serial shell pidof $PackageName 2>$null) -join "").Trim()
+    $focusMatch = & $AdbPath -s $Serial shell dumpsys window |
+        Select-String -Pattern "mCurrentFocus" |
+        Select-Object -First 1
+    $focus = if ($focusMatch) { $focusMatch.Line.Trim() } else { "" }
     Write-Host "PID: $appPid"
     Write-Host "Focus: $focus"
 
-    $crashes = & $AdbPath -s $Serial logcat -d -v time |
-        Select-String -Pattern "FATAL EXCEPTION|ANR in $([regex]::Escape($PackageName))|Process $([regex]::Escape($PackageName)) has died|$([regex]::Escape($PackageName)).*(Exception|Error)" |
-        Select-Object -First 40
+    $crashes = @(Get-LaunchDiagnosticLines -AdbPath $AdbPath -Serial $Serial -PackageName $PackageName)
+
+    if ([string]::IsNullOrWhiteSpace($appPid)) {
+        Write-Warning "App process was not found after launch."
+        if ($crashes) {
+            $crashes | ForEach-Object { Write-Warning $_ }
+        } else {
+            Write-Warning "No obvious crash lines found in logcat."
+        }
+        exit 2
+    }
 
     if ($crashes) {
         Write-Warning "Potential crash/error logs detected after launch:"
-        $crashes | ForEach-Object { Write-Warning $_.Line }
+        $crashes | ForEach-Object { Write-Warning $_ }
         exit 2
     }
 

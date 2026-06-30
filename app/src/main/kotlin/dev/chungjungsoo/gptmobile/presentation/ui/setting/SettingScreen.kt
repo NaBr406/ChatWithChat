@@ -56,6 +56,7 @@ fun SettingScreen(
     onNavigationClick: () -> Unit,
     onNavigateToAddPlatform: () -> Unit,
     onNavigateToPlatformSetting: (String) -> Unit,
+    onNavigateToMemory: () -> Unit,
     onNavigateToAboutPage: () -> Unit
 ) {
     val scrollState = rememberScrollState()
@@ -122,6 +123,8 @@ fun SettingScreen(
 
             AboutPageItem(onItemClick = onNavigateToAboutPage)
 
+            MemoryPageItem(onItemClick = onNavigateToMemory)
+
             if (dialogState.isThemeDialogOpen) {
                 ThemeSettingDialog(settingViewModel)
             }
@@ -184,6 +187,19 @@ fun AboutPageItem(
     SettingItem(
         title = stringResource(R.string.about),
         description = stringResource(R.string.about_description),
+        onItemClick = onItemClick,
+        showTrailingIcon = true,
+        showLeadingIcon = false
+    )
+}
+
+@Composable
+fun MemoryPageItem(
+    onItemClick: () -> Unit
+) {
+    SettingItem(
+        title = "记忆",
+        description = "长期个性化记忆",
         onItemClick = onItemClick,
         showTrailingIcon = true,
         showLeadingIcon = false

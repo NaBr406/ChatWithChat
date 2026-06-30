@@ -24,7 +24,6 @@ import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
-import io.ktor.utils.io.readLine
 import java.io.File
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
@@ -125,11 +124,11 @@ class OpenAIAPIImpl @Inject constructor(
 
                 // Success - read SSE stream
                 val channel = response.bodyAsChannel()
-                while (!channel.isClosedForRead) {
-                    val line = channel.readLine() ?: break
+                while (true) {
+                    val line = channel.readSseLineOrNull() ?: break
 
-                    if (line.startsWith("data: ")) {
-                        val data = line.removePrefix("data: ").trim()
+                    if (line.startsWith("data:")) {
+                        val data = line.removePrefix("data:").trim()
                         // OpenAI sends "[DONE]" as final message
                         if (data == "[DONE]") break
 
@@ -190,11 +189,11 @@ class OpenAIAPIImpl @Inject constructor(
 
                 // Success - read SSE stream
                 val channel = response.bodyAsChannel()
-                while (!channel.isClosedForRead) {
-                    val line = channel.readLine() ?: break
+                while (true) {
+                    val line = channel.readSseLineOrNull() ?: break
 
-                    if (line.startsWith("data: ")) {
-                        val data = line.removePrefix("data: ").trim()
+                    if (line.startsWith("data:")) {
+                        val data = line.removePrefix("data:").trim()
                         if (data == "[DONE]") break
 
                         try {

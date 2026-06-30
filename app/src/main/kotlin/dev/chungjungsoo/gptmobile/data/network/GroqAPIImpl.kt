@@ -16,7 +16,6 @@ import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
-import io.ktor.utils.io.readLine
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -72,8 +71,8 @@ class GroqAPIImpl @Inject constructor(
                 }
 
                 val channel = response.bodyAsChannel()
-                while (!channel.isClosedForRead) {
-                    val line = channel.readLine() ?: break
+                while (true) {
+                    val line = channel.readSseLineOrNull() ?: break
                     if (!line.startsWith("data:")) continue
 
                     val data = line.removePrefix("data:").trim()

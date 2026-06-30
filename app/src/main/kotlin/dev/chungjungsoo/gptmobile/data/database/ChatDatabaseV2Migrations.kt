@@ -213,6 +213,18 @@ object ChatDatabaseV2Migrations {
         }
     }
 
+    val MIGRATION_4_5 = object : Migration(4, 5) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            ensureMemoryTables(db)
+        }
+    }
+
+    val MIGRATION_5_6 = object : Migration(5, 6) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            ensureMemoryTables(db)
+        }
+    }
+
     internal fun legacyFilesToAttachmentsJson(filesValue: String): String {
         val attachments = filesValue
             .split(",")
@@ -242,5 +254,55 @@ object ChatDatabaseV2Migrations {
             .map { AssistantRevision(content = it, thoughts = "", createdAt = createdAt) }
 
         return AssistantRevisionListConverter().fromList(revisions)
+    }
+
+    private fun ensureMemoryTables(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `personal_memory` (
+                `memory_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                `summary` TEXT NOT NULL,
+                `details` TEXT,
+                `recall_text` TEXT NOT NULL,
+                `type` TEXT NOT NULL,
+                `scope` TEXT NOT NULL,
+                `domains` TEXT NOT NULL,
+                `entities` TEXT NOT NULL,
+                `tags` TEXT NOT NULL,
+                `applicable_modes` TEXT NOT NULL,
+                `avoid_modes` TEXT NOT NULL,
+                `importance` REAL NOT NULL,
+                `confidence` REAL NOT NULL,
+                `source` TEXT NOT NULL,
+                `sensitivity` TEXT NOT NULL,
+                `status` TEXT NOT NULL,
+                `evidence` TEXT,
+                `created_at` INTEGER NOT NULL,
+                `updated_at` INTEGER NOT NULL,
+                `last_accessed_at` INTEGER,
+                `expires_at` INTEGER
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `chat_classification` (
+                `chat_id` INTEGER NOT NULL,
+                `mode` TEXT NOT NULL,
+                `intent` TEXT NOT NULL,
+                `memory_needs` TEXT NOT NULL,
+                `domains` TEXT NOT NULL,
+                `entities` TEXT NOT NULL,
+                `emotional_tone` TEXT,
+                `should_use_memories` INTEGER NOT NULL,
+                `should_learn_memories` INTEGER NOT NULL,
+                `sensitivity` TEXT NOT NULL,
+                `confidence` REAL NOT NULL,
+                `updated_at` INTEGER NOT NULL,
+                `raw_model_json` TEXT,
+                PRIMARY KEY(`chat_id`)
+            )
+            """.trimIndent()
+        )
     }
 }

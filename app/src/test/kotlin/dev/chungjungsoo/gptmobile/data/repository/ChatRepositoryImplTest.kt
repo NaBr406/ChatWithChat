@@ -240,6 +240,22 @@ class ChatRepositoryImplTest {
         assertEquals(1, openAIAPI.streamChatCompletionCalls)
     }
 
+    @Test
+    fun `mergeSystemPrompt keeps base prompt and memory prompt`() {
+        val merged = mergeSystemPrompt(
+            basePrompt = "Base system prompt.",
+            memoryPrompt = "Relevant long-term user memories:\n- Memory"
+        )
+
+        assertEquals(
+            "Base system prompt.\n\nRelevant long-term user memories:\n- Memory",
+            merged
+        )
+        assertEquals("Base", mergeSystemPrompt("Base", null))
+        assertEquals("Memory", mergeSystemPrompt(null, "Memory"))
+        assertNull(mergeSystemPrompt(" ", " "))
+    }
+
     private fun createRepository(
         groqAPI: GroqAPI = FakeGroqAPI(emptyFlow()),
         openAIAPI: OpenAIAPI = RecordingOpenAIAPI()
