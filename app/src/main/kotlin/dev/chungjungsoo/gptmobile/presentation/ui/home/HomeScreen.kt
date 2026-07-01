@@ -116,7 +116,7 @@ fun HomeScreen(
         if (model == null) {
             Toast.makeText(context, context.getString(R.string.empty_chat_no_platforms), Toast.LENGTH_SHORT).show()
         } else {
-            homeViewModel.updateLastSelectedModel(model.platformUid, model.modelId)
+            homeViewModel.updateLastSelectedModel(model.platformUid, model.modelId, lastSelectedModel?.reasoningMode)
             navigateToNewChat(listOf(model.platformUid))
         }
     }

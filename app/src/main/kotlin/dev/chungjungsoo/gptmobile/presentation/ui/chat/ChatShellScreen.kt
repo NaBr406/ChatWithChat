@@ -77,7 +77,7 @@ fun ChatShellScreen(
             return
         }
 
-        homeViewModel.updateLastSelectedModel(model.platformUid, model.modelId)
+        homeViewModel.updateLastSelectedModel(model.platformUid, model.modelId, lastSelectedModel?.reasoningMode)
         closeDrawer()
         navigateToNewChat(listOf(model.platformUid), initialQuestion, model.modelId, initialAttachmentPaths)
     }

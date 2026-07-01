@@ -8,6 +8,9 @@ import dev.chungjungsoo.gptmobile.data.database.entity.ChatRoomV2
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
 import dev.chungjungsoo.gptmobile.data.model.AvailableChatModel
 import dev.chungjungsoo.gptmobile.data.model.LastSelectedModel
+import dev.chungjungsoo.gptmobile.data.model.ReasoningMode
+import dev.chungjungsoo.gptmobile.data.model.coerceReasoningModeForModel
+import dev.chungjungsoo.gptmobile.data.model.defaultReasoningMode
 import dev.chungjungsoo.gptmobile.data.repository.ChatRepository
 import dev.chungjungsoo.gptmobile.data.repository.SettingRepository
 import javax.inject.Inject
@@ -160,25 +163,55 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             val platforms = settingRepository.fetchPlatformV2s()
             val availableModels = settingRepository.fetchEnabledChatModels()
+            val lastSelectedModel = settingRepository.fetchLastSelectedModel()
             _platformState.update { platforms }
             _availableChatModels.update { availableModels }
             _lastSelectedModel.update {
                 selectUsableLastSelectedModel(
                     availableModels = availableModels,
+                    lastSelectedModel = lastSelectedModel,
                     defaultModel = settingRepository.resolveDefaultChatModel()
                 )
             }
         }
     }
 
-    fun updateLastSelectedModel(platformUid: String, model: String) {
+    fun updateLastSelectedModel(platformUid: String, model: String, reasoningMode: ReasoningMode? = null) {
         val sanitizedModel = model.trim()
         if (platformUid.isBlank() || sanitizedModel.isBlank()) return
 
-        _lastSelectedModel.update { LastSelectedModel(platformUid = platformUid, model = sanitizedModel) }
-        viewModelScope.launch {
-            settingRepository.updateLastSelectedModel(platformUid, sanitizedModel)
+        val selectedModel = _availableChatModels.value.firstOrNull { availableModel ->
+            availableModel.platformUid == platformUid && availableModel.modelId == sanitizedModel
         }
+        val nextReasoningMode = selectedModel?.let { availableModel ->
+            availableModel.platform.coerceReasoningModeForModel(
+                reasoningMode ?: _lastSelectedModel.value?.reasoningMode ?: availableModel.platform.defaultReasoningMode(),
+                availableModel.modelId
+            )
+        } ?: (reasoningMode ?: ReasoningMode.AUTO)
+
+        _lastSelectedModel.update {
+            LastSelectedModel(
+                platformUid = platformUid,
+                model = sanitizedModel,
+                reasoningMode = nextReasoningMode
+            )
+        }
+        viewModelScope.launch {
+            settingRepository.updateLastSelectedModel(platformUid, sanitizedModel, nextReasoningMode)
+        }
+    }
+
+    fun updateLastSelectedReasoningMode(reasoningMode: ReasoningMode) {
+        val selectedModel = _lastSelectedModel.value ?: _availableChatModels.value.firstOrNull()?.let { availableModel ->
+            LastSelectedModel(
+                platformUid = availableModel.platformUid,
+                model = availableModel.modelId,
+                reasoningMode = availableModel.platform.defaultReasoningMode()
+            )
+        } ?: return
+
+        updateLastSelectedModel(selectedModel.platformUid, selectedModel.model, reasoningMode)
     }
 
     fun selectChat(chatRoomIdx: Int) {
@@ -203,10 +236,33 @@ class HomeViewModel @Inject constructor(
 
     private fun selectUsableLastSelectedModel(
         availableModels: List<AvailableChatModel>,
+        lastSelectedModel: LastSelectedModel?,
         defaultModel: AvailableChatModel?
-    ): LastSelectedModel? = defaultModel?.let { model ->
-        LastSelectedModel(platformUid = model.platformUid, model = model.modelId)
-    } ?: availableModels.firstOrNull()?.let { model ->
-        LastSelectedModel(platformUid = model.platformUid, model = model.modelId)
+    ): LastSelectedModel? {
+        lastSelectedModel?.let { lastSelected ->
+            availableModels.firstOrNull { model ->
+                model.platformUid == lastSelected.platformUid && model.modelId == lastSelected.model
+            }?.let { model ->
+                return LastSelectedModel(
+                    platformUid = model.platformUid,
+                    model = model.modelId,
+                    reasoningMode = model.platform.coerceReasoningModeForModel(lastSelected.reasoningMode, model.modelId)
+                )
+            }
+        }
+
+        return defaultModel?.let { model ->
+            LastSelectedModel(
+                platformUid = model.platformUid,
+                model = model.modelId,
+                reasoningMode = model.platform.coerceReasoningModeForModel(model.platform.defaultReasoningMode(), model.modelId)
+            )
+        } ?: availableModels.firstOrNull()?.let { model ->
+            LastSelectedModel(
+                platformUid = model.platformUid,
+                model = model.modelId,
+                reasoningMode = model.platform.coerceReasoningModeForModel(model.platform.defaultReasoningMode(), model.modelId)
+            )
+        }
     }
 }

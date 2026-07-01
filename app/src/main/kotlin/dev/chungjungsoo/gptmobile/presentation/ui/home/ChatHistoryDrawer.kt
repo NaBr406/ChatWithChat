@@ -1,5 +1,11 @@
 package dev.chungjungsoo.gptmobile.presentation.ui.home
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -85,7 +91,19 @@ fun ChatHistoryDrawer(
             onSearchClick = onSearchClick
         )
 
-        if (chatListState.isSearchMode || searchQuery.isNotBlank()) {
+        AnimatedVisibility(
+            visible = chatListState.isSearchMode || searchQuery.isNotBlank(),
+            enter = fadeIn(animationSpec = tween(durationMillis = 120)) +
+                expandVertically(
+                    animationSpec = tween(durationMillis = 180),
+                    expandFrom = Alignment.Top
+                ),
+            exit = fadeOut(animationSpec = tween(durationMillis = 90)) +
+                shrinkVertically(
+                    animationSpec = tween(durationMillis = 140),
+                    shrinkTowards = Alignment.Top
+                )
+        ) {
             ChatDrawerSearchField(
                 query = searchQuery,
                 onQueryChange = onSearchQueryChanged,

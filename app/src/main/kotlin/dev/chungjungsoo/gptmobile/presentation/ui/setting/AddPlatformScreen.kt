@@ -25,7 +25,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -57,7 +56,6 @@ fun AddPlatformScreen(
     var clientTypeExpanded by remember { mutableStateOf(false) }
     var apiUrl by remember { mutableStateOf("") }
     var apiKey by remember { mutableStateOf("") }
-    var reasoningEnabled by remember { mutableStateOf(false) }
     val saveState by settingViewModel.addPlatformSaveState.collectAsStateWithLifecycle()
     val isBusy = saveState is SettingViewModelV2.AddPlatformSaveState.Saving ||
         saveState is SettingViewModelV2.AddPlatformSaveState.RefreshingModels
@@ -218,33 +216,6 @@ fun AddPlatformScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Extended Thinking Toggle
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = stringResource(R.string.extended_thinking),
-                        style = MaterialTheme.typography.bodyLarge
-                    )
-                    Text(
-                        text = stringResource(R.string.extended_thinking_description),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(
-                    checked = reasoningEnabled,
-                    enabled = !isBusy && !platformSaved,
-                    onCheckedChange = { reasoningEnabled = it }
-                )
-            }
-
-            Spacer(modifier = Modifier.height(32.dp))
-
             AddPlatformSaveStatus(saveState)
 
             if (saveState !is SettingViewModelV2.AddPlatformSaveState.Idle) {
@@ -287,7 +258,6 @@ fun AddPlatformScreen(
                             apiUrl = apiUrl,
                             selectedClientType = selectedClientType,
                             apiKey = apiKey,
-                            reasoningEnabled = reasoningEnabled,
                             enabled = !isBusy,
                             onSave = settingViewModel::addPlatformAndRefreshModels,
                             onCancel = ::closeScreen
@@ -302,7 +272,6 @@ fun AddPlatformScreen(
                         apiUrl = apiUrl,
                         selectedClientType = selectedClientType,
                         apiKey = apiKey,
-                        reasoningEnabled = reasoningEnabled,
                         enabled = false,
                         onSave = settingViewModel::addPlatformAndRefreshModels,
                         onCancel = ::closeScreen
@@ -315,7 +284,6 @@ fun AddPlatformScreen(
                         apiUrl = apiUrl,
                         selectedClientType = selectedClientType,
                         apiKey = apiKey,
-                        reasoningEnabled = reasoningEnabled,
                         enabled = true,
                         onSave = settingViewModel::addPlatformAndRefreshModels,
                         onCancel = ::closeScreen
@@ -334,7 +302,6 @@ private fun AddPlatformActionButtons(
     apiUrl: String,
     selectedClientType: ClientType,
     apiKey: String,
-    reasoningEnabled: Boolean,
     enabled: Boolean,
     onSave: (PlatformV2) -> Unit,
     onCancel: () -> Unit
@@ -352,7 +319,7 @@ private fun AddPlatformActionButtons(
                 topP = 1.0f,
                 systemPrompt = null,
                 stream = true,
-                reasoning = reasoningEnabled,
+                reasoning = false,
                 timeout = 30
             )
             onSave(platform)

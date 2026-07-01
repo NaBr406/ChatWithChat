@@ -7,6 +7,7 @@ import dev.chungjungsoo.gptmobile.data.dto.ThemeSetting
 import dev.chungjungsoo.gptmobile.data.model.AvailableChatModel
 import dev.chungjungsoo.gptmobile.data.model.LastSelectedModel
 import dev.chungjungsoo.gptmobile.data.model.ModelRefreshResult
+import dev.chungjungsoo.gptmobile.data.model.ReasoningMode
 
 interface SettingRepository {
     suspend fun fetchPlatforms(): List<Platform>
@@ -21,7 +22,7 @@ interface SettingRepository {
     suspend fun migrateToPlatformV2()
     suspend fun updatePlatforms(platforms: List<Platform>)
     suspend fun updateThemes(themeSetting: ThemeSetting)
-    suspend fun updateLastSelectedModel(platformUid: String, model: String)
+    suspend fun updateLastSelectedModel(platformUid: String, model: String, reasoningMode: ReasoningMode = ReasoningMode.AUTO)
     suspend fun updateMemoryEnabled(enabled: Boolean)
     suspend fun refreshPlatformModels(platformUid: String): ModelRefreshResult
     suspend fun updatePlatformModelEnabled(platformUid: String, modelId: String, enabled: Boolean)

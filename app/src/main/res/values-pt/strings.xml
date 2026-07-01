@@ -246,8 +246,6 @@
     <string name="thinking_in_progress">思考中...</string>
     <string name="expand">展开</string>
     <string name="collapse">收起</string>
-    <string name="extended_thinking">深度思考</string>
-    <string name="extended_thinking_description">为推理模型启用（o1、o3、Claude 思考模式、Gemini 思考模式）</string>
     <string name="your_platforms">你的平台</string>
     <string name="no_platforms_yet">尚未添加平台</string>
     <string name="add_your_first_platform">添加第一个 AI 平台即可开始</string>

@@ -14,7 +14,7 @@ interface SettingDataSource {
     suspend fun updateTemperature(apiType: ApiType, temperature: Float)
     suspend fun updateTopP(apiType: ApiType, topP: Float)
     suspend fun updateSystemPrompt(apiType: ApiType, prompt: String)
-    suspend fun updateLastSelectedModel(platformUid: String, model: String)
+    suspend fun updateLastSelectedModel(platformUid: String, model: String, reasoningMode: String)
     suspend fun updateMemoryEnabled(enabled: Boolean)
     suspend fun getDynamicTheme(): DynamicTheme?
     suspend fun getThemeMode(): ThemeMode?
@@ -27,5 +27,6 @@ interface SettingDataSource {
     suspend fun getSystemPrompt(apiType: ApiType): String?
     suspend fun getLastSelectedModelPlatformUid(): String?
     suspend fun getLastSelectedModel(): String?
+    suspend fun getLastSelectedReasoningMode(): String?
     suspend fun getMemoryEnabled(): Boolean?
 }

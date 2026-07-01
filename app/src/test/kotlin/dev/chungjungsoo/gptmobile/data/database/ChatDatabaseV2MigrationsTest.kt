@@ -98,6 +98,21 @@ class ChatDatabaseV2MigrationsTest {
         assertTrue(executedSql.any { it.contains("CREATE TABLE IF NOT EXISTS `chat_classification`") })
     }
 
+    @Test
+    fun `migration 7 to 8 rebuilds chat model table with reasoning modes`() {
+        val executedSql = mutableListOf<String>()
+        val db = recordingDatabase(executedSql)
+
+        ChatDatabaseV2Migrations.MIGRATION_7_8.migrate(db)
+
+        val migrationSql = executedSql.joinToString(separator = "\n")
+        assertTrue(migrationSql.contains("CREATE TABLE IF NOT EXISTS `chat_platform_model_v2_new`"))
+        assertTrue(migrationSql.contains("WHEN platform.`reasoning` = 1 THEN 'medium'"))
+        assertTrue(migrationSql.contains("ELSE 'off'"))
+        assertTrue(executedSql.any { it == "DROP TABLE `chat_platform_model_v2`" })
+        assertTrue(executedSql.any { it == "ALTER TABLE `chat_platform_model_v2_new` RENAME TO `chat_platform_model_v2`" })
+    }
+
     private fun recordingDatabase(executedSql: MutableList<String>): SupportSQLiteDatabase = Proxy.newProxyInstance(
         SupportSQLiteDatabase::class.java.classLoader,
         arrayOf(SupportSQLiteDatabase::class.java),

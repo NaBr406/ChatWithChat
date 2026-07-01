@@ -33,6 +33,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.chungjungsoo.gptmobile.R
+import dev.chungjungsoo.gptmobile.data.model.ReasoningMode
 import dev.chungjungsoo.gptmobile.presentation.ui.home.HomeViewModel
 import java.io.File
 
@@ -56,6 +57,7 @@ fun EmptyChatScreen(
     val currentModelLabel = currentModelOptions.firstOrNull { it.selected }?.label
         ?: currentModelOptions.firstOrNull()?.label
         ?: stringResource(R.string.chat_models)
+    val currentReasoningMode = lastSelectedModel?.reasoningMode ?: ReasoningMode.AUTO
     val inputState = rememberTextFieldState()
     var selectedAttachments by remember { mutableStateOf(listOf<ChatAttachmentDraft>()) }
     val canChat = currentModelOptions.isNotEmpty()
@@ -65,8 +67,8 @@ fun EmptyChatScreen(
         topBar = {
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
-                    scrolledContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
+                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.84f),
+                    scrolledContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
                     navigationIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     titleContentColor = MaterialTheme.colorScheme.onSurface
                 ),
@@ -75,10 +77,12 @@ fun EmptyChatScreen(
                         ModelSelectionMenu(
                             label = currentModelLabel,
                             options = currentModelOptions,
+                            selectedReasoningMode = currentReasoningMode,
                             enabled = true,
                             onOptionSelected = { option ->
-                                homeViewModel.updateLastSelectedModel(option.platformUid, option.model)
-                            }
+                                homeViewModel.updateLastSelectedModel(option.platformUid, option.model, currentReasoningMode)
+                            },
+                            onReasoningModeSelected = homeViewModel::updateLastSelectedReasoningMode
                         )
                     } else {
                         Text(

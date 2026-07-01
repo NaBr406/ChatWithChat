@@ -2,7 +2,6 @@ package dev.chungjungsoo.gptmobile.presentation.ui.setting
 
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -24,8 +23,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LargeTopAppBar
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
@@ -51,7 +48,6 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.chungjungsoo.gptmobile.R
-import dev.chungjungsoo.gptmobile.data.model.ClientType
 import dev.chungjungsoo.gptmobile.presentation.common.SettingItem
 import dev.chungjungsoo.gptmobile.util.formatPlatformTimeout
 import dev.chungjungsoo.gptmobile.util.pinnedExitUntilCollapsedScrollBehavior
@@ -148,14 +144,12 @@ fun PlatformSettingScreen(
                         )
                     }
                 )
-                // Disable temperature and top_p when reasoning is enabled for OpenAI
-                val isReasoningDisabled = platformData.compatibleType == ClientType.OPENAI && platformData.reasoning
                 val notSetText = stringResource(R.string.not_set)
                 SettingItem(
                     modifier = Modifier.height(64.dp),
                     title = stringResource(R.string.temperature),
                     description = platformData.temperature?.toString() ?: notSetText,
-                    enabled = platformData.enabled && !isReasoningDisabled,
+                    enabled = platformData.enabled,
                     onItemClick = settingViewModel::openTemperatureDialog,
                     showTrailingIcon = false,
                     showLeadingIcon = true,
@@ -170,7 +164,7 @@ fun PlatformSettingScreen(
                     modifier = Modifier.height(64.dp),
                     title = stringResource(R.string.top_p),
                     description = platformData.topP?.toString() ?: notSetText,
-                    enabled = platformData.enabled && !isReasoningDisabled,
+                    enabled = platformData.enabled,
                     onItemClick = settingViewModel::openTopPDialog,
                     showTrailingIcon = false,
                     showLeadingIcon = true,
@@ -210,12 +204,6 @@ fun PlatformSettingScreen(
                             contentDescription = stringResource(R.string.timeout_icon)
                         )
                     }
-                )
-                ExtendedThinkingSwitch(
-                    modifier = Modifier.height(64.dp),
-                    enabled = platformData.enabled,
-                    isChecked = platformData.reasoning,
-                    onCheckedChange = { settingViewModel.toggleReasoning() }
                 )
 
                 PlatformNameDialog(dialogState, platformData.name, settingViewModel)
@@ -283,61 +271,6 @@ fun PlatformTopAppBar(
             }
         },
         scrollBehavior = scrollBehavior
-    )
-}
-
-@Composable
-fun ExtendedThinkingSwitch(
-    modifier: Modifier,
-    enabled: Boolean,
-    isChecked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
-) {
-    val clickableModifier = if (enabled) {
-        modifier
-            .fillMaxWidth()
-            .clickable(onClick = { onCheckedChange(!isChecked) })
-            .padding(horizontal = 8.dp)
-    } else {
-        modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp)
-    }
-    val colors = ListItemDefaults.colors()
-
-    ListItem(
-        modifier = clickableModifier,
-        headlineContent = {
-            Text(
-                text = stringResource(R.string.extended_thinking),
-                overflow = TextOverflow.Ellipsis
-            )
-        },
-        supportingContent = {
-            Text(
-                text = stringResource(R.string.extended_thinking_description),
-                overflow = TextOverflow.Ellipsis
-            )
-        },
-        leadingContent = {
-            Icon(
-                imageVector = ImageVector.vectorResource(id = R.drawable.ic_model),
-                contentDescription = stringResource(R.string.extended_thinking)
-            )
-        },
-        trailingContent = {
-            Switch(
-                checked = isChecked,
-                onCheckedChange = null,
-                enabled = enabled
-            )
-        },
-        colors = ListItemDefaults.colors(
-            headlineColor = if (enabled) colors.headlineColor else colors.disabledHeadlineColor,
-            supportingColor = if (enabled) colors.supportingTextColor else colors.disabledHeadlineColor,
-            leadingIconColor = if (enabled) colors.leadingIconColor else colors.disabledLeadingIconColor,
-            trailingIconColor = if (enabled) colors.trailingIconColor else colors.disabledTrailingIconColor
-        )
     )
 }
 

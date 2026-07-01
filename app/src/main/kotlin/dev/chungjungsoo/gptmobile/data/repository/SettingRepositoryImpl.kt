@@ -17,6 +17,8 @@ import dev.chungjungsoo.gptmobile.data.model.ClientType
 import dev.chungjungsoo.gptmobile.data.model.DynamicTheme
 import dev.chungjungsoo.gptmobile.data.model.LastSelectedModel
 import dev.chungjungsoo.gptmobile.data.model.ModelRefreshResult
+import dev.chungjungsoo.gptmobile.data.model.ReasoningMode
+import dev.chungjungsoo.gptmobile.data.model.defaultReasoningMode
 import dev.chungjungsoo.gptmobile.data.model.ThemeMode
 import javax.inject.Inject
 
@@ -106,8 +108,17 @@ class SettingRepositoryImpl @Inject constructor(
     override suspend fun fetchLastSelectedModel(): LastSelectedModel? {
         val platformUid = settingDataSource.getLastSelectedModelPlatformUid()?.takeIf { it.isNotBlank() } ?: return null
         val model = settingDataSource.getLastSelectedModel()?.takeIf { it.isNotBlank() } ?: return null
+        val storedReasoningMode = settingDataSource.getLastSelectedReasoningMode()
+        val reasoningMode = if (storedReasoningMode.isNullOrBlank()) {
+            platformV2Dao.getPlatforms()
+                .firstOrNull { it.uid == platformUid }
+                ?.defaultReasoningMode()
+                ?: ReasoningMode.AUTO
+        } else {
+            ReasoningMode.fromStorageValue(storedReasoningMode)
+        }
 
-        return LastSelectedModel(platformUid = platformUid, model = model)
+        return LastSelectedModel(platformUid = platformUid, model = model, reasoningMode = reasoningMode)
     }
 
     override suspend fun fetchMemoryEnabled(): Boolean = settingDataSource.getMemoryEnabled() ?: false
@@ -174,12 +185,12 @@ class SettingRepositoryImpl @Inject constructor(
         settingDataSource.updateThemeMode(themeSetting.themeMode)
     }
 
-    override suspend fun updateLastSelectedModel(platformUid: String, model: String) {
+    override suspend fun updateLastSelectedModel(platformUid: String, model: String, reasoningMode: ReasoningMode) {
         val sanitizedPlatformUid = platformUid.trim()
         val sanitizedModel = model.trim()
         if (sanitizedPlatformUid.isBlank() || sanitizedModel.isBlank()) return
 
-        settingDataSource.updateLastSelectedModel(sanitizedPlatformUid, sanitizedModel)
+        settingDataSource.updateLastSelectedModel(sanitizedPlatformUid, sanitizedModel, reasoningMode.storageValue)
     }
 
     override suspend fun updateMemoryEnabled(enabled: Boolean) {

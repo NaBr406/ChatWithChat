@@ -50,7 +50,11 @@ import dev.chungjungsoo.gptmobile.data.dto.openai.response.ReasoningSummaryTextD
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.ResponseErrorEvent
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.ResponseFailedEvent
 import dev.chungjungsoo.gptmobile.data.model.ApiType
+import dev.chungjungsoo.gptmobile.data.model.ChatPlatformConfig
 import dev.chungjungsoo.gptmobile.data.model.ClientType
+import dev.chungjungsoo.gptmobile.data.model.ReasoningMode
+import dev.chungjungsoo.gptmobile.data.model.defaultReasoningMode
+import dev.chungjungsoo.gptmobile.data.model.isGptOssModel
 import dev.chungjungsoo.gptmobile.data.network.AnthropicAPI
 import dev.chungjungsoo.gptmobile.data.network.GoogleAPI
 import dev.chungjungsoo.gptmobile.data.network.GroqAPI
@@ -125,28 +129,29 @@ class ChatRepositoryImpl @Inject constructor(
         userMessages: List<MessageV2>,
         assistantMessages: List<List<MessageV2>>,
         platform: PlatformV2,
-        memoryPrompt: String?
+        memoryPrompt: String?,
+        reasoningMode: ReasoningMode
     ): Flow<ApiState> = when (platform.compatibleType) {
         ClientType.OPENAI -> {
             // Use Responses API for OpenAI (supports reasoning/thinking)
-            completeChatWithOpenAIResponses(userMessages, assistantMessages, platform, memoryPrompt)
+            completeChatWithOpenAIResponses(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
         }
 
         ClientType.GROQ -> {
-            completeChatWithGroq(userMessages, assistantMessages, platform, memoryPrompt)
+            completeChatWithGroq(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
         }
 
         ClientType.OLLAMA, ClientType.OPENROUTER, ClientType.CUSTOM -> {
             // Use Chat Completions API for OpenAI-compatible services
-            completeChatWithOpenAIChatCompletions(userMessages, assistantMessages, platform, memoryPrompt)
+            completeChatWithOpenAIChatCompletions(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
         }
 
         ClientType.ANTHROPIC -> {
-            completeChatWithAnthropic(userMessages, assistantMessages, platform, memoryPrompt)
+            completeChatWithAnthropic(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
         }
 
         ClientType.GOOGLE -> {
-            completeChatWithGoogle(userMessages, assistantMessages, platform, memoryPrompt)
+            completeChatWithGoogle(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
         }
     }
 
@@ -154,13 +159,15 @@ class ChatRepositoryImpl @Inject constructor(
         userMessages: List<MessageV2>,
         assistantMessages: List<List<MessageV2>>,
         platform: PlatformV2,
-        memoryPrompt: String?
+        memoryPrompt: String?,
+        reasoningMode: ReasoningMode
     ): Flow<ApiState> = try {
         openAIAPI.setToken(platform.token)
         openAIAPI.setAPIUrl(platform.apiUrl)
 
         streamPreparedApiState(
             prepare = {
+                val reasoningParameters = mapReasoningMode(platform, reasoningMode)
                 val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
                 val inputMessages = buildResponsesInputMessages(conversationContext.turns, platform.uid)
 
@@ -169,15 +176,13 @@ class ChatRepositoryImpl @Inject constructor(
                     input = inputMessages,
                     stream = true,
                     instructions = mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary),
-                    temperature = if (platform.reasoning) null else platform.temperature,
-                    topP = if (platform.reasoning) null else platform.topP,
-                    reasoning = if (platform.reasoning) {
+                    temperature = if (reasoningParameters.hasExplicitReasoning) null else platform.temperature,
+                    topP = if (reasoningParameters.hasExplicitReasoning) null else platform.topP,
+                    reasoning = reasoningParameters.openAIEffort?.let { effort ->
                         ReasoningConfig(
-                            effort = "medium",
+                            effort = effort,
                             summary = "auto"
                         )
-                    } else {
-                        null
                     }
                 )
             },
@@ -214,7 +219,8 @@ class ChatRepositoryImpl @Inject constructor(
         userMessages: List<MessageV2>,
         assistantMessages: List<List<MessageV2>>,
         platform: PlatformV2,
-        memoryPrompt: String?
+        memoryPrompt: String?,
+        reasoningMode: ReasoningMode
     ): Flow<ApiState> = try {
         streamPreparedApiState(
             prepare = {
@@ -225,7 +231,7 @@ class ChatRepositoryImpl @Inject constructor(
                     mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary)
                 )
 
-                createGroqChatCompletionRequest(messages, platform)
+                createGroqChatCompletionRequest(messages, platform, reasoningMode)
             },
             stream = { request ->
                 flow {
@@ -265,13 +271,15 @@ class ChatRepositoryImpl @Inject constructor(
         userMessages: List<MessageV2>,
         assistantMessages: List<List<MessageV2>>,
         platform: PlatformV2,
-        memoryPrompt: String?
+        memoryPrompt: String?,
+        reasoningMode: ReasoningMode
     ): Flow<ApiState> = try {
         openAIAPI.setToken(platform.token)
         openAIAPI.setAPIUrl(platform.apiUrl)
 
         streamPreparedApiState(
             prepare = {
+                val reasoningParameters = mapReasoningMode(platform, reasoningMode)
                 val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
                 validateInlineBudgetIfNeeded(conversationContext.turns, platform)
                 val messages = buildOpenAIChatMessages(
@@ -284,7 +292,8 @@ class ChatRepositoryImpl @Inject constructor(
                     messages = messages,
                     stream = platform.stream,
                     temperature = platform.temperature,
-                    topP = platform.topP
+                    topP = platform.topP,
+                    reasoningEffort = reasoningParameters.openAICompatibleReasoningEffort
                 )
             },
             stream = { request ->
@@ -528,31 +537,31 @@ class ChatRepositoryImpl @Inject constructor(
         userMessages: List<MessageV2>,
         assistantMessages: List<List<MessageV2>>,
         platform: PlatformV2,
-        memoryPrompt: String?
+        memoryPrompt: String?,
+        reasoningMode: ReasoningMode
     ): Flow<ApiState> = try {
         anthropicAPI.setToken(platform.token)
         anthropicAPI.setAPIUrl(platform.apiUrl)
 
         streamPreparedApiState(
             prepare = {
+                val reasoningParameters = mapReasoningMode(platform, reasoningMode)
                 val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
                 val messages = buildAnthropicInputMessages(conversationContext.turns, platform.uid)
 
                 MessageRequest(
                     model = platform.model,
                     messages = messages,
-                    maxTokens = if (platform.reasoning) 16000 else 4096,
+                    maxTokens = reasoningParameters.anthropicMaxTokens ?: 4096,
                     stream = platform.stream,
                     systemPrompt = mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary),
-                    temperature = if (platform.reasoning) null else platform.temperature,
-                    topP = if (platform.reasoning) null else platform.topP,
-                    thinking = if (platform.reasoning) {
+                    temperature = if (reasoningParameters.hasExplicitReasoning) null else platform.temperature,
+                    topP = if (reasoningParameters.hasExplicitReasoning) null else platform.topP,
+                    thinking = reasoningParameters.anthropicBudgetTokens?.let { budgetTokens ->
                         dev.chungjungsoo.gptmobile.data.dto.anthropic.request.ThinkingConfig(
                             type = "enabled",
-                            budgetTokens = 10000
+                            budgetTokens = budgetTokens
                         )
-                    } else {
-                        null
                     }
                 )
             },
@@ -635,13 +644,15 @@ class ChatRepositoryImpl @Inject constructor(
         userMessages: List<MessageV2>,
         assistantMessages: List<List<MessageV2>>,
         platform: PlatformV2,
-        memoryPrompt: String?
+        memoryPrompt: String?,
+        reasoningMode: ReasoningMode
     ): Flow<ApiState> = try {
         googleAPI.setToken(platform.token)
         googleAPI.setAPIUrl(platform.apiUrl)
 
         streamPreparedApiState(
             prepare = {
+                val reasoningParameters = mapReasoningMode(platform, reasoningMode)
                 val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
                 val contents = buildGoogleContents(conversationContext.turns, platform.uid)
 
@@ -650,12 +661,11 @@ class ChatRepositoryImpl @Inject constructor(
                     generationConfig = GenerationConfig(
                         temperature = platform.temperature,
                         topP = platform.topP,
-                        thinkingConfig = if (platform.reasoning) {
+                        thinkingConfig = reasoningParameters.googleThinkingBudget?.let { thinkingBudget ->
                             dev.chungjungsoo.gptmobile.data.dto.google.request.ThinkingConfig(
-                                includeThoughts = true
+                                thinkingBudget = thinkingBudget,
+                                includeThoughts = reasoningParameters.googleIncludeThoughts ?: false
                             )
-                        } else {
-                            null
                         }
                     ),
                     systemInstruction = mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary)?.let {
@@ -779,18 +789,26 @@ class ChatRepositoryImpl @Inject constructor(
 
     override suspend fun fetchMessagesV2(chatId: Int): List<MessageV2> = messageV2Dao.loadMessages(chatId)
 
-    override suspend fun fetchChatPlatformModels(chatId: Int): Map<String, String> = chatPlatformModelV2Dao.getByChatId(chatId).associate {
-        it.platformUid to it.model
+    override suspend fun fetchChatPlatformModels(chatId: Int): Map<String, ChatPlatformConfig> = chatPlatformModelV2Dao.getByChatId(chatId).associate {
+        it.platformUid to ChatPlatformConfig(
+            platformUid = it.platformUid,
+            model = it.model,
+            reasoningMode = ReasoningMode.fromStorageValue(it.reasoningMode)
+        )
     }
 
-    override suspend fun saveChatPlatformModels(chatId: Int, models: Map<String, String>) {
+    override suspend fun saveChatPlatformModels(chatId: Int, models: Map<String, ChatPlatformConfig>) {
         val rows = models
             .filterKeys { it.isNotBlank() }
-            .map { (platformUid, model) ->
+            .mapNotNull { (platformUid, config) ->
+                val sanitizedModel = config.model.trim()
+                if (sanitizedModel.isBlank()) return@mapNotNull null
+
                 ChatPlatformModelV2(
                     chatId = chatId,
                     platformUid = platformUid,
-                    model = model.trim()
+                    model = sanitizedModel,
+                    reasoningMode = config.reasoningMode.storageValue
                 )
             }
 
@@ -807,10 +825,14 @@ class ChatRepositoryImpl @Inject constructor(
         val chatList = fetchChatList()
         val platforms = settingRepository.fetchPlatformV2s()
         val apiTypeMap = mutableMapOf<ApiType, String>()
-        val modelByPlatformUid = mutableMapOf<String, String>()
+        val configByPlatformUid = mutableMapOf<String, ChatPlatformConfig>()
 
         platforms.forEach { platform ->
-            modelByPlatformUid[platform.uid] = platform.model
+            configByPlatformUid[platform.uid] = ChatPlatformConfig(
+                platformUid = platform.uid,
+                model = platform.model,
+                reasoningMode = platform.defaultReasoningMode()
+            )
             when (platform.name) {
                 "OpenAI" -> apiTypeMap[ApiType.OPENAI] = platform.uid
                 "Anthropic" -> apiTypeMap[ApiType.ANTHROPIC] = platform.uid
@@ -846,10 +868,16 @@ class ChatRepositoryImpl @Inject constructor(
             )
 
             val modelRows = enabledPlatformUids.map { platformUid ->
+                val config = configByPlatformUid[platformUid] ?: ChatPlatformConfig(
+                    platformUid = platformUid,
+                    model = "",
+                    reasoningMode = ReasoningMode.AUTO
+                )
                 ChatPlatformModelV2(
                     chatId = chatRoom.id,
                     platformUid = platformUid,
-                    model = modelByPlatformUid[platformUid] ?: ""
+                    model = config.model,
+                    reasoningMode = config.reasoningMode.storageValue
                 )
             }
 
@@ -867,7 +895,7 @@ class ChatRepositoryImpl @Inject constructor(
         chatRoomV2Dao.editChatRoom(chatRoom.copy(title = title.replace('\n', ' ').take(50)))
     }
 
-    override suspend fun saveChat(chatRoom: ChatRoomV2, messages: List<MessageV2>, chatPlatformModels: Map<String, String>): ChatRoomV2 {
+    override suspend fun saveChat(chatRoom: ChatRoomV2, messages: List<MessageV2>, chatPlatformModels: Map<String, ChatPlatformConfig>): ChatRoomV2 {
         if (chatRoom.id == 0) {
             // New Chat
             val chatId = chatRoomV2Dao.addChatRoom(chatRoom)
@@ -951,9 +979,10 @@ class ChatRepositoryImpl @Inject constructor(
 
 internal fun createGroqChatCompletionRequest(
     messages: List<ChatMessage>,
-    platform: PlatformV2
+    platform: PlatformV2,
+    reasoningMode: ReasoningMode = platform.defaultReasoningMode()
 ): GroqChatCompletionRequest {
-    val isGptOssModel = isGroqGptOssModel(platform.model)
+    val reasoningParameters = mapReasoningMode(platform, reasoningMode)
 
     return GroqChatCompletionRequest(
         model = platform.model,
@@ -961,21 +990,13 @@ internal fun createGroqChatCompletionRequest(
         stream = platform.stream,
         temperature = platform.temperature,
         topP = platform.topP,
-        reasoningEffort = if (platform.reasoning && isGptOssModel) "medium" else null,
-        reasoningFormat = when {
-            platform.reasoning && !isGptOssModel -> "parsed"
-            !platform.reasoning && !isGptOssModel -> "hidden"
-            else -> null
-        },
-        includeReasoning = when {
-            platform.reasoning && isGptOssModel -> true
-            !platform.reasoning && isGptOssModel -> false
-            else -> null
-        }
+        reasoningEffort = reasoningParameters.groqReasoningEffort,
+        reasoningFormat = reasoningParameters.groqReasoningFormat,
+        includeReasoning = reasoningParameters.groqIncludeReasoning
     )
 }
 
-internal fun isGroqGptOssModel(model: String): Boolean = model.contains("gpt-oss", ignoreCase = true)
+internal fun isGroqGptOssModel(model: String): Boolean = isGptOssModel(model)
 
 internal fun mergeSystemPrompt(basePrompt: String?, memoryPrompt: String?): String? = mergePromptSections(basePrompt, memoryPrompt)
 

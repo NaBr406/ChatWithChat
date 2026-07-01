@@ -31,7 +31,7 @@ import dev.chungjungsoo.gptmobile.data.database.entity.StringListConverter
         PersonalMemory::class,
         ChatClassification::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = true
 )
 @TypeConverters(

@@ -70,6 +70,7 @@ class SettingDataSourceImpl @Inject constructor(
     private val themeModeKey = intPreferencesKey("theme_mode")
     private val lastSelectedModelPlatformUidKey = stringPreferencesKey("last_selected_model_platform_uid")
     private val lastSelectedModelKey = stringPreferencesKey("last_selected_model")
+    private val lastSelectedReasoningModeKey = stringPreferencesKey("last_selected_reasoning_mode")
     private val memoryEnabledKey = booleanPreferencesKey("memory_enabled")
 
     override suspend fun updateDynamicTheme(theme: DynamicTheme) {
@@ -126,10 +127,11 @@ class SettingDataSourceImpl @Inject constructor(
         }
     }
 
-    override suspend fun updateLastSelectedModel(platformUid: String, model: String) {
+    override suspend fun updateLastSelectedModel(platformUid: String, model: String, reasoningMode: String) {
         dataStore.edit { pref ->
             pref[lastSelectedModelPlatformUidKey] = platformUid
             pref[lastSelectedModelKey] = model
+            pref[lastSelectedReasoningModeKey] = reasoningMode
         }
     }
 
@@ -189,6 +191,10 @@ class SettingDataSourceImpl @Inject constructor(
 
     override suspend fun getLastSelectedModel(): String? = dataStore.data.map { pref ->
         pref[lastSelectedModelKey]
+    }.first()
+
+    override suspend fun getLastSelectedReasoningMode(): String? = dataStore.data.map { pref ->
+        pref[lastSelectedReasoningModeKey]
     }.first()
 
     override suspend fun getMemoryEnabled(): Boolean? = dataStore.data.map { pref ->

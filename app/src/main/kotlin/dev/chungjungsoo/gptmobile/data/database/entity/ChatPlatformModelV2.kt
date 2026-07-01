@@ -3,6 +3,7 @@ package dev.chungjungsoo.gptmobile.data.database.entity
 import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
+import dev.chungjungsoo.gptmobile.data.model.ReasoningMode
 
 @Entity(
     tableName = "chat_platform_model_v2",
@@ -25,6 +26,9 @@ data class ChatPlatformModelV2(
 
     @ColumnInfo(name = "model")
     val model: String,
+
+    @ColumnInfo(name = "reasoning_mode")
+    val reasoningMode: String = ReasoningMode.OFF.storageValue,
 
     @ColumnInfo(name = "updated_at")
     val updatedAt: Long = System.currentTimeMillis() / 1000

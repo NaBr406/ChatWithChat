@@ -85,6 +85,7 @@ import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
 import dev.chungjungsoo.gptmobile.data.database.entity.effectiveContent
 import dev.chungjungsoo.gptmobile.data.database.entity.effectiveThoughts
+import dev.chungjungsoo.gptmobile.data.model.ReasoningMode
 import java.io.File
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -116,6 +117,7 @@ fun ChatScreen(
     val chatPlatformModels by chatViewModel.chatPlatformModels.collectAsStateWithLifecycle()
     val lastSelectedModel by chatViewModel.lastSelectedModel.collectAsStateWithLifecycle()
     val availableChatModels by chatViewModel.availableChatModels.collectAsStateWithLifecycle()
+    val currentReasoningMode by chatViewModel.currentReasoningMode.collectAsStateWithLifecycle()
     val enabledPlatformLookup = remember(appEnabledPlatforms) { appEnabledPlatforms.associateBy { it.uid } }
     val isIdle = loadingStates.all { it == ChatViewModel.LoadingState.Idle }
     val currentModelOptions = remember(availableChatModels, lastSelectedModel) {
@@ -141,6 +143,7 @@ fun ChatScreen(
         title = chatRoom.title,
         currentModelLabel = currentModelLabel,
         currentModelOptions = currentModelOptions,
+        currentReasoningMode = currentReasoningMode,
         isMenuItemEnabled = chatRoom.id > 0,
         groupedMessages = groupedMessages,
         indexStates = indexStates,
@@ -173,6 +176,7 @@ fun ChatScreen(
         onModelOptionSelected = { option ->
             chatViewModel.updateChatPlatformModelAndRemember(option.platformUid, option.model)
         },
+        onReasoningModeSelected = chatViewModel::updateChatReasoningModeAndRemember,
         navigationIcon = navigationIcon,
         navigationIconContentDescription = navigationDescription
     )
@@ -243,6 +247,7 @@ private fun ChatContent(
     title: String,
     currentModelLabel: String,
     currentModelOptions: List<ModelSelectionOption>,
+    currentReasoningMode: ReasoningMode,
     isMenuItemEnabled: Boolean,
     groupedMessages: ChatViewModel.GroupedMessages,
     indexStates: List<Int>,
@@ -257,6 +262,7 @@ private fun ChatContent(
     onBackAction: () -> Unit,
     onChatTitleItemClick: () -> Unit,
     onModelOptionSelected: (ModelSelectionOption) -> Unit,
+    onReasoningModeSelected: (ReasoningMode) -> Unit,
     onExportChatItemClick: () -> Unit,
     onEditQuestion: (MessageV2) -> Unit,
     onEditAssistant: (Int, Int) -> Unit,
@@ -361,6 +367,7 @@ private fun ChatContent(
                 title = title,
                 currentModelLabel = currentModelLabel,
                 currentModelOptions = currentModelOptions,
+                currentReasoningMode = currentReasoningMode,
                 isMenuItemEnabled = isMenuItemEnabled,
                 onBackAction = onBackAction,
                 navigationIcon = navigationIcon,
@@ -368,6 +375,7 @@ private fun ChatContent(
                 scrollBehavior = scrollBehavior,
                 onChatTitleItemClick = onChatTitleItemClick,
                 onModelOptionSelected = onModelOptionSelected,
+                onReasoningModeSelected = onReasoningModeSelected,
                 onExportChatItemClick = onExportChatItemClick
             )
         }
@@ -630,6 +638,7 @@ private fun ChatTopBar(
     title: String,
     currentModelLabel: String,
     currentModelOptions: List<ModelSelectionOption>,
+    currentReasoningMode: ReasoningMode,
     isMenuItemEnabled: Boolean,
     onBackAction: () -> Unit,
     navigationIcon: ImageVector,
@@ -637,14 +646,15 @@ private fun ChatTopBar(
     scrollBehavior: TopAppBarScrollBehavior,
     onChatTitleItemClick: () -> Unit,
     onModelOptionSelected: (ModelSelectionOption) -> Unit,
+    onReasoningModeSelected: (ReasoningMode) -> Unit,
     onExportChatItemClick: () -> Unit
 ) {
     var isDropDownMenuExpanded by remember { mutableStateOf(false) }
 
     CenterAlignedTopAppBar(
         colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
-            scrolledContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.84f),
+            scrolledContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
             navigationIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
             actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
             titleContentColor = MaterialTheme.colorScheme.onSurface
@@ -653,8 +663,10 @@ private fun ChatTopBar(
             ModelSelectionMenu(
                 label = currentModelLabel,
                 options = currentModelOptions,
+                selectedReasoningMode = currentReasoningMode,
                 enabled = currentModelOptions.isNotEmpty(),
-                onOptionSelected = onModelOptionSelected
+                onOptionSelected = onModelOptionSelected,
+                onReasoningModeSelected = onReasoningModeSelected
             )
         },
         navigationIcon = {

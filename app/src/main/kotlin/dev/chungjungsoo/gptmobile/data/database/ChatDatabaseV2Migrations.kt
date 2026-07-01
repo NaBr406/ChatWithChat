@@ -7,6 +7,7 @@ import dev.chungjungsoo.gptmobile.data.database.entity.AssistantRevision
 import dev.chungjungsoo.gptmobile.data.database.entity.AssistantRevisionListConverter
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatAttachmentListConverter
 import dev.chungjungsoo.gptmobile.data.model.ChatAttachment
+import dev.chungjungsoo.gptmobile.data.model.ReasoningMode
 import java.io.File
 
 object ChatDatabaseV2Migrations {
@@ -229,6 +230,48 @@ object ChatDatabaseV2Migrations {
         override fun migrate(db: SupportSQLiteDatabase) {
             ensureMemoryTables(db)
             ensurePlatformModelTables(db)
+        }
+    }
+
+    val MIGRATION_7_8 = object : Migration(7, 8) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `chat_platform_model_v2_new` (
+                    `chat_id` INTEGER NOT NULL,
+                    `platform_uid` TEXT NOT NULL,
+                    `model` TEXT NOT NULL,
+                    `reasoning_mode` TEXT NOT NULL,
+                    `updated_at` INTEGER NOT NULL,
+                    PRIMARY KEY(`chat_id`, `platform_uid`),
+                    FOREIGN KEY(`chat_id`) REFERENCES `chats_v2`(`chat_id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                )
+                """.trimIndent()
+            )
+            db.execSQL(
+                """
+                INSERT INTO `chat_platform_model_v2_new` (
+                    `chat_id`,
+                    `platform_uid`,
+                    `model`,
+                    `reasoning_mode`,
+                    `updated_at`
+                )
+                SELECT
+                    chat_model.`chat_id`,
+                    chat_model.`platform_uid`,
+                    chat_model.`model`,
+                    CASE
+                        WHEN platform.`reasoning` = 1 THEN '${ReasoningMode.MEDIUM.storageValue}'
+                        ELSE '${ReasoningMode.OFF.storageValue}'
+                    END,
+                    chat_model.`updated_at`
+                FROM `chat_platform_model_v2` AS chat_model
+                LEFT JOIN `platform_v2` AS platform ON platform.`uid` = chat_model.`platform_uid`
+                """.trimIndent()
+            )
+            db.execSQL("DROP TABLE `chat_platform_model_v2`")
+            db.execSQL("ALTER TABLE `chat_platform_model_v2_new` RENAME TO `chat_platform_model_v2`")
         }
     }
 

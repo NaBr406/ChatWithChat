@@ -23,7 +23,12 @@ import dev.chungjungsoo.gptmobile.data.database.entity.selectRevision
 import dev.chungjungsoo.gptmobile.data.database.entity.snapshotLatestAssistantRevision
 import dev.chungjungsoo.gptmobile.data.memory.MemoryLearningResult
 import dev.chungjungsoo.gptmobile.data.model.AvailableChatModel
+import dev.chungjungsoo.gptmobile.data.model.ChatPlatformConfig
 import dev.chungjungsoo.gptmobile.data.model.LastSelectedModel
+import dev.chungjungsoo.gptmobile.data.model.ReasoningMode
+import dev.chungjungsoo.gptmobile.data.model.coerceReasoningModeForModel
+import dev.chungjungsoo.gptmobile.data.model.defaultReasoningMode
+import dev.chungjungsoo.gptmobile.data.model.reasoningModesForModel
 import dev.chungjungsoo.gptmobile.data.repository.AttachmentUploadCoordinator
 import dev.chungjungsoo.gptmobile.data.repository.ChatRepository
 import dev.chungjungsoo.gptmobile.data.repository.MemoryRepository
@@ -75,6 +80,11 @@ class ChatViewModel @Inject constructor(
         val attachments: List<ChatAttachmentDraft> = emptyList()
     )
 
+    private data class ResolvedChatPlatform(
+        val platform: PlatformV2,
+        val reasoningMode: ReasoningMode
+    )
+
     private val chatRoomId: Int = checkNotNull(savedStateHandle["chatRoomId"])
     private val enabledPlatformString: String = checkNotNull(savedStateHandle["enabledPlatforms"])
     private val initialQuestion: String = Uri.decode(savedStateHandle.get<String>("initialQuestion").orEmpty())
@@ -103,11 +113,14 @@ class ChatViewModel @Inject constructor(
     private val _isSelectTextSheetOpen = MutableStateFlow(false)
     val isSelectTextSheetOpen = _isSelectTextSheetOpen.asStateFlow()
 
-    private val _chatPlatformModels = MutableStateFlow<Map<String, String>>(emptyMap())
+    private val _chatPlatformModels = MutableStateFlow<Map<String, ChatPlatformConfig>>(emptyMap())
     val chatPlatformModels = _chatPlatformModels.asStateFlow()
 
     private val _lastSelectedModel = MutableStateFlow<LastSelectedModel?>(null)
     val lastSelectedModel = _lastSelectedModel.asStateFlow()
+
+    private val _currentReasoningMode = MutableStateFlow(ReasoningMode.AUTO)
+    val currentReasoningMode = _currentReasoningMode.asStateFlow()
 
     private val _availableChatModels = MutableStateFlow(listOf<AvailableChatModel>())
     val availableChatModels = _availableChatModels.asStateFlow()
@@ -264,7 +277,7 @@ class ChatViewModel @Inject constructor(
         if (turnIndex !in _groupedMessages.value.assistantMessages.indices) return
         if (platformIndex >= enabledPlatformsInChat.size || platformIndex < 0) return
         val platform = _enabledPlatformsInApp.value.firstOrNull { it.uid == enabledPlatformsInChat[platformIndex] } ?: return
-        val platformWithChatModel = resolvePlatformModel(platform)
+        val platformSelection = resolvePlatformSelection(platform)
         val revisionToAppendOnSuccess = _groupedMessages.value.assistantMessages
             .getOrNull(turnIndex)
             ?.getOrNull(platformIndex)
@@ -279,19 +292,20 @@ class ChatViewModel @Inject constructor(
                 createRetryAssistantMessage(
                     currentMessage = currentMessage,
                     chatId = chatRoomId,
-                    platformUid = platformWithChatModel.uid
+                    platformUid = platformSelection.platform.uid
                 )
             }
         }
 
         viewModelScope.launch {
             val retryContext = groupedMessagesThroughTurn(_groupedMessages.value, turnIndex)
-            val memoryPrompt = prepareMemoryPrompt(retryContext, platformWithChatModel)
+            val memoryPrompt = prepareMemoryPrompt(retryContext, platformSelection.platform)
             chatRepository.completeChat(
                 retryContext.userMessages,
                 retryContext.assistantMessages,
-                platformWithChatModel,
-                memoryPrompt
+                platformSelection.platform,
+                memoryPrompt,
+                reasoningMode = platformSelection.reasoningMode
             ).handleStates(
                 messageFlow = _groupedMessages,
                 turnIndex = turnIndex,
@@ -549,14 +563,15 @@ class ChatViewModel @Inject constructor(
             // Send chat completion requests
             enabledPlatformsInChat.forEachIndexed { idx, platformUid ->
                 val platform = _enabledPlatformsInApp.value.firstOrNull { it.uid == platformUid } ?: return@forEachIndexed
-                val platformWithChatModel = resolvePlatformModel(platform)
+                val platformSelection = resolvePlatformSelection(platform)
                 launch {
                     val latestGroupedMessages = _groupedMessages.value
                     chatRepository.completeChat(
                         latestGroupedMessages.userMessages,
                         latestGroupedMessages.assistantMessages,
-                        platformWithChatModel,
-                        memoryPrompt
+                        platformSelection.platform,
+                        memoryPrompt,
+                        reasoningMode = platformSelection.reasoningMode
                     ).handleStates(
                         messageFlow = _groupedMessages,
                         turnIndex = turnIndex,
@@ -576,19 +591,79 @@ class ChatViewModel @Inject constructor(
         val selectedModel = _availableChatModels.value.firstOrNull { availableModel ->
             availableModel.platformUid == platformUid && availableModel.modelId == sanitizedModel
         } ?: return
+        val nextReasoningMode = reasoningModeForSelectedModel(selectedModel, _currentReasoningMode.value)
+        val nextConfig = ChatPlatformConfig(
+            platformUid = selectedModel.platformUid,
+            model = selectedModel.modelId,
+            reasoningMode = nextReasoningMode
+        )
 
         _chatRoom.update { it.copy(enabledPlatform = listOf(selectedModel.platformUid)) }
-        _chatPlatformModels.update { mapOf(selectedModel.platformUid to selectedModel.modelId) }
-        _lastSelectedModel.update { LastSelectedModel(platformUid = selectedModel.platformUid, model = selectedModel.modelId) }
+        _chatPlatformModels.update { mapOf(selectedModel.platformUid to nextConfig) }
+        _lastSelectedModel.update {
+            LastSelectedModel(
+                platformUid = selectedModel.platformUid,
+                model = selectedModel.modelId,
+                reasoningMode = nextReasoningMode
+            )
+        }
+        _currentReasoningMode.update { nextReasoningMode }
         _loadingStates.update { List(1) { LoadingState.Idle } }
 
         viewModelScope.launch {
-            settingRepository.updateLastSelectedModel(selectedModel.platformUid, selectedModel.modelId)
+            settingRepository.updateLastSelectedModel(selectedModel.platformUid, selectedModel.modelId, nextReasoningMode)
             if (_chatRoom.value.id > 0) {
                 chatRepository.saveChatPlatformModels(_chatRoom.value.id, _chatPlatformModels.value)
             }
         }
     }
+
+    fun updateChatReasoningModeAndRemember(reasoningMode: ReasoningMode) {
+        val selectedModel = currentSelectedAvailableModel() ?: return
+        if (selectedModel.platform.reasoningModesForModel(selectedModel.modelId).isEmpty()) return
+
+        val nextReasoningMode = selectedModel.platform.coerceReasoningModeForModel(reasoningMode, selectedModel.modelId)
+        val nextConfig = ChatPlatformConfig(
+            platformUid = selectedModel.platformUid,
+            model = selectedModel.modelId,
+            reasoningMode = nextReasoningMode
+        )
+
+        _chatPlatformModels.update { mapOf(selectedModel.platformUid to nextConfig) }
+        _lastSelectedModel.update {
+            LastSelectedModel(
+                platformUid = selectedModel.platformUid,
+                model = selectedModel.modelId,
+                reasoningMode = nextReasoningMode
+            )
+        }
+        _currentReasoningMode.update { nextReasoningMode }
+
+        viewModelScope.launch {
+            settingRepository.updateLastSelectedModel(selectedModel.platformUid, selectedModel.modelId, nextReasoningMode)
+            if (_chatRoom.value.id > 0) {
+                chatRepository.saveChatPlatformModels(_chatRoom.value.id, _chatPlatformModels.value)
+            }
+        }
+    }
+
+    private fun currentSelectedAvailableModel(): AvailableChatModel? {
+        val selectedModel = _lastSelectedModel.value
+        return selectedModel?.let { lastSelected ->
+            _availableChatModels.value.firstOrNull { availableModel ->
+                availableModel.platformUid == lastSelected.platformUid &&
+                    availableModel.modelId == lastSelected.model
+            }
+        } ?: _availableChatModels.value.firstOrNull { availableModel ->
+            availableModel.platformUid in enabledPlatformsInChat &&
+                _chatPlatformModels.value[availableModel.platformUid]?.model == availableModel.modelId
+        }
+    }
+
+    private fun reasoningModeForSelectedModel(
+        selectedModel: AvailableChatModel,
+        requestedMode: ReasoningMode
+    ): ReasoningMode = selectedModel.platform.coerceReasoningModeForModel(requestedMode, selectedModel.modelId)
 
     private suspend fun prepareMemoryPrompt(
         groupedMessages: GroupedMessages,
@@ -988,12 +1063,32 @@ class ChatViewModel @Inject constructor(
         if (selectedModel == null) {
             _lastSelectedModel.update { null }
             _chatPlatformModels.update { emptyMap() }
+            _currentReasoningMode.update { ReasoningMode.AUTO }
             _loadingStates.update { emptyList() }
             return
         }
 
-        _lastSelectedModel.update { LastSelectedModel(platformUid = selectedModel.platformUid, model = selectedModel.modelId) }
-        val mergedModels = mapOf(selectedModel.platformUid to selectedModel.modelId)
+        val selectedReasoningMode = selectedModel.platform.coerceReasoningModeForModel(
+            persistedModels[selectedModel.platformUid]
+                ?.takeIf { it.model == selectedModel.modelId }
+                ?.reasoningMode
+                ?: selectInitialReasoningMode(selectedModel),
+            selectedModel.modelId
+        )
+        val selectedConfig = ChatPlatformConfig(
+            platformUid = selectedModel.platformUid,
+            model = selectedModel.modelId,
+            reasoningMode = selectedReasoningMode
+        )
+        _lastSelectedModel.update {
+            LastSelectedModel(
+                platformUid = selectedModel.platformUid,
+                model = selectedModel.modelId,
+                reasoningMode = selectedReasoningMode
+            )
+        }
+        _currentReasoningMode.update { selectedReasoningMode }
+        val mergedModels = mapOf(selectedModel.platformUid to selectedConfig)
 
         _chatRoom.update { chatRoom ->
             if (chatRoom.id == -1) {
@@ -1026,14 +1121,26 @@ class ChatViewModel @Inject constructor(
         return routeModel ?: settingRepository.resolveDefaultChatModel()
     }
 
+    private suspend fun selectInitialReasoningMode(selectedModel: AvailableChatModel): ReasoningMode {
+        val lastSelectedModel = settingRepository.fetchLastSelectedModel()
+        return if (
+            lastSelectedModel?.platformUid == selectedModel.platformUid &&
+            lastSelectedModel.model == selectedModel.modelId
+        ) {
+            lastSelectedModel.reasoningMode
+        } else {
+            selectedModel.platform.defaultReasoningMode()
+        }
+    }
+
     private fun selectPersistedModel(
         availableModels: List<AvailableChatModel>,
-        persistedModels: Map<String, String>
+        persistedModels: Map<String, ChatPlatformConfig>
     ): AvailableChatModel? {
         if (chatRoomId == 0) return null
 
-        return persistedModels.firstNotNullOfOrNull { (platformUid, modelId) ->
-            availableModels.firstOrNull { model -> model.platformUid == platformUid && model.modelId == modelId }
+        return persistedModels.firstNotNullOfOrNull { (platformUid, config) ->
+            availableModels.firstOrNull { model -> model.platformUid == platformUid && model.modelId == config.model }
         }
     }
 
@@ -1077,11 +1184,23 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    private fun resolvePlatformModel(platform: PlatformV2): PlatformV2 {
-        val chatModel = _chatPlatformModels.value[platform.uid]?.trim().orEmpty()
-        if (chatModel.isBlank() || chatModel == platform.model) return platform
+    private fun resolvePlatformSelection(platform: PlatformV2): ResolvedChatPlatform {
+        val chatConfig = _chatPlatformModels.value[platform.uid]
+        val chatModel = chatConfig?.model?.trim().orEmpty()
+        val platformWithChatModel = if (chatModel.isBlank() || chatModel == platform.model) {
+            platform
+        } else {
+            platform.copy(model = chatModel)
+        }
+        val reasoningMode = platformWithChatModel.coerceReasoningModeForModel(
+            chatConfig?.reasoningMode ?: platform.defaultReasoningMode(),
+            platformWithChatModel.model
+        )
 
-        return platform.copy(model = chatModel)
+        return ResolvedChatPlatform(
+            platform = platformWithChatModel,
+            reasoningMode = reasoningMode
+        )
     }
 
     private fun preferredMemoryPlatform(): PlatformV2? {
@@ -1090,7 +1209,7 @@ class ChatViewModel @Inject constructor(
             ?.let { platformUid -> _enabledPlatformsInApp.value.firstOrNull { it.uid == platformUid } }
             ?: return null
 
-        return resolvePlatformModel(chatPlatform)
+        return resolvePlatformSelection(chatPlatform).platform
     }
 
     private fun persistCurrentChatSnapshot() {
