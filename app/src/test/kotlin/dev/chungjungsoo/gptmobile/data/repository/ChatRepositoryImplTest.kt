@@ -16,10 +16,15 @@ import dev.chungjungsoo.gptmobile.data.dto.groq.response.GroqChoice
 import dev.chungjungsoo.gptmobile.data.dto.groq.response.GroqDelta
 import dev.chungjungsoo.gptmobile.data.dto.openai.common.TextContent as OpenAITextContent
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ChatCompletionRequest
+import dev.chungjungsoo.gptmobile.data.dto.openai.request.ResponseFunctionCallInputItem
+import dev.chungjungsoo.gptmobile.data.dto.openai.request.ResponseFunctionCallOutputItem
+import dev.chungjungsoo.gptmobile.data.dto.openai.request.ResponseToolChoice
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ResponsesRequest
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.ChatCompletionChunk
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.Choice
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.Delta
+import dev.chungjungsoo.gptmobile.data.dto.openai.response.FunctionCallArgumentsDoneEvent
+import dev.chungjungsoo.gptmobile.data.dto.openai.response.OutputTextDeltaEvent
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.ResponsesStreamEvent
 import dev.chungjungsoo.gptmobile.data.model.ChatAttachment
 import dev.chungjungsoo.gptmobile.data.model.ClientType
@@ -466,6 +471,73 @@ class ChatRepositoryImplTest {
     }
 
     @Test
+    fun `auto web search uses openai responses native tools for openai platform`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            responsesResponses = mutableListOf(
+                flowOf(
+                    FunctionCallArgumentsDoneEvent(
+                        itemId = "fc_1",
+                        outputIndex = 0,
+                        callId = "call_1",
+                        name = "web_search",
+                        arguments = """{"query":"current Android target SDK"}"""
+                    )
+                ),
+                flowOf(
+                    OutputTextDeltaEvent(
+                        itemId = "msg_1",
+                        outputIndex = 0,
+                        contentIndex = 0,
+                        delta = "Final searched answer"
+                    )
+                )
+            )
+        )
+        val webSearchRepository = RecordingWebSearchRepository(
+            Result.success(listOf(webSearchResult()))
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(WebSearchMode.Auto),
+            webSearchRepository = webSearchRepository
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "What is the current Android target SDK?", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = openAIPlatform()
+        ).toList()
+
+        assertEquals(
+            listOf(
+                ApiState.Loading,
+                ApiState.ToolStarted("web_search", "current Android target SDK"),
+                ApiState.ToolFinished("web_search", "current Android target SDK"),
+                ApiState.SourcesUpdated(
+                    listOf(
+                        MessageSourceMetadata(
+                            title = "Example Source",
+                            url = "https://example.com/source",
+                            snippet = "Example search snippet",
+                            sourceToolName = "web_search"
+                        )
+                    )
+                ),
+                ApiState.Success("Final searched answer"),
+                ApiState.Done
+            ),
+            states
+        )
+        assertEquals(listOf("current Android target SDK"), webSearchRepository.queries)
+        assertEquals(0, openAIAPI.streamChatCompletionCalls)
+        assertEquals(2, openAIAPI.streamResponsesCalls)
+        assertEquals(ResponseToolChoice.Auto, openAIAPI.responsesRequests[0].toolChoice)
+        assertTrue(openAIAPI.responsesRequests[0].tools.orEmpty().any { tool -> tool.name == "web_search" })
+        assertTrue(openAIAPI.responsesRequests[1].input.any { item -> item is ResponseFunctionCallInputItem && item.callId == "call_1" })
+        assertTrue(openAIAPI.responsesRequests[1].input.any { item -> item is ResponseFunctionCallOutputItem && item.callId == "call_1" })
+    }
+
+    @Test
     fun `auto tool loop parse failure falls back to normal chat completion`() = runBlocking {
         val openAIAPI = RecordingOpenAIAPI(
             chatCompletionResponses = mutableListOf(
@@ -600,6 +672,17 @@ class ChatRepositoryImplTest {
         stream = true
     )
 
+    private fun openAIPlatform(systemPrompt: String? = null) = PlatformV2(
+        uid = "openai-platform",
+        name = "OpenAI",
+        compatibleType = ClientType.OPENAI,
+        apiUrl = "https://api.openai.com/",
+        token = "token",
+        model = "gpt-5",
+        systemPrompt = systemPrompt,
+        stream = true
+    )
+
     private fun systemText(openAIAPI: RecordingOpenAIAPI): String = openAIAPI.lastChatCompletionRequest
         ?.systemText()
         .orEmpty()
@@ -712,11 +795,15 @@ class ChatRepositoryImplTest {
     }
 
     private class RecordingOpenAIAPI(
-        private val chatCompletionResponses: MutableList<Flow<ChatCompletionChunk>> = mutableListOf(emptyFlow())
+        private val chatCompletionResponses: MutableList<Flow<ChatCompletionChunk>> = mutableListOf(emptyFlow()),
+        private val responsesResponses: MutableList<Flow<ResponsesStreamEvent>> = mutableListOf(emptyFlow())
     ) : OpenAIAPI {
         var streamChatCompletionCalls = 0
+        var streamResponsesCalls = 0
         var lastChatCompletionRequest: ChatCompletionRequest? = null
+        var lastResponsesRequest: ResponsesRequest? = null
         val chatCompletionRequests = mutableListOf<ChatCompletionRequest>()
+        val responsesRequests = mutableListOf<ResponsesRequest>()
 
         override fun setToken(token: String?) = Unit
 
@@ -733,7 +820,16 @@ class ChatRepositoryImplTest {
             }
         }
 
-        override fun streamResponses(request: ResponsesRequest, timeoutSeconds: Int): Flow<ResponsesStreamEvent> = emptyFlow()
+        override fun streamResponses(request: ResponsesRequest, timeoutSeconds: Int): Flow<ResponsesStreamEvent> {
+            streamResponsesCalls += 1
+            lastResponsesRequest = request
+            responsesRequests += request
+            return if (responsesResponses.isNotEmpty()) {
+                responsesResponses.removeAt(0)
+            } else {
+                emptyFlow()
+            }
+        }
 
         override suspend fun uploadFile(
             filePath: String,

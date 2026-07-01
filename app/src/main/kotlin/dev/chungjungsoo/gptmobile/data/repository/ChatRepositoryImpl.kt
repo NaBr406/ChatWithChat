@@ -44,12 +44,17 @@ import dev.chungjungsoo.gptmobile.data.dto.openai.request.ChatMessage
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ReasoningConfig
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ResponseContentPart
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ResponseInputContent
+import dev.chungjungsoo.gptmobile.data.dto.openai.request.ResponseInputItem
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ResponseInputMessage
+import dev.chungjungsoo.gptmobile.data.dto.openai.request.ResponseTool
+import dev.chungjungsoo.gptmobile.data.dto.openai.request.ResponseToolChoice
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ResponsesRequest
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.OutputTextDeltaEvent
+import dev.chungjungsoo.gptmobile.data.dto.openai.response.OutputTextDoneEvent
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.ReasoningSummaryTextDeltaEvent
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.ResponseErrorEvent
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.ResponseFailedEvent
+import dev.chungjungsoo.gptmobile.data.dto.openai.response.ResponsesStreamEvent
 import dev.chungjungsoo.gptmobile.data.model.ApiType
 import dev.chungjungsoo.gptmobile.data.model.ChatPlatformConfig
 import dev.chungjungsoo.gptmobile.data.model.ClientType
@@ -64,6 +69,7 @@ import dev.chungjungsoo.gptmobile.data.tool.ToolDefinition
 import dev.chungjungsoo.gptmobile.data.tool.ToolLoopOrchestrator
 import dev.chungjungsoo.gptmobile.data.tool.ToolLoopResult
 import dev.chungjungsoo.gptmobile.data.tool.ToolResult
+import dev.chungjungsoo.gptmobile.data.tool.provider.OpenAIResponsesToolAdapter
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchMode
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchPromptBuilder
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchRepository
@@ -98,7 +104,8 @@ class ChatRepositoryImpl @Inject constructor(
     private val contextBuilder: ContextBuilder,
     private val webSearchRepository: WebSearchRepository,
     private val toolLoopOrchestrator: ToolLoopOrchestrator,
-    private val webSearchPromptBuilder: WebSearchPromptBuilder = WebSearchPromptBuilder()
+    private val webSearchPromptBuilder: WebSearchPromptBuilder = WebSearchPromptBuilder(),
+    private val openAIResponsesToolAdapter: OpenAIResponsesToolAdapter = OpenAIResponsesToolAdapter()
 ) : ChatRepository {
 
     private fun isImageFile(extension: String): Boolean = extension in setOf("jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff", "svg")
@@ -148,7 +155,11 @@ class ChatRepositoryImpl @Inject constructor(
             .getOrNull()
             ?: WebSearchMode.Off
         return if (webSearchMode == WebSearchMode.Auto) {
-            completeChatWithToolLoopFallback(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+            if (platform.compatibleType == ClientType.OPENAI) {
+                completeChatWithOpenAIResponsesNativeToolLoop(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+            } else {
+                completeChatWithToolLoopFallback(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+            }
         } else {
             completeChatByProvider(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
         }
@@ -268,6 +279,155 @@ class ChatRepositoryImpl @Inject constructor(
                 emit(state)
             }
         }
+    }
+
+    private suspend fun completeChatWithOpenAIResponsesNativeToolLoop(
+        userMessages: List<MessageV2>,
+        assistantMessages: List<List<MessageV2>>,
+        platform: PlatformV2,
+        memoryPrompt: String?,
+        reasoningMode: ReasoningMode
+    ): Flow<ApiState> = flow {
+        emit(ApiState.Loading)
+        openAIAPI.setToken(platform.token)
+        openAIAPI.setAPIUrl(platform.apiUrl)
+
+        val prepared = withContext(Dispatchers.Default) {
+            val reasoningParameters = mapReasoningMode(platform, reasoningMode)
+            val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
+            val inputMessages = buildResponsesInputMessages(conversationContext.turns, platform.uid)
+            OpenAIResponsesNativeToolRequest(
+                model = platform.model,
+                input = inputMessages,
+                instructions = mergePromptSections(
+                    platform.systemPrompt,
+                    memoryPrompt,
+                    conversationContext.summary,
+                    OPENAI_NATIVE_TOOL_INSTRUCTION
+                ),
+                temperature = if (reasoningParameters.hasExplicitReasoning) null else platform.temperature,
+                topP = if (reasoningParameters.hasExplicitReasoning) null else platform.topP,
+                reasoning = reasoningParameters.openAIEffort?.let { effort ->
+                    ReasoningConfig(
+                        effort = effort,
+                        summary = "auto"
+                    )
+                }
+            )
+        }
+
+        val config = toolLoopOrchestrator.configuration
+        val tools = openAIResponsesToolAdapter.toResponseTools(toolLoopOrchestrator.toolDefinitions)
+        val continuationItems = mutableListOf<ResponseInputItem>()
+        val allResults = mutableListOf<ToolResult>()
+        val maxRounds = config.maxToolRounds.coerceAtLeast(1)
+
+        repeat(maxRounds) {
+            val round = collectOpenAIResponsesNativeRound(
+                request = prepared.toRequest(
+                    continuationItems = continuationItems,
+                    tools = tools,
+                    toolChoice = ResponseToolChoice.Auto
+                ),
+                timeoutSeconds = platform.timeout
+            )
+            if (round.errorMessage != null) {
+                if (allResults.isEmpty()) {
+                    emitProviderStatesSkippingLoading(
+                        completeChatWithOpenAIResponses(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+                    )
+                } else {
+                    emit(ApiState.Error(round.errorMessage))
+                    emit(ApiState.Done)
+                }
+                return@flow
+            }
+
+            val calls = openAIResponsesToolAdapter
+                .toolCallsFromEvents(round.events)
+                .distinctBy { call -> "${call.name}:${call.arguments}" }
+                .take(config.maxToolCallsPerRound.coerceAtLeast(0))
+            if (calls.isEmpty()) {
+                emit(ApiState.Done)
+                return@flow
+            }
+
+            val results = toolLoopOrchestrator.executeToolCalls(calls) { progress ->
+                emit(progress)
+            }
+            allResults += results
+            results.toMessageSourceMetadata().takeIf { it.isNotEmpty() }?.let { sources ->
+                emit(ApiState.SourcesUpdated(sources))
+            }
+            continuationItems += openAIResponsesToolAdapter.continuationInputItems(round.events, calls, results)
+        }
+
+        if (continuationItems.isEmpty()) {
+            emitProviderStatesSkippingLoading(
+                completeChatWithOpenAIResponses(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+            )
+            return@flow
+        }
+
+        val finalRound = collectOpenAIResponsesNativeRound(
+            request = prepared.toRequest(
+                continuationItems = continuationItems,
+                tools = tools,
+                toolChoice = ResponseToolChoice.None,
+                extraInstruction = OPENAI_NATIVE_FINAL_TOOL_INSTRUCTION
+            ),
+            timeoutSeconds = platform.timeout
+        )
+        finalRound.errorMessage?.let { message ->
+            emit(ApiState.Error(message))
+        }
+        emit(ApiState.Done)
+    }.catch { e ->
+        emit(ApiState.Error(e.message ?: "鏈煡閿欒"))
+        emit(ApiState.Done)
+    }
+
+    private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.collectOpenAIResponsesNativeRound(
+        request: ResponsesRequest,
+        timeoutSeconds: Int
+    ): OpenAIResponsesNativeRound {
+        val events = mutableListOf<ResponsesStreamEvent>()
+        var errorMessage: String? = null
+        var emittedOutputTextDelta = false
+
+        openAIAPI.streamResponses(request, timeoutSeconds).collect { event ->
+            events += event
+            when (event) {
+                is ReasoningSummaryTextDeltaEvent -> emit(ApiState.Thinking(event.delta))
+
+                is OutputTextDeltaEvent -> {
+                    emittedOutputTextDelta = true
+                    emit(ApiState.Success(event.delta))
+                }
+
+                is OutputTextDoneEvent -> {
+                    if (!emittedOutputTextDelta && event.text.isNotBlank()) {
+                        emittedOutputTextDelta = true
+                        emit(ApiState.Success(event.text))
+                    }
+                }
+
+                is ResponseFailedEvent -> {
+                    errorMessage = event.response.error?.message ?: event.response.status ?: "鍝嶅簲澶辫触"
+                }
+
+                is ResponseErrorEvent -> {
+                    errorMessage = event.message
+                }
+
+                else -> {}
+            }
+        }
+
+        return OpenAIResponsesNativeRound(
+            events = events,
+            errorMessage = errorMessage
+        )
     }
 
     private suspend fun completeChatWithOpenAIResponses(
@@ -550,8 +710,8 @@ class ChatRepositoryImpl @Inject constructor(
     private suspend fun buildResponsesInputMessages(
         contextTurns: List<ConversationTurn>,
         platformUid: String
-    ): List<ResponseInputMessage> {
-        val inputMessages = mutableListOf<ResponseInputMessage>()
+    ): List<ResponseInputItem> {
+        val inputMessages = mutableListOf<ResponseInputItem>()
 
         contextTurns.forEach { turn ->
             if (hasRenderableMessageContent(turn.userMessage, isUser = true)) {
@@ -1181,6 +1341,11 @@ internal fun isGroqGptOssModel(model: String): Boolean = isGptOssModel(model)
 private const val WEB_SEARCH_RESULT_LIMIT = 5
 private const val MAX_SEARCH_QUERY_COUNT = 2
 private const val MAX_SOURCE_SNIPPET_CHARS = 240
+private const val OPENAI_NATIVE_TOOL_INSTRUCTION =
+    "Use the available tools only when the latest user request needs current web information or source inspection. " +
+        "Prefer answering directly when the conversation is enough. If you use web sources, cite source URLs in the answer."
+private const val OPENAI_NATIVE_FINAL_TOOL_INSTRUCTION =
+    "Do not call more tools. Use the available function_call_output items when relevant and provide the final answer."
 
 private data class WebSearchContext(
     val prompt: String? = null,
@@ -1190,6 +1355,37 @@ private data class WebSearchContext(
 private data class ProviderRequestWithSources<T>(
     val request: T,
     val sources: List<MessageSourceMetadata>
+)
+
+private data class OpenAIResponsesNativeToolRequest(
+    val model: String,
+    val input: List<ResponseInputItem>,
+    val instructions: String?,
+    val temperature: Float?,
+    val topP: Float?,
+    val reasoning: ReasoningConfig?
+) {
+    fun toRequest(
+        continuationItems: List<ResponseInputItem>,
+        tools: List<ResponseTool>,
+        toolChoice: ResponseToolChoice,
+        extraInstruction: String? = null
+    ): ResponsesRequest = ResponsesRequest(
+        model = model,
+        input = input + continuationItems,
+        stream = true,
+        instructions = mergePromptSections(instructions, extraInstruction),
+        temperature = temperature,
+        topP = topP,
+        reasoning = reasoning,
+        tools = tools,
+        toolChoice = toolChoice
+    )
+}
+
+private data class OpenAIResponsesNativeRound(
+    val events: List<ResponsesStreamEvent>,
+    val errorMessage: String?
 )
 
 private fun List<WebSearchResult>.toMessageSourceMetadata(sourceToolName: String): List<MessageSourceMetadata> =

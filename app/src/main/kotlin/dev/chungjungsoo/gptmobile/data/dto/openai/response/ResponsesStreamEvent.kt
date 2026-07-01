@@ -1,8 +1,19 @@
 package dev.chungjungsoo.gptmobile.data.dto.openai.response
 
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.descriptors.buildClassSerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.JsonClassDiscriminator
+import kotlinx.serialization.json.JsonDecoder
+import kotlinx.serialization.json.JsonEncoder
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Streaming events from OpenAI Responses API.
@@ -125,6 +136,44 @@ data class OutputTextDoneEvent(
 
     @SerialName("text")
     val text: String
+) : ResponsesStreamEvent()
+
+/**
+ * Emitted while a function call argument JSON string is streaming.
+ */
+@Serializable
+@SerialName("response.function_call_arguments.delta")
+data class FunctionCallArgumentsDeltaEvent(
+    @SerialName("item_id")
+    val itemId: String,
+
+    @SerialName("output_index")
+    val outputIndex: Int,
+
+    @SerialName("delta")
+    val delta: String
+) : ResponsesStreamEvent()
+
+/**
+ * Emitted when a function call argument JSON string is complete.
+ */
+@Serializable
+@SerialName("response.function_call_arguments.done")
+data class FunctionCallArgumentsDoneEvent(
+    @SerialName("item_id")
+    val itemId: String,
+
+    @SerialName("output_index")
+    val outputIndex: Int,
+
+    @SerialName("call_id")
+    val callId: String,
+
+    @SerialName("name")
+    val name: String,
+
+    @SerialName("arguments")
+    val arguments: String
 ) : ResponsesStreamEvent()
 
 /**
@@ -284,14 +333,39 @@ data class ContentPart(
     val text: String? = null
 )
 
-@Serializable
+@Serializable(with = OutputItemSerializer::class)
 data class OutputItem(
-    @SerialName("type")
-    val type: String,
+    val raw: JsonObject
+) {
+    val type: String
+        get() = raw["type"]?.jsonPrimitive?.contentOrNull.orEmpty()
 
-    @SerialName("id")
     val id: String
-)
+        get() = raw["id"]?.jsonPrimitive?.contentOrNull.orEmpty()
+
+    val callId: String?
+        get() = raw["call_id"]?.jsonPrimitive?.contentOrNull
+
+    val name: String?
+        get() = raw["name"]?.jsonPrimitive?.contentOrNull
+
+    val arguments: String?
+        get() = raw["arguments"]?.jsonPrimitive?.contentOrNull
+}
+
+object OutputItemSerializer : KSerializer<OutputItem> {
+    override val descriptor: SerialDescriptor = buildClassSerialDescriptor("OutputItem")
+
+    override fun serialize(encoder: Encoder, value: OutputItem) {
+        val jsonEncoder = encoder as JsonEncoder
+        jsonEncoder.encodeJsonElement(value.raw)
+    }
+
+    override fun deserialize(decoder: Decoder): OutputItem {
+        val jsonDecoder = decoder as JsonDecoder
+        return OutputItem(jsonDecoder.decodeJsonElement().jsonObject)
+    }
+}
 
 @Serializable
 data class SummaryPart(

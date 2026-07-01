@@ -571,21 +571,21 @@ Manual checks:
 
 **Implementation:**
 
-- [ ] Add `tools`, `tool_choice`, and related optional request fields to `ResponsesRequest`.
-- [ ] Add response stream events needed to detect tool calls.
-- [ ] Convert internal `ToolDefinition` to OpenAI Responses tool definitions.
-- [ ] Convert OpenAI tool call output to internal `ToolCall`.
-- [ ] Convert internal `ToolResult` back into the format expected by Responses API.
-- [ ] Preserve current reasoning summary handling.
-- [ ] Preserve current streaming answer handling.
-- [ ] Keep JSON fallback for non-OpenAI providers.
+- [x] Add `tools`, `tool_choice`, and related optional request fields to `ResponsesRequest`.
+- [x] Add response stream events needed to detect tool calls.
+- [x] Convert internal `ToolDefinition` to OpenAI Responses tool definitions.
+- [x] Convert OpenAI tool call output to internal `ToolCall`.
+- [x] Convert internal `ToolResult` back into the format expected by Responses API.
+- [x] Preserve current reasoning summary handling.
+- [x] Preserve current streaming answer handling.
+- [x] Keep JSON fallback for non-OpenAI providers.
 
 **Tests:**
 
-- [ ] OpenAI request serializes with tools.
-- [ ] OpenAI stream tool event parses.
-- [ ] Tool result round-trip is represented correctly.
-- [ ] Existing reasoning/text streaming tests still pass.
+- [x] OpenAI request serializes with tools.
+- [x] OpenAI stream tool event parses.
+- [x] Tool result round-trip is represented correctly.
+- [x] Existing reasoning/text streaming tests still pass.
 
 **Verification:**
 
@@ -686,7 +686,7 @@ Use this order when handing work to Codex:
 - [x] Task 9: Add Minimal Tool UI
 - [x] Task 10: Add Settings UI For Web Search
 - [x] Task 11: Add Source Metadata Persistence
-- [ ] Task 12: Add OpenAI Responses Native Tool Calling
+- [x] Task 12: Add OpenAI Responses Native Tool Calling
 - [ ] Task 13: Add Provider Tool Adapters
 - [ ] Task 14: Hardening And Safety
 

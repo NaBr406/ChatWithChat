@@ -10,6 +10,12 @@ class ToolLoopOrchestrator(
     private val jsonToolCallParser: JsonToolCallParser = JsonToolCallParser(),
     private val config: ToolLoopConfig = ToolLoopConfig.Default
 ) {
+    val configuration: ToolLoopConfig
+        get() = config
+
+    val toolDefinitions: List<ToolDefinition>
+        get() = toolExecutor.definitions
+
     suspend fun runLoop(
         onProgress: suspend (ApiState) -> Unit = {},
         requestModel: suspend (toolPrompt: String) -> Result<String>
@@ -88,6 +94,14 @@ class ToolLoopOrchestrator(
     suspend fun runSingleRound(
         requestModel: suspend (toolPrompt: String) -> Result<String>
     ): ToolLoopResult = runLoop(requestModel = requestModel)
+
+    suspend fun executeToolCalls(
+        calls: List<ToolCall>,
+        onProgress: suspend (ApiState) -> Unit = {}
+    ): List<ToolResult> = calls
+        .distinctBy { call -> "${call.name}:${call.arguments}" }
+        .take(config.maxToolCallsPerRound.coerceAtLeast(0))
+        .let { boundedCalls -> executeCallsWithProgress(boundedCalls, onProgress) }
 
     private suspend fun executeCallsWithProgress(
         calls: List<ToolCall>,
