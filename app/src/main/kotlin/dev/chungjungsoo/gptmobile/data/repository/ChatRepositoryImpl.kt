@@ -59,6 +59,9 @@ import dev.chungjungsoo.gptmobile.data.network.AnthropicAPI
 import dev.chungjungsoo.gptmobile.data.network.GoogleAPI
 import dev.chungjungsoo.gptmobile.data.network.GroqAPI
 import dev.chungjungsoo.gptmobile.data.network.OpenAIAPI
+import dev.chungjungsoo.gptmobile.data.websearch.WebSearchMode
+import dev.chungjungsoo.gptmobile.data.websearch.WebSearchPromptBuilder
+import dev.chungjungsoo.gptmobile.data.websearch.WebSearchRepository
 import dev.chungjungsoo.gptmobile.util.AttachmentPayloadCache
 import dev.chungjungsoo.gptmobile.util.FileUtils
 import dev.chungjungsoo.gptmobile.util.isAssistantErrorMessage
@@ -86,7 +89,9 @@ class ChatRepositoryImpl @Inject constructor(
     private val anthropicAPI: AnthropicAPI,
     private val googleAPI: GoogleAPI,
     private val attachmentUploadCoordinator: AttachmentUploadCoordinator,
-    private val contextBuilder: ContextBuilder
+    private val contextBuilder: ContextBuilder,
+    private val webSearchRepository: WebSearchRepository,
+    private val webSearchPromptBuilder: WebSearchPromptBuilder = WebSearchPromptBuilder()
 ) : ChatRepository {
 
     private fun isImageFile(extension: String): Boolean = extension in setOf("jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff", "svg")
@@ -169,13 +174,14 @@ class ChatRepositoryImpl @Inject constructor(
             prepare = {
                 val reasoningParameters = mapReasoningMode(platform, reasoningMode)
                 val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
+                val webSearchPrompt = prepareWebSearchPrompt(userMessages)
                 val inputMessages = buildResponsesInputMessages(conversationContext.turns, platform.uid)
 
                 ResponsesRequest(
                     model = platform.model,
                     input = inputMessages,
                     stream = true,
-                    instructions = mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary),
+                    instructions = mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary, webSearchPrompt),
                     temperature = if (reasoningParameters.hasExplicitReasoning) null else platform.temperature,
                     topP = if (reasoningParameters.hasExplicitReasoning) null else platform.topP,
                     reasoning = reasoningParameters.openAIEffort?.let { effort ->
@@ -225,10 +231,11 @@ class ChatRepositoryImpl @Inject constructor(
         streamPreparedApiState(
             prepare = {
                 val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
+                val webSearchPrompt = prepareWebSearchPrompt(userMessages)
                 validateInlineBudgetIfNeeded(conversationContext.turns, platform)
                 val messages = buildOpenAIChatMessages(
                     conversationContext.turns,
-                    mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary)
+                    mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary, webSearchPrompt)
                 )
 
                 createGroqChatCompletionRequest(messages, platform, reasoningMode)
@@ -281,10 +288,11 @@ class ChatRepositoryImpl @Inject constructor(
             prepare = {
                 val reasoningParameters = mapReasoningMode(platform, reasoningMode)
                 val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
+                val webSearchPrompt = prepareWebSearchPrompt(userMessages)
                 validateInlineBudgetIfNeeded(conversationContext.turns, platform)
                 val messages = buildOpenAIChatMessages(
                     conversationContext.turns,
-                    mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary)
+                    mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary, webSearchPrompt)
                 )
 
                 ChatCompletionRequest(
@@ -332,6 +340,23 @@ class ChatRepositoryImpl @Inject constructor(
         return conversationContext.copy(
             turns = ensureProviderReferencesForTurns(conversationContext.turns, platform)
         )
+    }
+
+    private suspend fun prepareWebSearchPrompt(userMessages: List<MessageV2>): String? {
+        val webSearchMode = runCatching { settingRepository.fetchWebSearchMode() }
+            .getOrNull()
+            ?: WebSearchMode.Off
+        if (webSearchMode != WebSearchMode.Always) return null
+
+        val latestUserMessage = userMessages.lastOrNull()
+            ?.content
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: return null
+
+        return webSearchRepository.search(latestUserMessage, WEB_SEARCH_RESULT_LIMIT)
+            .getOrNull()
+            ?.let { results -> webSearchPromptBuilder.build(results) }
     }
 
     private suspend fun ensureProviderReferencesForTurns(
@@ -547,6 +572,7 @@ class ChatRepositoryImpl @Inject constructor(
             prepare = {
                 val reasoningParameters = mapReasoningMode(platform, reasoningMode)
                 val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
+                val webSearchPrompt = prepareWebSearchPrompt(userMessages)
                 val messages = buildAnthropicInputMessages(conversationContext.turns, platform.uid)
 
                 MessageRequest(
@@ -554,7 +580,7 @@ class ChatRepositoryImpl @Inject constructor(
                     messages = messages,
                     maxTokens = reasoningParameters.anthropicMaxTokens ?: 4096,
                     stream = platform.stream,
-                    systemPrompt = mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary),
+                    systemPrompt = mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary, webSearchPrompt),
                     temperature = if (reasoningParameters.hasExplicitReasoning) null else platform.temperature,
                     topP = if (reasoningParameters.hasExplicitReasoning) null else platform.topP,
                     thinking = reasoningParameters.anthropicBudgetTokens?.let { budgetTokens ->
@@ -654,6 +680,7 @@ class ChatRepositoryImpl @Inject constructor(
             prepare = {
                 val reasoningParameters = mapReasoningMode(platform, reasoningMode)
                 val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
+                val webSearchPrompt = prepareWebSearchPrompt(userMessages)
                 val contents = buildGoogleContents(conversationContext.turns, platform.uid)
 
                 GenerateContentRequest(
@@ -668,7 +695,7 @@ class ChatRepositoryImpl @Inject constructor(
                             )
                         }
                     ),
-                    systemInstruction = mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary)?.let {
+                    systemInstruction = mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary, webSearchPrompt)?.let {
                         Content(
                             parts = listOf(Part.text(it))
                         )
@@ -997,6 +1024,8 @@ internal fun createGroqChatCompletionRequest(
 }
 
 internal fun isGroqGptOssModel(model: String): Boolean = isGptOssModel(model)
+
+private const val WEB_SEARCH_RESULT_LIMIT = 5
 
 internal fun mergeSystemPrompt(basePrompt: String?, memoryPrompt: String?): String? = mergePromptSections(basePrompt, memoryPrompt)
 

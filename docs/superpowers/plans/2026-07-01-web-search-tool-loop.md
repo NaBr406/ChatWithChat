@@ -141,23 +141,23 @@ Optional later:
 
 **Implementation:**
 
-- [ ] Add `WebSearchMode` values: `Off`, `Always`.
-- [ ] Store global web search mode in DataStore, defaulting to `Off`.
-- [ ] Add repository methods to read/update web search mode.
-- [ ] Add `WebSearchPromptBuilder` that formats search results as a bounded prompt section.
-- [ ] Include title, URL, snippet, and source for each result.
-- [ ] Add a short instruction requiring the model to cite URLs when it uses search results.
-- [ ] In `ChatRepositoryImpl.completeChat(...)`, when mode is `Always`, search using the latest user message before building provider requests.
-- [ ] Merge the formatted search prompt via `mergePromptSections(...)`.
-- [ ] Keep all provider paths working: OpenAI Responses, OpenAI-compatible chat completions, Groq, Anthropic, and Google.
-- [ ] Do not modify `searchChatsV2(...)`.
+- [x] Add `WebSearchMode` values: `Off`, `Always`.
+- [x] Store global web search mode in DataStore, defaulting to `Off`.
+- [x] Add repository methods to read/update web search mode.
+- [x] Add `WebSearchPromptBuilder` that formats search results as a bounded prompt section.
+- [x] Include title, URL, snippet, and source for each result.
+- [x] Add a short instruction requiring the model to cite URLs when it uses search results.
+- [x] In `ChatRepositoryImpl.completeChat(...)`, when mode is `Always`, search using the latest user message before building provider requests.
+- [x] Merge the formatted search prompt via `mergePromptSections(...)`.
+- [x] Keep all provider paths working: OpenAI Responses, OpenAI-compatible chat completions, Groq, Anthropic, and Google.
+- [x] Do not modify `searchChatsV2(...)`.
 
 **Tests:**
 
-- [ ] `Off` mode does not call `WebSearchRepository`.
-- [ ] `Always` mode calls `WebSearchRepository` with the latest user message.
-- [ ] Search prompt is merged without dropping system prompt, memory prompt, or context summary.
-- [ ] Search failures do not break normal chat completion.
+- [x] `Off` mode does not call `WebSearchRepository`.
+- [x] `Always` mode calls `WebSearchRepository` with the latest user message.
+- [x] Search prompt is merged without dropping system prompt, memory prompt, or context summary.
+- [x] Search failures do not break normal chat completion.
 
 **Verification:**
 
@@ -676,7 +676,7 @@ Manual checks:
 Use this order when handing work to Codex:
 
 - [x] Task 1: Add Web Search Foundation
-- [ ] Task 2: Add Manual Web Search Injection
+- [x] Task 2: Add Manual Web Search Injection
 - [ ] Task 3: Add Auto Search Decision
 - [ ] Task 4: Introduce Provider-Neutral Tool Models
 - [ ] Task 5: Add Tool Executor

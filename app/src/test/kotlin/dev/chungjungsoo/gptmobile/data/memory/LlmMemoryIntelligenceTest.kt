@@ -28,6 +28,7 @@ import dev.chungjungsoo.gptmobile.data.network.GoogleAPI
 import dev.chungjungsoo.gptmobile.data.network.OpenAIAPI
 import dev.chungjungsoo.gptmobile.data.network.UploadedProviderFile
 import dev.chungjungsoo.gptmobile.data.repository.SettingRepository
+import dev.chungjungsoo.gptmobile.data.websearch.WebSearchMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
@@ -367,11 +368,13 @@ private class FakeSettingRepository(
     override suspend fun fetchThemes(): ThemeSetting = ThemeSetting()
     override suspend fun fetchLastSelectedModel(): LastSelectedModel? = null
     override suspend fun fetchMemoryEnabled(): Boolean = false
+    override suspend fun fetchWebSearchMode(): WebSearchMode = WebSearchMode.Off
     override suspend fun migrateToPlatformV2() = Unit
     override suspend fun updatePlatforms(platforms: List<Platform>) = Unit
     override suspend fun updateThemes(themeSetting: ThemeSetting) = Unit
     override suspend fun updateLastSelectedModel(platformUid: String, model: String, reasoningMode: ReasoningMode) = Unit
     override suspend fun updateMemoryEnabled(enabled: Boolean) = Unit
+    override suspend fun updateWebSearchMode(mode: WebSearchMode) = Unit
     override suspend fun refreshPlatformModels(platformUid: String): ModelRefreshResult = ModelRefreshResult(platforms.first(), emptyList())
     override suspend fun updatePlatformModelEnabled(platformUid: String, modelId: String, enabled: Boolean) = Unit
     override suspend fun setPlatformDefaultModel(platformUid: String, modelId: String) = Unit

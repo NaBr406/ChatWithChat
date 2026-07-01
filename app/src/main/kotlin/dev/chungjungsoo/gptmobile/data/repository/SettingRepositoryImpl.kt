@@ -20,6 +20,7 @@ import dev.chungjungsoo.gptmobile.data.model.ModelRefreshResult
 import dev.chungjungsoo.gptmobile.data.model.ReasoningMode
 import dev.chungjungsoo.gptmobile.data.model.defaultReasoningMode
 import dev.chungjungsoo.gptmobile.data.model.ThemeMode
+import dev.chungjungsoo.gptmobile.data.websearch.WebSearchMode
 import javax.inject.Inject
 
 class SettingRepositoryImpl @Inject constructor(
@@ -123,6 +124,9 @@ class SettingRepositoryImpl @Inject constructor(
 
     override suspend fun fetchMemoryEnabled(): Boolean = settingDataSource.getMemoryEnabled() ?: false
 
+    override suspend fun fetchWebSearchMode(): WebSearchMode =
+        WebSearchMode.fromStorageValue(settingDataSource.getWebSearchMode())
+
     override suspend fun migrateToPlatformV2() {
         val leftOverPlatformV2s = fetchPlatformV2s()
         leftOverPlatformV2s.forEach { platformV2Dao.deletePlatform(it) }
@@ -195,6 +199,10 @@ class SettingRepositoryImpl @Inject constructor(
 
     override suspend fun updateMemoryEnabled(enabled: Boolean) {
         settingDataSource.updateMemoryEnabled(enabled)
+    }
+
+    override suspend fun updateWebSearchMode(mode: WebSearchMode) {
+        settingDataSource.updateWebSearchMode(mode.storageValue)
     }
 
     override suspend fun refreshPlatformModels(platformUid: String): ModelRefreshResult {

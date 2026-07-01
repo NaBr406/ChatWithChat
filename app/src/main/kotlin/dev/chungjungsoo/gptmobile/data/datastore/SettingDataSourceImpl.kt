@@ -72,6 +72,7 @@ class SettingDataSourceImpl @Inject constructor(
     private val lastSelectedModelKey = stringPreferencesKey("last_selected_model")
     private val lastSelectedReasoningModeKey = stringPreferencesKey("last_selected_reasoning_mode")
     private val memoryEnabledKey = booleanPreferencesKey("memory_enabled")
+    private val webSearchModeKey = stringPreferencesKey("web_search_mode")
 
     override suspend fun updateDynamicTheme(theme: DynamicTheme) {
         dataStore.edit { pref ->
@@ -141,6 +142,12 @@ class SettingDataSourceImpl @Inject constructor(
         }
     }
 
+    override suspend fun updateWebSearchMode(mode: String) {
+        dataStore.edit { pref ->
+            pref[webSearchModeKey] = mode
+        }
+    }
+
     override suspend fun getDynamicTheme(): DynamicTheme? {
         val mode = dataStore.data.map { pref ->
             pref[dynamicThemeKey]
@@ -199,5 +206,9 @@ class SettingDataSourceImpl @Inject constructor(
 
     override suspend fun getMemoryEnabled(): Boolean? = dataStore.data.map { pref ->
         pref[memoryEnabledKey]
+    }.first()
+
+    override suspend fun getWebSearchMode(): String? = dataStore.data.map { pref ->
+        pref[webSearchModeKey]
     }.first()
 }
