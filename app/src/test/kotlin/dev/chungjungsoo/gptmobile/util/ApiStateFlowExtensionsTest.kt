@@ -155,6 +155,41 @@ class ApiStateFlowExtensionsTest {
     }
 
     @Test
+    fun `handleStates forwards tool progress without appending it to assistant content`() = runBlocking {
+        val messageFlow = MutableStateFlow(
+            ChatViewModel.GroupedMessages(
+                userMessages = listOf(MessageV2(content = "Hello", platformType = null)),
+                assistantMessages = listOf(
+                    listOf(MessageV2(content = "", platformType = "platform-1"))
+                )
+            )
+        )
+        val progressEvents = mutableListOf<ApiState>()
+
+        flowOf(
+            ApiState.ToolStarted("web_search", "latest Android SDK"),
+            ApiState.ToolFinished("web_search", "latest Android SDK"),
+            ApiState.Success("Answer"),
+            ApiState.Done
+        ).handleStates(
+            messageFlow = messageFlow,
+            turnIndex = 0,
+            platformIdx = 0,
+            onLoadingComplete = {},
+            onToolProgress = { progressEvents += it }
+        )
+
+        assertEquals("Answer", messageFlow.value.assistantMessages[0][0].content)
+        assertEquals(
+            listOf(
+                ApiState.ToolStarted("web_search", "latest Android SDK"),
+                ApiState.ToolFinished("web_search", "latest Android SDK")
+            ),
+            progressEvents
+        )
+    }
+
+    @Test
     fun `handleStates completion timestamps only the requested turn and platform`() = runBlocking {
         val originalTimestamp = 10L
         val untouchedTimestamp = 20L

@@ -421,20 +421,20 @@ Final answer shape:
 
 **Implementation:**
 
-- [ ] Add progress states such as:
+- [x] Add progress states such as:
   - `ApiState.ToolStarted(toolName: String, label: String)`
   - `ApiState.ToolFinished(toolName: String, label: String)`
   - `ApiState.ToolFailed(toolName: String, message: String)`
-- [ ] Ensure existing `handleStates(...)` remains backward compatible.
-- [ ] Keep progress states separate from final assistant message text.
-- [ ] Store enough transient UI state in `ChatViewModel` to show progress later.
-- [ ] Do not change database schema in this task.
+- [x] Ensure existing `handleStates(...)` remains backward compatible.
+- [x] Keep progress states separate from final assistant message text.
+- [x] Store enough transient UI state in `ChatViewModel` to show progress later.
+- [x] Do not change database schema in this task.
 
 **Tests:**
 
-- [ ] Existing success/error/done handling still works.
-- [ ] Tool progress states do not append to assistant answer content.
-- [ ] Tool failure state does not stop the whole flow unless final request also fails.
+- [x] Existing success/error/done handling still works.
+- [x] Tool progress states do not append to assistant answer content.
+- [x] Tool failure state does not stop the whole flow unless final request also fails.
 
 **Verification:**
 
@@ -682,7 +682,7 @@ Use this order when handing work to Codex:
 - [x] Task 5: Add Tool Executor
 - [x] Task 6: Add Single-Round Tool Loop Fallback
 - [x] Task 7: Expand To Full Multi-Round Tool Loop
-- [ ] Task 8: Add Tool Progress States
+- [x] Task 8: Add Tool Progress States
 - [ ] Task 9: Add Minimal Tool UI
 - [ ] Task 10: Add Settings UI For Web Search
 - [ ] Task 11: Add Source Metadata Persistence

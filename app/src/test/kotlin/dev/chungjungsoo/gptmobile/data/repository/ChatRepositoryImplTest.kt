@@ -437,6 +437,8 @@ class ChatRepositoryImplTest {
         assertEquals(
             listOf(
                 ApiState.Loading,
+                ApiState.ToolStarted("web_search", "current Android target SDK"),
+                ApiState.ToolFinished("web_search", "current Android target SDK"),
                 ApiState.Success("Final searched answer"),
                 ApiState.Done
             ),
@@ -485,6 +487,43 @@ class ChatRepositoryImplTest {
         )
         assertTrue(webSearchRepository.queries.isEmpty())
         assertEquals(2, openAIAPI.streamChatCompletionCalls)
+    }
+
+    @Test
+    fun `auto tool failure emits progress and still completes final answer`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatCompletionFlow(
+                    """{"type":"tool_calls","tool_calls":[{"id":"call_1","name":"web_search","arguments":{"query":"current news"}}]}"""
+                ),
+                chatCompletionFlow("""{"type":"final_answer","content":"Draft after failed tool"}"""),
+                chatCompletionFlow("Final answer despite tool failure")
+            )
+        )
+        val webSearchRepository = RecordingWebSearchRepository(
+            Result.failure(IllegalStateException("search unavailable"))
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(WebSearchMode.Auto),
+            webSearchRepository = webSearchRepository
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "What happened today?", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform()
+        ).toList()
+
+        assertEquals(ApiState.Loading, states.first())
+        assertTrue(states.contains(ApiState.ToolStarted("web_search", "current news")))
+        assertTrue(states.any { state ->
+            state is ApiState.ToolFailed &&
+                state.toolName == "web_search" &&
+                state.message.contains("web_search_failed")
+        })
+        assertTrue(states.contains(ApiState.Success("Final answer despite tool failure")))
+        assertEquals(ApiState.Done, states.last())
     }
 
     @Test

@@ -18,7 +18,8 @@ suspend fun Flow<ApiState>.handleStates(
     onLoadingComplete: () -> Unit,
     nanoTimeProvider: () -> Long = System::nanoTime,
     currentTimeProvider: () -> Long = { System.currentTimeMillis() / 1000 },
-    revisionToAppendOnSuccess: AssistantRevision? = null
+    revisionToAppendOnSuccess: AssistantRevision? = null,
+    onToolProgress: (ApiState) -> Unit = {}
 ) {
     val buffer = StreamingMessageBuffer(nanoTimeProvider = nanoTimeProvider)
     var isCompletedSuccessfully = false
@@ -43,6 +44,12 @@ suspend fun Flow<ApiState>.handleStates(
 
                 is ApiState.Error -> {
                     terminalError = chunk.message
+                }
+
+                is ApiState.ToolStarted,
+                is ApiState.ToolFinished,
+                is ApiState.ToolFailed -> {
+                    onToolProgress(chunk)
                 }
 
                 else -> {}

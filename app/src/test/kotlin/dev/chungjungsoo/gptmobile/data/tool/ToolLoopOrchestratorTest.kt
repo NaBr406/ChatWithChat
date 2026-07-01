@@ -13,7 +13,7 @@ class ToolLoopOrchestratorTest {
         val executedCalls = mutableListOf<ToolCall>()
         val orchestrator = ToolLoopOrchestrator(recordingExecutor(executedCalls))
 
-        val result = orchestrator.run { prompt ->
+        val result = orchestrator.runLoop { prompt ->
             assertTrue(prompt.contains("Available tools:"))
             Result.success("""{"type":"final_answer","content":"No tool needed."}""")
         }
@@ -31,7 +31,7 @@ class ToolLoopOrchestratorTest {
             config = ToolLoopConfig(maxToolRounds = 1)
         )
 
-        val result = orchestrator.run {
+        val result = orchestrator.runLoop {
             Result.success(
                 """{"type":"tool_calls","tool_calls":[{"id":"call_1","name":"web_search","arguments":{"query":"latest Android SDK"}}]}"""
             )
@@ -69,7 +69,7 @@ class ToolLoopOrchestratorTest {
             config = ToolLoopConfig(maxToolRounds = 1)
         )
 
-        val result = orchestrator.run {
+        val result = orchestrator.runLoop {
             Result.success(
                 """{"type":"tool_calls","tool_calls":[{"id":"call_1","name":"web_search","arguments":{"query":"news"}}]}"""
             )
@@ -89,7 +89,7 @@ class ToolLoopOrchestratorTest {
             config = ToolLoopConfig(maxToolRounds = 1, maxToolCallsPerRound = 1)
         )
 
-        val result = orchestrator.run {
+        val result = orchestrator.runLoop {
             Result.success(
                 """
                 {"type":"tool_calls","tool_calls":[
@@ -116,7 +116,7 @@ class ToolLoopOrchestratorTest {
         )
         val orchestrator = ToolLoopOrchestrator(recordingExecutor(executedCalls))
 
-        val result = orchestrator.run { prompt ->
+        val result = orchestrator.runLoop { prompt ->
             prompts += prompt
             Result.success(responses.removeAt(0))
         }
@@ -139,7 +139,7 @@ class ToolLoopOrchestratorTest {
             config = ToolLoopConfig(maxToolRounds = 2)
         )
 
-        val result = orchestrator.run {
+        val result = orchestrator.runLoop {
             Result.success(
                 """{"type":"tool_calls","tool_calls":[{"id":"call_1","name":"web_search","arguments":{"query":"again"}}]}"""
             )
@@ -158,7 +158,7 @@ class ToolLoopOrchestratorTest {
             config = ToolLoopConfig(maxToolRounds = 1, maxToolCallsPerRound = 4)
         )
 
-        val result = orchestrator.run {
+        val result = orchestrator.runLoop {
             Result.success(
                 """
                 {"type":"tool_calls","tool_calls":[
@@ -195,7 +195,7 @@ class ToolLoopOrchestratorTest {
             config = ToolLoopConfig(maxToolRounds = 1)
         )
 
-        val result = orchestrator.run {
+        val result = orchestrator.runLoop {
             Result.success(
                 """{"type":"tool_calls","tool_calls":[{"id":"call_1","name":"web_search","arguments":{"query":"source"}}]}"""
             )

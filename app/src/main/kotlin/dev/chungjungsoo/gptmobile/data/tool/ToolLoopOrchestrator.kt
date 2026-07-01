@@ -1,12 +1,17 @@
 package dev.chungjungsoo.gptmobile.data.tool
 
+import dev.chungjungsoo.gptmobile.data.dto.ApiState
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
+
 class ToolLoopOrchestrator(
     private val toolExecutor: ToolExecutor,
     private val toolPromptBuilder: ToolPromptBuilder = ToolPromptBuilder(),
     private val jsonToolCallParser: JsonToolCallParser = JsonToolCallParser(),
     private val config: ToolLoopConfig = ToolLoopConfig.Default
 ) {
-    suspend fun run(
+    suspend fun runLoop(
+        onProgress: suspend (ApiState) -> Unit = {},
         requestModel: suspend (toolPrompt: String) -> Result<String>
     ): ToolLoopResult {
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)
@@ -64,7 +69,7 @@ class ToolLoopOrchestrator(
                         )
                     }
 
-                    val results = toolExecutor.executeAll(calls, config)
+                    val results = executeCallsWithProgress(calls, onProgress)
                     allCalls += calls
                     allResults += results
                     calls.forEach { call -> scratchpad += ToolMessage.modelToolCall(call) }
@@ -82,7 +87,22 @@ class ToolLoopOrchestrator(
 
     suspend fun runSingleRound(
         requestModel: suspend (toolPrompt: String) -> Result<String>
-    ): ToolLoopResult = run(requestModel)
+    ): ToolLoopResult = runLoop(requestModel = requestModel)
+
+    private suspend fun executeCallsWithProgress(
+        calls: List<ToolCall>,
+        onProgress: suspend (ApiState) -> Unit
+    ): List<ToolResult> = calls.map { call ->
+        val label = call.progressLabel()
+        onProgress(ApiState.ToolStarted(call.name, label))
+        val result = toolExecutor.execute(call, config)
+        if (result.isError) {
+            onProgress(ApiState.ToolFailed(call.name, result.content))
+        } else {
+            onProgress(ApiState.ToolFinished(call.name, label))
+        }
+        result
+    }
 
     private fun fallbackOrFailure(
         allCalls: List<ToolCall>,
@@ -120,5 +140,25 @@ class ToolLoopOrchestrator(
         val boundedMax = maxChars.coerceAtLeast(0)
         if (length <= boundedMax) return this
         return take(boundedMax).trimEnd()
+    }
+
+    private fun ToolCall.progressLabel(): String {
+        val arguments = argumentsObject().getOrNull()
+        val label = when (name) {
+            ToolDefinition.WebSearch.name -> arguments
+                ?.get("query")
+                ?.jsonPrimitive
+                ?.contentOrNull
+            ToolDefinition.FetchUrl.name -> arguments
+                ?.get("url")
+                ?.jsonPrimitive
+                ?.contentOrNull
+            else -> null
+        }
+
+        return label
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: name
     }
 }

@@ -21,6 +21,7 @@ import dev.chungjungsoo.gptmobile.data.database.entity.effectiveThoughts
 import dev.chungjungsoo.gptmobile.data.database.entity.resetActiveRevision
 import dev.chungjungsoo.gptmobile.data.database.entity.selectRevision
 import dev.chungjungsoo.gptmobile.data.database.entity.snapshotLatestAssistantRevision
+import dev.chungjungsoo.gptmobile.data.dto.ApiState
 import dev.chungjungsoo.gptmobile.data.memory.MemoryLearningResult
 import dev.chungjungsoo.gptmobile.data.model.AvailableChatModel
 import dev.chungjungsoo.gptmobile.data.model.ChatPlatformConfig
@@ -61,6 +62,19 @@ class ChatViewModel @Inject constructor(
         data object Idle : LoadingState()
         data object Loading : LoadingState()
     }
+
+    enum class ToolProgressStatus {
+        Running,
+        Finished,
+        Failed
+    }
+
+    data class ToolProgressState(
+        val toolName: String,
+        val label: String,
+        val status: ToolProgressStatus,
+        val message: String? = null
+    )
 
     data class GroupedMessages(
         val userMessages: List<MessageV2> = listOf(),
@@ -157,6 +171,9 @@ class ChatViewModel @Inject constructor(
     // Loading states for each platform
     private val _loadingStates = MutableStateFlow(List<LoadingState>(initialEnabledPlatformsInChat.size) { LoadingState.Idle })
     val loadingStates = _loadingStates.asStateFlow()
+
+    private val _toolProgressStates = MutableStateFlow<Map<String, List<ToolProgressState>>>(emptyMap())
+    val toolProgressStates = _toolProgressStates.asStateFlow()
 
     // Used for text data to show in SelectText Bottom Sheet
     private val _selectedText = MutableStateFlow("")
@@ -282,6 +299,7 @@ class ChatViewModel @Inject constructor(
             .getOrNull(turnIndex)
             ?.getOrNull(platformIndex)
             ?.snapshotLatestAssistantRevision(currentTimeStamp)
+        clearToolProgress(turnIndex, platformIndex)
         _loadingStates.update { it.toMutableList().apply { this[platformIndex] = LoadingState.Loading } }
         _groupedMessages.update {
             updateAssistantSlot(
@@ -313,7 +331,8 @@ class ChatViewModel @Inject constructor(
                 onLoadingComplete = {
                     _loadingStates.update { it.toMutableList().apply { this[platformIndex] = LoadingState.Idle } }
                 },
-                revisionToAppendOnSuccess = revisionToAppendOnSuccess
+                revisionToAppendOnSuccess = revisionToAppendOnSuccess,
+                onToolProgress = { progress -> updateToolProgress(turnIndex, platformIndex, progress) }
             )
         }
     }
@@ -554,6 +573,7 @@ class ChatViewModel @Inject constructor(
         // Update all the platform loading states to Loading
         _loadingStates.update { List(enabledPlatformsInChat.size) { LoadingState.Loading } }
         val turnIndex = _groupedMessages.value.assistantMessages.lastIndex
+        clearToolProgressForTurn(turnIndex)
         val groupedMessages = _groupedMessages.value
         val memoryPlatform = preferredMemoryPlatform()
 
@@ -578,12 +598,58 @@ class ChatViewModel @Inject constructor(
                         platformIdx = idx,
                         onLoadingComplete = {
                             _loadingStates.update { it.toMutableList().apply { this[idx] = LoadingState.Idle } }
-                        }
+                        },
+                        onToolProgress = { progress -> updateToolProgress(turnIndex, idx, progress) }
                     )
                 }
             }
         }
     }
+
+    private fun updateToolProgress(
+        turnIndex: Int,
+        platformIndex: Int,
+        progress: ApiState
+    ) {
+        val progressState = when (progress) {
+            is ApiState.ToolStarted -> ToolProgressState(
+                toolName = progress.toolName,
+                label = progress.label,
+                status = ToolProgressStatus.Running
+            )
+            is ApiState.ToolFinished -> ToolProgressState(
+                toolName = progress.toolName,
+                label = progress.label,
+                status = ToolProgressStatus.Finished
+            )
+            is ApiState.ToolFailed -> ToolProgressState(
+                toolName = progress.toolName,
+                label = progress.toolName,
+                status = ToolProgressStatus.Failed,
+                message = progress.message
+            )
+            else -> return
+        }
+
+        val key = toolProgressKey(turnIndex, platformIndex)
+        _toolProgressStates.update { current ->
+            current + (key to (current[key].orEmpty() + progressState))
+        }
+    }
+
+    private fun clearToolProgress(turnIndex: Int, platformIndex: Int) {
+        val key = toolProgressKey(turnIndex, platformIndex)
+        _toolProgressStates.update { current -> current - key }
+    }
+
+    private fun clearToolProgressForTurn(turnIndex: Int) {
+        val prefix = "$turnIndex:"
+        _toolProgressStates.update { current ->
+            current.filterKeys { key -> !key.startsWith(prefix) }
+        }
+    }
+
+    private fun toolProgressKey(turnIndex: Int, platformIndex: Int): String = "$turnIndex:$platformIndex"
 
     fun updateChatPlatformModelAndRemember(platformUid: String, model: String) {
         val sanitizedModel = model.trim()
