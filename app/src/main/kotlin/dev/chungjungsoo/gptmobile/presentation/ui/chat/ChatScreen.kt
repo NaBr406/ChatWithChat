@@ -107,6 +107,7 @@ fun ChatScreen(
     val groupedMessages by chatViewModel.groupedMessages.collectAsStateWithLifecycle()
     val indexStates by chatViewModel.indexStates.collectAsStateWithLifecycle()
     val loadingStates by chatViewModel.loadingStates.collectAsStateWithLifecycle()
+    val toolProgressStates by chatViewModel.toolProgressStates.collectAsStateWithLifecycle()
     val isChatTitleDialogOpen by chatViewModel.isChatTitleDialogOpen.collectAsStateWithLifecycle()
     val messageEditSession by chatViewModel.messageEditSession.collectAsStateWithLifecycle()
     val isSelectTextSheetOpen by chatViewModel.isSelectTextSheetOpen.collectAsStateWithLifecycle()
@@ -148,6 +149,7 @@ fun ChatScreen(
         groupedMessages = groupedMessages,
         indexStates = indexStates,
         loadingStates = loadingStates,
+        toolProgressStates = toolProgressStates,
         enabledPlatformsInChat = chatViewModel.enabledPlatformsInChat,
         enabledPlatformLookup = enabledPlatformLookup,
         canUseChat = canUseChat,
@@ -252,6 +254,7 @@ private fun ChatContent(
     groupedMessages: ChatViewModel.GroupedMessages,
     indexStates: List<Int>,
     loadingStates: List<ChatViewModel.LoadingState>,
+    toolProgressStates: Map<String, List<ChatViewModel.ToolProgressState>>,
     enabledPlatformsInChat: List<String>,
     enabledPlatformLookup: Map<String, PlatformV2>,
     canUseChat: Boolean,
@@ -288,7 +291,7 @@ private fun ChatContent(
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     val lastMessageIndex = groupedMessages.userMessages.lastIndex
     val bottomItemIndex = groupedMessages.userMessages.size
-    val latestContentVersion = remember(groupedMessages, loadingStates) {
+    val latestContentVersion = remember(groupedMessages, loadingStates, toolProgressStates) {
         buildString {
             append(groupedMessages.userMessages.size)
             append('|')
@@ -302,6 +305,14 @@ private fun ChatContent(
             }
             loadingStates.forEach { state ->
                 append(if (state == ChatViewModel.LoadingState.Loading) 'L' else 'I')
+            }
+            toolProgressStates.entries.sortedBy { it.key }.forEach { (key, states) ->
+                append('|')
+                append(key)
+                append(':')
+                append(states.size)
+                append(':')
+                append(states.lastOrNull()?.status?.name.orEmpty())
             }
         }
     }
@@ -409,6 +420,7 @@ private fun ChatContent(
                             assistantMessages = groupedMessages.assistantMessages.getOrNull(index) ?: emptyList(),
                             platformIndexState = indexStates.getOrElse(index) { 0 },
                             loadingStates = loadingStates,
+                            toolProgressStates = toolProgressStates,
                             enabledPlatformsInChat = enabledPlatformsInChat,
                             enabledPlatformLookup = enabledPlatformLookup,
                             canUseChat = canUseChat,
@@ -435,6 +447,7 @@ private fun ChatContent(
                                 assistantMessages = groupedMessages.assistantMessages.getOrNull(lastMessageIndex) ?: emptyList(),
                                 platformIndexState = indexStates.getOrElse(lastMessageIndex) { 0 },
                                 loadingStates = loadingStates,
+                                toolProgressStates = toolProgressStates,
                                 enabledPlatformsInChat = enabledPlatformsInChat,
                                 enabledPlatformLookup = enabledPlatformLookup,
                                 canUseChat = canUseChat,
@@ -499,6 +512,7 @@ private fun ChatMessagePair(
     assistantMessages: List<MessageV2>,
     platformIndexState: Int,
     loadingStates: List<ChatViewModel.LoadingState>,
+    toolProgressStates: Map<String, List<ChatViewModel.ToolProgressState>>,
     enabledPlatformsInChat: List<String>,
     enabledPlatformLookup: Map<String, PlatformV2>,
     canUseChat: Boolean,
@@ -527,6 +541,7 @@ private fun ChatMessagePair(
             assistantMessage.activeRevisionIndex != ACTIVE_REVISION_LATEST
     } ?: false
     val selectedPlatformUid = enabledPlatformsInChat.getOrElse(platformIndexState) { "" }
+    val selectedToolProgressStates = toolProgressStates[ChatViewModel.toolProgressKey(messageIndex, platformIndexState)].orEmpty()
     val isCurrentPlatformLoading =
         loadingStates.getOrElse(platformIndexState) { ChatViewModel.LoadingState.Idle } == ChatViewModel.LoadingState.Loading
     var isDropDownMenuExpanded by remember { mutableStateOf(false) }
@@ -585,6 +600,12 @@ private fun ChatMessagePair(
                         }
                     }
                 }
+            }
+            if (selectedToolProgressStates.isNotEmpty()) {
+                ToolActivityBlock(
+                    progressStates = selectedToolProgressStates,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
             }
             OpponentChatBubble(
                 modifier = Modifier

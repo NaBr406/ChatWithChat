@@ -461,12 +461,12 @@ Final answer shape:
 
 **Implementation:**
 
-- [ ] Display "正在搜索" for `web_search`.
-- [ ] Display "正在读取网页" for `fetch_url`.
-- [ ] Show failure in a compact non-blocking row.
-- [ ] Keep UI text grounded in actual `ApiState.Tool*` events.
-- [ ] Do not expose raw JSON tool calls to users.
-- [ ] Keep the visual style compact and consistent with existing chat UI.
+- [x] Display "正在搜索" for `web_search`.
+- [x] Display "正在读取网页" for `fetch_url`.
+- [x] Show failure in a compact non-blocking row.
+- [x] Keep UI text grounded in actual `ApiState.Tool*` events.
+- [x] Do not expose raw JSON tool calls to users.
+- [x] Keep the visual style compact and consistent with existing chat UI.
 
 **Verification:**
 
@@ -683,7 +683,7 @@ Use this order when handing work to Codex:
 - [x] Task 6: Add Single-Round Tool Loop Fallback
 - [x] Task 7: Expand To Full Multi-Round Tool Loop
 - [x] Task 8: Add Tool Progress States
-- [ ] Task 9: Add Minimal Tool UI
+- [x] Task 9: Add Minimal Tool UI
 - [ ] Task 10: Add Settings UI For Web Search
 - [ ] Task 11: Add Source Metadata Persistence
 - [ ] Task 12: Add OpenAI Responses Native Tool Calling

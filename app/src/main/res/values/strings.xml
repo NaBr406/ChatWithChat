@@ -394,4 +394,11 @@
     <string name="large_images_resized_before_upload">上传前已压缩大图。</string>
     <string name="failed_to_prepare_attachment">附件处理失败。</string>
     <string name="failed_to_copy_attachment">附件复制失败。</string>
+    <string name="tool_web_search_running">正在搜索</string>
+    <string name="tool_fetch_url_running">正在读取网页</string>
+    <string name="tool_web_search_finished">搜索完成</string>
+    <string name="tool_fetch_url_finished">网页读取完成</string>
+    <string name="tool_running">正在使用工具</string>
+    <string name="tool_finished">工具已完成</string>
+    <string name="tool_failed">工具执行失败</string>
 </resources>

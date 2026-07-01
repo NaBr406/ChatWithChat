@@ -649,8 +649,6 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    private fun toolProgressKey(turnIndex: Int, platformIndex: Int): String = "$turnIndex:$platformIndex"
-
     fun updateChatPlatformModelAndRemember(platformUid: String, model: String) {
         val sanitizedModel = model.trim()
         if (sanitizedModel.isBlank()) return
@@ -1298,6 +1296,8 @@ class ChatViewModel @Inject constructor(
 
     companion object {
         private const val TAG = "ChatViewModel"
+
+        fun toolProgressKey(turnIndex: Int, platformIndex: Int): String = "$turnIndex:$platformIndex"
     }
 }
 
