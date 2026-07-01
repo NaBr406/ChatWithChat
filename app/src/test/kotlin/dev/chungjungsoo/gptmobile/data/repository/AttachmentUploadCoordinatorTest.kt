@@ -18,15 +18,113 @@ import dev.chungjungsoo.gptmobile.data.model.ClientType
 import dev.chungjungsoo.gptmobile.data.network.AnthropicAPI
 import dev.chungjungsoo.gptmobile.data.network.GoogleAPI
 import dev.chungjungsoo.gptmobile.data.network.OpenAIAPI
+import dev.chungjungsoo.gptmobile.data.network.ProviderFileUploadException
 import dev.chungjungsoo.gptmobile.data.network.UploadedProviderFile
 import java.io.File
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.fail
 import org.junit.Test
 
 class AttachmentUploadCoordinatorTest {
+    @Test
+    fun `openai file endpoint 404 falls back to inline attachment`() = runBlocking {
+        val openAIAPI = FakeOpenAIAPI(
+            uploadFailure = ProviderFileUploadException(
+                providerName = "OpenAI",
+                statusCode = 404,
+                responseBody = "404 page not found"
+            )
+        )
+        val coordinator = AttachmentUploadCoordinator(openAIAPI, FakeAnthropicAPI(), FakeGoogleAPI())
+        val tempFile = File.createTempFile("attachment", ".png").apply {
+            writeBytes(ByteArray(32))
+            deleteOnExit()
+        }
+        val message = MessageV2(
+            content = "describe",
+            platformType = null,
+            attachments = listOf(
+                ChatAttachment(
+                    localFilePath = tempFile.absolutePath,
+                    preparedFilePath = tempFile.absolutePath,
+                    displayName = tempFile.name,
+                    mimeType = "image/png",
+                    sizeBytes = tempFile.length(),
+                    providerRefs = listOf(
+                        AttachmentProviderRef(
+                            platformUid = "openai-platform",
+                            remoteType = AttachmentRemoteType.OPENAI_FILE,
+                            remoteId = "stale-file",
+                            mimeType = "image/png",
+                            uploadedAt = 1L
+                        )
+                    )
+                )
+            )
+        )
+
+        val updated = coordinator.ensureMessageAttachmentsForPlatform(
+            message,
+            PlatformV2(
+                uid = "openai-platform",
+                name = "OpenAI",
+                compatibleType = ClientType.OPENAI,
+                apiUrl = "https://proxy.example.com/",
+                model = "gpt-4.1"
+            )
+        )
+
+        assertEquals(1, openAIAPI.uploadCount)
+        assertEquals(emptyList<AttachmentProviderRef>(), updated.attachments.single().providerRefs)
+    }
+
+    @Test
+    fun `openai file upload non endpoint errors are preserved`() = runBlocking {
+        val openAIAPI = FakeOpenAIAPI(
+            uploadFailure = ProviderFileUploadException(
+                providerName = "OpenAI",
+                statusCode = 401,
+                responseBody = """{"error":{"message":"invalid token"}}"""
+            )
+        )
+        val coordinator = AttachmentUploadCoordinator(openAIAPI, FakeAnthropicAPI(), FakeGoogleAPI())
+        val tempFile = File.createTempFile("attachment", ".png").apply {
+            writeBytes(ByteArray(32))
+            deleteOnExit()
+        }
+
+        try {
+            coordinator.ensureMessageAttachmentsForPlatform(
+                MessageV2(
+                    content = "describe",
+                    platformType = null,
+                    attachments = listOf(
+                        ChatAttachment(
+                            localFilePath = tempFile.absolutePath,
+                            preparedFilePath = tempFile.absolutePath,
+                            displayName = tempFile.name,
+                            mimeType = "image/png",
+                            sizeBytes = tempFile.length()
+                        )
+                    )
+                ),
+                PlatformV2(
+                    uid = "openai-platform",
+                    name = "OpenAI",
+                    compatibleType = ClientType.OPENAI,
+                    apiUrl = "https://api.openai.com/",
+                    model = "gpt-4.1"
+                )
+            )
+            fail("Expected ProviderFileUploadException")
+        } catch (e: ProviderFileUploadException) {
+            assertEquals(401, e.statusCode)
+        }
+    }
+
     @Test
     fun `existing openai ref is reused without upload`() = runBlocking {
         val openAIAPI = FakeOpenAIAPI(isAvailable = true)
@@ -107,7 +205,7 @@ class AttachmentUploadCoordinatorTest {
         assertEquals("files/google-file", updated.attachments.single().providerRefs.single().remoteName)
     }
 
-    @Test(expected = IllegalStateException::class)
+    @Test
     fun `inline attachment budget rejects oversized payloads`() = runBlocking {
         val coordinator = AttachmentUploadCoordinator(FakeOpenAIAPI(), FakeAnthropicAPI(), FakeGoogleAPI())
         val first = File.createTempFile("inline-first", ".png").apply {
@@ -119,38 +217,43 @@ class AttachmentUploadCoordinatorTest {
             deleteOnExit()
         }
 
-        coordinator.validateInlineAttachmentBudget(
-            contextTurns = listOf(
-                ConversationTurn(
-                    userMessage = MessageV2(
-                        content = "hi",
-                        platformType = null,
-                        attachments = listOf(
-                            ChatAttachment(
-                                localFilePath = first.absolutePath,
-                                preparedFilePath = first.absolutePath,
-                                displayName = first.name,
-                                mimeType = "image/png",
-                                sizeBytes = first.length()
-                            ),
-                            ChatAttachment(
-                                localFilePath = second.absolutePath,
-                                preparedFilePath = second.absolutePath,
-                                displayName = second.name,
-                                mimeType = "image/png",
-                                sizeBytes = second.length()
+        try {
+            coordinator.validateInlineAttachmentBudget(
+                contextTurns = listOf(
+                    ConversationTurn(
+                        userMessage = MessageV2(
+                            content = "hi",
+                            platformType = null,
+                            attachments = listOf(
+                                ChatAttachment(
+                                    localFilePath = first.absolutePath,
+                                    preparedFilePath = first.absolutePath,
+                                    displayName = first.name,
+                                    mimeType = "image/png",
+                                    sizeBytes = first.length()
+                                ),
+                                ChatAttachment(
+                                    localFilePath = second.absolutePath,
+                                    preparedFilePath = second.absolutePath,
+                                    displayName = second.name,
+                                    mimeType = "image/png",
+                                    sizeBytes = second.length()
+                                )
                             )
-                        )
-                    ),
-                    assistantMessage = null,
-                    isCurrentTurn = true
+                        ),
+                        assistantMessage = null,
+                        isCurrentTurn = true
+                    )
                 )
             )
-        )
+            fail("Expected IllegalStateException")
+        } catch (_: IllegalStateException) {
+        }
     }
 
     private class FakeOpenAIAPI(
-        private val isAvailable: Boolean = false
+        private val isAvailable: Boolean = false,
+        private val uploadFailure: ProviderFileUploadException? = null
     ) : OpenAIAPI {
         var uploadCount = 0
 
@@ -164,6 +267,7 @@ class AttachmentUploadCoordinatorTest {
 
         override suspend fun uploadFile(filePath: String, fileName: String, mimeType: String): UploadedProviderFile {
             uploadCount += 1
+            uploadFailure?.let { throw it }
             return UploadedProviderFile(id = "file-uploaded", mimeType = mimeType)
         }
 

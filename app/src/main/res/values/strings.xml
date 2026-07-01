@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">GPTMobile</string>
-    <string name="gpt_mobile_introduction_logo">GPT Mobile 介绍图标</string>
+    <string name="app_name">ChatWithChat</string>
+    <string name="gpt_mobile_introduction_logo">ChatWithChat 介绍图标</string>
     <string name="welcome_title">可随身携带的\n强大 AI 助手</string>
     <string name="welcome_description">选择适合你的模型，随时提问。</string>
     <string name="get_started">开始使用</string>
@@ -54,7 +54,7 @@
     <string name="gemini_1_5_flash_description">在多种任务中提供快速且灵活的表现。</string>
     <string name="gemini_1_0_pro_description">适合自然语言任务、多轮文本和代码聊天，以及代码生成。</string>
     <string name="setup_complete">全部设置完成！</string>
-    <string name="setup_complete_description">开始使用 GPTMobile 吧！</string>
+    <string name="setup_complete_description">开始使用 ChatWithChat 吧！</string>
     <string name="done">完成</string>
     <string name="setup_complete_logo">设置完成图标</string>
     <string name="chats">会话</string>
@@ -186,8 +186,8 @@
     <string name="version">版本</string>
     <string name="license">许可证</string>
     <string name="github" translatable="false">GitHub</string>
-    <string name="f_droid" translatable="false">F-Droid</string>
-    <string name="play_store" translatable="false">Play Store</string>
+    <string name="f_droid" translatable="false">GitHub Releases</string>
+    <string name="play_store" translatable="false">GitHub Actions</string>
     <string name="feedback">反馈</string>
     <string name="license_description">开源许可证</string>
     <string name="feedback_description">欢迎任何反馈！</string>
@@ -195,13 +195,13 @@
     <string name="license_icon">许可证图标</string>
     <string name="feedback_icon">反馈图标</string>
     <string name="github_icon">GitHub 图标</string>
-    <string name="f_droid_icon">F-Droid 图标</string>
-    <string name="play_store_icon">Play Store 图标</string>
-    <string name="github_link" translatable="false">https://github.com/Taewan-P/gpt_mobile</string>
-    <string name="f_droid_link" translatable="false">https://f-droid.org/packages/dev.chungjungsoo.gptmobile/</string>
-    <string name="play_store_link" translatable="false">https://play.google.com/store/apps/details?id=dev.chungjungsoo.gptmobile</string>
-    <string name="bug_report_link" translatable="false">https://github.com/Taewan-P/gpt_mobile/issues/new/choose</string>
-    <string name="feedback_link" translatable="false">https://github.com/Taewan-P/gpt_mobile/discussions/new/choose</string>
+    <string name="f_droid_icon">GitHub Releases 图标</string>
+    <string name="play_store_icon">GitHub Actions 图标</string>
+    <string name="github_link" translatable="false">https://github.com/NaBr406/ChatWithChat</string>
+    <string name="f_droid_link" translatable="false">https://github.com/NaBr406/ChatWithChat/releases</string>
+    <string name="play_store_link" translatable="false">https://github.com/NaBr406/ChatWithChat/actions</string>
+    <string name="bug_report_link" translatable="false">https://github.com/NaBr406/ChatWithChat/issues/new/choose</string>
+    <string name="feedback_link" translatable="false">https://github.com/NaBr406/ChatWithChat/discussions/new/choose</string>
     <string name="api_url">API URL</string>
     <string name="url_icon">URL 图标</string>
     <string name="invalid_api_url">请输入有效的 URL。</string>

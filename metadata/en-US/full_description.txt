@@ -1,15 +1,27 @@
-This is an Material3 style chat app that supports answers from multiple LLMs at once.
+ChatWithChat is a local-first Android chat assistant for working with multiple AI providers from one app.
 
-Supported Platforms
-- OpenAI GPT (GPT-4o, turbo, etc)
-- Anthropic Claude (3.5 Sonnet, 3 Opus, etc)
-- Google Gemini (1.5 Pro, Flash, etc)
-- Groq (Fast inference server for various models)
-- Ollama (Your own server)
+Supported providers:
+- OpenAI
+- Anthropic Claude
+- Google Gemini
+- Groq
+- Ollama
+- OpenRouter
+- Custom OpenAI-compatible endpoints
 
-Local chat history
-Chat history is only saved locally. The app only sends to official API servers while chatting. NOT SHARED anywhere else.
+Highlights:
+- Start chatting from the first screen.
+- Switch models from the chat top bar.
+- Keep chat history in a side drawer with search, duplicate, and delete actions.
+- Configure API URL, API key, model, system prompt, temperature, top p, and streaming timeout per provider.
+- Fetch available model IDs from supported provider URLs.
+- Compare answers from multiple providers in one conversation.
+- Manage long-term personal memories locally, with review, edit, archive, delete, and Markdown export.
+- Edit and retry messages, keep assistant answer revisions, and export chat history.
+- Attach supported images with size checks and large-image compression before upload.
 
-Custom API address and custom model name supported. Also, adjust system prompt, top p, temperature, and more!
+Privacy:
+Chat history, provider settings, API keys, available model lists, and memories are stored on your device. The app sends chat content only to the AI service endpoints you configure.
 
-Note that some platforms may not be supported in some countries.
+Note:
+Some providers, models, or APIs may be unavailable in certain regions or accounts. API usage may require billing with the provider.

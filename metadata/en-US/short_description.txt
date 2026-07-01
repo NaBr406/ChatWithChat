@@ -1,1 +1,1 @@
-Your all in one chat assistant - Chat with multiple LLMs at once!
+Chat with multiple AI providers from one local-first Android app.

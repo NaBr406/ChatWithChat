@@ -48,7 +48,7 @@ class OpenAIAPIImpl @Inject constructor(
     }
 
     override suspend fun uploadFile(filePath: String, fileName: String, mimeType: String): UploadedProviderFile {
-        val endpoint = if (apiUrl.endsWith("/")) "${apiUrl}v1/files" else "$apiUrl/v1/files"
+        val endpoint = joinApiEndpoint(apiUrl, "v1/files")
         val responseBody = networkClient().preparePost(endpoint) {
             token?.let { bearerAuth(it) }
             setBody(
@@ -66,7 +66,18 @@ class OpenAIAPIImpl @Inject constructor(
                     }
                 )
             )
-        }.body<String>()
+        }.execute { response ->
+            val body = response.body<String>()
+            if (!response.status.isSuccess()) {
+                throw ProviderFileUploadException(
+                    providerName = "OpenAI",
+                    statusCode = response.status.value,
+                    responseBody = body,
+                    detail = parseOpenAIErrorMessage(body) ?: "HTTP ${response.status.value}: ${body.take(MAX_ERROR_BODY_LENGTH)}"
+                )
+            }
+            body
+        }
 
         val uploadResponse = NetworkClient.openAIJson.decodeFromString<OpenAIFileResponse>(responseBody)
         return UploadedProviderFile(
@@ -77,7 +88,7 @@ class OpenAIAPIImpl @Inject constructor(
     }
 
     override suspend fun isFileAvailable(fileId: String): Boolean {
-        val endpoint = if (apiUrl.endsWith("/")) "${apiUrl}v1/files/$fileId" else "$apiUrl/v1/files/$fileId"
+        val endpoint = joinApiEndpoint(apiUrl, "v1/files/$fileId")
         return try {
             networkClient().prepareGet(endpoint) {
                 token?.let { bearerAuth(it) }
@@ -91,7 +102,7 @@ class OpenAIAPIImpl @Inject constructor(
 
     override fun streamChatCompletion(request: ChatCompletionRequest, timeoutSeconds: Int): Flow<ChatCompletionChunk> = flow {
         try {
-            val endpoint = if (apiUrl.endsWith("/")) "${apiUrl}v1/chat/completions" else "$apiUrl/v1/chat/completions"
+            val endpoint = joinApiEndpoint(apiUrl, "v1/chat/completions")
 
             networkClient().preparePost(endpoint) {
                 applyPlatformStreamingTimeout(timeoutSeconds)
@@ -103,10 +114,7 @@ class OpenAIAPIImpl @Inject constructor(
                 if (!response.status.isSuccess()) {
                     val errorBody = response.body<String>()
 
-                    val errorMessage = try {
-                        val errorResponse = NetworkClient.openAIJson.decodeFromString<OpenAIErrorResponse>(errorBody)
-                        errorResponse.error.message
-                    } catch (_: Exception) {
+                    val errorMessage = parseOpenAIErrorMessage(errorBody) ?: run {
                         "HTTP ${response.status.value}: $errorBody"
                     }
 
@@ -164,7 +172,7 @@ class OpenAIAPIImpl @Inject constructor(
 
     override fun streamResponses(request: ResponsesRequest, timeoutSeconds: Int): Flow<ResponsesStreamEvent> = flow {
         try {
-            val endpoint = if (apiUrl.endsWith("/")) "${apiUrl}v1/responses" else "$apiUrl/v1/responses"
+            val endpoint = joinApiEndpoint(apiUrl, "v1/responses")
 
             networkClient().preparePost(endpoint) {
                 applyPlatformStreamingTimeout(timeoutSeconds)
@@ -176,10 +184,7 @@ class OpenAIAPIImpl @Inject constructor(
                 if (!response.status.isSuccess()) {
                     val errorBody = response.body<String>()
 
-                    val errorMessage = try {
-                        val errorResponse = NetworkClient.openAIJson.decodeFromString<OpenAIErrorResponse>(errorBody)
-                        errorResponse.error.message
-                    } catch (_: Exception) {
+                    val errorMessage = parseOpenAIErrorMessage(errorBody) ?: run {
                         "HTTP ${response.status.value}: $errorBody"
                     }
 
@@ -223,6 +228,16 @@ class OpenAIAPIImpl @Inject constructor(
             )
         }
     }.flowOn(Dispatchers.IO)
+
+    private fun parseOpenAIErrorMessage(errorBody: String): String? = try {
+        NetworkClient.openAIJson.decodeFromString<OpenAIErrorResponse>(errorBody).error.message
+    } catch (_: Exception) {
+        null
+    }
+
+    companion object {
+        private const val MAX_ERROR_BODY_LENGTH = 500
+    }
 }
 
 @Serializable

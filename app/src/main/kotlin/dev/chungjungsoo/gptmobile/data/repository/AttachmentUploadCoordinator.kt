@@ -11,6 +11,7 @@ import dev.chungjungsoo.gptmobile.data.model.ClientType
 import dev.chungjungsoo.gptmobile.data.network.AnthropicAPI
 import dev.chungjungsoo.gptmobile.data.network.GoogleAPI
 import dev.chungjungsoo.gptmobile.data.network.OpenAIAPI
+import dev.chungjungsoo.gptmobile.data.network.ProviderFileUploadException
 import dev.chungjungsoo.gptmobile.util.FileUtils
 import java.io.File
 import javax.inject.Inject
@@ -82,11 +83,18 @@ class AttachmentUploadCoordinator @Inject constructor(
             return attachment
         }
 
-        val uploadFile = openAIAPI.uploadFile(
-            filePath = resolveUploadFilePath(attachment),
-            fileName = attachment.resolvedDisplayName,
-            mimeType = resolveMimeType(attachment)
-        )
+        val uploadFile = try {
+            openAIAPI.uploadFile(
+                filePath = resolveUploadFilePath(attachment),
+                fileName = attachment.resolvedDisplayName,
+                mimeType = resolveMimeType(attachment)
+            )
+        } catch (e: ProviderFileUploadException) {
+            if (e.isEndpointUnavailable) {
+                return attachment.clearProviderRef(platformUid)
+            }
+            throw e
+        }
         return attachment.upsertProviderRef(
             AttachmentProviderRef(
                 platformUid = platformUid,

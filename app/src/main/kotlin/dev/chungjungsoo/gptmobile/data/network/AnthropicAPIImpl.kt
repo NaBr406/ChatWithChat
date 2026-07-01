@@ -53,7 +53,7 @@ class AnthropicAPIImpl @Inject constructor(
     }
 
     override suspend fun uploadFile(filePath: String, fileName: String, mimeType: String): UploadedProviderFile {
-        val endpoint = if (apiUrl.endsWith("/")) "${apiUrl}v1/files" else "$apiUrl/v1/files"
+        val endpoint = joinApiEndpoint(apiUrl, "v1/files")
         val responseBody = networkClient().preparePost(endpoint) {
             setBody(
                 MultiPartFormDataContent(
@@ -74,7 +74,18 @@ class AnthropicAPIImpl @Inject constructor(
                 append(VERSION_HEADER, ANTHROPIC_VERSION)
                 append(BETA_HEADER, ANTHROPIC_FILES_BETA)
             }
-        }.body<String>()
+        }.execute { response ->
+            val body = response.body<String>()
+            if (!response.status.isSuccess()) {
+                throw ProviderFileUploadException(
+                    providerName = "Anthropic",
+                    statusCode = response.status.value,
+                    responseBody = body,
+                    detail = parseAnthropicErrorMessage(body) ?: "HTTP ${response.status.value}: ${body.take(MAX_ERROR_BODY_LENGTH)}"
+                )
+            }
+            body
+        }
 
         val uploadResponse = json.decodeFromString<AnthropicFileResponse>(responseBody)
         return UploadedProviderFile(
@@ -85,7 +96,7 @@ class AnthropicAPIImpl @Inject constructor(
     }
 
     override suspend fun isFileAvailable(fileId: String): Boolean {
-        val endpoint = if (apiUrl.endsWith("/")) "${apiUrl}v1/files/$fileId" else "$apiUrl/v1/files/$fileId"
+        val endpoint = joinApiEndpoint(apiUrl, "v1/files/$fileId")
         return try {
             networkClient().prepareGet(endpoint) {
                 headers {
@@ -103,7 +114,7 @@ class AnthropicAPIImpl @Inject constructor(
 
     override fun streamChatMessage(messageRequest: MessageRequest, timeoutSeconds: Int): Flow<MessageResponseChunk> = flow {
         try {
-            val endpoint = if (apiUrl.endsWith("/")) "${apiUrl}v1/messages" else "$apiUrl/v1/messages"
+            val endpoint = joinApiEndpoint(apiUrl, "v1/messages")
 
             networkClient().preparePost(endpoint) {
                 applyPlatformStreamingTimeout(timeoutSeconds)
@@ -119,10 +130,7 @@ class AnthropicAPIImpl @Inject constructor(
                 if (!response.status.isSuccess()) {
                     val errorBody = response.body<String>()
 
-                    val errorMessage = try {
-                        val errorResponse = json.decodeFromString<AnthropicErrorResponse>(errorBody)
-                        errorResponse.error.message
-                    } catch (_: Exception) {
+                    val errorMessage = parseAnthropicErrorMessage(errorBody) ?: run {
                         "HTTP ${response.status.value}: $errorBody"
                     }
 
@@ -159,12 +167,19 @@ class AnthropicAPIImpl @Inject constructor(
         }
     }.flowOn(Dispatchers.IO)
 
+    private fun parseAnthropicErrorMessage(errorBody: String): String? = try {
+        json.decodeFromString<AnthropicErrorResponse>(errorBody).error.message
+    } catch (_: Exception) {
+        null
+    }
+
     companion object {
         private const val API_KEY_HEADER = "x-api-key"
         private const val VERSION_HEADER = "anthropic-version"
         private const val BETA_HEADER = "anthropic-beta"
         private const val ANTHROPIC_VERSION = "2023-06-01"
         private const val ANTHROPIC_FILES_BETA = "files-api-2025-04-14"
+        private const val MAX_ERROR_BODY_LENGTH = 500
     }
 }
 
