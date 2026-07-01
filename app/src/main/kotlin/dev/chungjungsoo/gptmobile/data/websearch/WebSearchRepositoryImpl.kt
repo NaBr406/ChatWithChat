@@ -61,11 +61,18 @@ class WebSearchRepositoryImpl(
                 response.body<String>()
             }
 
-            NetworkClient.json.decodeFromString<SearxngSearchResponse>(responseBody)
+            val searchResponse = NetworkClient.json.decodeFromString<SearxngSearchResponse>(responseBody)
+            val results = searchResponse
                 .results
                 .mapNotNull { it.toWebSearchResult() }
                 .distinctBy { it.url }
                 .take(boundedLimit)
+
+            if (results.isEmpty() && searchResponse.unresponsiveEngines.isNotEmpty()) {
+                throw IllegalStateException("web_search_no_results_unresponsive_engines:${searchResponse.unresponsiveEngines.toReadableSummary()}")
+            }
+
+            results
         }
     }
 
@@ -73,6 +80,18 @@ class WebSearchRepositoryImpl(
         private const val MAX_ERROR_BODY_LENGTH = 500
     }
 }
+
+private const val MAX_UNRESPONSIVE_ENGINE_DETAILS = 3
+
+private fun List<List<String>>.toReadableSummary(): String =
+    take(MAX_UNRESPONSIVE_ENGINE_DETAILS)
+        .joinToString(separator = "; ") { parts ->
+            parts
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .joinToString(separator = ": ")
+        }
+        .ifBlank { "unknown" }
 
 data class WebSearchConfig(
     val searxngBaseUrl: String = "",

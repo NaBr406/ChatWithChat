@@ -207,6 +207,27 @@ class ToolExecutorTest {
         assertEquals("web_search_backend_not_configured", toolResult.content)
     }
 
+    @Test
+    fun `web search unavailable engines return readable tool error`() = runBlocking {
+        val executor = builtInExecutor(
+            FakeWebSearchRepository(
+                results = emptyList(),
+                failure = IllegalStateException("web_search_no_results_unresponsive_engines:mojeek: access denied")
+            )
+        )
+
+        val toolResult = executor.execute(
+            ToolCall(
+                id = "call_9",
+                name = "web_search",
+                arguments = """{"query":"news"}"""
+            )
+        )
+
+        assertTrue(toolResult.isError)
+        assertEquals("web_search_failed:search backend unavailable: mojeek: access denied", toolResult.content)
+    }
+
     private fun builtInExecutor(searchRepository: WebSearchRepository): ToolExecutor = ToolExecutor(
         BuiltInTools(
             webSearchRepository = searchRepository,

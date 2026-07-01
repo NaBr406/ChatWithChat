@@ -5,7 +5,9 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 data class SearxngSearchResponse(
-    val results: List<SearxngSearchResult> = emptyList()
+    val results: List<SearxngSearchResult> = emptyList(),
+    @SerialName("unresponsive_engines")
+    val unresponsiveEngines: List<List<String>> = emptyList()
 )
 
 @Serializable
@@ -30,4 +32,3 @@ data class SearxngSearchResult(
         )
     }
 }
-

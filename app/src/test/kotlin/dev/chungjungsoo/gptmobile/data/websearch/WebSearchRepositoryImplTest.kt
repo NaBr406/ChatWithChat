@@ -149,6 +149,61 @@ class WebSearchRepositoryImplTest {
     }
 
     @Test
+    fun `empty results with unresponsive engines returns failure`() = runBlocking {
+        withServer(
+            statusCode = 200,
+            body =
+                """
+                {
+                  "results": [],
+                  "unresponsive_engines": [
+                    ["mojeek", "Suspended: access denied"]
+                  ]
+                }
+                """.trimIndent()
+        ) { baseUrl, _ ->
+            val repository = WebSearchRepositoryImpl(
+                httpClient = NetworkClient(CIO)(),
+                config = WebSearchConfig(searxngBaseUrl = baseUrl)
+            )
+
+            val result = repository.search("news", limit = 5)
+
+            assertTrue(result.isFailure)
+            assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("web_search_no_results_unresponsive_engines"))
+            assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("mojeek"))
+        }
+    }
+
+    @Test
+    fun `results are kept when some engines are unresponsive`() = runBlocking {
+        withServer(
+            statusCode = 200,
+            body =
+                """
+                {
+                  "results": [
+                    {"title": "One", "url": "https://one.example", "content": "one"}
+                  ],
+                  "unresponsive_engines": [
+                    ["mojeek", "Suspended: access denied"]
+                  ]
+                }
+                """.trimIndent()
+        ) { baseUrl, _ ->
+            val repository = WebSearchRepositoryImpl(
+                httpClient = NetworkClient(CIO)(),
+                config = WebSearchConfig(searxngBaseUrl = baseUrl)
+            )
+
+            val results = repository.search("news", limit = 5).getOrThrow()
+
+            assertEquals(1, results.size)
+            assertEquals("https://one.example", results.single().url)
+        }
+    }
+
+    @Test
     fun `result count is limited`() = runBlocking {
         withServer(
             statusCode = 200,

@@ -34,6 +34,8 @@ class BuiltInTools(
             val message = throwable.message ?: throwable::class.simpleName.orEmpty()
             return if (message.contains("web_search_backend_not_configured")) {
                 call.errorResult("web_search_backend_not_configured")
+            } else if (message.startsWith(WEB_SEARCH_UNRESPONSIVE_ENGINES_PREFIX)) {
+                call.errorResult("web_search_failed:search backend unavailable: ${message.removePrefix(WEB_SEARCH_UNRESPONSIVE_ENGINES_PREFIX)}")
             } else {
                 call.errorResult("web_search_failed:$message")
             }
@@ -218,3 +220,4 @@ class BuiltInTools(
 }
 
 private const val MAX_SOURCE_SNIPPET_CHARS = 240
+private const val WEB_SEARCH_UNRESPONSIVE_ENGINES_PREFIX = "web_search_no_results_unresponsive_engines:"
