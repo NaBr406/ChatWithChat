@@ -378,7 +378,7 @@ class ChatRepositoryImpl @Inject constructor(
             results.toMessageSourceMetadata().takeIf { it.isNotEmpty() }?.let { sources ->
                 emit(ApiState.SourcesUpdated(sources))
             }
-            continuationItems += openAIResponsesToolAdapter.continuationInputItems(round.events, calls, results)
+            continuationItems += openAIResponsesToolAdapter.continuationInputItems(round.events, calls, results, config)
         }
 
         if (continuationItems.isEmpty()) {

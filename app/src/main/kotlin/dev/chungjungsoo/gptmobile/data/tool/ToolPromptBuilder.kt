@@ -64,7 +64,7 @@ class ToolPromptBuilder(
             }
         }.trim()
 
-        return text.clip(config.maxScratchpadChars).takeIf { it.isNotBlank() }
+        return text.clip(config.toolResultInjectionLimit()).takeIf { it.isNotBlank() }
     }
 
     private fun formatScratchpad(
@@ -91,8 +91,13 @@ class ToolPromptBuilder(
             }
         }.trim()
 
-        return text.clip(config.maxScratchpadChars).takeIf { it.isNotBlank() }
+        return text.clip(config.toolResultInjectionLimit()).takeIf { it.isNotBlank() }
     }
+
+    private fun ToolLoopConfig.toolResultInjectionLimit(): Int = minOf(
+        maxScratchpadChars,
+        maxTotalToolResultChars
+    ).coerceAtLeast(0)
 
     private fun String.clip(maxChars: Int): String {
         val boundedMax = maxChars.coerceAtLeast(0)

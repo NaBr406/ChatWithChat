@@ -75,4 +75,30 @@ class ToolPromptBuilderTest {
         assertFalse(prompt.contains("x".repeat(9)))
         assertTrue(prompt.length <= 220)
     }
+
+    @Test
+    fun `tool result formatting honors total injection limit`() {
+        val builder = ToolPromptBuilder()
+        val prompt = builder.formatToolResults(
+            listOf(
+                ToolResult(
+                    callId = "call_1",
+                    name = "web_search",
+                    content = "a".repeat(500)
+                ),
+                ToolResult(
+                    callId = "call_2",
+                    name = "fetch_url",
+                    content = "b".repeat(500)
+                )
+            ),
+            ToolLoopConfig(
+                maxToolResultChars = 500,
+                maxScratchpadChars = 1_000,
+                maxTotalToolResultChars = 120
+            )
+        ).orEmpty()
+
+        assertTrue(prompt.length <= 120)
+    }
 }

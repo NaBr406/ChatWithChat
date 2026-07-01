@@ -643,24 +643,24 @@ Manual checks:
 
 **Implementation:**
 
-- [ ] Add a global per-chat tool budget.
-- [ ] Add per-request max search queries.
-- [ ] Add per-request max fetched URLs.
-- [ ] Add max total tool-result characters injected into model context.
-- [ ] Add domain blocklist support for `fetch_url`.
-- [ ] Do not fetch local/private network URLs.
-- [ ] Strip scripts/styles from extracted pages.
-- [ ] Normalize whitespace and remove repeated boilerplate where feasible.
-- [ ] Add clear errors for backend not configured.
-- [ ] Make all failures recoverable unless the final provider request fails.
+- [x] Add a global per-chat tool budget.
+- [x] Add per-request max search queries.
+- [x] Add per-request max fetched URLs.
+- [x] Add max total tool-result characters injected into model context.
+- [x] Add domain blocklist support for `fetch_url`.
+- [x] Do not fetch local/private network URLs.
+- [x] Strip scripts/styles from extracted pages.
+- [x] Normalize whitespace and remove repeated boilerplate where feasible.
+- [x] Add clear errors for backend not configured.
+- [x] Make all failures recoverable unless the final provider request fails.
 
 **Tests:**
 
-- [ ] Private/local URLs are rejected.
-- [ ] Max rounds enforced.
-- [ ] Max tool calls enforced.
-- [ ] Huge tool results clipped.
-- [ ] Search backend failure still produces a normal answer when possible.
+- [x] Private/local URLs are rejected.
+- [x] Max rounds enforced.
+- [x] Max tool calls enforced.
+- [x] Huge tool results clipped.
+- [x] Search backend failure still produces a normal answer when possible.
 
 **Verification:**
 
@@ -688,7 +688,7 @@ Use this order when handing work to Codex:
 - [x] Task 11: Add Source Metadata Persistence
 - [x] Task 12: Add OpenAI Responses Native Tool Calling
 - [x] Task 13: Add Provider Tool Adapters
-- [ ] Task 14: Hardening And Safety
+- [x] Task 14: Hardening And Safety
 
 Tasks 1-3 are enough to ship a useful "LLM decides whether to search" MVP.
 
@@ -724,13 +724,13 @@ Report:
 
 ## Acceptance Criteria For The Full Plan
 
-- [ ] Web search can be disabled globally.
-- [ ] Auto mode lets the model decide when to search.
-- [ ] Search and fetch tools are real executable tools, not prompt-only decorations.
-- [ ] Tool failures are recoverable.
-- [ ] The final answer streams through the existing chat UI.
-- [ ] Tool progress can be shown without corrupting assistant message content.
-- [ ] Sources used by an answer can be displayed and eventually persisted.
-- [ ] Provider-neutral fallback works for all providers.
-- [ ] OpenAI Responses native tool calling works where supported.
-- [ ] `searchChatsV2(...)` remains local chat-history search only.
+- [x] Web search can be disabled globally.
+- [x] Auto mode lets the model decide when to search.
+- [x] Search and fetch tools are real executable tools, not prompt-only decorations.
+- [x] Tool failures are recoverable.
+- [x] The final answer streams through the existing chat UI.
+- [x] Tool progress can be shown without corrupting assistant message content.
+- [x] Sources used by an answer can be displayed and eventually persisted.
+- [x] Provider-neutral fallback works for all providers.
+- [x] OpenAI Responses native tool calling works where supported.
+- [x] `searchChatsV2(...)` remains local chat-history search only.

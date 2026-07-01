@@ -11,6 +11,7 @@ import dev.chungjungsoo.gptmobile.data.dto.openai.response.OutputItemDoneEvent
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.ResponsesStreamEvent
 import dev.chungjungsoo.gptmobile.data.tool.ToolCall
 import dev.chungjungsoo.gptmobile.data.tool.ToolDefinition
+import dev.chungjungsoo.gptmobile.data.tool.ToolLoopConfig
 import dev.chungjungsoo.gptmobile.data.tool.ToolResult
 import dev.chungjungsoo.gptmobile.data.tool.toolProtocolJson
 import kotlinx.serialization.Serializable
@@ -51,7 +52,8 @@ class OpenAIResponsesToolAdapter {
     fun continuationInputItems(
         events: List<ResponsesStreamEvent>,
         calls: List<ToolCall>,
-        results: List<ToolResult>
+        results: List<ToolResult>,
+        config: ToolLoopConfig = ToolLoopConfig.Default
     ): List<ResponseInputItem> {
         val reasoningItems = events
             .filterIsInstance<OutputItemDoneEvent>()
@@ -60,12 +62,15 @@ class OpenAIResponsesToolAdapter {
             .map { item -> ResponsePassthroughInputItem(item.raw) }
 
         val callItems = calls.map { call -> call.toResponseFunctionCallInput(events) }
-        val outputItems = results.map { result -> result.toResponseFunctionCallOutput() }
+        val outputItems = results.map { result -> result.toResponseFunctionCallOutput(config) }
 
         return reasoningItems + callItems + outputItems
     }
 
-    fun toolResultToResponseInput(result: ToolResult): ResponseFunctionCallOutputItem = result.toResponseFunctionCallOutput()
+    fun toolResultToResponseInput(
+        result: ToolResult,
+        config: ToolLoopConfig = ToolLoopConfig.Default
+    ): ResponseFunctionCallOutputItem = result.toResponseFunctionCallOutput(config)
 
     private fun FunctionCallArgumentsDoneEvent.toToolCall(): ToolCall? {
         val callId = callId.trim().ifBlank { itemId.trim() }
@@ -107,13 +112,13 @@ class OpenAIResponsesToolAdapter {
         )
     }
 
-    private fun ToolResult.toResponseFunctionCallOutput(): ResponseFunctionCallOutputItem = ResponseFunctionCallOutputItem(
+    private fun ToolResult.toResponseFunctionCallOutput(config: ToolLoopConfig): ResponseFunctionCallOutputItem = ResponseFunctionCallOutputItem(
         callId = callId,
         output = toolProtocolJson.encodeToString(
             OpenAIToolResultPayload(
                 name = name,
                 ok = !isError,
-                content = content,
+                content = content.clip(config.maxToolResultChars),
                 metadata = metadata
             )
         )
@@ -131,6 +136,12 @@ class OpenAIResponsesToolAdapter {
         private const val FUNCTION_CALL_OUTPUT_TYPE = "function_call"
         private const val REASONING_OUTPUT_TYPE = "reasoning"
     }
+}
+
+private fun String.clip(maxChars: Int): String {
+    val boundedMax = maxChars.coerceAtLeast(0)
+    if (length <= boundedMax) return this
+    return take(boundedMax).trimEnd()
 }
 
 @Serializable

@@ -68,7 +68,8 @@ class ToolExecutorTest {
                     id = "call_2",
                     name = "fetch_url",
                     arguments = """{"url":"$baseUrl/post"}"""
-                )
+                ),
+                ToolLoopConfig(allowPrivateNetworkFetch = true)
             )
 
             assertFalse(toolResult.isError)
@@ -150,6 +151,60 @@ class ToolExecutorTest {
 
         assertTrue(toolResult.isError)
         assertTrue(toolResult.content.contains("invalid_url_scheme"))
+    }
+
+    @Test
+    fun `private fetch url is rejected by default`() = runBlocking {
+        val executor = builtInExecutor(FakeWebSearchRepository(emptyList()))
+
+        val toolResult = executor.execute(
+            ToolCall(
+                id = "call_6",
+                name = "fetch_url",
+                arguments = """{"url":"http://127.0.0.1/private"}"""
+            )
+        )
+
+        assertTrue(toolResult.isError)
+        assertTrue(toolResult.content.contains("private_url_rejected"))
+    }
+
+    @Test
+    fun `blocked fetch url domain is rejected`() = runBlocking {
+        val executor = builtInExecutor(FakeWebSearchRepository(emptyList()))
+
+        val toolResult = executor.execute(
+            ToolCall(
+                id = "call_7",
+                name = "fetch_url",
+                arguments = """{"url":"https://news.example.com/article"}"""
+            ),
+            ToolLoopConfig(fetchUrlBlockedDomains = setOf("example.com"))
+        )
+
+        assertTrue(toolResult.isError)
+        assertTrue(toolResult.content.contains("blocked_domain:example.com"))
+    }
+
+    @Test
+    fun `web search backend not configured returns clear tool error`() = runBlocking {
+        val executor = builtInExecutor(
+            FakeWebSearchRepository(
+                results = emptyList(),
+                failure = IllegalStateException("web_search_backend_not_configured")
+            )
+        )
+
+        val toolResult = executor.execute(
+            ToolCall(
+                id = "call_8",
+                name = "web_search",
+                arguments = """{"query":"news"}"""
+            )
+        )
+
+        assertTrue(toolResult.isError)
+        assertEquals("web_search_backend_not_configured", toolResult.content)
     }
 
     private fun builtInExecutor(searchRepository: WebSearchRepository): ToolExecutor = ToolExecutor(

@@ -118,6 +118,19 @@ class WebSearchRepositoryImplTest {
     }
 
     @Test
+    fun `blank backend returns configured error`() = runBlocking {
+        val repository = WebSearchRepositoryImpl(
+            httpClient = NetworkClient(CIO)(),
+            config = WebSearchConfig(searxngBaseUrl = "")
+        )
+
+        val result = repository.search("android", limit = 5)
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("web_search_backend_not_configured"))
+    }
+
+    @Test
     fun `http failure returns result failure`() = runBlocking {
         withServer(
             statusCode = 500,

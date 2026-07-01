@@ -33,6 +33,7 @@ class ToolLoopOrchestrator(
         val scratchpad = mutableListOf<ToolMessage>()
         val allCalls = mutableListOf<ToolCall>()
         val allResults = mutableListOf<ToolResult>()
+        val budget = ToolBudgetState(config)
 
         repeat(maxRounds) {
             val toolPrompt = adapter.buildToolPrompt(
@@ -77,7 +78,8 @@ class ToolLoopOrchestrator(
                     val calls = modelOutput.calls
                         .distinctBy { call -> "${call.name}:${call.arguments}" }
                         .take(config.maxToolCallsPerRound.coerceAtLeast(0))
-                    if (calls.isEmpty()) {
+                    val budgetedCalls = budget.select(calls)
+                    if (calls.isEmpty() || (budgetedCalls.allowed.isEmpty() && budgetedCalls.rejected.isEmpty())) {
                         return fallbackOrFailure(
                             adapter = adapter,
                             allCalls = allCalls,
@@ -86,7 +88,10 @@ class ToolLoopOrchestrator(
                         )
                     }
 
-                    val results = executeCallsWithProgress(calls, onProgress)
+                    budgetedCalls.rejected.forEach { rejected ->
+                        onProgress(ApiState.ToolFailed(rejected.name, rejected.content))
+                    }
+                    val results = executeCallsWithProgress(budgetedCalls.allowed, onProgress) + budgetedCalls.rejected
                     allCalls += calls
                     allResults += results
                     calls.forEach { call -> scratchpad += ToolMessage.modelToolCall(call) }
@@ -171,3 +176,57 @@ class ToolLoopOrchestrator(
             ?: name
     }
 }
+
+private class ToolBudgetState(config: ToolLoopConfig) {
+    private var remainingToolCalls = config.maxToolCallsPerChat.coerceAtLeast(0)
+    private var remainingSearchQueries = config.maxSearchQueriesPerChat.coerceAtLeast(0)
+    private var remainingFetchedUrls = config.maxFetchedUrlsPerChat.coerceAtLeast(0)
+    private val maxSearchQueriesPerRequest = config.maxSearchQueriesPerRequest.coerceAtLeast(0)
+    private val maxFetchedUrlsPerRequest = config.maxFetchedUrlsPerRequest.coerceAtLeast(0)
+
+    fun select(calls: List<ToolCall>): BudgetedToolCalls {
+        val allowed = mutableListOf<ToolCall>()
+        val rejected = mutableListOf<ToolResult>()
+        var requestSearchQueries = 0
+        var requestFetchedUrls = 0
+
+        calls.forEach { call ->
+            val rejection = when {
+                remainingToolCalls <= 0 -> "tool_budget_exceeded:max_tool_calls_per_chat"
+                call.name == ToolDefinition.WebSearch.name && requestSearchQueries >= maxSearchQueriesPerRequest ->
+                    "tool_budget_exceeded:max_search_queries_per_request"
+                call.name == ToolDefinition.WebSearch.name && remainingSearchQueries <= 0 ->
+                    "tool_budget_exceeded:max_search_queries_per_chat"
+                call.name == ToolDefinition.FetchUrl.name && requestFetchedUrls >= maxFetchedUrlsPerRequest ->
+                    "tool_budget_exceeded:max_fetched_urls_per_request"
+                call.name == ToolDefinition.FetchUrl.name && remainingFetchedUrls <= 0 ->
+                    "tool_budget_exceeded:max_fetched_urls_per_chat"
+                else -> null
+            }
+
+            if (rejection != null) {
+                rejected += call.errorResult(rejection)
+            } else {
+                allowed += call
+                remainingToolCalls -= 1
+                when (call.name) {
+                    ToolDefinition.WebSearch.name -> {
+                        remainingSearchQueries -= 1
+                        requestSearchQueries += 1
+                    }
+                    ToolDefinition.FetchUrl.name -> {
+                        remainingFetchedUrls -= 1
+                        requestFetchedUrls += 1
+                    }
+                }
+            }
+        }
+
+        return BudgetedToolCalls(allowed, rejected)
+    }
+}
+
+private data class BudgetedToolCalls(
+    val allowed: List<ToolCall>,
+    val rejected: List<ToolResult>
+)

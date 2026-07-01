@@ -4,7 +4,9 @@ import dev.chungjungsoo.gptmobile.data.websearch.FetchedWebPage
 import dev.chungjungsoo.gptmobile.data.websearch.WebPageExtractor
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchRepository
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchResult
+import java.net.InetAddress
 import java.net.URI
+import java.util.Locale
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -29,7 +31,12 @@ class BuiltInTools(
         }
         val resultLimit = config.maxSearchResults.coerceAtLeast(0)
         val results = webSearchRepository.search(query, resultLimit).getOrElse { throwable ->
-            return call.errorResult("web_search_failed:${throwable.message ?: throwable::class.simpleName.orEmpty()}")
+            val message = throwable.message ?: throwable::class.simpleName.orEmpty()
+            return if (message.contains("web_search_backend_not_configured")) {
+                call.errorResult("web_search_backend_not_configured")
+            } else {
+                call.errorResult("web_search_failed:$message")
+            }
         }
         val boundedResults = results
             .filter { it.url.isNotBlank() }
@@ -59,11 +66,11 @@ class BuiltInTools(
         val url = call.stringArgument("url").getOrElse { throwable ->
             return call.errorResult("tool_arguments_invalid:${throwable.message}")
         }
-        if (!url.isPublicHttpUrl()) {
-            return call.errorResult("invalid_url_scheme")
+        val validation = url.validateFetchUrl(config).getOrElse { throwable ->
+            return call.errorResult(throwable.message ?: "invalid_url")
         }
 
-        val page = webPageExtractor.fetchAndExtract(url).getOrElse { throwable ->
+        val page = webPageExtractor.fetchAndExtract(validation.toString()).getOrElse { throwable ->
             return call.errorResult("fetch_url_failed:${throwable.message ?: throwable::class.simpleName.orEmpty()}")
         }
 
@@ -94,10 +101,75 @@ class BuiltInTools(
         value
     }
 
-    private fun String.isPublicHttpUrl(): Boolean = runCatching {
+    private fun String.validateFetchUrl(config: ToolLoopConfig): Result<URI> = runCatching {
         val uri = URI(trim())
-        uri.scheme?.lowercase() in setOf("http", "https") && !uri.host.isNullOrBlank()
-    }.getOrDefault(false)
+        if (uri.scheme?.lowercase() !in setOf("http", "https")) {
+            throw IllegalArgumentException("invalid_url_scheme")
+        }
+
+        val host = uri.host
+            ?.trim()
+            ?.trimEnd('.')
+            ?.lowercase(Locale.US)
+            .orEmpty()
+        if (host.isBlank()) {
+            throw IllegalArgumentException("invalid_url_host")
+        }
+        host.blockedDomain(config.fetchUrlBlockedDomains)?.let { blockedDomain ->
+            throw IllegalArgumentException("blocked_domain:$blockedDomain")
+        }
+        if (!config.allowPrivateNetworkFetch && host.isPrivateOrLocalHost()) {
+            throw IllegalArgumentException("private_url_rejected")
+        }
+
+        uri
+    }
+
+    private fun String.blockedDomain(blockedDomains: Set<String>): String? {
+        val host = this
+        return blockedDomains
+            .map { it.trim().trimStart('.').trimEnd('.').lowercase(Locale.US) }
+            .filter { it.isNotBlank() }
+            .firstOrNull { blockedDomain ->
+                host == blockedDomain || host.endsWith(".$blockedDomain")
+            }
+    }
+
+    private fun String.isPrivateOrLocalHost(): Boolean {
+        if (this == "localhost" || endsWith(".localhost")) return true
+
+        val addresses = runCatching { InetAddress.getAllByName(this).toList() }
+            .getOrElse { return true }
+        return addresses.any { it.isPrivateOrLocalAddress() }
+    }
+
+    private fun InetAddress.isPrivateOrLocalAddress(): Boolean {
+        if (isAnyLocalAddress || isLoopbackAddress || isLinkLocalAddress || isSiteLocalAddress || isMulticastAddress) {
+            return true
+        }
+
+        val bytes = address.map { it.toInt() and 0xff }
+        if (bytes.size == 4) {
+            val first = bytes[0]
+            val second = bytes[1]
+            return first == 0 ||
+                first == 10 ||
+                first == 127 ||
+                (first == 100 && second in 64..127) ||
+                (first == 169 && second == 254) ||
+                (first == 172 && second in 16..31) ||
+                (first == 192 && second == 168)
+        }
+
+        if (bytes.size == 16) {
+            val first = bytes[0]
+            val second = bytes[1]
+            return first in 0xfc..0xfd ||
+                (first == 0xfe && second in 0x80..0xbf)
+        }
+
+        return false
+    }
 
     private fun formatSearchResults(
         query: String,

@@ -26,10 +26,12 @@ class WebPageExtractorTest {
                 <script>console.log("secret")</script>
               </head>
               <body>
+                <nav>Navigation boilerplate</nav>
                 <main>
                   <h1>Hello World</h1>
                   <p>This is readable text.</p>
                 </main>
+                <footer>Footer boilerplate</footer>
               </body>
             </html>
             """.trimIndent()
@@ -46,6 +48,8 @@ class WebPageExtractorTest {
             assertTrue(page.text.contains("Hello World"))
             assertTrue(page.text.contains("This is readable text."))
             assertFalse(page.text.contains("console.log"))
+            assertFalse(page.text.contains("Navigation boilerplate"))
+            assertFalse(page.text.contains("Footer boilerplate"))
         }
     }
 

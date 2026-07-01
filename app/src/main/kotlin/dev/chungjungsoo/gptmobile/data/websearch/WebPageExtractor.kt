@@ -46,7 +46,7 @@ class WebPageExtractor(
 
     fun extract(url: String, html: String, maxTextChars: Int = config.maxTextChars): FetchedWebPage {
         val document = Jsoup.parse(html, url)
-        document.select("script, style, noscript").remove()
+        document.select("script, style, noscript, nav, footer, header, aside, form").remove()
 
         val title = document.title().trim()
         val siteName = document

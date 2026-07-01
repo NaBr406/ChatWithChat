@@ -175,6 +175,60 @@ class ToolLoopOrchestratorTest {
     }
 
     @Test
+    fun `search query budget rejects extra calls as recoverable tool errors`() = runBlocking {
+        val executedCalls = mutableListOf<ToolCall>()
+        val orchestrator = ToolLoopOrchestrator(
+            toolExecutor = recordingExecutor(executedCalls),
+            config = ToolLoopConfig(
+                maxToolRounds = 1,
+                maxToolCallsPerRound = 4,
+                maxSearchQueriesPerRequest = 1
+            )
+        )
+
+        val result = orchestrator.runLoop {
+            Result.success(
+                """
+                {"type":"tool_calls","tool_calls":[
+                  {"id":"call_1","name":"web_search","arguments":{"query":"one"}},
+                  {"id":"call_2","name":"web_search","arguments":{"query":"two"}}
+                ]}
+                """.trimIndent()
+            )
+        }
+
+        assertTrue(result is ToolLoopResult.ToolResults)
+        val toolResults = result as ToolLoopResult.ToolResults
+        assertEquals(listOf("call_1"), executedCalls.map { it.id })
+        assertEquals(2, toolResults.results.size)
+        assertTrue(toolResults.results.single { it.callId == "call_2" }.isError)
+        assertTrue(toolResults.finalAnswerPrompt.orEmpty().contains("tool_budget_exceeded:max_search_queries_per_request"))
+    }
+
+    @Test
+    fun `global tool call budget is enforced across rounds`() = runBlocking {
+        val executedCalls = mutableListOf<ToolCall>()
+        val responses = mutableListOf(
+            """{"type":"tool_calls","tool_calls":[{"id":"call_1","name":"web_search","arguments":{"query":"one"}}]}""",
+            """{"type":"tool_calls","tool_calls":[{"id":"call_2","name":"fetch_url","arguments":{"url":"https://example.com/two"}}]}"""
+        )
+        val orchestrator = ToolLoopOrchestrator(
+            toolExecutor = recordingExecutor(executedCalls),
+            config = ToolLoopConfig(maxToolRounds = 2, maxToolCallsPerChat = 1)
+        )
+
+        val result = orchestrator.runLoop {
+            Result.success(responses.removeAt(0))
+        }
+
+        assertTrue(result is ToolLoopResult.ToolResults)
+        val toolResults = result as ToolLoopResult.ToolResults
+        assertEquals(listOf("call_1"), executedCalls.map { it.id })
+        assertTrue(toolResults.results.single { it.callId == "call_2" }.isError)
+        assertTrue(toolResults.finalAnswerPrompt.orEmpty().contains("tool_budget_exceeded:max_tool_calls_per_chat"))
+    }
+
+    @Test
     fun `final answer prompt can cite urls from tool results`() = runBlocking {
         val executor = ToolExecutor(
             ToolRegistry(
