@@ -127,6 +127,9 @@ class SettingRepositoryImpl @Inject constructor(
     override suspend fun fetchWebSearchMode(): WebSearchMode =
         WebSearchMode.fromStorageValue(settingDataSource.getWebSearchMode())
 
+    override suspend fun fetchWebSearchSearxngBaseUrl(): String =
+        settingDataSource.getWebSearchSearxngBaseUrl()?.trim().orEmpty()
+
     override suspend fun migrateToPlatformV2() {
         val leftOverPlatformV2s = fetchPlatformV2s()
         leftOverPlatformV2s.forEach { platformV2Dao.deletePlatform(it) }
@@ -203,6 +206,10 @@ class SettingRepositoryImpl @Inject constructor(
 
     override suspend fun updateWebSearchMode(mode: WebSearchMode) {
         settingDataSource.updateWebSearchMode(mode.storageValue)
+    }
+
+    override suspend fun updateWebSearchSearxngBaseUrl(baseUrl: String) {
+        settingDataSource.updateWebSearchSearxngBaseUrl(baseUrl.trim().trimEnd('/'))
     }
 
     override suspend fun refreshPlatformModels(platformUid: String): ModelRefreshResult {

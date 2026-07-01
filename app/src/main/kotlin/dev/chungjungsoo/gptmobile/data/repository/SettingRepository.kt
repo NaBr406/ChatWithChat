@@ -21,12 +21,14 @@ interface SettingRepository {
     suspend fun fetchLastSelectedModel(): LastSelectedModel?
     suspend fun fetchMemoryEnabled(): Boolean
     suspend fun fetchWebSearchMode(): WebSearchMode
+    suspend fun fetchWebSearchSearxngBaseUrl(): String
     suspend fun migrateToPlatformV2()
     suspend fun updatePlatforms(platforms: List<Platform>)
     suspend fun updateThemes(themeSetting: ThemeSetting)
     suspend fun updateLastSelectedModel(platformUid: String, model: String, reasoningMode: ReasoningMode = ReasoningMode.AUTO)
     suspend fun updateMemoryEnabled(enabled: Boolean)
     suspend fun updateWebSearchMode(mode: WebSearchMode)
+    suspend fun updateWebSearchSearxngBaseUrl(baseUrl: String)
     suspend fun refreshPlatformModels(platformUid: String): ModelRefreshResult
     suspend fun updatePlatformModelEnabled(platformUid: String, modelId: String, enabled: Boolean)
     suspend fun setPlatformDefaultModel(platformUid: String, modelId: String)

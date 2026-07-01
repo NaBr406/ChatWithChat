@@ -6,7 +6,10 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformModelV2
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
 import dev.chungjungsoo.gptmobile.data.repository.SettingRepository
+import dev.chungjungsoo.gptmobile.data.websearch.WebSearchMode
+import java.net.URI
 import javax.inject.Inject
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -24,6 +27,9 @@ class SettingViewModelV2 @Inject constructor(
     private val _memoryEnabled = MutableStateFlow(false)
     val memoryEnabled: StateFlow<Boolean> = _memoryEnabled.asStateFlow()
 
+    private val _webSearchSettings = MutableStateFlow(WebSearchSettingsState())
+    val webSearchSettings: StateFlow<WebSearchSettingsState> = _webSearchSettings.asStateFlow()
+
     private val _modelManagementState = MutableStateFlow(ModelManagementState())
     val modelManagementState: StateFlow<ModelManagementState> = _modelManagementState.asStateFlow()
 
@@ -34,10 +40,12 @@ class SettingViewModelV2 @Inject constructor(
     val dialogState: StateFlow<DialogState> = _dialogState.asStateFlow()
 
     private var lastAddedPlatformUid: String? = null
+    private var webSearchBaseUrlSaveJob: Job? = null
 
     init {
         fetchPlatforms()
         fetchMemoryEnabled()
+        fetchWebSearchSettings()
     }
 
     fun fetchPlatforms() {
@@ -70,6 +78,41 @@ class SettingViewModelV2 @Inject constructor(
         _memoryEnabled.update { enabled }
         viewModelScope.launch {
             settingRepository.updateMemoryEnabled(enabled)
+        }
+    }
+
+    fun fetchWebSearchSettings() {
+        viewModelScope.launch {
+            _webSearchSettings.update {
+                WebSearchSettingsState(
+                    mode = settingRepository.fetchWebSearchMode(),
+                    searxngBaseUrl = settingRepository.fetchWebSearchSearxngBaseUrl()
+                )
+            }
+        }
+    }
+
+    fun updateWebSearchMode(mode: WebSearchMode) {
+        _webSearchSettings.update { currentState -> currentState.copy(mode = mode) }
+        viewModelScope.launch {
+            settingRepository.updateWebSearchMode(mode)
+        }
+    }
+
+    fun updateWebSearchSearxngBaseUrl(baseUrl: String) {
+        val hasError = !isValidWebSearchBaseUrl(baseUrl)
+        _webSearchSettings.update { currentState ->
+            currentState.copy(
+                searxngBaseUrl = baseUrl,
+                searxngBaseUrlError = hasError
+            )
+        }
+
+        webSearchBaseUrlSaveJob?.cancel()
+        if (hasError) return
+
+        webSearchBaseUrlSaveJob = viewModelScope.launch {
+            settingRepository.updateWebSearchSearxngBaseUrl(baseUrl)
         }
     }
 
@@ -189,6 +232,12 @@ class SettingViewModelV2 @Inject constructor(
         val platformToDelete: Int? = null
     )
 
+    data class WebSearchSettingsState(
+        val mode: WebSearchMode = WebSearchMode.Off,
+        val searxngBaseUrl: String = "",
+        val searxngBaseUrlError: Boolean = false
+    )
+
     sealed class AddPlatformSaveState {
         data object Idle : AddPlatformSaveState()
         data object Saving : AddPlatformSaveState()
@@ -218,5 +267,17 @@ class SettingViewModelV2 @Inject constructor(
                 )
             }
         }
+    }
+
+    private fun isValidWebSearchBaseUrl(baseUrl: String): Boolean {
+        val trimmedBaseUrl = baseUrl.trim()
+        if (trimmedBaseUrl.isBlank()) return true
+
+        val uri = runCatching { URI(trimmedBaseUrl) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase()
+        return (scheme == "http" || scheme == "https") &&
+            !uri.host.isNullOrBlank() &&
+            uri.rawQuery == null &&
+            uri.rawFragment == null
     }
 }

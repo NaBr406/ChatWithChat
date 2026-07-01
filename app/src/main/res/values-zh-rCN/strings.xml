@@ -388,6 +388,17 @@
     <string name="large_images_resized_before_upload">上传前已压缩大图。</string>
     <string name="failed_to_prepare_attachment">附件处理失败。</string>
     <string name="failed_to_copy_attachment">附件复制失败。</string>
+    <string name="settings_section_web_search">联网搜索</string>
+    <string name="web_search_mode_off">关闭</string>
+    <string name="web_search_mode_off_description">不使用搜索工具</string>
+    <string name="web_search_mode_auto">自动</string>
+    <string name="web_search_mode_auto_description">让模型判断是否需要搜索</string>
+    <string name="web_search_mode_always">始终搜索</string>
+    <string name="web_search_mode_always_description">每次回答前尝试搜索最新网页</string>
+    <string name="searxng_base_url">SearXNG 地址</string>
+    <string name="searxng_base_url_hint">https://search.example.com</string>
+    <string name="searxng_base_url_description">搜索后端基础地址。公共实例可能关闭 JSON API。</string>
+    <string name="searxng_base_url_invalid">请输入以 http:// 或 https:// 开头的有效地址</string>
     <string name="tool_web_search_running">正在搜索</string>
     <string name="tool_fetch_url_running">正在读取网页</string>
     <string name="tool_web_search_finished">搜索完成</string>

@@ -369,12 +369,14 @@ private class FakeSettingRepository(
     override suspend fun fetchLastSelectedModel(): LastSelectedModel? = null
     override suspend fun fetchMemoryEnabled(): Boolean = false
     override suspend fun fetchWebSearchMode(): WebSearchMode = WebSearchMode.Off
+    override suspend fun fetchWebSearchSearxngBaseUrl(): String = ""
     override suspend fun migrateToPlatformV2() = Unit
     override suspend fun updatePlatforms(platforms: List<Platform>) = Unit
     override suspend fun updateThemes(themeSetting: ThemeSetting) = Unit
     override suspend fun updateLastSelectedModel(platformUid: String, model: String, reasoningMode: ReasoningMode) = Unit
     override suspend fun updateMemoryEnabled(enabled: Boolean) = Unit
     override suspend fun updateWebSearchMode(mode: WebSearchMode) = Unit
+    override suspend fun updateWebSearchSearxngBaseUrl(baseUrl: String) = Unit
     override suspend fun refreshPlatformModels(platformUid: String): ModelRefreshResult = ModelRefreshResult(platforms.first(), emptyList())
     override suspend fun updatePlatformModelEnabled(platformUid: String, modelId: String, enabled: Boolean) = Unit
     override suspend fun setPlatformDefaultModel(platformUid: String, modelId: String) = Unit

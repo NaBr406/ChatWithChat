@@ -7,12 +7,14 @@ import io.ktor.client.request.parameter
 import io.ktor.client.request.prepareGet
 import io.ktor.http.isSuccess
 import dev.chungjungsoo.gptmobile.data.network.NetworkClient
+import dev.chungjungsoo.gptmobile.data.repository.SettingRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 class WebSearchRepositoryImpl(
     private val httpClient: HttpClient,
-    private val config: WebSearchConfig = WebSearchConfig()
+    private val config: WebSearchConfig = WebSearchConfig(),
+    private val configProvider: (suspend () -> WebSearchConfig)? = null
 ) : WebSearchRepository {
 
     constructor(
@@ -20,14 +22,25 @@ class WebSearchRepositoryImpl(
         config: WebSearchConfig = WebSearchConfig()
     ) : this(networkClient(), config)
 
+    constructor(
+        networkClient: NetworkClient,
+        settingRepository: SettingRepository
+    ) : this(
+        httpClient = networkClient(),
+        configProvider = {
+            WebSearchConfig(searxngBaseUrl = settingRepository.fetchWebSearchSearxngBaseUrl())
+        }
+    )
+
     override suspend fun search(query: String, limit: Int): Result<List<WebSearchResult>> = withContext(Dispatchers.IO) {
+        val activeConfig = configProvider?.invoke() ?: config
         val normalizedQuery = query.trim()
         if (normalizedQuery.isBlank()) return@withContext Result.success(emptyList())
 
-        val boundedLimit = limit.coerceAtMost(config.maxResults).coerceAtLeast(0)
+        val boundedLimit = limit.coerceAtMost(activeConfig.maxResults).coerceAtLeast(0)
         if (boundedLimit == 0) return@withContext Result.success(emptyList())
 
-        val baseUrl = config.searxngBaseUrl.trim().trimEnd('/')
+        val baseUrl = activeConfig.searxngBaseUrl.trim().trimEnd('/')
         if (baseUrl.isBlank()) {
             return@withContext Result.failure(IllegalStateException("web_search_backend_not_configured"))
         }
@@ -37,9 +50,9 @@ class WebSearchRepositoryImpl(
                 parameter("q", normalizedQuery)
                 parameter("format", "json")
                 timeout {
-                    requestTimeoutMillis = config.timeoutMillis
-                    connectTimeoutMillis = config.timeoutMillis
-                    socketTimeoutMillis = config.timeoutMillis
+                    requestTimeoutMillis = activeConfig.timeoutMillis
+                    connectTimeoutMillis = activeConfig.timeoutMillis
+                    socketTimeoutMillis = activeConfig.timeoutMillis
                 }
             }.execute { response ->
                 if (!response.status.isSuccess()) {

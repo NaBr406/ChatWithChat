@@ -73,6 +73,7 @@ class SettingDataSourceImpl @Inject constructor(
     private val lastSelectedReasoningModeKey = stringPreferencesKey("last_selected_reasoning_mode")
     private val memoryEnabledKey = booleanPreferencesKey("memory_enabled")
     private val webSearchModeKey = stringPreferencesKey("web_search_mode")
+    private val webSearchSearxngBaseUrlKey = stringPreferencesKey("web_search_searxng_base_url")
 
     override suspend fun updateDynamicTheme(theme: DynamicTheme) {
         dataStore.edit { pref ->
@@ -148,6 +149,12 @@ class SettingDataSourceImpl @Inject constructor(
         }
     }
 
+    override suspend fun updateWebSearchSearxngBaseUrl(baseUrl: String) {
+        dataStore.edit { pref ->
+            pref[webSearchSearxngBaseUrlKey] = baseUrl
+        }
+    }
+
     override suspend fun getDynamicTheme(): DynamicTheme? {
         val mode = dataStore.data.map { pref ->
             pref[dynamicThemeKey]
@@ -210,5 +217,9 @@ class SettingDataSourceImpl @Inject constructor(
 
     override suspend fun getWebSearchMode(): String? = dataStore.data.map { pref ->
         pref[webSearchModeKey]
+    }.first()
+
+    override suspend fun getWebSearchSearxngBaseUrl(): String? = dataStore.data.map { pref ->
+        pref[webSearchSearxngBaseUrlKey]
     }.first()
 }

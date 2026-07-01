@@ -4,9 +4,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -18,6 +20,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -30,6 +34,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -39,6 +44,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.chungjungsoo.gptmobile.R
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
+import dev.chungjungsoo.gptmobile.data.websearch.WebSearchMode
 import dev.chungjungsoo.gptmobile.util.getClientTypeDisplayName
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -56,6 +62,7 @@ fun SettingScreen(
     val platformState by settingViewModel.platformState.collectAsStateWithLifecycle()
     val dialogState by settingViewModel.dialogState.collectAsStateWithLifecycle()
     val memoryEnabled by settingViewModel.memoryEnabled.collectAsStateWithLifecycle()
+    val webSearchSettings by settingViewModel.webSearchSettings.collectAsStateWithLifecycle()
     val scrollState = rememberScrollState()
     val lifecycleOwner = LocalLifecycleOwner.current
 
@@ -64,6 +71,7 @@ fun SettingScreen(
             if (event == Lifecycle.Event.ON_RESUME) {
                 settingViewModel.fetchPlatforms()
                 settingViewModel.fetchMemoryEnabled()
+                settingViewModel.fetchWebSearchSettings()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -120,6 +128,35 @@ fun SettingScreen(
                     title = stringResource(R.string.memory),
                     description = stringResource(R.string.memory_page_description),
                     onClick = onNavigateToMemory
+                )
+            }
+
+            SettingsSection(title = stringResource(R.string.settings_section_web_search)) {
+                WebSearchModeItem(
+                    mode = WebSearchMode.Off,
+                    selectedMode = webSearchSettings.mode,
+                    title = stringResource(R.string.web_search_mode_off),
+                    description = stringResource(R.string.web_search_mode_off_description),
+                    onSelected = settingViewModel::updateWebSearchMode
+                )
+                WebSearchModeItem(
+                    mode = WebSearchMode.Auto,
+                    selectedMode = webSearchSettings.mode,
+                    title = stringResource(R.string.web_search_mode_auto),
+                    description = stringResource(R.string.web_search_mode_auto_description),
+                    onSelected = settingViewModel::updateWebSearchMode
+                )
+                WebSearchModeItem(
+                    mode = WebSearchMode.Always,
+                    selectedMode = webSearchSettings.mode,
+                    title = stringResource(R.string.web_search_mode_always),
+                    description = stringResource(R.string.web_search_mode_always_description),
+                    onSelected = settingViewModel::updateWebSearchMode
+                )
+                WebSearchBaseUrlItem(
+                    baseUrl = webSearchSettings.searxngBaseUrl,
+                    hasError = webSearchSettings.searxngBaseUrlError,
+                    onBaseUrlChange = settingViewModel::updateWebSearchSearxngBaseUrl
                 )
             }
 
@@ -182,6 +219,59 @@ private fun SettingsRow(
         trailingContent = trailingContent,
         colors = ListItemDefaults.colors(containerColor = Color.Transparent)
     )
+    HorizontalDivider(modifier = Modifier.padding(start = 24.dp))
+}
+
+@Composable
+private fun WebSearchModeItem(
+    mode: WebSearchMode,
+    selectedMode: WebSearchMode,
+    title: String,
+    description: String,
+    onSelected: (WebSearchMode) -> Unit
+) {
+    SettingsRow(
+        title = title,
+        description = description,
+        onClick = { onSelected(mode) },
+        trailingContent = {
+            RadioButton(
+                selected = selectedMode == mode,
+                onClick = { onSelected(mode) }
+            )
+        }
+    )
+}
+
+@Composable
+private fun WebSearchBaseUrlItem(
+    baseUrl: String,
+    hasError: Boolean,
+    onBaseUrlChange: (String) -> Unit
+) {
+    Column(
+        modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp)
+    ) {
+        OutlinedTextField(
+            value = baseUrl,
+            onValueChange = onBaseUrlChange,
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text(stringResource(R.string.searxng_base_url)) },
+            placeholder = { Text(stringResource(R.string.searxng_base_url_hint)) },
+            singleLine = true,
+            isError = hasError,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+            supportingText = {
+                Text(
+                    text = if (hasError) {
+                        stringResource(R.string.searxng_base_url_invalid)
+                    } else {
+                        stringResource(R.string.searxng_base_url_description)
+                    }
+                )
+            }
+        )
+    }
     HorizontalDivider(modifier = Modifier.padding(start = 24.dp))
 }
 

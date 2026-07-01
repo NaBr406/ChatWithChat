@@ -17,6 +17,7 @@ interface SettingDataSource {
     suspend fun updateLastSelectedModel(platformUid: String, model: String, reasoningMode: String)
     suspend fun updateMemoryEnabled(enabled: Boolean)
     suspend fun updateWebSearchMode(mode: String)
+    suspend fun updateWebSearchSearxngBaseUrl(baseUrl: String)
     suspend fun getDynamicTheme(): DynamicTheme?
     suspend fun getThemeMode(): ThemeMode?
     suspend fun getStatus(apiType: ApiType): Boolean?
@@ -31,4 +32,5 @@ interface SettingDataSource {
     suspend fun getLastSelectedReasoningMode(): String?
     suspend fun getMemoryEnabled(): Boolean?
     suspend fun getWebSearchMode(): String?
+    suspend fun getWebSearchSearxngBaseUrl(): String?
 }

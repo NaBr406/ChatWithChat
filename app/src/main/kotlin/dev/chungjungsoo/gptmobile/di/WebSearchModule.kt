@@ -9,6 +9,7 @@ import dev.chungjungsoo.gptmobile.data.network.GoogleAPI
 import dev.chungjungsoo.gptmobile.data.network.GroqAPI
 import dev.chungjungsoo.gptmobile.data.network.NetworkClient
 import dev.chungjungsoo.gptmobile.data.network.OpenAIAPI
+import dev.chungjungsoo.gptmobile.data.repository.SettingRepository
 import dev.chungjungsoo.gptmobile.data.tool.BuiltInTools
 import dev.chungjungsoo.gptmobile.data.tool.JsonToolCallParser
 import dev.chungjungsoo.gptmobile.data.tool.ToolExecutor
@@ -28,8 +29,10 @@ object WebSearchModule {
 
     @Provides
     @Singleton
-    fun provideWebSearchRepository(networkClient: NetworkClient): WebSearchRepository =
-        WebSearchRepositoryImpl(networkClient)
+    fun provideWebSearchRepository(
+        networkClient: NetworkClient,
+        settingRepository: SettingRepository
+    ): WebSearchRepository = WebSearchRepositoryImpl(networkClient, settingRepository)
 
     @Provides
     @Singleton

@@ -499,13 +499,13 @@ Manual checks:
 
 **Implementation:**
 
-- [ ] Add web search mode setting: Off, Auto, Always.
-- [ ] Default to Off.
-- [ ] Add SearXNG base URL setting.
-- [ ] Validate base URL format lightly.
-- [ ] Explain that public SearXNG instances may disable JSON API.
-- [ ] Keep this setting under a relevant group such as "Tools" or "Web Search".
-- [ ] Do not make search silently active after upgrade.
+- [x] Add web search mode setting: Off, Auto, Always.
+- [x] Default to Off.
+- [x] Add SearXNG base URL setting.
+- [x] Validate base URL format lightly.
+- [x] Explain that public SearXNG instances may disable JSON API.
+- [x] Keep this setting under a relevant group such as "Tools" or "Web Search".
+- [x] Do not make search silently active after upgrade.
 
 **Verification:**
 
@@ -684,7 +684,7 @@ Use this order when handing work to Codex:
 - [x] Task 7: Expand To Full Multi-Round Tool Loop
 - [x] Task 8: Add Tool Progress States
 - [x] Task 9: Add Minimal Tool UI
-- [ ] Task 10: Add Settings UI For Web Search
+- [x] Task 10: Add Settings UI For Web Search
 - [ ] Task 11: Add Source Metadata Persistence
 - [ ] Task 12: Add OpenAI Responses Native Tool Calling
 - [ ] Task 13: Add Provider Tool Adapters
