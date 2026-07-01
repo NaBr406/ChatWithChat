@@ -59,7 +59,8 @@ import dev.chungjungsoo.gptmobile.data.network.AnthropicAPI
 import dev.chungjungsoo.gptmobile.data.network.GoogleAPI
 import dev.chungjungsoo.gptmobile.data.network.GroqAPI
 import dev.chungjungsoo.gptmobile.data.network.OpenAIAPI
-import dev.chungjungsoo.gptmobile.data.websearch.SearchDecisionService
+import dev.chungjungsoo.gptmobile.data.tool.ToolLoopOrchestrator
+import dev.chungjungsoo.gptmobile.data.tool.ToolLoopResult
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchMode
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchPromptBuilder
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchRepository
@@ -93,7 +94,7 @@ class ChatRepositoryImpl @Inject constructor(
     private val attachmentUploadCoordinator: AttachmentUploadCoordinator,
     private val contextBuilder: ContextBuilder,
     private val webSearchRepository: WebSearchRepository,
-    private val searchDecisionService: SearchDecisionService,
+    private val toolLoopOrchestrator: ToolLoopOrchestrator,
     private val webSearchPromptBuilder: WebSearchPromptBuilder = WebSearchPromptBuilder()
 ) : ChatRepository {
 
@@ -139,27 +140,124 @@ class ChatRepositoryImpl @Inject constructor(
         platform: PlatformV2,
         memoryPrompt: String?,
         reasoningMode: ReasoningMode
+    ): Flow<ApiState> {
+        val webSearchMode = runCatching { settingRepository.fetchWebSearchMode() }
+            .getOrNull()
+            ?: WebSearchMode.Off
+        return if (webSearchMode == WebSearchMode.Auto) {
+            completeChatWithToolLoopFallback(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+        } else {
+            completeChatByProvider(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+        }
+    }
+
+    private suspend fun completeChatByProvider(
+        userMessages: List<MessageV2>,
+        assistantMessages: List<List<MessageV2>>,
+        platform: PlatformV2,
+        memoryPrompt: String?,
+        reasoningMode: ReasoningMode,
+        extraPrompt: String? = null
     ): Flow<ApiState> = when (platform.compatibleType) {
         ClientType.OPENAI -> {
             // Use Responses API for OpenAI (supports reasoning/thinking)
-            completeChatWithOpenAIResponses(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+            completeChatWithOpenAIResponses(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode, extraPrompt)
         }
 
         ClientType.GROQ -> {
-            completeChatWithGroq(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+            completeChatWithGroq(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode, extraPrompt)
         }
 
         ClientType.OLLAMA, ClientType.OPENROUTER, ClientType.CUSTOM -> {
             // Use Chat Completions API for OpenAI-compatible services
-            completeChatWithOpenAIChatCompletions(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+            completeChatWithOpenAIChatCompletions(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode, extraPrompt)
         }
 
         ClientType.ANTHROPIC -> {
-            completeChatWithAnthropic(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+            completeChatWithAnthropic(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode, extraPrompt)
         }
 
         ClientType.GOOGLE -> {
-            completeChatWithGoogle(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+            completeChatWithGoogle(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode, extraPrompt)
+        }
+    }
+
+    private suspend fun completeChatWithToolLoopFallback(
+        userMessages: List<MessageV2>,
+        assistantMessages: List<List<MessageV2>>,
+        platform: PlatformV2,
+        memoryPrompt: String?,
+        reasoningMode: ReasoningMode
+    ): Flow<ApiState> = flow {
+        emit(ApiState.Loading)
+        val loopResult = toolLoopOrchestrator.runSingleRound { toolPrompt ->
+            collectProviderText(
+                completeChatByProvider(
+                    userMessages = userMessages,
+                    assistantMessages = assistantMessages,
+                    platform = platform,
+                    memoryPrompt = memoryPrompt,
+                    reasoningMode = reasoningMode,
+                    extraPrompt = toolPrompt
+                )
+            )
+        }
+
+        when (loopResult) {
+            is ToolLoopResult.FinalAnswer -> {
+                loopResult.content.takeIf { it.isNotBlank() }?.let { content ->
+                    emit(ApiState.Success(content))
+                }
+                emit(ApiState.Done)
+            }
+            is ToolLoopResult.ToolResults -> {
+                emitProviderStatesSkippingLoading(
+                    completeChatByProvider(
+                        userMessages = userMessages,
+                        assistantMessages = assistantMessages,
+                        platform = platform,
+                        memoryPrompt = memoryPrompt,
+                        reasoningMode = reasoningMode,
+                        extraPrompt = loopResult.finalAnswerPrompt
+                    )
+                )
+            }
+            is ToolLoopResult.Failed -> {
+                emitProviderStatesSkippingLoading(
+                    completeChatByProvider(
+                        userMessages = userMessages,
+                        assistantMessages = assistantMessages,
+                        platform = platform,
+                        memoryPrompt = memoryPrompt,
+                        reasoningMode = reasoningMode
+                    )
+                )
+            }
+        }
+    }.catch { e ->
+        emit(ApiState.Error(e.message ?: "鏈煡閿欒"))
+        emit(ApiState.Done)
+    }
+
+    private suspend fun collectProviderText(states: Flow<ApiState>): Result<String> = runCatching {
+        val text = StringBuilder()
+        var errorMessage: String? = null
+        states.collect { state ->
+            when (state) {
+                is ApiState.Success -> text.append(state.textChunk)
+                is ApiState.Error -> errorMessage = errorMessage ?: state.message
+                else -> {}
+            }
+        }
+        errorMessage?.let { throw IllegalStateException(it) }
+        text.toString()
+    }
+
+    private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.emitProviderStatesSkippingLoading(states: Flow<ApiState>) {
+        states.collect { state ->
+            if (state !is ApiState.Loading) {
+                emit(state)
+            }
         }
     }
 
@@ -168,7 +266,8 @@ class ChatRepositoryImpl @Inject constructor(
         assistantMessages: List<List<MessageV2>>,
         platform: PlatformV2,
         memoryPrompt: String?,
-        reasoningMode: ReasoningMode
+        reasoningMode: ReasoningMode,
+        extraPrompt: String? = null
     ): Flow<ApiState> = try {
         openAIAPI.setToken(platform.token)
         openAIAPI.setAPIUrl(platform.apiUrl)
@@ -177,14 +276,14 @@ class ChatRepositoryImpl @Inject constructor(
             prepare = {
                 val reasoningParameters = mapReasoningMode(platform, reasoningMode)
                 val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
-                val webSearchPrompt = prepareWebSearchPrompt(userMessages, assistantMessages, platform)
+                val webSearchPrompt = prepareWebSearchPrompt(userMessages)
                 val inputMessages = buildResponsesInputMessages(conversationContext.turns, platform.uid)
 
                 ResponsesRequest(
                     model = platform.model,
                     input = inputMessages,
                     stream = true,
-                    instructions = mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary, webSearchPrompt),
+                    instructions = mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary, webSearchPrompt, extraPrompt),
                     temperature = if (reasoningParameters.hasExplicitReasoning) null else platform.temperature,
                     topP = if (reasoningParameters.hasExplicitReasoning) null else platform.topP,
                     reasoning = reasoningParameters.openAIEffort?.let { effort ->
@@ -229,16 +328,17 @@ class ChatRepositoryImpl @Inject constructor(
         assistantMessages: List<List<MessageV2>>,
         platform: PlatformV2,
         memoryPrompt: String?,
-        reasoningMode: ReasoningMode
+        reasoningMode: ReasoningMode,
+        extraPrompt: String? = null
     ): Flow<ApiState> = try {
         streamPreparedApiState(
             prepare = {
                 val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
-                val webSearchPrompt = prepareWebSearchPrompt(userMessages, assistantMessages, platform)
+                val webSearchPrompt = prepareWebSearchPrompt(userMessages)
                 validateInlineBudgetIfNeeded(conversationContext.turns, platform)
                 val messages = buildOpenAIChatMessages(
                     conversationContext.turns,
-                    mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary, webSearchPrompt)
+                    mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary, webSearchPrompt, extraPrompt)
                 )
 
                 createGroqChatCompletionRequest(messages, platform, reasoningMode)
@@ -282,7 +382,8 @@ class ChatRepositoryImpl @Inject constructor(
         assistantMessages: List<List<MessageV2>>,
         platform: PlatformV2,
         memoryPrompt: String?,
-        reasoningMode: ReasoningMode
+        reasoningMode: ReasoningMode,
+        extraPrompt: String? = null
     ): Flow<ApiState> = try {
         openAIAPI.setToken(platform.token)
         openAIAPI.setAPIUrl(platform.apiUrl)
@@ -291,11 +392,11 @@ class ChatRepositoryImpl @Inject constructor(
             prepare = {
                 val reasoningParameters = mapReasoningMode(platform, reasoningMode)
                 val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
-                val webSearchPrompt = prepareWebSearchPrompt(userMessages, assistantMessages, platform)
+                val webSearchPrompt = prepareWebSearchPrompt(userMessages)
                 validateInlineBudgetIfNeeded(conversationContext.turns, platform)
                 val messages = buildOpenAIChatMessages(
                     conversationContext.turns,
-                    mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary, webSearchPrompt)
+                    mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary, webSearchPrompt, extraPrompt)
                 )
 
                 ChatCompletionRequest(
@@ -345,11 +446,7 @@ class ChatRepositoryImpl @Inject constructor(
         )
     }
 
-    private suspend fun prepareWebSearchPrompt(
-        userMessages: List<MessageV2>,
-        assistantMessages: List<List<MessageV2>>,
-        platform: PlatformV2
-    ): String? {
+    private suspend fun prepareWebSearchPrompt(userMessages: List<MessageV2>): String? {
         val webSearchMode = runCatching { settingRepository.fetchWebSearchMode() }
             .getOrNull()
             ?: WebSearchMode.Off
@@ -362,15 +459,7 @@ class ChatRepositoryImpl @Inject constructor(
         val searchQueries = when (webSearchMode) {
             WebSearchMode.Off -> return null
             WebSearchMode.Always -> listOf(latestUserMessage)
-            WebSearchMode.Auto -> {
-                val decision = searchDecisionService.decide(
-                    platform = platform,
-                    latestUserMessage = latestUserMessage,
-                    recentContext = buildSearchDecisionContext(userMessages, assistantMessages)
-                )
-                if (!decision.shouldSearch) return null
-                decision.queries
-            }
+            WebSearchMode.Auto -> return null
         }
 
         return searchWebQueries(searchQueries)
@@ -388,28 +477,6 @@ class ChatRepositoryImpl @Inject constructor(
             }
             .distinctBy { it.url }
             .take(WEB_SEARCH_RESULT_LIMIT)
-
-    private fun buildSearchDecisionContext(
-        userMessages: List<MessageV2>,
-        assistantMessages: List<List<MessageV2>>
-    ): String? {
-        val recentTurns = userMessages.dropLast(1).takeLast(2)
-        if (recentTurns.isEmpty()) return null
-
-        return recentTurns.mapIndexed { index, userMessage ->
-            val assistantText = assistantMessages
-                .getOrNull(userMessages.lastIndex - recentTurns.size + index)
-                ?.firstOrNull()
-                ?.sendableAssistantContent()
-                .orEmpty()
-            listOfNotNull(
-                userMessage.content.trim().takeIf { it.isNotBlank() }?.let { "User: $it" },
-                assistantText.trim().takeIf { it.isNotBlank() }?.let { "Assistant: $it" }
-            ).joinToString("\n")
-        }.filter { it.isNotBlank() }
-            .joinToString("\n\n")
-            .takeIf { it.isNotBlank() }
-    }
 
     private suspend fun ensureProviderReferencesForTurns(
         turns: List<ConversationTurn>,
@@ -615,7 +682,8 @@ class ChatRepositoryImpl @Inject constructor(
         assistantMessages: List<List<MessageV2>>,
         platform: PlatformV2,
         memoryPrompt: String?,
-        reasoningMode: ReasoningMode
+        reasoningMode: ReasoningMode,
+        extraPrompt: String? = null
     ): Flow<ApiState> = try {
         anthropicAPI.setToken(platform.token)
         anthropicAPI.setAPIUrl(platform.apiUrl)
@@ -624,7 +692,7 @@ class ChatRepositoryImpl @Inject constructor(
             prepare = {
                 val reasoningParameters = mapReasoningMode(platform, reasoningMode)
                 val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
-                val webSearchPrompt = prepareWebSearchPrompt(userMessages, assistantMessages, platform)
+                val webSearchPrompt = prepareWebSearchPrompt(userMessages)
                 val messages = buildAnthropicInputMessages(conversationContext.turns, platform.uid)
 
                 MessageRequest(
@@ -632,7 +700,7 @@ class ChatRepositoryImpl @Inject constructor(
                     messages = messages,
                     maxTokens = reasoningParameters.anthropicMaxTokens ?: 4096,
                     stream = platform.stream,
-                    systemPrompt = mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary, webSearchPrompt),
+                    systemPrompt = mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary, webSearchPrompt, extraPrompt),
                     temperature = if (reasoningParameters.hasExplicitReasoning) null else platform.temperature,
                     topP = if (reasoningParameters.hasExplicitReasoning) null else platform.topP,
                     thinking = reasoningParameters.anthropicBudgetTokens?.let { budgetTokens ->
@@ -723,7 +791,8 @@ class ChatRepositoryImpl @Inject constructor(
         assistantMessages: List<List<MessageV2>>,
         platform: PlatformV2,
         memoryPrompt: String?,
-        reasoningMode: ReasoningMode
+        reasoningMode: ReasoningMode,
+        extraPrompt: String? = null
     ): Flow<ApiState> = try {
         googleAPI.setToken(platform.token)
         googleAPI.setAPIUrl(platform.apiUrl)
@@ -732,7 +801,7 @@ class ChatRepositoryImpl @Inject constructor(
             prepare = {
                 val reasoningParameters = mapReasoningMode(platform, reasoningMode)
                 val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
-                val webSearchPrompt = prepareWebSearchPrompt(userMessages, assistantMessages, platform)
+                val webSearchPrompt = prepareWebSearchPrompt(userMessages)
                 val contents = buildGoogleContents(conversationContext.turns, platform.uid)
 
                 GenerateContentRequest(
@@ -747,7 +816,7 @@ class ChatRepositoryImpl @Inject constructor(
                             )
                         }
                     ),
-                    systemInstruction = mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary, webSearchPrompt)?.let {
+                    systemInstruction = mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary, webSearchPrompt, extraPrompt)?.let {
                         Content(
                             parts = listOf(Part.text(it))
                         )

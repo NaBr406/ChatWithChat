@@ -19,7 +19,7 @@ import dev.chungjungsoo.gptmobile.data.network.OpenAIAPI
 import dev.chungjungsoo.gptmobile.data.repository.ChatRepository
 import dev.chungjungsoo.gptmobile.data.repository.ChatRepositoryImpl
 import dev.chungjungsoo.gptmobile.data.repository.SettingRepository
-import dev.chungjungsoo.gptmobile.data.websearch.SearchDecisionService
+import dev.chungjungsoo.gptmobile.data.tool.ToolLoopOrchestrator
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchRepository
 import javax.inject.Singleton
 
@@ -44,7 +44,7 @@ object ChatRepositoryModule {
         attachmentUploadCoordinator: dev.chungjungsoo.gptmobile.data.repository.AttachmentUploadCoordinator,
         contextBuilder: ContextBuilder,
         webSearchRepository: WebSearchRepository,
-        searchDecisionService: SearchDecisionService
+        toolLoopOrchestrator: ToolLoopOrchestrator
     ): ChatRepository = ChatRepositoryImpl(
         context,
         chatRoomDao,
@@ -60,6 +60,6 @@ object ChatRepositoryModule {
         attachmentUploadCoordinator,
         contextBuilder,
         webSearchRepository,
-        searchDecisionService
+        toolLoopOrchestrator
     )
 }

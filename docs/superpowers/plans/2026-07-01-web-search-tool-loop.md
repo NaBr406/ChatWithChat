@@ -317,14 +317,14 @@ Optional later:
 
 **Implementation:**
 
-- [ ] Implement `ToolLoopOrchestrator` with `maxToolRounds=1` for this task.
-- [ ] Ask the model to either return final answer or a JSON list of tool calls.
-- [ ] If final answer is returned, stream it normally.
-- [ ] If tool calls are returned, execute them through `ToolExecutor`.
-- [ ] Inject `ToolResult` content into a second final-answer request.
-- [ ] Keep normal provider completion behavior when web search mode is `Off`.
-- [ ] In `Auto`, use the generic tool loop instead of `SearchDecisionService`.
-- [ ] Keep `SearchDecisionService` only if still useful for low-cost preflight; otherwise remove it in this task.
+- [x] Implement `ToolLoopOrchestrator` with `maxToolRounds=1` for this task.
+- [x] Ask the model to either return final answer or a JSON list of tool calls.
+- [x] If final answer is returned, stream it normally.
+- [x] If tool calls are returned, execute them through `ToolExecutor`.
+- [x] Inject `ToolResult` content into a second final-answer request.
+- [x] Keep normal provider completion behavior when web search mode is `Off`.
+- [x] In `Auto`, use the generic tool loop instead of `SearchDecisionService`.
+- [x] Keep `SearchDecisionService` only if still useful for low-cost preflight; otherwise remove it in this task.
 
 **JSON fallback model output shape:**
 
@@ -354,10 +354,10 @@ Final answer shape:
 
 **Tests:**
 
-- [ ] Model final answer path does not execute tools.
-- [ ] Model tool-call path executes `web_search` and produces second request.
-- [ ] Tool failure is injected into second request as an error result.
-- [ ] More than max allowed tool calls are clipped.
+- [x] Model final answer path does not execute tools.
+- [x] Model tool-call path executes `web_search` and produces second request.
+- [x] Tool failure is injected into second request as an error result.
+- [x] More than max allowed tool calls are clipped.
 
 **Verification:**
 
@@ -680,7 +680,7 @@ Use this order when handing work to Codex:
 - [x] Task 3: Add Auto Search Decision
 - [x] Task 4: Introduce Provider-Neutral Tool Models
 - [x] Task 5: Add Tool Executor
-- [ ] Task 6: Add Single-Round Tool Loop Fallback
+- [x] Task 6: Add Single-Round Tool Loop Fallback
 - [ ] Task 7: Expand To Full Multi-Round Tool Loop
 - [ ] Task 8: Add Tool Progress States
 - [ ] Task 9: Add Minimal Tool UI

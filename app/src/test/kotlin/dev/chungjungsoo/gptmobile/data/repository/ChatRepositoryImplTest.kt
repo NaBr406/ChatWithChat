@@ -17,6 +17,8 @@ import dev.chungjungsoo.gptmobile.data.dto.openai.common.TextContent as OpenAITe
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ChatCompletionRequest
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ResponsesRequest
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.ChatCompletionChunk
+import dev.chungjungsoo.gptmobile.data.dto.openai.response.Choice
+import dev.chungjungsoo.gptmobile.data.dto.openai.response.Delta
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.ResponsesStreamEvent
 import dev.chungjungsoo.gptmobile.data.model.ChatAttachment
 import dev.chungjungsoo.gptmobile.data.model.ClientType
@@ -24,13 +26,17 @@ import dev.chungjungsoo.gptmobile.data.model.ReasoningMode
 import dev.chungjungsoo.gptmobile.data.network.AnthropicAPI
 import dev.chungjungsoo.gptmobile.data.network.GoogleAPI
 import dev.chungjungsoo.gptmobile.data.network.GroqAPI
+import dev.chungjungsoo.gptmobile.data.network.NetworkClient
 import dev.chungjungsoo.gptmobile.data.network.OpenAIAPI
 import dev.chungjungsoo.gptmobile.data.network.UploadedProviderFile
-import dev.chungjungsoo.gptmobile.data.websearch.SearchDecisionModelClient
-import dev.chungjungsoo.gptmobile.data.websearch.SearchDecisionService
+import dev.chungjungsoo.gptmobile.data.tool.BuiltInTools
+import dev.chungjungsoo.gptmobile.data.tool.ToolExecutor
+import dev.chungjungsoo.gptmobile.data.tool.ToolLoopOrchestrator
+import dev.chungjungsoo.gptmobile.data.websearch.WebPageExtractor
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchMode
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchRepository
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchResult
+import io.ktor.client.engine.cio.CIO
 import java.io.File
 import java.lang.reflect.InvocationHandler
 import java.lang.reflect.Proxy
@@ -403,43 +409,61 @@ class ChatRepositoryImplTest {
     }
 
     @Test
-    fun `auto web search uses approved decision queries`() = runBlocking {
+    fun `auto web search uses generic tool loop and injects tool results into final request`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatCompletionFlow(
+                    """{"type":"tool_calls","tool_calls":[{"id":"call_1","name":"web_search","arguments":{"query":"current Android target SDK"}}]}"""
+                ),
+                chatCompletionFlow("Final searched answer")
+            )
+        )
         val webSearchRepository = RecordingWebSearchRepository(
             Result.success(listOf(webSearchResult()))
         )
         val repository = createRepository(
+            openAIAPI = openAIAPI,
             settingRepository = settingRepository(WebSearchMode.Auto),
-            webSearchRepository = webSearchRepository,
-            searchDecisionService = searchDecisionService(
-                """{"shouldSearch":true,"queries":["current Android target SDK","unused third query","extra"],"reason":"current fact"}"""
-            )
+            webSearchRepository = webSearchRepository
         )
 
-        repository.completeChat(
+        val states = repository.completeChat(
             userMessages = listOf(MessageV2(content = "What is the current Android target SDK?", platformType = null)),
             assistantMessages = emptyList(),
             platform = customPlatform()
         ).toList()
 
         assertEquals(
-            listOf("current Android target SDK", "unused third query"),
-            webSearchRepository.queries
+            listOf(
+                ApiState.Loading,
+                ApiState.Success("Final searched answer"),
+                ApiState.Done
+            ),
+            states
         )
+        assertEquals(listOf("current Android target SDK"), webSearchRepository.queries)
+        assertEquals(2, openAIAPI.streamChatCompletionCalls)
+        assertTrue(openAIAPI.chatCompletionRequests[0].systemText().contains("Available tools:"))
+        assertTrue(openAIAPI.chatCompletionRequests[1].systemText().contains("Tool results are available"))
+        assertTrue(openAIAPI.chatCompletionRequests[1].systemText().contains("Example Source"))
+        assertTrue(openAIAPI.chatCompletionRequests[1].systemText().contains("https://example.com/source"))
     }
 
     @Test
-    fun `auto search decision failure does not call web search`() = runBlocking {
+    fun `auto tool loop parse failure falls back to normal chat completion`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatCompletionFlow("not json"),
+                chatCompletionFlow("Normal answer")
+            )
+        )
         val webSearchRepository = RecordingWebSearchRepository(
             Result.success(listOf(webSearchResult()))
         )
         val repository = createRepository(
+            openAIAPI = openAIAPI,
             settingRepository = settingRepository(WebSearchMode.Auto),
-            webSearchRepository = webSearchRepository,
-            searchDecisionService = SearchDecisionService(
-                SearchDecisionModelClient { _, _ ->
-                    Result.failure(IllegalStateException("decision failed"))
-                }
-            )
+            webSearchRepository = webSearchRepository
         )
 
         val states = repository.completeChat(
@@ -448,8 +472,16 @@ class ChatRepositoryImplTest {
             platform = customPlatform()
         ).toList()
 
-        assertEquals(listOf(ApiState.Loading, ApiState.Done), states)
+        assertEquals(
+            listOf(
+                ApiState.Loading,
+                ApiState.Success("Normal answer"),
+                ApiState.Done
+            ),
+            states
+        )
         assertTrue(webSearchRepository.queries.isEmpty())
+        assertEquals(2, openAIAPI.streamChatCompletionCalls)
     }
 
     @Test
@@ -473,9 +505,7 @@ class ChatRepositoryImplTest {
         openAIAPI: OpenAIAPI = RecordingOpenAIAPI(),
         settingRepository: SettingRepository = settingRepository(WebSearchMode.Off),
         webSearchRepository: WebSearchRepository = RecordingWebSearchRepository(),
-        searchDecisionService: SearchDecisionService = searchDecisionService(
-            """{"shouldSearch":false,"queries":[],"reason":"default"}"""
-        )
+        toolLoopOrchestrator: ToolLoopOrchestrator = toolLoopOrchestrator(webSearchRepository)
     ): ChatRepositoryImpl = ChatRepositoryImpl(
         context = ContextWrapper(null),
         chatRoomDao = proxy(),
@@ -495,7 +525,7 @@ class ChatRepositoryImplTest {
         ),
         contextBuilder = ContextBuilder(),
         webSearchRepository = webSearchRepository,
-        searchDecisionService = searchDecisionService
+        toolLoopOrchestrator = toolLoopOrchestrator
     )
 
     private fun groqPlatform(reasoning: Boolean, model: String) = PlatformV2(
@@ -518,8 +548,11 @@ class ChatRepositoryImplTest {
     )
 
     private fun systemText(openAIAPI: RecordingOpenAIAPI): String = openAIAPI.lastChatCompletionRequest
-        ?.messages
-        ?.firstOrNull()
+        ?.systemText()
+        .orEmpty()
+
+    private fun ChatCompletionRequest.systemText(): String = messages
+        .firstOrNull()
         ?.content
         ?.filterIsInstance<OpenAITextContent>()
         ?.firstOrNull()
@@ -549,8 +582,26 @@ class ChatRepositoryImplTest {
         ) as SettingRepository
     }
 
-    private fun searchDecisionService(rawDecision: String): SearchDecisionService =
-        SearchDecisionService(SearchDecisionModelClient { _, _ -> Result.success(rawDecision) })
+    private fun toolLoopOrchestrator(webSearchRepository: WebSearchRepository): ToolLoopOrchestrator =
+        ToolLoopOrchestrator(
+            ToolExecutor(
+                BuiltInTools(
+                    webSearchRepository = webSearchRepository,
+                    webPageExtractor = WebPageExtractor(NetworkClient(CIO))
+                ).registry()
+            )
+        )
+
+    private fun chatCompletionFlow(content: String): Flow<ChatCompletionChunk> = flowOf(
+        ChatCompletionChunk(
+            choices = listOf(
+                Choice(
+                    index = 0,
+                    delta = Delta(content = content)
+                )
+            )
+        )
+    )
 
     @Suppress("UNCHECKED_CAST")
     private inline fun <reified T> proxy(): T {
@@ -607,9 +658,12 @@ class ChatRepositoryImplTest {
         }
     }
 
-    private class RecordingOpenAIAPI : OpenAIAPI {
+    private class RecordingOpenAIAPI(
+        private val chatCompletionResponses: MutableList<Flow<ChatCompletionChunk>> = mutableListOf(emptyFlow())
+    ) : OpenAIAPI {
         var streamChatCompletionCalls = 0
         var lastChatCompletionRequest: ChatCompletionRequest? = null
+        val chatCompletionRequests = mutableListOf<ChatCompletionRequest>()
 
         override fun setToken(token: String?) = Unit
 
@@ -618,7 +672,12 @@ class ChatRepositoryImplTest {
         override fun streamChatCompletion(request: ChatCompletionRequest, timeoutSeconds: Int): Flow<ChatCompletionChunk> {
             streamChatCompletionCalls += 1
             lastChatCompletionRequest = request
-            return emptyFlow()
+            chatCompletionRequests += request
+            return if (chatCompletionResponses.isNotEmpty()) {
+                chatCompletionResponses.removeAt(0)
+            } else {
+                emptyFlow()
+            }
         }
 
         override fun streamResponses(request: ResponsesRequest, timeoutSeconds: Int): Flow<ResponsesStreamEvent> = emptyFlow()

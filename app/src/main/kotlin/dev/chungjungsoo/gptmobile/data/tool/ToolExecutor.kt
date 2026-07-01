@@ -10,6 +10,9 @@ class ToolExecutor(
     private val toolRegistry: ToolRegistry,
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO
 ) {
+    val definitions: List<ToolDefinition>
+        get() = toolRegistry.definitions
+
     suspend fun execute(
         call: ToolCall,
         config: ToolLoopConfig = ToolLoopConfig.Default
