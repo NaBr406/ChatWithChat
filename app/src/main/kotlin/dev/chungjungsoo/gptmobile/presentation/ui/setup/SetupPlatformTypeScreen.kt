@@ -155,7 +155,7 @@ private fun PlatformTypeCard(
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow
         ),
-        shape = RoundedCornerShape(16.dp)
+        shape = RoundedCornerShape(8.dp)
     ) {
         Row(
             modifier = Modifier

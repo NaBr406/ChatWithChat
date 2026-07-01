@@ -175,7 +175,7 @@ private fun PlatformCard(
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow
         ),
-        shape = RoundedCornerShape(16.dp)
+        shape = RoundedCornerShape(8.dp)
     ) {
         Row(
             modifier = Modifier
@@ -236,7 +236,7 @@ private fun AddPlatformCard(
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow
         ),
-        shape = RoundedCornerShape(16.dp)
+        shape = RoundedCornerShape(8.dp)
     ) {
         Row(
             modifier = Modifier

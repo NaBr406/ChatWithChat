@@ -37,10 +37,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.chungjungsoo.gptmobile.R
 import dev.chungjungsoo.gptmobile.data.database.entity.PersonalMemory
 import dev.chungjungsoo.gptmobile.data.memory.MemorySensitivity
 import dev.chungjungsoo.gptmobile.data.memory.MemorySource
@@ -53,6 +55,11 @@ fun MemoryScreen(
     onNavigationClick: () -> Unit
 ) {
     val uiState by memoryViewModel.uiState.collectAsStateWithLifecycle()
+    val pendingTitle = stringResource(R.string.memory_section_pending)
+    val activeTitle = stringResource(R.string.memory_section_active)
+    val inactiveTitle = stringResource(R.string.memory_section_inactive)
+    val noMemoriesText = stringResource(R.string.memory_empty)
+    val emptyExportMarkdown = stringResource(R.string.memory_export_empty_markdown)
 
     LaunchedEffect(Unit) {
         memoryViewModel.loadMemories()
@@ -67,19 +74,19 @@ fun MemoryScreen(
                 ),
                 title = {
                     Text(
-                        text = "记忆",
+                        text = stringResource(R.string.memory),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 },
                 navigationIcon = {
                     IconButton(onClick = onNavigationClick) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.go_back))
                     }
                 },
                 actions = {
                     IconButton(onClick = memoryViewModel::exportMarkdown) {
-                        Icon(Icons.Filled.FileDownload, contentDescription = "导出")
+                        Icon(Icons.Filled.FileDownload, contentDescription = stringResource(R.string.memory_export))
                     }
                 }
             )
@@ -92,9 +99,13 @@ fun MemoryScreen(
             val active = uiState.memories.filter { it.status == MemoryStatus.ACTIVE }
             val inactive = uiState.memories.filter { it.status != MemoryStatus.PENDING_CONFIRMATION && it.status != MemoryStatus.ACTIVE }
 
-            memorySection("待确认", pending, memoryViewModel)
-            memorySection("生效中", active, memoryViewModel)
-            memorySection("已解决与已归档", inactive, memoryViewModel)
+            if (!uiState.memoryEnabled) {
+                item { MemoryDisabledNotice() }
+            }
+
+            memorySection(pendingTitle, pending, noMemoriesText, memoryViewModel)
+            memorySection(activeTitle, active, noMemoriesText, memoryViewModel)
+            memorySection(inactiveTitle, inactive, noMemoriesText, memoryViewModel)
         }
     }
 
@@ -108,26 +119,36 @@ fun MemoryScreen(
 
     uiState.exportMarkdown?.let { markdown ->
         AlertDialog(
-            title = { Text("记忆导出") },
+            title = { Text(stringResource(R.string.memory_export_title)) },
             text = {
                 Text(
-                    text = markdown.ifBlank { "# 用户记忆" },
+                    text = markdown.ifBlank { emptyExportMarkdown },
                     style = MaterialTheme.typography.bodyMedium
                 )
             },
             onDismissRequest = memoryViewModel::closeExport,
             confirmButton = {
                 TextButton(onClick = memoryViewModel::closeExport) {
-                    Text("关闭")
+                    Text(stringResource(R.string.close))
                 }
             }
         )
     }
 }
 
+@Composable
+private fun MemoryDisabledNotice() {
+    ListItem(
+        headlineContent = { Text(stringResource(R.string.memory_disabled_notice_title)) },
+        supportingContent = { Text(stringResource(R.string.memory_disabled_notice_description)) },
+        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+    )
+}
+
 private fun androidx.compose.foundation.lazy.LazyListScope.memorySection(
     title: String,
     memories: List<PersonalMemory>,
+    emptyText: String,
     memoryViewModel: MemoryViewModel
 ) {
     item {
@@ -141,7 +162,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.memorySection(
         item {
             Text(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                text = "暂无记忆",
+                text = emptyText,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -184,10 +205,10 @@ private fun MemoryItem(
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(memory.recallText, maxLines = 3, overflow = TextOverflow.Ellipsis)
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            AssistChip(onClick = {}, label = { Text(memory.type.displayMemoryType()) })
-                            AssistChip(onClick = {}, label = { Text(memory.source.displayMemorySource()) })
-                            AssistChip(onClick = {}, label = { Text(memory.sensitivity.displayMemorySensitivity()) })
-                            AssistChip(onClick = {}, label = { Text(memory.status.displayMemoryStatus()) })
+                            AssistChip(onClick = {}, label = { Text(stringResource(memory.type.memoryTypeStringRes())) })
+                            AssistChip(onClick = {}, label = { Text(stringResource(memory.source.memorySourceStringRes())) })
+                            AssistChip(onClick = {}, label = { Text(stringResource(memory.sensitivity.memorySensitivityStringRes())) })
+                            AssistChip(onClick = {}, label = { Text(stringResource(memory.status.memoryStatusStringRes())) })
                         }
                     }
                 }
@@ -200,23 +221,23 @@ private fun MemoryItem(
             ) {
                 if (memory.status == MemoryStatus.PENDING_CONFIRMATION) {
                     IconButton(onClick = onConfirm) {
-                        Icon(Icons.Filled.Check, contentDescription = "确认")
+                        Icon(Icons.Filled.Check, contentDescription = stringResource(R.string.confirm))
                     }
                     IconButton(onClick = onReject) {
-                        Icon(Icons.Filled.Close, contentDescription = "拒绝")
+                        Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.memory_reject))
                     }
                 }
                 IconButton(onClick = onEdit) {
-                    Icon(Icons.Filled.Edit, contentDescription = "编辑")
+                    Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.edit))
                 }
                 IconButton(onClick = onResolved) {
-                    Icon(Icons.Filled.DoneAll, contentDescription = "标记为已解决")
+                    Icon(Icons.Filled.DoneAll, contentDescription = stringResource(R.string.memory_mark_resolved))
                 }
                 IconButton(onClick = onArchive) {
-                    Icon(Icons.Filled.Archive, contentDescription = "归档")
+                    Icon(Icons.Filled.Archive, contentDescription = stringResource(R.string.memory_archive))
                 }
                 IconButton(onClick = onDelete) {
-                    Icon(Icons.Filled.Delete, contentDescription = "删除")
+                    Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete))
                 }
             }
         }
@@ -233,20 +254,20 @@ private fun EditMemoryDialog(
     var recallText by remember(memory.id) { mutableStateOf(memory.recallText) }
 
     AlertDialog(
-        title = { Text("编辑记忆") },
+        title = { Text(stringResource(R.string.memory_edit_title)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
                     modifier = Modifier.fillMaxWidth(),
                     value = summary,
                     onValueChange = { summary = it },
-                    label = { Text("摘要") }
+                    label = { Text(stringResource(R.string.memory_summary_label)) }
                 )
                 OutlinedTextField(
                     modifier = Modifier.fillMaxWidth(),
                     value = recallText,
                     onValueChange = { recallText = it },
-                    label = { Text("召回文本") },
+                    label = { Text(stringResource(R.string.memory_recall_text_label)) },
                     minLines = 3
                 )
             }
@@ -257,50 +278,50 @@ private fun EditMemoryDialog(
                 enabled = summary.isNotBlank() && recallText.isNotBlank(),
                 onClick = { onSave(summary, recallText) }
             ) {
-                Text("保存")
+                Text(stringResource(R.string.save))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("取消")
+                Text(stringResource(R.string.cancel))
             }
         }
     )
 }
 
-private fun String.displayMemoryType(): String = when (this) {
-    "stable_profile" -> "个人资料"
-    "communication_style" -> "沟通风格"
-    "interest" -> "兴趣"
-    "important_event" -> "重要事件"
-    "important_person" -> "重要人物"
-    "emotional_pattern" -> "情绪模式"
-    "boundary" -> "边界"
-    "life_context" -> "生活背景"
-    "recurring_theme" -> "重复主题"
-    "light_productivity_preference" -> "轻量生产力偏好"
-    else -> "其他类型"
+private fun String.memoryTypeStringRes(): Int = when (this) {
+    "stable_profile" -> R.string.memory_type_stable_profile
+    "communication_style" -> R.string.memory_type_communication_style
+    "interest" -> R.string.memory_type_interest
+    "important_event" -> R.string.memory_type_important_event
+    "important_person" -> R.string.memory_type_important_person
+    "emotional_pattern" -> R.string.memory_type_emotional_pattern
+    "boundary" -> R.string.memory_type_boundary
+    "life_context" -> R.string.memory_type_life_context
+    "recurring_theme" -> R.string.memory_type_recurring_theme
+    "light_productivity_preference" -> R.string.memory_type_light_productivity_preference
+    else -> R.string.memory_type_other
 }
 
-private fun String.displayMemorySource(): String = when (this) {
-    MemorySource.EXPLICIT_USER_STATEMENT -> "用户明确提到"
-    MemorySource.ASSISTANT_INFERRED -> "助手推断"
-    MemorySource.USER_CONFIRMED -> "用户确认"
-    else -> "其他来源"
+private fun String.memorySourceStringRes(): Int = when (this) {
+    MemorySource.EXPLICIT_USER_STATEMENT -> R.string.memory_source_explicit_user_statement
+    MemorySource.ASSISTANT_INFERRED -> R.string.memory_source_assistant_inferred
+    MemorySource.USER_CONFIRMED -> R.string.memory_source_user_confirmed
+    else -> R.string.memory_source_other
 }
 
-private fun String.displayMemorySensitivity(): String = when (this) {
-    MemorySensitivity.NORMAL -> "普通"
-    MemorySensitivity.PRIVATE -> "私密"
-    MemorySensitivity.SENSITIVE -> "敏感"
-    else -> "未分类"
+private fun String.memorySensitivityStringRes(): Int = when (this) {
+    MemorySensitivity.NORMAL -> R.string.memory_sensitivity_normal
+    MemorySensitivity.PRIVATE -> R.string.memory_sensitivity_private
+    MemorySensitivity.SENSITIVE -> R.string.memory_sensitivity_sensitive
+    else -> R.string.memory_sensitivity_uncategorized
 }
 
-private fun String.displayMemoryStatus(): String = when (this) {
-    MemoryStatus.ACTIVE -> "生效中"
-    MemoryStatus.PENDING_CONFIRMATION -> "待确认"
-    MemoryStatus.RESOLVED -> "已解决"
-    MemoryStatus.ARCHIVED -> "已归档"
-    MemoryStatus.SUPERSEDED -> "已替换"
-    else -> "未知状态"
+private fun String.memoryStatusStringRes(): Int = when (this) {
+    MemoryStatus.ACTIVE -> R.string.memory_status_active
+    MemoryStatus.PENDING_CONFIRMATION -> R.string.memory_status_pending
+    MemoryStatus.RESOLVED -> R.string.memory_status_resolved
+    MemoryStatus.ARCHIVED -> R.string.memory_status_archived
+    MemoryStatus.SUPERSEDED -> R.string.memory_status_superseded
+    else -> R.string.memory_status_unknown
 }

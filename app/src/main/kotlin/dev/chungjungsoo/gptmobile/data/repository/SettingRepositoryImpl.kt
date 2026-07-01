@@ -10,6 +10,7 @@ import dev.chungjungsoo.gptmobile.data.dto.ThemeSetting
 import dev.chungjungsoo.gptmobile.data.model.ApiType
 import dev.chungjungsoo.gptmobile.data.model.ClientType
 import dev.chungjungsoo.gptmobile.data.model.DynamicTheme
+import dev.chungjungsoo.gptmobile.data.model.LastSelectedModel
 import dev.chungjungsoo.gptmobile.data.model.ThemeMode
 import javax.inject.Inject
 
@@ -58,6 +59,15 @@ class SettingRepositoryImpl @Inject constructor(
         dynamicTheme = settingDataSource.getDynamicTheme() ?: DynamicTheme.OFF,
         themeMode = settingDataSource.getThemeMode() ?: ThemeMode.SYSTEM
     )
+
+    override suspend fun fetchLastSelectedModel(): LastSelectedModel? {
+        val platformUid = settingDataSource.getLastSelectedModelPlatformUid()?.takeIf { it.isNotBlank() } ?: return null
+        val model = settingDataSource.getLastSelectedModel()?.takeIf { it.isNotBlank() } ?: return null
+
+        return LastSelectedModel(platformUid = platformUid, model = model)
+    }
+
+    override suspend fun fetchMemoryEnabled(): Boolean = settingDataSource.getMemoryEnabled() ?: false
 
     override suspend fun migrateToPlatformV2() {
         val leftOverPlatformV2s = fetchPlatformV2s()
@@ -119,6 +129,18 @@ class SettingRepositoryImpl @Inject constructor(
     override suspend fun updateThemes(themeSetting: ThemeSetting) {
         settingDataSource.updateDynamicTheme(themeSetting.dynamicTheme)
         settingDataSource.updateThemeMode(themeSetting.themeMode)
+    }
+
+    override suspend fun updateLastSelectedModel(platformUid: String, model: String) {
+        val sanitizedPlatformUid = platformUid.trim()
+        val sanitizedModel = model.trim()
+        if (sanitizedPlatformUid.isBlank() || sanitizedModel.isBlank()) return
+
+        settingDataSource.updateLastSelectedModel(sanitizedPlatformUid, sanitizedModel)
+    }
+
+    override suspend fun updateMemoryEnabled(enabled: Boolean) {
+        settingDataSource.updateMemoryEnabled(enabled)
     }
 
     override suspend fun addPlatformV2(platform: PlatformV2) {

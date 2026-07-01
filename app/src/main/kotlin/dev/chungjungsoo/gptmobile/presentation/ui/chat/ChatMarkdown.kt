@@ -222,9 +222,9 @@ private fun CodeBlockWithCopy(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp),
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surfaceContainerLow,
-        tonalElevation = 2.dp,
+        tonalElevation = 0.dp,
         border = BorderStroke(
             width = 1.dp,
             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)

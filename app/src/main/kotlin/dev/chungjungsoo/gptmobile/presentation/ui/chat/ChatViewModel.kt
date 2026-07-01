@@ -1,6 +1,7 @@
 package dev.chungjungsoo.gptmobile.presentation.ui.chat
 
 import android.content.Context
+import android.net.Uri
 import android.util.Log
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.text.input.clearText
@@ -21,6 +22,7 @@ import dev.chungjungsoo.gptmobile.data.database.entity.resetActiveRevision
 import dev.chungjungsoo.gptmobile.data.database.entity.selectRevision
 import dev.chungjungsoo.gptmobile.data.database.entity.snapshotLatestAssistantRevision
 import dev.chungjungsoo.gptmobile.data.memory.MemoryLearningResult
+import dev.chungjungsoo.gptmobile.data.model.LastSelectedModel
 import dev.chungjungsoo.gptmobile.data.repository.AttachmentUploadCoordinator
 import dev.chungjungsoo.gptmobile.data.repository.ChatRepository
 import dev.chungjungsoo.gptmobile.data.repository.MemoryRepository
@@ -74,6 +76,8 @@ class ChatViewModel @Inject constructor(
 
     private val chatRoomId: Int = checkNotNull(savedStateHandle["chatRoomId"])
     private val enabledPlatformString: String = checkNotNull(savedStateHandle["enabledPlatforms"])
+    private val initialQuestion: String = Uri.decode(savedStateHandle.get<String>("initialQuestion").orEmpty())
+    private val initialModel: String = Uri.decode(savedStateHandle.get<String>("initialModel").orEmpty())
     val enabledPlatformsInChat = enabledPlatformString.split(',')
 
     private val currentTimeStamp: Long
@@ -96,6 +100,11 @@ class ChatViewModel @Inject constructor(
 
     private val _chatPlatformModels = MutableStateFlow<Map<String, String>>(emptyMap())
     val chatPlatformModels = _chatPlatformModels.asStateFlow()
+
+    private val _lastSelectedModel = MutableStateFlow<LastSelectedModel?>(null)
+    val lastSelectedModel = _lastSelectedModel.asStateFlow()
+
+    private val _memoryEnabled = MutableStateFlow(false)
 
     // All platforms configured in app (including disabled)
     private val _platformsInApp = MutableStateFlow(listOf<PlatformV2>())
@@ -137,6 +146,7 @@ class ChatViewModel @Inject constructor(
     val isLoaded = _isLoaded.asStateFlow()
 
     private var pendingQuestionText: String? = null
+    private var initialQuestionConsumed = false
     private var lastLearnedMessageSignature: String? = null
     private val memoryLearningSignaturesInFlight = mutableSetOf<String>()
 
@@ -568,10 +578,28 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    fun updateChatPlatformModelAndRemember(platformUid: String, model: String) {
+        if (platformUid !in enabledPlatformsInChat) return
+        val sanitizedModel = model.trim()
+        if (sanitizedModel.isBlank()) return
+
+        _chatPlatformModels.update { it + (platformUid to sanitizedModel) }
+        _lastSelectedModel.update { LastSelectedModel(platformUid = platformUid, model = sanitizedModel) }
+
+        viewModelScope.launch {
+            settingRepository.updateLastSelectedModel(platformUid, sanitizedModel)
+            if (_chatRoom.value.id > 0) {
+                chatRepository.saveChatPlatformModels(_chatRoom.value.id, _chatPlatformModels.value)
+            }
+        }
+    }
+
     private suspend fun prepareMemoryPrompt(
         groupedMessages: GroupedMessages,
         memoryPlatform: PlatformV2?
     ): String? = withContext(Dispatchers.IO) {
+        if (!refreshMemoryEnabled()) return@withContext null
+
         runCatching {
             memoryRepository.prepareMemoryContext(
                 chatRoom = _chatRoom.value,
@@ -609,6 +637,12 @@ class ChatViewModel @Inject constructor(
                 logMemoryLearningResult(result)
             }
         }
+    }
+
+    private suspend fun refreshMemoryEnabled(): Boolean {
+        val enabled = settingRepository.fetchMemoryEnabled()
+        _memoryEnabled.update { enabled }
+        return enabled
     }
 
     private fun logMemoryLearningResult(result: MemoryLearningResult) {
@@ -906,6 +940,7 @@ class ChatViewModel @Inject constructor(
                     chatRepository.fetchChatListV2().first { it.id == chatRoomId }
                 }
             }
+            maybeSendInitialQuestion()
         }
     }
 
@@ -915,10 +950,33 @@ class ChatViewModel @Inject constructor(
             _platformsInApp.update { allPlatforms }
             _enabledPlatformsInApp.update { allPlatforms.filter { it.enabled } }
             initializeChatPlatformModels(allPlatforms)
+            maybeSendInitialQuestion()
         }
     }
 
+    private fun maybeSendInitialQuestion() {
+        if (initialQuestionConsumed) return
+        if (chatRoomId != 0) return
+        if (initialQuestion.isBlank()) return
+        if (_chatRoom.value.id == -1) return
+
+        val enabledPlatformUids = _enabledPlatformsInApp.value.map { it.uid }.toSet()
+        if ((enabledPlatformsInChat.toSet() - enabledPlatformUids).isNotEmpty()) return
+
+        initialQuestionConsumed = true
+        question.setTextAndPlaceCursorAtEnd(initialQuestion)
+        askQuestion()
+    }
+
     private suspend fun initializeChatPlatformModels(platforms: List<PlatformV2>) {
+        val lastSelectedModel = settingRepository.fetchLastSelectedModel()
+            ?.takeIf { selected ->
+                selected.model.isNotBlank() &&
+                    platforms.any { platform -> platform.uid == selected.platformUid && platform.enabled }
+            }
+        _lastSelectedModel.update { lastSelectedModel }
+        _memoryEnabled.update { settingRepository.fetchMemoryEnabled() }
+
         val defaultModels = enabledPlatformsInChat.associateWith { uid ->
             platforms.firstOrNull { it.uid == uid }?.model ?: ""
         }
@@ -927,9 +985,19 @@ class ChatViewModel @Inject constructor(
         } else {
             emptyMap()
         }
+        val routeModelOverrides = if (chatRoomId == 0 && enabledPlatformsInChat.size == 1 && initialModel.isNotBlank()) {
+            mapOf(enabledPlatformsInChat.first() to initialModel.trim())
+        } else {
+            emptyMap()
+        }
 
         val mergedModels = defaultModels.mapValues { (uid, defaultModel) ->
-            persistedModels[uid]?.takeIf { it.isNotBlank() } ?: defaultModel
+            persistedModels[uid]?.takeIf { it.isNotBlank() }
+                ?: routeModelOverrides[uid]
+                ?: lastSelectedModel
+                    ?.takeIf { chatRoomId == 0 && it.platformUid == uid }
+                    ?.model
+                ?: defaultModel
         }
 
         _chatPlatformModels.update { mergedModels }
@@ -967,7 +1035,7 @@ class ChatViewModel @Inject constructor(
                         }
                     }
                     val signature = groupedMessages.memoryLearningSignature(savedChatRoom.id)
-                    if (signature != lastLearnedMessageSignature && signature !in memoryLearningSignaturesInFlight) {
+                    if (refreshMemoryEnabled() && signature != lastLearnedMessageSignature && signature !in memoryLearningSignaturesInFlight) {
                         memoryLearningSignaturesInFlight += signature
                         learnFromSavedChat(savedChatRoom, groupedMessages, memoryPlatform, signature)
                     }

@@ -1,15 +1,17 @@
 package dev.chungjungsoo.gptmobile.presentation.ui.chat
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -22,20 +24,17 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardColors
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
@@ -55,30 +54,28 @@ fun UserChatBubble(
     files: List<String> = emptyList(),
     onLongPress: () -> Unit
 ) {
-    val cardColor = CardColors(
-        containerColor = MaterialTheme.colorScheme.primaryContainer,
-        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-        disabledContentColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.38f),
-        disabledContainerColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.38f)
-    )
-
     Column(horizontalAlignment = Alignment.End) {
-        Card(
+        Surface(
             modifier = modifier
                 .pointerInput(Unit) {
                     detectTapGestures(onLongPress = { onLongPress.invoke() })
                 },
-            shape = RoundedCornerShape(32.dp),
-            colors = cardColor
+            shape = RoundedCornerShape(topStart = 22.dp, topEnd = 8.dp, bottomStart = 22.dp, bottomEnd = 22.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            border = BorderStroke(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.48f)
+            )
         ) {
             ChatMarkdown(
                 content = text,
-                modifier = Modifier.padding(16.dp)
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
             )
         }
         MessageFileThumbnailRow(
             files = files,
-            modifier = Modifier.padding(top = 8.dp)
+            modifier = Modifier.padding(top = 6.dp)
         )
     }
 }
@@ -104,21 +101,12 @@ fun OpponentChatBubble(
     onShowPreviousRevision: () -> Unit = {},
     onShowNextRevision: () -> Unit = {}
 ) {
-    val cardColor = CardColors(
-        containerColor = MaterialTheme.colorScheme.background,
-        contentColor = MaterialTheme.colorScheme.onBackground,
-        disabledContentColor = MaterialTheme.colorScheme.background.copy(alpha = 0.38f),
-        disabledContainerColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.38f)
-    )
-
-    // Show thinking block while loading if we have thoughts but no text yet
     val isThinking = isLoading && thoughts.isNotBlank() && text.isBlank()
 
     Column(modifier = modifier) {
-        // Thinking block (collapsed by default)
         if (thoughts.isNotBlank()) {
             ThinkingBlock(
-                modifier = Modifier.padding(top = 16.dp, start = 8.dp, end = 8.dp),
+                modifier = Modifier.padding(top = 8.dp, bottom = 6.dp),
                 thoughts = thoughts,
                 contentIdentity = contentIdentity,
                 isLoading = isThinking
@@ -126,59 +114,54 @@ fun OpponentChatBubble(
         }
 
         Column {
-            Card(
-                shape = RoundedCornerShape(0.dp),
-                colors = cardColor
-            ) {
-                Column {
-                    val displayText = if (isLoading) text + "●" else text
+            val displayText = if (isLoading) text + "●" else text
 
-                    ChatMarkdown(
-                        content = displayText,
-                        contentIdentity = contentIdentity,
-                        modifier = Modifier
-                            .padding(16.dp)
-                    )
+            ChatMarkdown(
+                content = displayText,
+                contentIdentity = contentIdentity,
+                modifier = Modifier.padding(vertical = 6.dp)
+            )
 
-                    MessageFileThumbnailRow(
-                        files = attachments,
-                        usePrimaryColors = false,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                    )
-                }
-            }
+            MessageFileThumbnailRow(
+                files = attachments,
+                usePrimaryColors = false,
+                modifier = Modifier.padding(top = 6.dp, bottom = 8.dp)
+            )
 
             if (!isLoading) {
                 Row(
-                    modifier = Modifier.padding(start = 16.dp)
+                    modifier = Modifier
+                        .padding(top = 4.dp)
+                        .alpha(0.72f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     if (!isError) {
                         CopyTextIcon(onCopyClick)
-                        Spacer(modifier = Modifier.width(8.dp))
                         SelectTextIcon(onSelectClick)
                         if (canEdit) {
-                            Spacer(modifier = Modifier.width(8.dp))
                             EditTextIcon(onEditClick)
                         }
                     }
                     if (canRetry) {
-                        Spacer(modifier = Modifier.width(8.dp))
                         RetryIcon(onRetryClick)
                     }
                 }
 
                 revisionIndexLabel?.let { label ->
                     Row(
-                        modifier = Modifier.padding(start = 8.dp),
+                        modifier = Modifier.padding(top = 2.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         IconButton(
+                            modifier = Modifier.size(36.dp),
                             enabled = canShowPreviousRevision,
                             onClick = onShowPreviousRevision
                         ) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                                contentDescription = stringResource(R.string.previous_revision)
+                                contentDescription = stringResource(R.string.previous_revision),
+                                modifier = Modifier.size(18.dp)
                             )
                         }
                         Text(
@@ -187,12 +170,14 @@ fun OpponentChatBubble(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         IconButton(
+                            modifier = Modifier.size(36.dp),
                             enabled = canShowNextRevision,
                             onClick = onShowNextRevision
                         ) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                contentDescription = stringResource(R.string.next_revision)
+                                contentDescription = stringResource(R.string.next_revision),
+                                modifier = Modifier.size(18.dp)
                             )
                         }
                     }
@@ -207,20 +192,21 @@ fun GPTMobileIcon(loading: Boolean) {
     Box(
         modifier = Modifier
             .padding(start = 8.dp)
-            .size(40.dp)
-            .clip(RoundedCornerShape(40.dp))
-            .background(color = Color(0xFF00A67D)),
+            .size(32.dp)
+            .clip(RoundedCornerShape(32.dp))
+            .background(color = MaterialTheme.colorScheme.surfaceContainerLow),
         contentAlignment = Alignment.Center
     ) {
         if (loading) {
             CircularProgressIndicator(
-                modifier = Modifier.size(40.dp)
+                modifier = Modifier.size(32.dp),
+                strokeWidth = 2.dp
             )
         }
         Image(
             painter = painterResource(R.drawable.chatwithchat_logo),
             contentDescription = null,
-            modifier = Modifier.size(24.dp)
+            modifier = Modifier.size(20.dp)
         )
     }
 }
@@ -232,68 +218,80 @@ fun PlatformButton(
     selected: Boolean,
     onPlatformClick: () -> Unit
 ) {
-    val buttonContent: @Composable RowScope.() -> Unit = {
-        Spacer(modifier = Modifier.width(12.dp))
-
-        if (isLoading) {
-            CircularProgressIndicator(modifier = Modifier.size(16.dp))
-            Spacer(modifier = Modifier.width(8.dp))
+    Surface(
+        modifier = Modifier
+            .widthIn(max = 152.dp)
+            .heightIn(min = 32.dp)
+            .clickable(onClick = onPlatformClick),
+        shape = RoundedCornerShape(18.dp),
+        color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surfaceContainerLow,
+        contentColor = if (selected) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurfaceVariant
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            if (isLoading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(14.dp),
+                    strokeWidth = 2.dp
+                )
+            }
+            Text(
+                text = name,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.labelMedium
+            )
         }
-
-        Text(
-            text = name,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            color = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.primary
-        )
-        Spacer(modifier = Modifier.width(12.dp))
-        if (isLoading) Spacer(modifier = Modifier.width(4.dp))
     }
-
-    TextButton(
-        modifier = Modifier.widthIn(max = 160.dp),
-        onClick = onPlatformClick,
-        colors = if (selected) ButtonDefaults.filledTonalButtonColors() else ButtonDefaults.textButtonColors(),
-        content = buttonContent
-    )
 }
 
 @Composable
 private fun CopyTextIcon(onCopyClick: () -> Unit) {
-    IconButton(onClick = onCopyClick) {
+    IconButton(modifier = Modifier.size(36.dp), onClick = onCopyClick) {
         Icon(
             imageVector = ImageVector.vectorResource(id = R.drawable.ic_copy),
-            contentDescription = stringResource(R.string.copy_text)
+            contentDescription = stringResource(R.string.copy_text),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp)
         )
     }
 }
 
 @Composable
 private fun SelectTextIcon(onSelectClick: () -> Unit) {
-    IconButton(onClick = onSelectClick) {
+    IconButton(modifier = Modifier.size(36.dp), onClick = onSelectClick) {
         Icon(
             imageVector = ImageVector.vectorResource(id = R.drawable.ic_select),
-            contentDescription = stringResource(R.string.select_text)
+            contentDescription = stringResource(R.string.select_text),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp)
         )
     }
 }
 
 @Composable
 private fun RetryIcon(onRetryClick: () -> Unit) {
-    IconButton(onClick = onRetryClick) {
+    IconButton(modifier = Modifier.size(36.dp), onClick = onRetryClick) {
         Icon(
             Icons.Rounded.Refresh,
-            contentDescription = stringResource(R.string.retry)
+            contentDescription = stringResource(R.string.retry),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp)
         )
     }
 }
 
 @Composable
 private fun EditTextIcon(onEditClick: () -> Unit) {
-    IconButton(onClick = onEditClick) {
+    IconButton(modifier = Modifier.size(36.dp), onClick = onEditClick) {
         Icon(
             imageVector = Icons.Outlined.Edit,
-            contentDescription = stringResource(R.string.edit)
+            contentDescription = stringResource(R.string.edit),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp)
         )
     }
 }
@@ -312,7 +310,7 @@ fun UserChatBubblePreview() {
 
 @Preview
 @Composable
-fun OpponentChatBubblePreview() {
+fun AssistantChatBubblePreview() {
     val sampleText = """
         # Demo
     
@@ -376,12 +374,12 @@ private fun MessageFileThumbnail(
     val file = File(filePath)
     val isImage = isImageFile(file.extension)
     val containerColor = if (usePrimaryColors) {
-        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
+        MaterialTheme.colorScheme.surfaceContainerHigh
     } else {
-        MaterialTheme.colorScheme.surfaceVariant
+        MaterialTheme.colorScheme.surfaceContainerLow
     }
     val contentColor = if (usePrimaryColors) {
-        MaterialTheme.colorScheme.onPrimaryContainer
+        MaterialTheme.colorScheme.onSurfaceVariant
     } else {
         MaterialTheme.colorScheme.onSurfaceVariant
     }

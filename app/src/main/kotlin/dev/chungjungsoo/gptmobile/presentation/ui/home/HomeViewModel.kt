@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatRoomV2
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
+import dev.chungjungsoo.gptmobile.data.model.LastSelectedModel
 import dev.chungjungsoo.gptmobile.data.repository.ChatRepository
 import dev.chungjungsoo.gptmobile.data.repository.SettingRepository
 import javax.inject.Inject
@@ -44,6 +45,9 @@ class HomeViewModel @Inject constructor(
 
     private val _platformState = MutableStateFlow(listOf<PlatformV2>())
     val platformState = _platformState.asStateFlow()
+
+    private val _lastSelectedModel = MutableStateFlow<LastSelectedModel?>(null)
+    val lastSelectedModel = _lastSelectedModel.asStateFlow()
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery = _searchQuery.asStateFlow()
@@ -183,6 +187,7 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             val platforms = settingRepository.fetchPlatformV2s()
             _platformState.update { platforms }
+            _lastSelectedModel.update { selectUsableLastSelectedModel(platforms, settingRepository.fetchLastSelectedModel()) }
 
             if (_chatListState.value.selectedPlatforms.size != platforms.size) {
                 _chatListState.update { it.copy(selectedPlatforms = List(platforms.size) { false }) }
@@ -190,8 +195,18 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    fun updateLastSelectedModel(platformUid: String, model: String) {
+        val sanitizedModel = model.trim()
+        if (platformUid.isBlank() || sanitizedModel.isBlank()) return
+
+        _lastSelectedModel.update { LastSelectedModel(platformUid = platformUid, model = sanitizedModel) }
+        viewModelScope.launch {
+            settingRepository.updateLastSelectedModel(platformUid, sanitizedModel)
+        }
+    }
+
     fun selectChat(chatRoomIdx: Int) {
-        if (chatRoomIdx < 0 || chatRoomIdx > _chatListState.value.chats.size) return
+        if (chatRoomIdx < 0 || chatRoomIdx >= _chatListState.value.chats.size) return
 
         _chatListState.update {
             it.copy(
@@ -208,5 +223,16 @@ class HomeViewModel @Inject constructor(
         if (_chatListState.value.selectedChats.count { it } == 0) {
             disableSelectionMode()
         }
+    }
+
+    private fun selectUsableLastSelectedModel(
+        platforms: List<PlatformV2>,
+        lastSelectedModel: LastSelectedModel?
+    ): LastSelectedModel? {
+        val selectedModel = lastSelectedModel ?: return null
+        val platform = platforms.firstOrNull { it.uid == selectedModel.platformUid && it.enabled } ?: return null
+        val model = selectedModel.model.takeIf { it.isNotBlank() } ?: platform.model
+
+        return LastSelectedModel(platformUid = platform.uid, model = model)
     }
 }

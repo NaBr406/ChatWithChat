@@ -53,27 +53,22 @@ fun ThinkingBlock(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable { isExpanded = !isExpanded }
-                .padding(12.dp),
+                .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = "💭",
-                style = MaterialTheme.typography.titleSmall
-            )
-            Spacer(modifier = Modifier.width(8.dp))
             Text(
                 text = if (isExpanded) {
                     stringResource(R.string.hide_thinking)
                 } else {
                     stringResource(R.string.view_thinking)
                 },
-                style = MaterialTheme.typography.titleSmall,
+                style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f)
             )
@@ -92,7 +87,7 @@ fun ThinkingBlock(
                 } else {
                     stringResource(R.string.expand)
                 },
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f),
                 modifier = Modifier.rotate(rotationAngle)
             )
         }
@@ -109,7 +104,7 @@ fun ThinkingBlock(
                 contentIdentity = contentIdentity,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 12.dp, end = 12.dp, bottom = 12.dp)
+                    .padding(start = 12.dp, end = 12.dp, bottom = 10.dp)
             )
         }
 

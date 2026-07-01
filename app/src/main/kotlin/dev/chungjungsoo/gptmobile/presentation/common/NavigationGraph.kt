@@ -1,11 +1,15 @@
 package dev.chungjungsoo.gptmobile.presentation.common
 
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
@@ -14,8 +18,10 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import androidx.navigation.navigation
+import dev.chungjungsoo.gptmobile.R
+import dev.chungjungsoo.gptmobile.presentation.ui.chat.EmptyChatScreen
 import dev.chungjungsoo.gptmobile.presentation.ui.chat.ChatScreen
-import dev.chungjungsoo.gptmobile.presentation.ui.home.HomeScreen
+import dev.chungjungsoo.gptmobile.presentation.ui.chat.ChatShellScreen
 import dev.chungjungsoo.gptmobile.presentation.ui.memory.MemoryScreen
 import dev.chungjungsoo.gptmobile.presentation.ui.migrate.MigrateScreen
 import dev.chungjungsoo.gptmobile.presentation.ui.setting.AboutScreen
@@ -100,7 +106,6 @@ fun NavGraphBuilder.setupNavigation(
             SetupPlatformWizardScreen(
                 setupViewModel = setupViewModel,
                 onComplete = {
-                    // Go back to platform list after adding a platform
                     navController.popBackStack(Route.SETUP_PLATFORM_LIST, inclusive = false)
                 },
                 onBackAction = { navController.navigateUp() }
@@ -121,26 +126,43 @@ fun NavGraphBuilder.setupNavigation(
 
 fun NavGraphBuilder.homeScreenNavigation(navController: NavHostController) {
     composable(Route.CHAT_LIST) {
-        HomeScreen(
+        ChatShellScreen(
             settingOnClick = { navController.navigate(Route.SETTING_ROUTE) { launchSingleTop = true } },
+            onMemoryClick = { navController.navigate(Route.MEMORY) { launchSingleTop = true } },
+            onAboutClick = { navController.navigate(Route.ABOUT_PAGE) { launchSingleTop = true } },
             onExistingChatClick = { chatRoom ->
-                val enabledPlatformString = chatRoom.enabledPlatform.joinToString(",")
-                navController.navigate(
-                    Route.CHAT_ROOM
-                        .replace(oldValue = "{chatRoomId}", newValue = "${chatRoom.id}")
-                        .replace(oldValue = "{enabledPlatforms}", newValue = enabledPlatformString)
-                )
+                navController.navigateToChatRoom(chatRoom.id, chatRoom.enabledPlatform)
             },
-            navigateToNewChat = {
-                val enabledPlatformString = it.joinToString(",")
-                navController.navigate(
-                    Route.CHAT_ROOM
-                        .replace(oldValue = "{chatRoomId}", newValue = "0")
-                        .replace(oldValue = "{enabledPlatforms}", newValue = enabledPlatformString)
-                )
+            navigateToNewChat = { enabledPlatforms, initialQuestion, initialModel ->
+                navController.navigateToChatRoom(0, enabledPlatforms, initialQuestion, initialModel)
             }
-        )
+        ) { openDrawer, homeViewModel, startNewChat, openModelPicker ->
+            EmptyChatScreen(
+                homeViewModel = homeViewModel,
+                onOpenDrawer = openDrawer,
+                onStartChat = { prompt -> startNewChat(prompt, true) },
+                onAddProvider = { navController.navigate(Route.ADD_PLATFORM) }
+            )
+        }
     }
+}
+
+private fun NavHostController.navigateToChatRoom(
+    chatRoomId: Int,
+    enabledPlatforms: List<String>,
+    initialQuestion: String? = null,
+    initialModel: String? = null
+) {
+    val enabledPlatformString = enabledPlatforms.joinToString(",")
+    val encodedInitialQuestion = Uri.encode(initialQuestion.orEmpty())
+    val encodedInitialModel = Uri.encode(initialModel.orEmpty())
+    navigate(
+        Route.CHAT_ROOM
+            .replace(oldValue = "{chatRoomId}", newValue = "$chatRoomId")
+            .replace(oldValue = "{enabledPlatforms}", newValue = enabledPlatformString)
+            .replace(oldValue = "{initialQuestion}", newValue = encodedInitialQuestion)
+            .replace(oldValue = "{initialModel}", newValue = encodedInitialModel)
+    )
 }
 
 fun NavGraphBuilder.chatScreenNavigation(navController: NavHostController) {
@@ -148,12 +170,28 @@ fun NavGraphBuilder.chatScreenNavigation(navController: NavHostController) {
         Route.CHAT_ROOM,
         arguments = listOf(
             navArgument("chatRoomId") { type = NavType.IntType },
-            navArgument("enabledPlatforms") { defaultValue = "" }
+            navArgument("enabledPlatforms") { defaultValue = "" },
+            navArgument("initialQuestion") { defaultValue = "" },
+            navArgument("initialModel") { defaultValue = "" }
         )
     ) {
-        ChatScreen(
-            onBackAction = { navController.navigateUp() }
-        )
+        ChatShellScreen(
+            settingOnClick = { navController.navigate(Route.SETTING_ROUTE) { launchSingleTop = true } },
+            onMemoryClick = { navController.navigate(Route.MEMORY) { launchSingleTop = true } },
+            onAboutClick = { navController.navigate(Route.ABOUT_PAGE) { launchSingleTop = true } },
+            onExistingChatClick = { chatRoom ->
+                navController.navigateToChatRoom(chatRoom.id, chatRoom.enabledPlatform)
+            },
+            navigateToNewChat = { enabledPlatforms, initialQuestion, initialModel ->
+                navController.navigateToChatRoom(0, enabledPlatforms, initialQuestion, initialModel)
+            }
+        ) { openDrawer, _, _, _ ->
+            ChatScreen(
+                onBackAction = openDrawer,
+                navigationIcon = Icons.Rounded.Menu,
+                navigationIconContentDescription = stringResource(R.string.open_chat_history)
+            )
+        }
     }
 }
 

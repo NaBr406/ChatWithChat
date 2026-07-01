@@ -1,6 +1,7 @@
 package dev.chungjungsoo.gptmobile.presentation.ui.setting
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -15,8 +16,10 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LargeTopAppBar
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
@@ -65,12 +68,14 @@ fun SettingScreen(
     )
     val platformState by settingViewModel.platformState.collectAsStateWithLifecycle()
     val dialogState by settingViewModel.dialogState.collectAsStateWithLifecycle()
+    val memoryEnabled by settingViewModel.memoryEnabled.collectAsStateWithLifecycle()
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 settingViewModel.fetchPlatforms()
+                settingViewModel.fetchMemoryEnabled()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -94,36 +99,48 @@ fun SettingScreen(
                 .padding(innerPadding)
                 .verticalScroll(scrollState)
         ) {
-            ThemeSetting { settingViewModel.openThemeDialog() }
+            SettingsSection(title = stringResource(R.string.settings_section_models_providers)) {
+                SettingItem(
+                    title = stringResource(R.string.add_platform),
+                    description = stringResource(R.string.add_platform_description),
+                    onItemClick = onNavigateToAddPlatform,
+                    showTrailingIcon = false,
+                    showLeadingIcon = true,
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Filled.Add,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                )
 
-            // Add Platform button
-            SettingItem(
-                title = stringResource(R.string.add_platform),
-                description = stringResource(R.string.add_platform_description),
-                onItemClick = onNavigateToAddPlatform,
-                showTrailingIcon = false,
-                showLeadingIcon = true,
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Filled.Add,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary
+                platformState.forEach { platform ->
+                    PlatformItem(
+                        platform = platform,
+                        onItemClick = { onNavigateToPlatformSetting(platform.uid) },
+                        onDeleteClick = { settingViewModel.openDeleteDialog(platform.id) }
                     )
                 }
-            )
-
-            // Dynamic platform list
-            platformState.forEach { platform ->
-                PlatformItem(
-                    platform = platform,
-                    onItemClick = { onNavigateToPlatformSetting(platform.uid) },
-                    onDeleteClick = { settingViewModel.openDeleteDialog(platform.id) }
-                )
             }
 
-            AboutPageItem(onItemClick = onNavigateToAboutPage)
+            SettingsSection(title = stringResource(R.string.settings_section_personalization)) {
+                MemoryEnabledItem(
+                    memoryEnabled = memoryEnabled,
+                    onCheckedChange = settingViewModel::updateMemoryEnabled
+                )
+                MemoryPageItem(onItemClick = onNavigateToMemory)
+            }
 
-            MemoryPageItem(onItemClick = onNavigateToMemory)
+            SettingsSection(title = stringResource(R.string.settings_section_appearance)) {
+                ThemeSetting { settingViewModel.openThemeDialog() }
+            }
+
+            SettingsSection(title = stringResource(R.string.settings_section_app)) {
+                AboutPageItem(onItemClick = onNavigateToAboutPage)
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
 
             if (dialogState.isThemeDialogOpen) {
                 ThemeSettingDialog(settingViewModel)
@@ -134,6 +151,20 @@ fun SettingScreen(
             }
         }
     }
+}
+
+@Composable
+private fun SettingsSection(
+    title: String,
+    content: @Composable () -> Unit
+) {
+    Text(
+        modifier = Modifier.padding(PaddingValues(start = 24.dp, top = 18.dp, end = 24.dp, bottom = 6.dp)),
+        text = title,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.primary
+    )
+    content()
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -198,11 +229,29 @@ fun MemoryPageItem(
     onItemClick: () -> Unit
 ) {
     SettingItem(
-        title = "记忆",
-        description = "长期个性化记忆",
+        title = stringResource(R.string.memory),
+        description = stringResource(R.string.memory_page_description),
         onItemClick = onItemClick,
         showTrailingIcon = true,
         showLeadingIcon = false
+    )
+}
+
+@Composable
+fun MemoryEnabledItem(
+    memoryEnabled: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    ListItem(
+        headlineContent = { Text(stringResource(R.string.memory_enabled_title)) },
+        supportingContent = { Text(stringResource(R.string.memory_enabled_description)) },
+        trailingContent = {
+            Switch(
+                checked = memoryEnabled,
+                onCheckedChange = onCheckedChange
+            )
+        },
+        modifier = Modifier.padding(horizontal = 8.dp)
     )
 }
 

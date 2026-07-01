@@ -20,17 +20,34 @@ class SettingViewModelV2 @Inject constructor(
     private val _platformState = MutableStateFlow(listOf<PlatformV2>())
     val platformState: StateFlow<List<PlatformV2>> = _platformState.asStateFlow()
 
+    private val _memoryEnabled = MutableStateFlow(false)
+    val memoryEnabled: StateFlow<Boolean> = _memoryEnabled.asStateFlow()
+
     private val _dialogState = MutableStateFlow(DialogState())
     val dialogState: StateFlow<DialogState> = _dialogState.asStateFlow()
 
     init {
         fetchPlatforms()
+        fetchMemoryEnabled()
     }
 
     fun fetchPlatforms() {
         viewModelScope.launch {
             val platforms = settingRepository.fetchPlatformV2s()
             _platformState.update { platforms }
+        }
+    }
+
+    fun fetchMemoryEnabled() {
+        viewModelScope.launch {
+            _memoryEnabled.update { settingRepository.fetchMemoryEnabled() }
+        }
+    }
+
+    fun updateMemoryEnabled(enabled: Boolean) {
+        _memoryEnabled.update { enabled }
+        viewModelScope.launch {
+            settingRepository.updateMemoryEnabled(enabled)
         }
     }
 

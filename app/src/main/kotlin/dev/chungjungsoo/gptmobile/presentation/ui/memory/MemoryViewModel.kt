@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.chungjungsoo.gptmobile.data.database.entity.PersonalMemory
 import dev.chungjungsoo.gptmobile.data.repository.MemoryRepository
+import dev.chungjungsoo.gptmobile.data.repository.SettingRepository
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -13,13 +14,15 @@ import kotlinx.coroutines.launch
 
 @HiltViewModel
 class MemoryViewModel @Inject constructor(
-    private val memoryRepository: MemoryRepository
+    private val memoryRepository: MemoryRepository,
+    private val settingRepository: SettingRepository
 ) : ViewModel() {
 
     data class UiState(
         val memories: List<PersonalMemory> = emptyList(),
         val editingMemory: PersonalMemory? = null,
-        val exportMarkdown: String? = null
+        val exportMarkdown: String? = null,
+        val memoryEnabled: Boolean = false
     )
 
     private val _uiState = MutableStateFlow(UiState())
@@ -31,7 +34,12 @@ class MemoryViewModel @Inject constructor(
 
     fun loadMemories() {
         viewModelScope.launch {
-            _uiState.update { it.copy(memories = memoryRepository.getMemories()) }
+            _uiState.update {
+                it.copy(
+                    memories = memoryRepository.getMemories(),
+                    memoryEnabled = settingRepository.fetchMemoryEnabled()
+                )
+            }
         }
     }
 

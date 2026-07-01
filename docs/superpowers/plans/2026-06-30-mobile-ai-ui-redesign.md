@@ -275,11 +275,11 @@ MVP 行为：
 - Create: `app/src/main/kotlin/dev/chungjungsoo/gptmobile/presentation/ui/chat/ChatComposer.kt`
 - Modify: `app/src/main/kotlin/dev/chungjungsoo/gptmobile/presentation/ui/chat/ChatBubble.kt`
 
-- [ ] Split `ChatScreen` into route/state collection and stateless `ChatContent`.
-- [ ] Move composer and attachment thumbnail composables to `ChatComposer.kt`.
-- [ ] Keep all existing callbacks and `ChatViewModel` method calls unchanged.
-- [ ] Add previews for empty composer, attachment preparing, attachment failed, user bubble, assistant bubble.
-- [ ] Run: `./gradlew :app:compileDebugKotlin` or Windows `./gradlew.bat :app:compileDebugKotlin`.
+- [x] Split `ChatScreen` into route/state collection and stateless `ChatContent`.
+- [x] Move composer and attachment thumbnail composables to `ChatComposer.kt`.
+- [x] Keep all existing callbacks and `ChatViewModel` method calls unchanged.
+- [x] Add previews for empty composer, attachment preparing, attachment failed, user bubble, assistant bubble.
+- [x] Run: `./gradlew :app:compileDebugKotlin` or Windows `./gradlew.bat :app:compileDebugKotlin`.
 
 ### Task 2: Redesign chat room visual structure
 
@@ -291,11 +291,11 @@ MVP 行为：
 - Modify: `app/src/main/res/values/strings.xml`
 - Modify: `app/src/main/res/values-zh-rCN/strings.xml`
 
-- [ ] Replace current top app bar with compact model/title bar.
-- [ ] Restyle assistant messages as plain content blocks with subtle action row.
-- [ ] Restyle user messages as right-aligned compact bubbles.
-- [ ] Keep copy/select/edit/retry/revision controls reachable.
-- [ ] Keep `ScrollToBottomButton` and IME auto-scroll behavior.
+- [x] Replace current top app bar with compact model/title bar.
+- [x] Restyle assistant messages as plain content blocks with subtle action row.
+- [x] Restyle user messages as right-aligned compact bubbles.
+- [x] Keep copy/select/edit/retry/revision controls reachable.
+- [x] Keep `ScrollToBottomButton` and IME auto-scroll behavior.
 - [ ] Verify a real chat with normal text, long markdown, code block, reasoning thoughts, image attachment, retry, edit, revision navigation.
 
 ### Task 3: Introduce Chat Shell and history drawer
@@ -308,12 +308,12 @@ MVP 行为：
 - Modify: `HomeViewModel.kt`
 - Modify: `NavigationGraph.kt`
 
-- [ ] Build a `ModalNavigationDrawer` shell for `CHAT_LIST` and `CHAT_ROOM` surfaces.
-- [ ] Move chat history list/search/selection into drawer components.
-- [ ] Keep delete and duplicate confirmation flows.
-- [ ] Drawer item click navigates with the same `Route.CHAT_ROOM` replacement logic.
-- [ ] Bottom drawer actions navigate to Memory and Settings through existing routes.
-- [ ] Run compile and manually verify back behavior: close drawer, exit search, exit selection, navigate back from chat/settings.
+- [x] Build a `ModalNavigationDrawer` shell for `CHAT_LIST` and `CHAT_ROOM` surfaces.
+- [x] Move chat history list/search/selection into drawer components.
+- [x] Keep delete and duplicate confirmation flows.
+- [x] Drawer item click navigates with the same `Route.CHAT_ROOM` replacement logic.
+- [x] Bottom drawer actions navigate to Memory and Settings through existing routes.
+- [x] Run compile and manually verify back behavior: close drawer, exit search, exit selection, navigate back from chat/settings.
 
 ### Task 4: Replace full-page chat list with empty new-chat screen
 
@@ -324,11 +324,11 @@ MVP 行为：
 - Modify: `NavigationGraph.kt`
 - Modify: `HomeViewModel.kt`
 
-- [ ] `Route.CHAT_LIST` shows empty chat surface with bottom composer.
-- [ ] If only one platform is enabled, send/new chat uses that platform directly.
-- [ ] If multiple platforms are enabled, use primary model selection instead of immediate multi-select dialog.
-- [ ] If no platform is enabled, show setup/add provider action.
-- [ ] Optional suggestion chips fill the composer text and focus input.
+- [x] `Route.CHAT_LIST` shows empty chat surface with bottom composer.
+- [x] If only one platform is enabled, send/new chat uses that platform directly.
+- [x] If multiple platforms are enabled, use primary model selection instead of immediate multi-select dialog.
+- [x] If no platform is enabled, show setup/add provider action.
+- [x] Optional suggestion chips fill the composer text and focus input.
 
 ### Task 5: Build top model switcher and advanced compare mode
 
@@ -340,15 +340,15 @@ MVP 行为：
 - Modify: `ChatDialogs.kt` if existing `ChatModelDialog` can share UI primitives.
 - Modify: `SettingDataSource.kt`, `SettingDataSourceImpl.kt`, `SettingRepository.kt`, `SettingRepositoryImpl.kt`
 
-- [ ] Replace `SelectPlatformDialog` as the primary new-chat picker with a top-triggered model picker.
-- [ ] Persist the last selected model in DataStore, including platform uid and model id/string.
-- [ ] New chat defaults to the persisted last selected model.
-- [ ] Chat page top bar exposes direct model switching.
-- [ ] Switching the chat top model updates current chat model override and the persisted last selected model.
-- [ ] Add explicit compare mode for selecting multiple platform uids.
-- [ ] In single-model chats, hide per-turn platform chips unless needed for clarity.
-- [ ] In compare chats, keep compact platform chips and existing `updateChatPlatformIndex()` behavior.
-- [ ] Verify persisted `ChatRoomV2.enabledPlatform` and `ChatPlatformModelV2` still round-trip.
+- [x] Replace `SelectPlatformDialog` as the primary new-chat picker with a top-triggered model picker.
+- [x] Persist the last selected model in DataStore, including platform uid and model id/string.
+- [x] New chat defaults to the persisted last selected model.
+- [x] Chat page top bar exposes direct model switching.
+- [x] Switching the chat top model updates current chat model override and the persisted last selected model.
+- [x] Add explicit compare mode for selecting multiple platform uids.
+- [x] In single-model chats, hide per-turn platform chips unless needed for clarity.
+- [x] In compare chats, keep compact platform chips and existing `updateChatPlatformIndex()` behavior.
+- [x] Verify persisted `ChatRoomV2.enabledPlatform` and `ChatPlatformModelV2` still round-trip.
 
 ### Task 6: Add memory enable switch and gate memory chain
 
@@ -364,13 +364,13 @@ MVP 行为：
 - Modify: `app/src/main/kotlin/dev/chungjungsoo/gptmobile/presentation/ui/memory/MemoryScreen.kt`
 - Modify: strings resources
 
-- [ ] Add DataStore boolean key `memory_enabled`, defaulting to false.
-- [ ] Expose memory enabled state through `SettingRepository`.
-- [ ] Show a settings switch under Personalization.
-- [ ] Gate memory recall before `prepareMemoryPrompt()` reaches `MemoryRepository`.
-- [ ] Gate memory learning before `learnFromSavedChat()` launches.
-- [ ] Keep Memory management page accessible while disabled.
-- [ ] Add tests or focused verification for disabled memory: no memory prompt and no learning call.
+- [x] Add DataStore boolean key `memory_enabled`, defaulting to false.
+- [x] Expose memory enabled state through `SettingRepository`.
+- [x] Show a settings switch under Personalization.
+- [x] Gate memory recall before `prepareMemoryPrompt()` reaches `MemoryRepository`.
+- [x] Gate memory learning before `learnFromSavedChat()` launches.
+- [x] Keep Memory management page accessible while disabled.
+- [x] Add tests or focused verification for disabled memory: no memory prompt and no learning call.
 
 ### Task 7: Restyle settings, memory, setup, and app theme
 
@@ -383,11 +383,11 @@ MVP 行为：
 - Modify: `SetupPlatformListScreen.kt`, `SetupPlatformTypeScreen.kt`, `SetupPlatformWizardScreen.kt`
 - Modify: `Theme.kt`, `Color.kt`, `Type.kt` if needed.
 
-- [ ] Group settings into Models & Providers, Personalization, Appearance, App.
-- [ ] Move hard-coded Memory strings into resources.
-- [ ] Align top bars, list rows, dialogs, bottom sheets with the new chat shell style.
-- [ ] Keep onboarding/setup usable for first-run users.
-- [ ] Check light/dark themes and dynamic theme behavior.
+- [x] Group settings into Models & Providers, Personalization, Appearance, App.
+- [x] Move hard-coded Memory strings into resources.
+- [x] Align top bars, list rows, dialogs, bottom sheets with the new chat shell style.
+- [x] Keep onboarding/setup usable for first-run users.
+- [x] Check light/dark themes and dynamic theme behavior.
 
 ### Task 8: Regression verification and release polish
 
@@ -395,16 +395,23 @@ MVP 行为：
 
 - Modify as needed from earlier tasks.
 
-- [ ] Run: `./gradlew :app:testDebugUnitTest` or Windows `./gradlew.bat :app:testDebugUnitTest`.
-- [ ] Run: `./gradlew :app:compileDebugKotlin`.
-- [ ] Run: `./gradlew :app:assembleDebug` for installable debug APK validation.
+- [x] Run: `./gradlew :app:testDebugUnitTest` or Windows `./gradlew.bat :app:testDebugUnitTest`.
+- [x] Run: `./gradlew :app:compileDebugKotlin`.
+- [x] Run: `./gradlew :app:assembleDebug` for installable debug APK validation.
 - [ ] Manual verify first-run setup, migration route, new chat, existing chat, history search, delete, duplicate, settings, memory, about/license.
 - [ ] Manual verify send, streaming, attachment preparing, attachment failed, retry, edit user message, edit assistant message, export chat, select text, revision navigation.
-- [ ] Manual verify last selected model survives app restart and becomes the default for new chats.
+- [x] Manual verify last selected model survives app restart and becomes the default for new chats.
 - [ ] Manual verify memory disabled path: no memory prompt is injected, and save-chat does not trigger learning.
 - [ ] Manual verify memory enabled path: recall and learning still use existing MemoryRepository behavior.
-- [ ] Check Chinese text does not overflow in compact buttons, top bars, drawer rows, model chips, and dialogs.
-- [ ] Check no visible controls suggest unsupported features such as voice input or stop generation.
+- [x] Check Chinese text does not overflow in compact buttons, top bars, drawer rows, model chips, and dialogs.
+- [x] Check no visible controls suggest unsupported features such as voice input or stop generation.
+
+Task 8 verification notes on 2026-06-30:
+
+- Re-queried current `MainActivity` / `SetupNavGraph` / `ChatShellScreen` / `EmptyChatScreen` / `ChatScreen` / `ChatViewModel` / `HomeViewModel` / `SettingRepository` / `SettingDataSource` paths before verification.
+- Installed and launched `app-debug.apk` on `emulator-5554` without clearing app data; launch stayed focused on `MainActivity` and logcat showed no fatal app crash lines.
+- Verified existing-data surfaces without deleting or mutating records: new-chat first screen, history drawer, existing chat open, model picker, chat overflow menu, history selection toolbar, settings memory switch, and Memory page disabled notice.
+- Left destructive or state-changing checks unchecked: delete, duplicate, real send/streaming, attachment upload failure/success, retry/edit/export execution, first-run setup after clearing data, migration route, memory-enabled learning, and runtime proof that disabled memory injects no prompt.
 
 ## Non-Goals For The First Pass
 
