@@ -66,14 +66,18 @@ import dev.chungjungsoo.gptmobile.data.network.GoogleAPI
 import dev.chungjungsoo.gptmobile.data.network.GroqAPI
 import dev.chungjungsoo.gptmobile.data.network.OpenAIAPI
 import dev.chungjungsoo.gptmobile.data.tool.ToolDefinition
+import dev.chungjungsoo.gptmobile.data.tool.ToolCall
 import dev.chungjungsoo.gptmobile.data.tool.ToolLoopOrchestrator
 import dev.chungjungsoo.gptmobile.data.tool.ToolLoopResult
 import dev.chungjungsoo.gptmobile.data.tool.ToolResult
+import dev.chungjungsoo.gptmobile.data.tool.toolProtocolJson
 import dev.chungjungsoo.gptmobile.data.tool.provider.AnthropicToolAdapter
 import dev.chungjungsoo.gptmobile.data.tool.provider.GoogleToolAdapter
 import dev.chungjungsoo.gptmobile.data.tool.provider.OpenAICompatibleJsonToolAdapter
 import dev.chungjungsoo.gptmobile.data.tool.provider.OpenAIResponsesToolAdapter
 import dev.chungjungsoo.gptmobile.data.tool.provider.ToolCallingAdapter
+import dev.chungjungsoo.gptmobile.data.websearch.SearchDecision
+import dev.chungjungsoo.gptmobile.data.websearch.SearchDecisionService
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchMode
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchPromptBuilder
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchRepository
@@ -82,6 +86,9 @@ import dev.chungjungsoo.gptmobile.util.AttachmentPayloadCache
 import dev.chungjungsoo.gptmobile.util.FileUtils
 import dev.chungjungsoo.gptmobile.util.isAssistantErrorMessage
 import dev.chungjungsoo.gptmobile.util.stripAssistantErrorNote
+import java.time.ZoneId
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -91,6 +98,9 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 
 class ChatRepositoryImpl @Inject constructor(
     @param:ApplicationContext private val context: Context,
@@ -108,6 +118,7 @@ class ChatRepositoryImpl @Inject constructor(
     private val contextBuilder: ContextBuilder,
     private val webSearchRepository: WebSearchRepository,
     private val toolLoopOrchestrator: ToolLoopOrchestrator,
+    private val searchDecisionService: SearchDecisionService? = null,
     private val webSearchPromptBuilder: WebSearchPromptBuilder = WebSearchPromptBuilder(),
     private val openAIResponsesToolAdapter: OpenAIResponsesToolAdapter = OpenAIResponsesToolAdapter(),
     private val openAICompatibleJsonToolAdapter: ToolCallingAdapter = OpenAICompatibleJsonToolAdapter(),
@@ -211,6 +222,25 @@ class ChatRepositoryImpl @Inject constructor(
         reasoningMode: ReasoningMode
     ): Flow<ApiState> = flow {
         emit(ApiState.Loading)
+        val searchDecisionPrompt = executeSearchDecisionIfNeeded(
+            userMessages = userMessages,
+            assistantMessages = assistantMessages,
+            platform = platform
+        )
+        if (searchDecisionPrompt != null) {
+            emitProviderStatesSkippingLoading(
+                completeChatByProvider(
+                    userMessages = userMessages,
+                    assistantMessages = assistantMessages,
+                    platform = platform,
+                    memoryPrompt = memoryPrompt,
+                    reasoningMode = reasoningMode,
+                    extraPrompt = searchDecisionPrompt
+                )
+            )
+            return@flow
+        }
+
         val toolCallingAdapter = toolCallingAdapterFor(platform.compatibleType)
         val loopResult = toolLoopOrchestrator.runLoop(
             adapter = toolCallingAdapter,
@@ -278,6 +308,66 @@ class ChatRepositoryImpl @Inject constructor(
         ClientType.CUSTOM -> openAICompatibleJsonToolAdapter
     }
 
+    private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.executeSearchDecisionIfNeeded(
+        userMessages: List<MessageV2>,
+        assistantMessages: List<List<MessageV2>>,
+        platform: PlatformV2
+    ): String? {
+        val decision = runCatching {
+            searchDecisionService?.decide(
+                platform = platform,
+                latestUserMessage = userMessages.lastOrNull()?.content.orEmpty(),
+                recentContext = searchDecisionRecentContext(userMessages, assistantMessages, platform)
+            )
+        }.getOrNull()
+            ?.takeIf { it.shouldSearch }
+            ?: return null
+
+        val calls = decision.toWebSearchToolCalls()
+        if (calls.isEmpty()) return null
+
+        val results = toolLoopOrchestrator.executeToolCalls(calls) { progress ->
+            emit(progress)
+        }
+        results.toMessageSourceMetadata().takeIf { it.isNotEmpty() }?.let { sources ->
+            emit(ApiState.SourcesUpdated(sources))
+        }
+
+        return openAICompatibleJsonToolAdapter.buildFinalAnswerPrompt(
+            results = results,
+            draftFinalAnswer = null,
+            config = toolLoopOrchestrator.configuration
+        )
+    }
+
+    private fun searchDecisionRecentContext(
+        userMessages: List<MessageV2>,
+        assistantMessages: List<List<MessageV2>>,
+        platform: PlatformV2
+    ): String? {
+        val recentTurns = userMessages
+            .dropLast(1)
+            .takeLast(2)
+            .mapIndexedNotNull { offset, userMessage ->
+                val absoluteIndex = (userMessages.size - 1 - minOf(2, userMessages.size - 1)) + offset
+                val assistantMessage = assistantMessages
+                    .getOrNull(absoluteIndex)
+                    ?.firstOrNull { message -> message.platformType == platform.uid }
+                buildString {
+                    userMessage.content.trim().takeIf { it.isNotBlank() }?.let { content ->
+                        append("User: ")
+                        appendLine(content.take(400))
+                    }
+                    assistantMessage?.sendableAssistantContent()?.trim()?.takeIf { it.isNotBlank() }?.let { content ->
+                        append("Assistant: ")
+                        appendLine(content.take(400))
+                    }
+                }.trim().takeIf { it.isNotBlank() }
+            }
+
+        return recentTurns.joinToString(separator = "\n\n").takeIf { it.isNotBlank() }
+    }
+
     private suspend fun collectProviderText(states: Flow<ApiState>): Result<String> = runCatching {
         val text = StringBuilder()
         var errorMessage: String? = null
@@ -320,6 +410,7 @@ class ChatRepositoryImpl @Inject constructor(
                 input = inputMessages,
                 instructions = mergePromptSections(
                     platform.systemPrompt,
+                    currentRuntimeContextPrompt(),
                     memoryPrompt,
                     conversationContext.summary,
                     OPENAI_NATIVE_TOOL_INSTRUCTION
@@ -340,6 +431,25 @@ class ChatRepositoryImpl @Inject constructor(
         val continuationItems = mutableListOf<ResponseInputItem>()
         val allResults = mutableListOf<ToolResult>()
         val maxRounds = config.maxToolRounds.coerceAtLeast(1)
+
+        val searchDecisionPrompt = executeSearchDecisionIfNeeded(
+            userMessages = userMessages,
+            assistantMessages = assistantMessages,
+            platform = platform
+        )
+        if (searchDecisionPrompt != null) {
+            emitProviderStatesSkippingLoading(
+                completeChatWithOpenAIResponses(
+                    userMessages = userMessages,
+                    assistantMessages = assistantMessages,
+                    platform = platform,
+                    memoryPrompt = memoryPrompt,
+                    reasoningMode = reasoningMode,
+                    extraPrompt = searchDecisionPrompt
+                )
+            )
+            return@flow
+        }
 
         repeat(maxRounds) {
             val round = collectOpenAIResponsesNativeRound(
@@ -472,7 +582,7 @@ class ChatRepositoryImpl @Inject constructor(
                         model = platform.model,
                         input = inputMessages,
                         stream = true,
-                        instructions = mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary, webSearchContext.prompt, extraPrompt),
+                        instructions = mergePromptSections(platform.systemPrompt, currentRuntimeContextPrompt(), memoryPrompt, conversationContext.summary, webSearchContext.prompt, extraPrompt),
                         temperature = if (reasoningParameters.hasExplicitReasoning) null else platform.temperature,
                         topP = if (reasoningParameters.hasExplicitReasoning) null else platform.topP,
                         reasoning = reasoningParameters.openAIEffort?.let { effort ->
@@ -530,7 +640,7 @@ class ChatRepositoryImpl @Inject constructor(
                 validateInlineBudgetIfNeeded(conversationContext.turns, platform)
                 val messages = buildOpenAIChatMessages(
                     conversationContext.turns,
-                    mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary, webSearchContext.prompt, extraPrompt)
+                    mergePromptSections(platform.systemPrompt, currentRuntimeContextPrompt(), memoryPrompt, conversationContext.summary, webSearchContext.prompt, extraPrompt)
                 )
 
                 ProviderRequestWithSources(
@@ -592,7 +702,7 @@ class ChatRepositoryImpl @Inject constructor(
                 validateInlineBudgetIfNeeded(conversationContext.turns, platform)
                 val messages = buildOpenAIChatMessages(
                     conversationContext.turns,
-                    mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary, webSearchContext.prompt, extraPrompt)
+                    mergePromptSections(platform.systemPrompt, currentRuntimeContextPrompt(), memoryPrompt, conversationContext.summary, webSearchContext.prompt, extraPrompt)
                 )
 
                 ProviderRequestWithSources(
@@ -904,7 +1014,7 @@ class ChatRepositoryImpl @Inject constructor(
                         messages = messages,
                         maxTokens = reasoningParameters.anthropicMaxTokens ?: 4096,
                         stream = platform.stream,
-                        systemPrompt = mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary, webSearchContext.prompt, extraPrompt),
+                        systemPrompt = mergePromptSections(platform.systemPrompt, currentRuntimeContextPrompt(), memoryPrompt, conversationContext.summary, webSearchContext.prompt, extraPrompt),
                         temperature = if (reasoningParameters.hasExplicitReasoning) null else platform.temperature,
                         topP = if (reasoningParameters.hasExplicitReasoning) null else platform.topP,
                         thinking = reasoningParameters.anthropicBudgetTokens?.let { budgetTokens ->
@@ -1024,7 +1134,7 @@ class ChatRepositoryImpl @Inject constructor(
                                 )
                             }
                         ),
-                        systemInstruction = mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary, webSearchContext.prompt, extraPrompt)?.let {
+                        systemInstruction = mergePromptSections(platform.systemPrompt, currentRuntimeContextPrompt(), memoryPrompt, conversationContext.summary, webSearchContext.prompt, extraPrompt)?.let {
                             Content(
                                 parts = listOf(Part.text(it))
                             )
@@ -1362,6 +1472,7 @@ private const val MAX_SEARCH_QUERY_COUNT = 2
 private const val MAX_SOURCE_SNIPPET_CHARS = 240
 private const val OPENAI_NATIVE_TOOL_INSTRUCTION =
     "Use the available tools only when the latest user request needs current web information or source inspection. " +
+        "Do not use web_search for the user's local date, time, timezone, device state, or app settings. " +
         "Prefer answering directly when the conversation is enough. If you use web sources, cite source URLs in the answer."
 private const val OPENAI_NATIVE_FINAL_TOOL_INSTRUCTION =
     "Do not call more tools. Use the available function_call_output items when relevant and provide the final answer."
@@ -1419,6 +1530,23 @@ private fun List<WebSearchResult>.toMessageSourceMetadata(sourceToolName: String
         }
     }.dedupeMessageSources()
 
+private fun SearchDecision.toWebSearchToolCalls(): List<ToolCall> = queries
+    .map { it.trim() }
+    .filter { it.isNotBlank() }
+    .distinct()
+    .take(MAX_SEARCH_QUERY_COUNT)
+    .mapIndexed { index, query ->
+        ToolCall(
+            id = "search_decision_${index + 1}",
+            name = ToolDefinition.WebSearch.name,
+            arguments = toolProtocolJson.encodeToString(
+                buildJsonObject {
+                    put("query", JsonPrimitive(query))
+                }
+            )
+        )
+    }
+
 private fun List<ToolResult>.toMessageSourceMetadata(): List<MessageSourceMetadata> =
     flatMap { result -> result.toMessageSourceMetadata() }.dedupeMessageSources()
 
@@ -1465,6 +1593,14 @@ private fun String.toSourceSnippet(): String = trim()
     .take(MAX_SOURCE_SNIPPET_CHARS)
 
 internal fun mergeSystemPrompt(basePrompt: String?, memoryPrompt: String?): String? = mergePromptSections(basePrompt, memoryPrompt)
+
+internal fun currentRuntimeContextPrompt(): String {
+    val zone = ZoneId.systemDefault()
+    val now = ZonedDateTime.now(zone)
+    return "Runtime context:\n" +
+        "- Current local date/time: ${now.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)} (${zone.id}).\n" +
+        "- Use this runtime context for simple date, time, and timezone questions. Do not call web_search to determine local clock time."
+}
 
 internal fun mergePromptSections(vararg sections: String?): String? = sections
     .mapNotNull { section -> section?.trim()?.takeIf { it.isNotBlank() } }

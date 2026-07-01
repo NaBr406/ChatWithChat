@@ -24,6 +24,7 @@ class ToolPromptBuilder(
             appendLine("- Use at most ${config.maxToolCallsPerRound.coerceAtLeast(0)} tool calls in one response.")
             appendLine("- Use at most ${config.maxToolRounds.coerceAtLeast(0)} tool rounds before returning final_answer.")
             appendLine("- Keep arguments concise and match each tool parameter schema.")
+            appendLine("- Do not call web_search for the user's local date, time, timezone, device state, or app settings.")
             appendLine("- After web_search results, use fetch_url only for pages that are clearly worth reading.")
             appendLine("- Prefer final_answer when the existing conversation is enough.")
             appendLine()

@@ -1,7 +1,9 @@
 package dev.chungjungsoo.gptmobile.data.context
 
+import dev.chungjungsoo.gptmobile.data.database.entity.MessageSourceMetadata
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
+import dev.chungjungsoo.gptmobile.data.database.entity.effectiveContent
 import dev.chungjungsoo.gptmobile.data.model.ClientType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -94,6 +96,40 @@ class ContextBuilderTest {
         assertNotNull(context.summary)
     }
 
+    @Test
+    fun `assistant web sources are included in reusable context`() {
+        val source = MessageSourceMetadata(
+            title = "Example Source",
+            url = "https://example.com/source",
+            snippet = "Example search snippet",
+            sourceToolName = "web_search"
+        )
+
+        val context = ContextBuilder().buildContext(
+            userMessages = listOf(
+                userMessage(1, "What changed?"),
+                userMessage(2, "Use the previous source again")
+            ),
+            assistantMessages = listOf(
+                listOf(assistantMessage(1, "Answer from search", listOf(source))),
+                listOf(assistantMessage(2, ""))
+            ),
+            platform = platform(),
+            policy = policy(
+                recentTurnWindow = 4,
+                maxContextTokens = 600,
+                summaryTokenBudget = 80
+            )
+        )
+
+        val assistantContext = context.turns.first().assistantMessage?.effectiveContent().orEmpty()
+        assertTrue(assistantContext.contains("Answer from search"))
+        assertTrue(assistantContext.contains("Referenced web sources from this answer"))
+        assertTrue(assistantContext.contains("Example Source"))
+        assertTrue(assistantContext.contains("https://example.com/source"))
+        assertTrue(assistantContext.contains("Example search snippet"))
+    }
+
     private fun policy(
         recentTurnWindow: Int,
         maxContextTokens: Int,
@@ -123,9 +159,14 @@ class ContextBuilderTest {
         platformType = null
     )
 
-    private fun assistantMessage(id: Int, content: String) = MessageV2(
+    private fun assistantMessage(
+        id: Int,
+        content: String,
+        sourceMetadata: List<MessageSourceMetadata> = emptyList()
+    ) = MessageV2(
         id = 100 + id,
         content = content,
+        sourceMetadata = sourceMetadata,
         platformType = PLATFORM_UID
     )
 

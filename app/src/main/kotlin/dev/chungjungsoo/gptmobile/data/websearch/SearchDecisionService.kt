@@ -86,9 +86,7 @@ class ProviderSearchDecisionModelClient(
                 ),
                 stream = true,
                 instructions = DECISION_SYSTEM_PROMPT,
-                maxOutputTokens = DECISION_MAX_OUTPUT_TOKENS,
-                temperature = 0f,
-                topP = 1f
+                maxOutputTokens = DECISION_MAX_OUTPUT_TOKENS
             ),
             timeoutSeconds = platform.timeout
         ).collect { event ->
@@ -225,4 +223,3 @@ class ProviderSearchDecisionModelClient(
             "You decide whether web search is needed. Return only the requested JSON object and no markdown."
     }
 }
-

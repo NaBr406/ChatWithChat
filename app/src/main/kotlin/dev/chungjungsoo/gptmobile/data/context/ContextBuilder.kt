@@ -4,6 +4,7 @@ import com.knuddels.jtokkit.Encodings
 import com.knuddels.jtokkit.api.Encoding
 import com.knuddels.jtokkit.api.EncodingType
 import dev.chungjungsoo.gptmobile.data.database.entity.ACTIVE_REVISION_LATEST
+import dev.chungjungsoo.gptmobile.data.database.entity.MessageSourceMetadata
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
 import dev.chungjungsoo.gptmobile.data.database.entity.effectiveContent
@@ -175,6 +176,7 @@ class ContextBuilder @Inject constructor() {
 
     private fun sanitizeAssistantMessageForContext(message: MessageV2): MessageV2 {
         val sanitizedContent = stripAssistantErrorNote(message.effectiveContent()).trimEnd()
+            .withSourceContext(message.sourceMetadata)
         return if (sanitizedContent == message.content && message.activeRevisionIndex == ACTIVE_REVISION_LATEST) {
             message
         } else {
@@ -185,8 +187,39 @@ class ContextBuilder @Inject constructor() {
         }
     }
 
+    private fun String.withSourceContext(sources: List<MessageSourceMetadata>): String {
+        val sourceLines = sources
+            .filter { source -> source.url.isNotBlank() }
+            .distinctBy { source -> source.url.trim().lowercase() }
+            .take(MAX_CONTEXT_SOURCES)
+            .mapIndexed { index, source ->
+                buildString {
+                    append("${index + 1}. ")
+                    append(source.title.trim().ifBlank { source.url.trim() })
+                    append(" - ")
+                    append(source.url.trim())
+                    source.snippet.trim().takeIf { it.isNotBlank() }?.let { snippet ->
+                        append(" | ")
+                        append(snippet.replace(Regex("\\s+"), " ").take(MAX_SOURCE_SNIPPET_CHARS))
+                    }
+                }
+            }
+        if (sourceLines.isEmpty()) return this
+
+        val sourceBlock = buildString {
+            appendLine("Referenced web sources from this answer:")
+            sourceLines.forEach { line -> appendLine(line) }
+        }.trim()
+
+        return listOf(this.trimEnd(), sourceBlock)
+            .filter { it.isNotBlank() }
+            .joinToString(separator = "\n\n")
+    }
+
     private companion object {
         const val MIN_SUMMARY_TOKEN_BUDGET = 48
+        const val MAX_CONTEXT_SOURCES = 5
+        const val MAX_SOURCE_SNIPPET_CHARS = 240
     }
 }
 

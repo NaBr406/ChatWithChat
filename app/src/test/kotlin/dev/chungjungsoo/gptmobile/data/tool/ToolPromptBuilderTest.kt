@@ -16,9 +16,17 @@ class ToolPromptBuilderTest {
         assertTrue(prompt.contains("Name: web_search"))
         assertTrue(prompt.contains("Name: fetch_url"))
         assertTrue(prompt.indexOf("Name: web_search") < prompt.indexOf("Name: fetch_url"))
-        assertTrue(prompt.contains(""""query":{"type":"string","description":"The concise search query to run."}"""))
+        assertTrue(prompt.contains("Do not use this for the user's local date"))
+        assertTrue(prompt.contains(""""query":{"type":"string","description":"The concise public-web search query to run. Do not use clock/time-only queries."}"""))
         assertTrue(prompt.contains(""""required":["query"]"""))
         assertTrue(prompt.contains(""""url":{"type":"string","description":"The http or https URL to fetch."}"""))
+    }
+
+    @Test
+    fun `fallback prompt discourages web search for local device state`() {
+        val prompt = ToolPromptBuilder().buildJsonFallbackPrompt()
+
+        assertTrue(prompt.contains("Do not call web_search for the user's local date, time, timezone, device state, or app settings."))
     }
 
     @Test

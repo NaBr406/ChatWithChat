@@ -38,6 +38,8 @@ import dev.chungjungsoo.gptmobile.data.network.UploadedProviderFile
 import dev.chungjungsoo.gptmobile.data.tool.BuiltInTools
 import dev.chungjungsoo.gptmobile.data.tool.ToolExecutor
 import dev.chungjungsoo.gptmobile.data.tool.ToolLoopOrchestrator
+import dev.chungjungsoo.gptmobile.data.websearch.SearchDecisionModelClient
+import dev.chungjungsoo.gptmobile.data.websearch.SearchDecisionService
 import dev.chungjungsoo.gptmobile.data.websearch.WebPageExtractor
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchMode
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchRepository
@@ -471,6 +473,46 @@ class ChatRepositoryImplTest {
     }
 
     @Test
+    fun `auto search decision executes web search before final provider request`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatCompletionFlow("Final answer with source")
+            )
+        )
+        val webSearchRepository = RecordingWebSearchRepository(
+            Result.success(listOf(webSearchResult()))
+        )
+        val searchDecisionService = SearchDecisionService(
+            SearchDecisionModelClient { _, prompt ->
+                assertTrue(prompt.contains("latest Kotlin release"))
+                Result.success("""{"shouldSearch":true,"queries":["latest Kotlin release"],"reason":"latest requested"}""")
+            }
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(WebSearchMode.Auto),
+            webSearchRepository = webSearchRepository,
+            searchDecisionService = searchDecisionService
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "Search the latest Kotlin release", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform()
+        ).toList()
+
+        assertEquals(ApiState.Loading, states.first())
+        assertTrue(states.contains(ApiState.ToolStarted("web_search", "latest Kotlin release")))
+        assertTrue(states.contains(ApiState.ToolFinished("web_search", "latest Kotlin release")))
+        assertTrue(states.contains(ApiState.Success("Final answer with source")))
+        assertEquals(ApiState.Done, states.last())
+        assertEquals(listOf("latest Kotlin release"), webSearchRepository.queries)
+        assertEquals(1, openAIAPI.streamChatCompletionCalls)
+        assertTrue(openAIAPI.chatCompletionRequests.single().systemText().contains("Tool results are available"))
+        assertTrue(openAIAPI.chatCompletionRequests.single().systemText().contains("https://example.com/source"))
+    }
+
+    @Test
     fun `auto web search uses openai responses native tools for openai platform`() = runBlocking {
         val openAIAPI = RecordingOpenAIAPI(
             responsesResponses = mutableListOf(
@@ -630,7 +672,8 @@ class ChatRepositoryImplTest {
         openAIAPI: OpenAIAPI = RecordingOpenAIAPI(),
         settingRepository: SettingRepository = settingRepository(WebSearchMode.Off),
         webSearchRepository: WebSearchRepository = RecordingWebSearchRepository(),
-        toolLoopOrchestrator: ToolLoopOrchestrator = toolLoopOrchestrator(webSearchRepository)
+        toolLoopOrchestrator: ToolLoopOrchestrator = toolLoopOrchestrator(webSearchRepository),
+        searchDecisionService: SearchDecisionService? = null
     ): ChatRepositoryImpl = ChatRepositoryImpl(
         context = ContextWrapper(null),
         chatRoomDao = proxy(),
@@ -650,7 +693,8 @@ class ChatRepositoryImplTest {
         ),
         contextBuilder = ContextBuilder(),
         webSearchRepository = webSearchRepository,
-        toolLoopOrchestrator = toolLoopOrchestrator
+        toolLoopOrchestrator = toolLoopOrchestrator,
+        searchDecisionService = searchDecisionService
     )
 
     private fun groqPlatform(reasoning: Boolean, model: String) = PlatformV2(
