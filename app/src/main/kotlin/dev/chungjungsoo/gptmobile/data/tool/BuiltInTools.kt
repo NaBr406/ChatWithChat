@@ -40,7 +40,15 @@ class BuiltInTools(
             callId = call.id,
             name = call.name,
             content = formatSearchResults(query, boundedResults).clip(config.maxToolResultChars),
-            metadata = mapOf("result_count" to boundedResults.size.toString())
+            metadata = buildMap {
+                put("result_count", boundedResults.size.toString())
+                boundedResults.forEachIndexed { index, result ->
+                    put("source_${index}_title", result.title)
+                    put("source_${index}_url", result.url)
+                    put("source_${index}_snippet", result.snippet)
+                    put("source_${index}_tool", call.name)
+                }
+            }
         )
     }
 
@@ -65,8 +73,10 @@ class BuiltInTools(
             content = formatFetchedPage(page, config.maxFetchedPageChars).clip(config.maxToolResultChars),
             metadata = buildMap {
                 put("url", page.url)
+                put("source_tool", call.name)
                 page.title.takeIf { it.isNotBlank() }?.let { put("title", it) }
                 page.siteName?.takeIf { it.isNotBlank() }?.let { put("site_name", it) }
+                page.excerpt.takeIf { it.isNotBlank() }?.let { put("snippet", it.clip(MAX_SOURCE_SNIPPET_CHARS)) }
             }
         )
     }
@@ -134,3 +144,5 @@ class BuiltInTools(
         return take(boundedMax).trimEnd()
     }
 }
+
+private const val MAX_SOURCE_SNIPPET_CHARS = 240

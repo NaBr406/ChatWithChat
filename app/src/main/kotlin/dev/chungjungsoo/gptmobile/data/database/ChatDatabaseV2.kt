@@ -16,6 +16,7 @@ import dev.chungjungsoo.gptmobile.data.database.entity.ChatClassification
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatPlatformModelV2
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatRoomV2
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
+import dev.chungjungsoo.gptmobile.data.database.entity.MessageSourceMetadataListConverter
 import dev.chungjungsoo.gptmobile.data.database.entity.PersonalMemory
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformModelV2
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
@@ -31,13 +32,14 @@ import dev.chungjungsoo.gptmobile.data.database.entity.StringListConverter
         PersonalMemory::class,
         ChatClassification::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = true
 )
 @TypeConverters(
     StringListConverter::class,
     ChatAttachmentListConverter::class,
-    AssistantRevisionListConverter::class
+    AssistantRevisionListConverter::class,
+    MessageSourceMetadataListConverter::class
 )
 abstract class ChatDatabaseV2 : RoomDatabase() {
 

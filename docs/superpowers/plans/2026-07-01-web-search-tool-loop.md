@@ -535,11 +535,11 @@ Manual checks:
 
 **Implementation:**
 
-- [ ] Add a source metadata field to assistant messages, preferably a JSON string or typed serializable field compatible with Room.
-- [ ] Store title, URL, snippet, and source tool name.
-- [ ] Render a compact sources section under assistant answers.
-- [ ] Avoid duplicate URLs.
-- [ ] Preserve old messages through migration.
+- [x] Add a source metadata field to assistant messages, preferably a JSON string or typed serializable field compatible with Room.
+- [x] Store title, URL, snippet, and source tool name.
+- [x] Render a compact sources section under assistant answers.
+- [x] Avoid duplicate URLs.
+- [x] Preserve old messages through migration.
 
 **Verification:**
 
@@ -685,7 +685,7 @@ Use this order when handing work to Codex:
 - [x] Task 8: Add Tool Progress States
 - [x] Task 9: Add Minimal Tool UI
 - [x] Task 10: Add Settings UI For Web Search
-- [ ] Task 11: Add Source Metadata Persistence
+- [x] Task 11: Add Source Metadata Persistence
 - [ ] Task 12: Add OpenAI Responses Native Tool Calling
 - [ ] Task 13: Add Provider Tool Adapters
 - [ ] Task 14: Hardening And Safety

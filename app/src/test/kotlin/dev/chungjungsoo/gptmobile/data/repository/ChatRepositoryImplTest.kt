@@ -2,6 +2,7 @@ package dev.chungjungsoo.gptmobile.data.repository
 
 import android.content.ContextWrapper
 import dev.chungjungsoo.gptmobile.data.context.ContextBuilder
+import dev.chungjungsoo.gptmobile.data.database.entity.MessageSourceMetadata
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
 import dev.chungjungsoo.gptmobile.data.dto.ApiState
@@ -439,6 +440,16 @@ class ChatRepositoryImplTest {
                 ApiState.Loading,
                 ApiState.ToolStarted("web_search", "current Android target SDK"),
                 ApiState.ToolFinished("web_search", "current Android target SDK"),
+                ApiState.SourcesUpdated(
+                    listOf(
+                        MessageSourceMetadata(
+                            title = "Example Source",
+                            url = "https://example.com/source",
+                            snippet = "Example search snippet",
+                            sourceToolName = "web_search"
+                        )
+                    )
+                ),
                 ApiState.Success("Final searched answer"),
                 ApiState.Done
             ),

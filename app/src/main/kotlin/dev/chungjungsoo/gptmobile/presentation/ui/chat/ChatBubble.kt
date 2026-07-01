@@ -43,6 +43,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import dev.chungjungsoo.gptmobile.R
+import dev.chungjungsoo.gptmobile.data.database.entity.MessageSourceMetadata
 import dev.chungjungsoo.gptmobile.presentation.theme.GPTMobileTheme
 import java.io.File
 
@@ -88,6 +89,7 @@ fun OpponentChatBubble(
     text: String,
     thoughts: String = "",
     attachments: List<String> = emptyList(),
+    sourceMetadata: List<MessageSourceMetadata> = emptyList(),
     contentIdentity: Any = text,
     canEdit: Boolean = false,
     revisionIndexLabel: String? = null,
@@ -143,6 +145,11 @@ fun OpponentChatBubble(
                 files = attachments,
                 usePrimaryColors = false,
                 modifier = Modifier.padding(top = 6.dp, bottom = 8.dp)
+            )
+
+            SourceMetadataBlock(
+                sources = sourceMetadata,
+                modifier = Modifier.padding(top = 2.dp, bottom = 8.dp)
             )
 
             if (!isLoading) {
@@ -205,6 +212,60 @@ fun OpponentChatBubble(
 }
 
 @Composable
+private fun SourceMetadataBlock(
+    sources: List<MessageSourceMetadata>,
+    modifier: Modifier = Modifier
+) {
+    val visibleSources = sources
+        .filter { source -> source.url.isNotBlank() }
+        .distinctBy { source -> source.url.trim() }
+        .take(MAX_VISIBLE_SOURCES)
+    if (visibleSources.isEmpty()) return
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            text = stringResource(R.string.sources_title),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        visibleSources.forEach { source ->
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = source.title.ifBlank { source.url },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = source.url,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                source.snippet.takeIf { it.isNotBlank() }?.let { snippet ->
+                    Text(
+                        text = snippet,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun PlatformButton(
     isLoading: Boolean,
     name: String,
@@ -240,6 +301,9 @@ fun PlatformButton(
         }
     }
 }
+
+private const val MAX_VISIBLE_SOURCES = 5
+
 @Composable
 private fun CopyTextIcon(onCopyClick: () -> Unit) {
     IconButton(modifier = Modifier.size(36.dp), onClick = onCopyClick) {

@@ -399,6 +399,7 @@
     <string name="searxng_base_url_hint">https://search.example.com</string>
     <string name="searxng_base_url_description">搜索后端基础地址。公共实例可能关闭 JSON API。</string>
     <string name="searxng_base_url_invalid">请输入以 http:// 或 https:// 开头的有效地址</string>
+    <string name="sources_title">来源</string>
     <string name="tool_web_search_running">正在搜索</string>
     <string name="tool_fetch_url_running">正在读取网页</string>
     <string name="tool_web_search_finished">搜索完成</string>

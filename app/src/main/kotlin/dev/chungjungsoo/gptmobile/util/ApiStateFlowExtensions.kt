@@ -1,6 +1,7 @@
 package dev.chungjungsoo.gptmobile.util
 
 import dev.chungjungsoo.gptmobile.data.database.entity.AssistantRevision
+import dev.chungjungsoo.gptmobile.data.database.entity.MessageSourceMetadata
 import dev.chungjungsoo.gptmobile.data.database.entity.resetActiveRevision
 import dev.chungjungsoo.gptmobile.data.dto.ApiState
 import dev.chungjungsoo.gptmobile.presentation.ui.chat.ChatViewModel
@@ -36,6 +37,10 @@ suspend fun Flow<ApiState>.handleStates(
                 is ApiState.Success -> {
                     buffer.appendContent(chunk.textChunk)
                     buffer.publishIfDue(messageFlow, turnIndex, platformIdx)
+                }
+
+                is ApiState.SourcesUpdated -> {
+                    messageFlow.setSourceMetadata(turnIndex, platformIdx, chunk.sources)
                 }
 
                 ApiState.Done -> {
@@ -74,6 +79,30 @@ suspend fun Flow<ApiState>.handleStates(
             )
         }
         onLoadingComplete()
+    }
+}
+
+private fun MutableStateFlow<ChatViewModel.GroupedMessages>.setSourceMetadata(
+    turnIndex: Int,
+    platformIdx: Int,
+    sources: List<MessageSourceMetadata>
+) {
+    val distinctSources = sources
+        .filter { source -> source.url.isNotBlank() }
+        .distinctBy { source -> source.url.trim() }
+
+    update { groupedMessages ->
+        updateAssistantSlot(
+            groupedMessages = groupedMessages,
+            turnIndex = turnIndex,
+            platformIndex = platformIdx
+        ) { currentMessage ->
+            if (currentMessage.sourceMetadata == distinctSources) {
+                currentMessage
+            } else {
+                currentMessage.copy(sourceMetadata = distinctSources)
+            }
+        }
     }
 }
 

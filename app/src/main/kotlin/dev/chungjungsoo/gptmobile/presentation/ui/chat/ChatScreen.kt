@@ -617,6 +617,7 @@ private fun ChatMessagePair(
                 text = assistantContent,
                 thoughts = assistantThoughts,
                 attachments = selectedAssistantMessage?.attachments.orEmpty().map { it.filePathForDisplay },
+                sourceMetadata = selectedAssistantMessage?.sourceMetadata.orEmpty(),
                 contentIdentity = "$messageIndex:$selectedPlatformUid",
                 revisionIndexLabel = selectedAssistantMessage?.let { assistantMessage ->
                     val totalRevisions = assistantMessage.revisions.size + 1

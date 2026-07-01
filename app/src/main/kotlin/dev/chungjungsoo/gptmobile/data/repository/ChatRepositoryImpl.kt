@@ -15,6 +15,7 @@ import dev.chungjungsoo.gptmobile.data.database.entity.ChatPlatformModelV2
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatRoom
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatRoomV2
 import dev.chungjungsoo.gptmobile.data.database.entity.Message
+import dev.chungjungsoo.gptmobile.data.database.entity.MessageSourceMetadata
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
 import dev.chungjungsoo.gptmobile.data.database.entity.effectiveContent
@@ -59,8 +60,10 @@ import dev.chungjungsoo.gptmobile.data.network.AnthropicAPI
 import dev.chungjungsoo.gptmobile.data.network.GoogleAPI
 import dev.chungjungsoo.gptmobile.data.network.GroqAPI
 import dev.chungjungsoo.gptmobile.data.network.OpenAIAPI
+import dev.chungjungsoo.gptmobile.data.tool.ToolDefinition
 import dev.chungjungsoo.gptmobile.data.tool.ToolLoopOrchestrator
 import dev.chungjungsoo.gptmobile.data.tool.ToolLoopResult
+import dev.chungjungsoo.gptmobile.data.tool.ToolResult
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchMode
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchPromptBuilder
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchRepository
@@ -214,6 +217,9 @@ class ChatRepositoryImpl @Inject constructor(
                 emit(ApiState.Done)
             }
             is ToolLoopResult.ToolResults -> {
+                loopResult.results.toMessageSourceMetadata().takeIf { it.isNotEmpty() }?.let { sources ->
+                    emit(ApiState.SourcesUpdated(sources))
+                }
                 emitProviderStatesSkippingLoading(
                     completeChatByProvider(
                         userMessages = userMessages,
@@ -279,27 +285,30 @@ class ChatRepositoryImpl @Inject constructor(
             prepare = {
                 val reasoningParameters = mapReasoningMode(platform, reasoningMode)
                 val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
-                val webSearchPrompt = prepareWebSearchPrompt(userMessages)
+                val webSearchContext = prepareWebSearchContext(userMessages)
                 val inputMessages = buildResponsesInputMessages(conversationContext.turns, platform.uid)
 
-                ResponsesRequest(
-                    model = platform.model,
-                    input = inputMessages,
-                    stream = true,
-                    instructions = mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary, webSearchPrompt, extraPrompt),
-                    temperature = if (reasoningParameters.hasExplicitReasoning) null else platform.temperature,
-                    topP = if (reasoningParameters.hasExplicitReasoning) null else platform.topP,
-                    reasoning = reasoningParameters.openAIEffort?.let { effort ->
-                        ReasoningConfig(
-                            effort = effort,
-                            summary = "auto"
-                        )
-                    }
+                ProviderRequestWithSources(
+                    request = ResponsesRequest(
+                        model = platform.model,
+                        input = inputMessages,
+                        stream = true,
+                        instructions = mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary, webSearchContext.prompt, extraPrompt),
+                        temperature = if (reasoningParameters.hasExplicitReasoning) null else platform.temperature,
+                        topP = if (reasoningParameters.hasExplicitReasoning) null else platform.topP,
+                        reasoning = reasoningParameters.openAIEffort?.let { effort ->
+                            ReasoningConfig(
+                                effort = effort,
+                                summary = "auto"
+                            )
+                        }
+                    ),
+                    sources = webSearchContext.sources
                 )
             },
-            stream = { request ->
+            stream = { prepared ->
                 flow {
-                    openAIAPI.streamResponses(request, platform.timeout).collect { event ->
+                    openAIAPI.streamResponses(prepared.request, platform.timeout).collect { event ->
                         when (event) {
                             is ReasoningSummaryTextDeltaEvent -> emit(ApiState.Thinking(event.delta))
 
@@ -316,7 +325,8 @@ class ChatRepositoryImpl @Inject constructor(
                         }
                     }
                 }
-            }
+            },
+            sourceMetadata = { it.sources }
         ).catch { e ->
             emit(ApiState.Error(e.message ?: "未知错误"))
         }.onCompletion {
@@ -337,20 +347,23 @@ class ChatRepositoryImpl @Inject constructor(
         streamPreparedApiState(
             prepare = {
                 val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
-                val webSearchPrompt = prepareWebSearchPrompt(userMessages)
+                val webSearchContext = prepareWebSearchContext(userMessages)
                 validateInlineBudgetIfNeeded(conversationContext.turns, platform)
                 val messages = buildOpenAIChatMessages(
                     conversationContext.turns,
-                    mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary, webSearchPrompt, extraPrompt)
+                    mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary, webSearchContext.prompt, extraPrompt)
                 )
 
-                createGroqChatCompletionRequest(messages, platform, reasoningMode)
+                ProviderRequestWithSources(
+                    request = createGroqChatCompletionRequest(messages, platform, reasoningMode),
+                    sources = webSearchContext.sources
+                )
             },
-            stream = { request ->
+            stream = { prepared ->
                 flow {
                     val parser = GroqReasoningParser()
                     groqAPI.streamChatCompletion(
-                        request = request,
+                        request = prepared.request,
                         timeoutSeconds = platform.timeout,
                         token = platform.token,
                         apiUrl = platform.apiUrl
@@ -370,7 +383,8 @@ class ChatRepositoryImpl @Inject constructor(
 
                     parser.flush().forEach { emit(it) }
                 }
-            }
+            },
+            sourceMetadata = { it.sources }
         ).catch { e ->
             emit(ApiState.Error(e.message ?: "未知错误"))
         }.onCompletion {
@@ -395,25 +409,28 @@ class ChatRepositoryImpl @Inject constructor(
             prepare = {
                 val reasoningParameters = mapReasoningMode(platform, reasoningMode)
                 val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
-                val webSearchPrompt = prepareWebSearchPrompt(userMessages)
+                val webSearchContext = prepareWebSearchContext(userMessages)
                 validateInlineBudgetIfNeeded(conversationContext.turns, platform)
                 val messages = buildOpenAIChatMessages(
                     conversationContext.turns,
-                    mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary, webSearchPrompt, extraPrompt)
+                    mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary, webSearchContext.prompt, extraPrompt)
                 )
 
-                ChatCompletionRequest(
-                    model = platform.model,
-                    messages = messages,
-                    stream = platform.stream,
-                    temperature = platform.temperature,
-                    topP = platform.topP,
-                    reasoningEffort = reasoningParameters.openAICompatibleReasoningEffort
+                ProviderRequestWithSources(
+                    request = ChatCompletionRequest(
+                        model = platform.model,
+                        messages = messages,
+                        stream = platform.stream,
+                        temperature = platform.temperature,
+                        topP = platform.topP,
+                        reasoningEffort = reasoningParameters.openAICompatibleReasoningEffort
+                    ),
+                    sources = webSearchContext.sources
                 )
             },
-            stream = { request ->
+            stream = { prepared ->
                 flow {
-                    openAIAPI.streamChatCompletion(request, platform.timeout).collect { chunk ->
+                    openAIAPI.streamChatCompletion(prepared.request, platform.timeout).collect { chunk ->
                         when {
                             chunk.error != null -> emit(ApiState.Error(chunk.error.message))
 
@@ -423,7 +440,8 @@ class ChatRepositoryImpl @Inject constructor(
                         }
                     }
                 }
-            }
+            },
+            sourceMetadata = { it.sources }
         ).catch { e ->
             emit(ApiState.Error(e.message ?: "未知错误"))
         }.onCompletion {
@@ -449,7 +467,7 @@ class ChatRepositoryImpl @Inject constructor(
         )
     }
 
-    private suspend fun prepareWebSearchPrompt(userMessages: List<MessageV2>): String? {
+    private suspend fun prepareWebSearchContext(userMessages: List<MessageV2>): WebSearchContext {
         val webSearchMode = runCatching { settingRepository.fetchWebSearchMode() }
             .getOrNull()
             ?: WebSearchMode.Off
@@ -457,16 +475,19 @@ class ChatRepositoryImpl @Inject constructor(
             ?.content
             ?.trim()
             ?.takeIf { it.isNotBlank() }
-            ?: return null
+            ?: return WebSearchContext()
 
         val searchQueries = when (webSearchMode) {
-            WebSearchMode.Off -> return null
+            WebSearchMode.Off -> return WebSearchContext()
             WebSearchMode.Always -> listOf(latestUserMessage)
-            WebSearchMode.Auto -> return null
+            WebSearchMode.Auto -> return WebSearchContext()
         }
 
-        return searchWebQueries(searchQueries)
-            .let { results -> webSearchPromptBuilder.build(results) }
+        val results = searchWebQueries(searchQueries)
+        return WebSearchContext(
+            prompt = webSearchPromptBuilder.build(results),
+            sources = results.toMessageSourceMetadata(ToolDefinition.WebSearch.name)
+        )
     }
 
     private suspend fun searchWebQueries(queries: List<String>): List<WebSearchResult> =
@@ -695,28 +716,31 @@ class ChatRepositoryImpl @Inject constructor(
             prepare = {
                 val reasoningParameters = mapReasoningMode(platform, reasoningMode)
                 val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
-                val webSearchPrompt = prepareWebSearchPrompt(userMessages)
+                val webSearchContext = prepareWebSearchContext(userMessages)
                 val messages = buildAnthropicInputMessages(conversationContext.turns, platform.uid)
 
-                MessageRequest(
-                    model = platform.model,
-                    messages = messages,
-                    maxTokens = reasoningParameters.anthropicMaxTokens ?: 4096,
-                    stream = platform.stream,
-                    systemPrompt = mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary, webSearchPrompt, extraPrompt),
-                    temperature = if (reasoningParameters.hasExplicitReasoning) null else platform.temperature,
-                    topP = if (reasoningParameters.hasExplicitReasoning) null else platform.topP,
-                    thinking = reasoningParameters.anthropicBudgetTokens?.let { budgetTokens ->
-                        dev.chungjungsoo.gptmobile.data.dto.anthropic.request.ThinkingConfig(
-                            type = "enabled",
-                            budgetTokens = budgetTokens
-                        )
-                    }
+                ProviderRequestWithSources(
+                    request = MessageRequest(
+                        model = platform.model,
+                        messages = messages,
+                        maxTokens = reasoningParameters.anthropicMaxTokens ?: 4096,
+                        stream = platform.stream,
+                        systemPrompt = mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary, webSearchContext.prompt, extraPrompt),
+                        temperature = if (reasoningParameters.hasExplicitReasoning) null else platform.temperature,
+                        topP = if (reasoningParameters.hasExplicitReasoning) null else platform.topP,
+                        thinking = reasoningParameters.anthropicBudgetTokens?.let { budgetTokens ->
+                            dev.chungjungsoo.gptmobile.data.dto.anthropic.request.ThinkingConfig(
+                                type = "enabled",
+                                budgetTokens = budgetTokens
+                            )
+                        }
+                    ),
+                    sources = webSearchContext.sources
                 )
             },
-            stream = { request ->
+            stream = { prepared ->
                 flow {
-                    anthropicAPI.streamChatMessage(request, platform.timeout).collect { chunk ->
+                    anthropicAPI.streamChatMessage(prepared.request, platform.timeout).collect { chunk ->
                         when (chunk) {
                             is dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ContentDeltaResponseChunk -> {
                                 when (chunk.delta.type) {
@@ -740,7 +764,8 @@ class ChatRepositoryImpl @Inject constructor(
                         }
                     }
                 }
-            }
+            },
+            sourceMetadata = { it.sources }
         ).catch { e ->
             emit(ApiState.Error(e.message ?: "未知错误"))
         }.onCompletion {
@@ -804,31 +829,34 @@ class ChatRepositoryImpl @Inject constructor(
             prepare = {
                 val reasoningParameters = mapReasoningMode(platform, reasoningMode)
                 val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
-                val webSearchPrompt = prepareWebSearchPrompt(userMessages)
+                val webSearchContext = prepareWebSearchContext(userMessages)
                 val contents = buildGoogleContents(conversationContext.turns, platform.uid)
 
-                GenerateContentRequest(
-                    contents = contents,
-                    generationConfig = GenerationConfig(
-                        temperature = platform.temperature,
-                        topP = platform.topP,
-                        thinkingConfig = reasoningParameters.googleThinkingBudget?.let { thinkingBudget ->
-                            dev.chungjungsoo.gptmobile.data.dto.google.request.ThinkingConfig(
-                                thinkingBudget = thinkingBudget,
-                                includeThoughts = reasoningParameters.googleIncludeThoughts ?: false
+                ProviderRequestWithSources(
+                    request = GenerateContentRequest(
+                        contents = contents,
+                        generationConfig = GenerationConfig(
+                            temperature = platform.temperature,
+                            topP = platform.topP,
+                            thinkingConfig = reasoningParameters.googleThinkingBudget?.let { thinkingBudget ->
+                                dev.chungjungsoo.gptmobile.data.dto.google.request.ThinkingConfig(
+                                    thinkingBudget = thinkingBudget,
+                                    includeThoughts = reasoningParameters.googleIncludeThoughts ?: false
+                                )
+                            }
+                        ),
+                        systemInstruction = mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary, webSearchContext.prompt, extraPrompt)?.let {
+                            Content(
+                                parts = listOf(Part.text(it))
                             )
                         }
                     ),
-                    systemInstruction = mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary, webSearchPrompt, extraPrompt)?.let {
-                        Content(
-                            parts = listOf(Part.text(it))
-                        )
-                    }
+                    sources = webSearchContext.sources
                 )
             },
-            stream = { request ->
+            stream = { prepared ->
                 flow {
-                    googleAPI.streamGenerateContent(request, platform.model, platform.timeout).collect { response ->
+                    googleAPI.streamGenerateContent(prepared.request, platform.model, platform.timeout).collect { response ->
                         when {
                             response.error != null -> emit(ApiState.Error(response.error.message))
 
@@ -847,7 +875,8 @@ class ChatRepositoryImpl @Inject constructor(
                         }
                     }
                 }
-            }
+            },
+            sourceMetadata = { it.sources }
         ).catch { e ->
             emit(ApiState.Error(e.message ?: "未知错误"))
         }.onCompletion {
@@ -1151,6 +1180,74 @@ internal fun isGroqGptOssModel(model: String): Boolean = isGptOssModel(model)
 
 private const val WEB_SEARCH_RESULT_LIMIT = 5
 private const val MAX_SEARCH_QUERY_COUNT = 2
+private const val MAX_SOURCE_SNIPPET_CHARS = 240
+
+private data class WebSearchContext(
+    val prompt: String? = null,
+    val sources: List<MessageSourceMetadata> = emptyList()
+)
+
+private data class ProviderRequestWithSources<T>(
+    val request: T,
+    val sources: List<MessageSourceMetadata>
+)
+
+private fun List<WebSearchResult>.toMessageSourceMetadata(sourceToolName: String): List<MessageSourceMetadata> =
+    mapNotNull { result ->
+        result.url.trim().takeIf { it.isNotBlank() }?.let { url ->
+            MessageSourceMetadata(
+                title = result.title.trim().ifBlank { url },
+                url = url,
+                snippet = result.snippet.toSourceSnippet(),
+                sourceToolName = sourceToolName
+            )
+        }
+    }.dedupeMessageSources()
+
+private fun List<ToolResult>.toMessageSourceMetadata(): List<MessageSourceMetadata> =
+    flatMap { result -> result.toMessageSourceMetadata() }.dedupeMessageSources()
+
+private fun ToolResult.toMessageSourceMetadata(): List<MessageSourceMetadata> = when (name) {
+    ToolDefinition.WebSearch.name -> {
+        val sources = mutableListOf<MessageSourceMetadata>()
+        var index = 0
+        while (true) {
+            val url = metadata["source_${index}_url"]?.trim()?.takeIf { it.isNotBlank() } ?: break
+            sources += MessageSourceMetadata(
+                title = metadata["source_${index}_title"]?.trim()?.takeIf { it.isNotBlank() } ?: url,
+                url = url,
+                snippet = metadata["source_${index}_snippet"].orEmpty().toSourceSnippet(),
+                sourceToolName = metadata["source_${index}_tool"]?.trim()?.takeIf { it.isNotBlank() } ?: name
+            )
+            index += 1
+        }
+        sources
+    }
+    ToolDefinition.FetchUrl.name -> {
+        val url = metadata["url"]?.trim()?.takeIf { it.isNotBlank() }
+        if (url == null) {
+            emptyList()
+        } else {
+            listOf(
+                MessageSourceMetadata(
+                    title = metadata["title"]?.trim()?.takeIf { it.isNotBlank() } ?: url,
+                    url = url,
+                    snippet = metadata["snippet"].orEmpty().toSourceSnippet(),
+                    sourceToolName = metadata["source_tool"]?.trim()?.takeIf { it.isNotBlank() } ?: name
+                )
+            )
+        }
+    }
+    else -> emptyList()
+}
+
+private fun List<MessageSourceMetadata>.dedupeMessageSources(): List<MessageSourceMetadata> =
+    filter { source -> source.url.isNotBlank() }
+        .distinctBy { source -> source.url.trim().lowercase() }
+
+private fun String.toSourceSnippet(): String = trim()
+    .replace(Regex("\\s+"), " ")
+    .take(MAX_SOURCE_SNIPPET_CHARS)
 
 internal fun mergeSystemPrompt(basePrompt: String?, memoryPrompt: String?): String? = mergePromptSections(basePrompt, memoryPrompt)
 
@@ -1174,9 +1271,13 @@ internal fun validateResponseInputPartsOrThrow(messageContent: String, partCount
 
 internal fun <T> streamPreparedApiState(
     prepare: suspend () -> T,
-    stream: suspend (T) -> Flow<ApiState>
+    stream: suspend (T) -> Flow<ApiState>,
+    sourceMetadata: (T) -> List<MessageSourceMetadata> = { emptyList() }
 ): Flow<ApiState> = flow {
     emit(ApiState.Loading)
     val preparedRequest = withContext(Dispatchers.Default) { prepare() }
+    sourceMetadata(preparedRequest).dedupeMessageSources().takeIf { it.isNotEmpty() }?.let { sources ->
+        emit(ApiState.SourcesUpdated(sources))
+    }
     emitAll(stream(preparedRequest))
 }

@@ -2,6 +2,7 @@ package dev.chungjungsoo.gptmobile.util
 
 import dev.chungjungsoo.gptmobile.data.database.entity.ACTIVE_REVISION_LATEST
 import dev.chungjungsoo.gptmobile.data.database.entity.AssistantRevision
+import dev.chungjungsoo.gptmobile.data.database.entity.MessageSourceMetadata
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
 import dev.chungjungsoo.gptmobile.data.dto.ApiState
 import dev.chungjungsoo.gptmobile.presentation.ui.chat.ChatViewModel
@@ -152,6 +153,39 @@ class ApiStateFlowExtensionsTest {
         assertEquals("Keep me", messageFlow.value.assistantMessages[0][0].content)
         assertTrue(messageFlow.value.assistantMessages[0][1].content.contains("Partial answer"))
         assertEquals(untouchedTurn, messageFlow.value.assistantMessages[1])
+    }
+
+    @Test
+    fun `handleStates stores sources without appending them to assistant content`() = runBlocking {
+        val source = MessageSourceMetadata(
+            title = "Android docs",
+            url = "https://developer.android.com/",
+            snippet = "Android platform docs",
+            sourceToolName = "web_search"
+        )
+        val messageFlow = MutableStateFlow(
+            ChatViewModel.GroupedMessages(
+                userMessages = listOf(MessageV2(content = "Hello", platformType = null)),
+                assistantMessages = listOf(
+                    listOf(MessageV2(content = "", platformType = "platform-1"))
+                )
+            )
+        )
+
+        flowOf(
+            ApiState.SourcesUpdated(listOf(source)),
+            ApiState.Success("Answer"),
+            ApiState.Done
+        ).handleStates(
+            messageFlow = messageFlow,
+            turnIndex = 0,
+            platformIdx = 0,
+            onLoadingComplete = {}
+        )
+
+        val assistantMessage = messageFlow.value.assistantMessages[0][0]
+        assertEquals("Answer", assistantMessage.content)
+        assertEquals(listOf(source), assistantMessage.sourceMetadata)
     }
 
     @Test

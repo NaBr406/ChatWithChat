@@ -43,6 +43,9 @@ data class MessageV2(
     @ColumnInfo(name = "active_revision_index")
     val activeRevisionIndex: Int = ACTIVE_REVISION_LATEST,
 
+    @ColumnInfo(name = "source_metadata")
+    val sourceMetadata: List<MessageSourceMetadata> = listOf(),
+
     @ColumnInfo(name = "linked_message_id")
     val linkedMessageId: Int = 0,
 
@@ -58,6 +61,14 @@ data class AssistantRevision(
     val content: String,
     val thoughts: String = "",
     val createdAt: Long
+)
+
+@Serializable
+data class MessageSourceMetadata(
+    val title: String,
+    val url: String,
+    val snippet: String = "",
+    val sourceToolName: String
 )
 
 const val ACTIVE_REVISION_LATEST = -1

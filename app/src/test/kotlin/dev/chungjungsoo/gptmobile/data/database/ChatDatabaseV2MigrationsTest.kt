@@ -113,6 +113,16 @@ class ChatDatabaseV2MigrationsTest {
         assertTrue(executedSql.any { it == "ALTER TABLE `chat_platform_model_v2_new` RENAME TO `chat_platform_model_v2`" })
     }
 
+    @Test
+    fun `migration 8 to 9 adds source metadata to messages`() {
+        val executedSql = mutableListOf<String>()
+        val db = recordingDatabase(executedSql)
+
+        ChatDatabaseV2Migrations.MIGRATION_8_9.migrate(db)
+
+        assertTrue(executedSql.any { it == "ALTER TABLE messages_v2 ADD COLUMN source_metadata TEXT NOT NULL DEFAULT ''" })
+    }
+
     private fun recordingDatabase(executedSql: MutableList<String>): SupportSQLiteDatabase = Proxy.newProxyInstance(
         SupportSQLiteDatabase::class.java.classLoader,
         arrayOf(SupportSQLiteDatabase::class.java),
