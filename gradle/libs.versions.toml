@@ -13,6 +13,7 @@ datastore = "1.2.1"
 hilt = "2.59.2"
 ksp = "2.3.4" # Also change with Kotlin version
 ktor = "3.4.1"
+jtokkit = "1.1.0"
 material3 = "1.4.0"
 androidxHilt = "1.3.0"
 navigation = "2.9.7"
@@ -54,6 +55,7 @@ ktor-client-cio = { group = "io.ktor", name = "ktor-client-cio", version.ref = "
 ktor-core = { group = "io.ktor", name = "ktor-client-core", version.ref = "ktor" }
 ktor-logging = { group = "io.ktor", name = "ktor-client-logging-jvm", version.ref = "ktor" }
 ktor-serialization = { group = "io.ktor", name = "ktor-serialization-kotlinx-json", version.ref = "ktor" }
+jtokkit = { group = "com.knuddels", name = "jtokkit", version.ref = "jtokkit" }
 splashscreen = { group = "androidx.core", name = "core-splashscreen", version.ref = "splashscreen" }
 room = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
 room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }

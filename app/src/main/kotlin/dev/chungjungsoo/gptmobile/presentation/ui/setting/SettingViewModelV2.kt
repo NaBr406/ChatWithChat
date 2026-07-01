@@ -3,6 +3,7 @@ package dev.chungjungsoo.gptmobile.presentation.ui.setting
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.chungjungsoo.gptmobile.data.database.entity.PlatformModelV2
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
 import dev.chungjungsoo.gptmobile.data.repository.SettingRepository
 import javax.inject.Inject
@@ -23,6 +24,9 @@ class SettingViewModelV2 @Inject constructor(
     private val _memoryEnabled = MutableStateFlow(false)
     val memoryEnabled: StateFlow<Boolean> = _memoryEnabled.asStateFlow()
 
+    private val _modelManagementState = MutableStateFlow(ModelManagementState())
+    val modelManagementState: StateFlow<ModelManagementState> = _modelManagementState.asStateFlow()
+
     private val _dialogState = MutableStateFlow(DialogState())
     val dialogState: StateFlow<DialogState> = _dialogState.asStateFlow()
 
@@ -35,6 +39,19 @@ class SettingViewModelV2 @Inject constructor(
         viewModelScope.launch {
             val platforms = settingRepository.fetchPlatformV2s()
             _platformState.update { platforms }
+            fetchPlatformModels(platforms)
+        }
+    }
+
+    private suspend fun fetchPlatformModels(platforms: List<PlatformV2>) {
+        val modelsByPlatformUid = platforms.associate { platform ->
+            platform.uid to settingRepository.fetchPlatformModels(platform.uid)
+        }
+        _modelManagementState.update { currentState ->
+            currentState.copy(
+                platforms = platforms,
+                modelsByPlatformUid = modelsByPlatformUid
+            )
         }
     }
 
@@ -48,6 +65,35 @@ class SettingViewModelV2 @Inject constructor(
         _memoryEnabled.update { enabled }
         viewModelScope.launch {
             settingRepository.updateMemoryEnabled(enabled)
+        }
+    }
+
+    fun refreshPlatformModels(platformUid: String) {
+        viewModelScope.launch {
+            _modelManagementState.update { state -> state.copy(refreshingPlatformUids = state.refreshingPlatformUids + platformUid) }
+            settingRepository.refreshPlatformModels(platformUid)
+            val platforms = settingRepository.fetchPlatformV2s()
+            _platformState.update { platforms }
+            fetchPlatformModels(platforms)
+            _modelManagementState.update { state -> state.copy(refreshingPlatformUids = state.refreshingPlatformUids - platformUid) }
+        }
+    }
+
+    fun updatePlatformModelEnabled(platformUid: String, modelId: String, enabled: Boolean) {
+        viewModelScope.launch {
+            settingRepository.updatePlatformModelEnabled(platformUid, modelId, enabled)
+            val platforms = settingRepository.fetchPlatformV2s()
+            _platformState.update { platforms }
+            fetchPlatformModels(platforms)
+        }
+    }
+
+    fun setPlatformDefaultModel(platformUid: String, modelId: String) {
+        viewModelScope.launch {
+            settingRepository.setPlatformDefaultModel(platformUid, modelId)
+            val platforms = settingRepository.fetchPlatformV2s()
+            _platformState.update { platforms }
+            fetchPlatformModels(platforms)
         }
     }
 
@@ -79,10 +125,6 @@ class SettingViewModelV2 @Inject constructor(
         }
     }
 
-    fun openThemeDialog() = _dialogState.update { it.copy(isThemeDialogOpen = true) }
-
-    fun closeThemeDialog() = _dialogState.update { it.copy(isThemeDialogOpen = false) }
-
     fun openDeleteDialog(platformId: Int) = _dialogState.update {
         it.copy(
             isDeleteDialogOpen = true,
@@ -106,8 +148,13 @@ class SettingViewModelV2 @Inject constructor(
     }
 
     data class DialogState(
-        val isThemeDialogOpen: Boolean = false,
         val isDeleteDialogOpen: Boolean = false,
         val platformToDelete: Int? = null
+    )
+
+    data class ModelManagementState(
+        val platforms: List<PlatformV2> = emptyList(),
+        val modelsByPlatformUid: Map<String, List<PlatformModelV2>> = emptyMap(),
+        val refreshingPlatformUids: Set<String> = emptySet()
     )
 }

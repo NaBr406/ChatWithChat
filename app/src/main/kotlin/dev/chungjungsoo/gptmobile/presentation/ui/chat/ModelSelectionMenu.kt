@@ -29,12 +29,13 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.chungjungsoo.gptmobile.R
-import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
+import dev.chungjungsoo.gptmobile.data.model.AvailableChatModel
 
 data class ModelSelectionOption(
     val platformUid: String,
     val label: String,
     val model: String,
+    val subtitle: String? = null,
     val selected: Boolean = false
 )
 
@@ -96,11 +97,22 @@ fun ModelSelectionMenu(
                         }
                     },
                     text = {
-                        Text(
-                            text = option.label,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        androidx.compose.foundation.layout.Column {
+                            Text(
+                                text = option.label,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            option.subtitle?.let { subtitle ->
+                                Text(
+                                    text = subtitle,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
                     },
                     onClick = {
                         expanded = false
@@ -113,17 +125,35 @@ fun ModelSelectionMenu(
 }
 
 fun buildModelSelectionOptions(
-    platforms: List<PlatformV2>,
+    models: List<AvailableChatModel>,
     selectedPlatformUid: String?,
-    modelForPlatform: (PlatformV2) -> String?
-): List<ModelSelectionOption> = platforms.mapNotNull { platform ->
-    val model = modelForPlatform(platform)?.trim().orEmpty().ifBlank { platform.model.trim() }
-    val label = model.ifBlank { platform.name.trim() }
+    selectedModel: String?
+): List<ModelSelectionOption> {
+    val duplicateModelIds = models
+        .groupingBy { it.modelId }
+        .eachCount()
+        .filterValues { count -> count > 1 }
+        .keys
 
-    ModelSelectionOption(
-        platformUid = platform.uid,
-        label = label,
-        model = model,
-        selected = platform.uid == selectedPlatformUid
-    )
+    return models.map { chatModel ->
+        val isSelected = chatModel.platformUid == selectedPlatformUid && chatModel.modelId == selectedModel
+        val subtitle = chatModel.platformName.takeIf { chatModel.modelId in duplicateModelIds }
+
+        ModelSelectionOption(
+            platformUid = chatModel.platformUid,
+            label = chatModel.displayName,
+            model = chatModel.modelId,
+            subtitle = subtitle,
+            selected = isSelected
+        )
+    }
 }
+
+fun AvailableChatModel.toSelectionOption(selected: Boolean = false): ModelSelectionOption =
+    ModelSelectionOption(
+        platformUid = platformUid,
+        label = displayName,
+        model = modelId,
+        subtitle = platformName,
+        selected = selected
+    )

@@ -13,6 +13,7 @@ import dev.chungjungsoo.gptmobile.data.dto.groq.request.GroqChatCompletionReques
 import dev.chungjungsoo.gptmobile.data.dto.groq.response.GroqChatCompletionChunk
 import dev.chungjungsoo.gptmobile.data.dto.groq.response.GroqChoice
 import dev.chungjungsoo.gptmobile.data.dto.groq.response.GroqDelta
+import dev.chungjungsoo.gptmobile.data.dto.openai.common.TextContent as OpenAITextContent
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ChatCompletionRequest
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ResponsesRequest
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.ChatCompletionChunk
@@ -38,6 +39,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ChatRepositoryImplTest {
@@ -241,6 +243,47 @@ class ChatRepositoryImplTest {
     }
 
     @Test
+    fun `old conversation turns are summarized into system prompt`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI()
+        val repository = createRepository(openAIAPI = openAIAPI)
+        val customPlatform = customPlatform()
+
+        repository.completeChat(
+            userMessages = (1..8).map { index ->
+                MessageV2(
+                    id = index,
+                    content = "topic-$index user detail",
+                    platformType = null
+                )
+            },
+            assistantMessages = (1..8).map { index ->
+                listOf(
+                    MessageV2(
+                        id = 100 + index,
+                        content = "topic-$index assistant detail",
+                        platformType = customPlatform.uid
+                    )
+                )
+            },
+            platform = customPlatform.copy(systemPrompt = "Base system prompt")
+        ).toList()
+
+        val request = openAIAPI.lastChatCompletionRequest
+        val systemText = request
+            ?.messages
+            ?.firstOrNull()
+            ?.content
+            ?.filterIsInstance<OpenAITextContent>()
+            ?.firstOrNull()
+            ?.text
+            .orEmpty()
+
+        assertTrue(systemText.contains("Base system prompt"))
+        assertTrue(systemText.contains("Earlier conversation summary"))
+        assertTrue(systemText.contains("topic-1"))
+    }
+
+    @Test
     fun `mergeSystemPrompt keeps base prompt and memory prompt`() {
         val merged = mergeSystemPrompt(
             basePrompt = "Base system prompt.",
@@ -338,6 +381,7 @@ class ChatRepositoryImplTest {
 
     private class RecordingOpenAIAPI : OpenAIAPI {
         var streamChatCompletionCalls = 0
+        var lastChatCompletionRequest: ChatCompletionRequest? = null
 
         override fun setToken(token: String?) = Unit
 
@@ -345,6 +389,7 @@ class ChatRepositoryImplTest {
 
         override fun streamChatCompletion(request: ChatCompletionRequest, timeoutSeconds: Int): Flow<ChatCompletionChunk> {
             streamChatCompletionCalls += 1
+            lastChatCompletionRequest = request
             return emptyFlow()
         }
 

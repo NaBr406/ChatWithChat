@@ -47,7 +47,6 @@ import dev.chungjungsoo.gptmobile.R
 import dev.chungjungsoo.gptmobile.data.model.ClientType
 import dev.chungjungsoo.gptmobile.presentation.ui.setup.SetupViewModelV2.Companion.WIZARD_STEP_API_KEY
 import dev.chungjungsoo.gptmobile.presentation.ui.setup.SetupViewModelV2.Companion.WIZARD_STEP_BASICS
-import dev.chungjungsoo.gptmobile.presentation.ui.setup.SetupViewModelV2.Companion.WIZARD_STEP_MODEL
 import dev.chungjungsoo.gptmobile.presentation.ui.setup.SetupViewModelV2.Companion.WIZARD_TOTAL_STEPS
 
 @Composable
@@ -63,7 +62,6 @@ fun SetupPlatformWizardScreen(
     val platformNameState = setupViewModel.platformName.collectAsStateWithLifecycle()
     val apiUrlState = setupViewModel.apiUrl.collectAsStateWithLifecycle()
     val apiKeyState = setupViewModel.apiKey.collectAsStateWithLifecycle()
-    val modelState = setupViewModel.model.collectAsStateWithLifecycle()
 
     // Extract values for use in composables
     val wizardStep = wizardStepState.value
@@ -71,8 +69,6 @@ fun SetupPlatformWizardScreen(
     platformNameState.value
     apiUrlState.value
     apiKeyState.value
-    modelState.value
-
     // Compute canProceed using derivedStateOf for proper reactivity
     val canProceed by remember {
         derivedStateOf {
@@ -80,9 +76,6 @@ fun SetupPlatformWizardScreen(
                 WIZARD_STEP_BASICS -> platformNameState.value.isNotBlank() && apiUrlState.value.isNotBlank()
 
                 WIZARD_STEP_API_KEY -> true
-
-                // API key is optional for some providers (e.g., Ollama)
-                WIZARD_STEP_MODEL -> modelState.value.isNotBlank()
 
                 else -> false
             }
@@ -165,14 +158,6 @@ fun SetupPlatformWizardScreen(
                         )
                     }
 
-                    WIZARD_STEP_MODEL -> {
-                        // Collect model state directly inside AnimatedContent for proper recomposition
-                        val currentModel by setupViewModel.model.collectAsStateWithLifecycle()
-                        ModelStep(
-                            model = currentModel,
-                            onModelChange = setupViewModel::updateModel
-                        )
-                    }
                 }
             }
 
@@ -244,11 +229,6 @@ private fun WizardProgressIndicator(
                 text = stringResource(R.string.step_api_key),
                 isCompleted = currentStep > WIZARD_STEP_API_KEY,
                 isCurrent = currentStep == WIZARD_STEP_API_KEY
-            )
-            StepLabel(
-                text = stringResource(R.string.step_model),
-                isCompleted = currentStep > WIZARD_STEP_MODEL,
-                isCurrent = currentStep == WIZARD_STEP_MODEL
             )
         }
     }
@@ -423,58 +403,6 @@ private fun ApiKeyStep(
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun ModelStep(
-    model: String,
-    onModelChange: (String) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp)
-    ) {
-        Text(
-            modifier = Modifier.semantics { heading() },
-            text = stringResource(R.string.step_model),
-            style = MaterialTheme.typography.headlineSmall
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Text(
-            text = stringResource(R.string.model_description),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        // Model
-        OutlinedTextField(
-            value = model,
-            onValueChange = onModelChange,
-            label = { Text(stringResource(R.string.model)) },
-            placeholder = { Text(stringResource(R.string.model_name)) },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            supportingText = {
-                Text(stringResource(R.string.model_supporting))
-            }
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Examples
-        Text(
-            text = stringResource(R.string.model_examples),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
     }
 }
 

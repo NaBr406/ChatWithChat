@@ -96,6 +96,9 @@ dependencies {
     implementation(libs.ktor.logging)
     implementation(libs.ktor.serialization)
 
+    // Token counting
+    implementation(libs.jtokkit)
+
     // License page UI
     implementation(libs.auto.license.core)
     implementation(libs.auto.license.ui)

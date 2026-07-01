@@ -7,3 +7,9 @@ data class ConversationTurn(
     val assistantMessage: MessageV2?,
     val isCurrentTurn: Boolean
 )
+
+data class ConversationContext(
+    val turns: List<ConversationTurn> = emptyList(),
+    val summary: String? = null,
+    val estimatedTokens: Int = 0
+)

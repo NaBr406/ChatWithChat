@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatRoomV2
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
+import dev.chungjungsoo.gptmobile.data.model.AvailableChatModel
 import dev.chungjungsoo.gptmobile.data.model.LastSelectedModel
 import dev.chungjungsoo.gptmobile.data.repository.ChatRepository
 import dev.chungjungsoo.gptmobile.data.repository.SettingRepository
@@ -36,7 +37,6 @@ class HomeViewModel @Inject constructor(
         val chats: List<ChatRoomV2> = listOf(),
         val isSelectionMode: Boolean = false,
         val isSearchMode: Boolean = false,
-        val selectedPlatforms: List<Boolean> = listOf(),
         val selectedChats: List<Boolean> = listOf()
     )
 
@@ -49,11 +49,11 @@ class HomeViewModel @Inject constructor(
     private val _lastSelectedModel = MutableStateFlow<LastSelectedModel?>(null)
     val lastSelectedModel = _lastSelectedModel.asStateFlow()
 
+    private val _availableChatModels = MutableStateFlow(listOf<AvailableChatModel>())
+    val availableChatModels = _availableChatModels.asStateFlow()
+
     private val _searchQuery = MutableStateFlow("")
     val searchQuery = _searchQuery.asStateFlow()
-
-    private val _showSelectModelDialog = MutableStateFlow(false)
-    val showSelectModelDialog: StateFlow<Boolean> = _showSelectModelDialog.asStateFlow()
 
     private val _showDeleteWarningDialog = MutableStateFlow(false)
     val showDeleteWarningDialog: StateFlow<Boolean> = _showDeleteWarningDialog.asStateFlow()
@@ -65,22 +65,6 @@ class HomeViewModel @Inject constructor(
             .distinctUntilChanged()
             .onEach { query -> searchChats(query) }
             .launchIn(viewModelScope)
-    }
-
-    fun updatePlatformCheckedState(idx: Int) {
-        if (idx < 0 || idx >= _chatListState.value.selectedPlatforms.size) return
-
-        _chatListState.update {
-            it.copy(
-                selectedPlatforms = it.selectedPlatforms.mapIndexed { index, b ->
-                    if (index == idx) {
-                        !b
-                    } else {
-                        b
-                    }
-                }
-            )
-        }
     }
 
     fun updateSearchQuery(query: String) {
@@ -100,22 +84,11 @@ class HomeViewModel @Inject constructor(
     }
 
     fun openDeleteWarningDialog() {
-        closeSelectModelDialog()
         _showDeleteWarningDialog.update { true }
     }
 
     fun closeDeleteWarningDialog() {
         _showDeleteWarningDialog.update { false }
-    }
-
-    fun openSelectModelDialog() {
-        _showSelectModelDialog.update { true }
-        disableSelectionMode()
-    }
-
-    fun closeSelectModelDialog() {
-        _showSelectModelDialog.update { false }
-        _chatListState.update { it.copy(selectedPlatforms = List(it.selectedPlatforms.size) { false }) }
     }
 
     fun deleteSelectedChats() {
@@ -186,11 +159,14 @@ class HomeViewModel @Inject constructor(
     fun fetchPlatformStatus() {
         viewModelScope.launch {
             val platforms = settingRepository.fetchPlatformV2s()
+            val availableModels = settingRepository.fetchEnabledChatModels()
             _platformState.update { platforms }
-            _lastSelectedModel.update { selectUsableLastSelectedModel(platforms, settingRepository.fetchLastSelectedModel()) }
-
-            if (_chatListState.value.selectedPlatforms.size != platforms.size) {
-                _chatListState.update { it.copy(selectedPlatforms = List(platforms.size) { false }) }
+            _availableChatModels.update { availableModels }
+            _lastSelectedModel.update {
+                selectUsableLastSelectedModel(
+                    availableModels = availableModels,
+                    defaultModel = settingRepository.resolveDefaultChatModel()
+                )
             }
         }
     }
@@ -226,13 +202,11 @@ class HomeViewModel @Inject constructor(
     }
 
     private fun selectUsableLastSelectedModel(
-        platforms: List<PlatformV2>,
-        lastSelectedModel: LastSelectedModel?
-    ): LastSelectedModel? {
-        val selectedModel = lastSelectedModel ?: return null
-        val platform = platforms.firstOrNull { it.uid == selectedModel.platformUid && it.enabled } ?: return null
-        val model = selectedModel.model.takeIf { it.isNotBlank() } ?: platform.model
-
-        return LastSelectedModel(platformUid = platform.uid, model = model)
+        availableModels: List<AvailableChatModel>,
+        defaultModel: AvailableChatModel?
+    ): LastSelectedModel? = defaultModel?.let { model ->
+        LastSelectedModel(platformUid = model.platformUid, model = model.modelId)
+    } ?: availableModels.firstOrNull()?.let { model ->
+        LastSelectedModel(platformUid = model.platformUid, model = model.modelId)
     }
 }

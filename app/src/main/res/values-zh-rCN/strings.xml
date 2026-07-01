@@ -80,7 +80,6 @@
     <string name="memory_page_description">查看、编辑和管理已保存的记忆。</string>
     <string name="settings_section_models_providers">模型与提供商</string>
     <string name="settings_section_personalization">个性化</string>
-    <string name="settings_section_appearance">外观</string>
     <string name="settings_section_app">应用</string>
     <string name="memory_disabled_notice_title">记忆链路未启用</string>
     <string name="memory_disabled_notice_description">仍可查看、编辑、导出和清理已有记忆；开启后才会参与新聊天。</string>
@@ -124,9 +123,6 @@
     <string name="memory_status_unknown">未知状态</string>
     <string name="settings">设置</string>
     <string name="new_chat">新建会话</string>
-    <string name="select_platform">选择平台</string>
-    <string name="select_platform_description">选择此会话要使用的平台。会话创建后无法更改，如需更改请新建会话。</string>
-    <string name="enable_at_leat_one_platform">请至少启用一个平台才能创建会话。</string>
     <string name="chat_icon">会话图标</string>
     <string name="using_certain_platform">使用 %s</string>
     <string name="confirm">确定</string>
@@ -137,9 +133,7 @@
     <string name="on">开启</string>
     <string name="off">关闭</string>
     <string name="system_default">跟随系统</string>
-    <string name="theme_settings">主题设置</string>
     <string name="supported_soon">即将支持</string>
-    <string name="theme_description">动态主题、深色模式</string>
     <string name="openai_setting">OpenAI 设置</string>
     <string name="anthropic_setting">Anthropic 设置</string>
     <string name="google_setting">Google 设置</string>
@@ -147,8 +141,6 @@
     <string name="enable_api">启用 API</string>
     <string name="api_key">API 密钥</string>
     <string name="api_model">API 模型</string>
-    <string name="dynamic_theme">动态主题</string>
-    <string name="dark_mode">深色模式</string>
     <string name="key_icon">密钥图标</string>
     <string name="model_icon">模型图标</string>
     <string name="send">发送</string>
@@ -221,9 +213,7 @@
     <string name="select_ollama_model_description">请选择 Ollama 模型。Ollama 支持大量模型和标签，你可以自定义模型值。请确认端点确实支持并已运行该模型，否则不会生成响应。</string>
     <string name="custom">自定义</string>
     <string name="custom_description">使用列表之外的模型。</string>
-    <string name="model_name">模型标识符</string>
     <string name="model_custom_example">例如 llama3.2、llava、llama3:latest、...</string>
-    <string name="custom_model_warning">请注意，模型名称必须受 API 支持。</string>
     <string name="enter_api_address">输入 API 地址</string>
     <string name="api_address_description">请输入 Ollama API 地址（包含端口号）。应用会使用 v1/chat/completions 端点，因此只需输入完整地址的前半部分。地址必须以 / 结尾，例如 http://192.168.1.100:11434/</string>
     <string name="ollama_api_address">Ollama API 地址</string>
@@ -264,6 +254,14 @@
     <string name="model_picker_use_model">使用此模型</string>
     <string name="model_picker_start_compare">开始对比</string>
     <string name="model_picker_no_enabled_platform">请先启用一个平台。</string>
+    <string name="model_management">模型管理</string>
+    <string name="model_management_description">刷新模型列表、启用模型并设置默认模型</string>
+    <string name="refresh_models">刷新</string>
+    <string name="no_available_models">暂无可用模型，请刷新模型列表。</string>
+    <string name="model_refresh_success">模型列表已同步</string>
+    <string name="model_refresh_failed_short">刷新失败</string>
+    <string name="model_refresh_failed_inline">刷新失败：%1$s</string>
+    <string name="model_not_refreshed">尚未刷新模型列表</string>
     <string name="update_chat_title">更新会话标题</string>
     <string name="chat_title">会话标题</string>
     <string name="chat_title_dialog_description">AI 生成标题仅适用于支持 AICore 的设备。</string>

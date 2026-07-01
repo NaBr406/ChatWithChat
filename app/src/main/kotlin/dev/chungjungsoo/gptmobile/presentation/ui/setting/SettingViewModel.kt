@@ -154,13 +154,9 @@ class SettingViewModel @Inject constructor(
         }
     }
 
-    fun openThemeDialog() = _dialogState.update { it.copy(isThemeDialogOpen = true) }
-
     fun openApiUrlDialog() = _dialogState.update { it.copy(isApiUrlDialogOpen = true) }
 
     fun openApiTokenDialog() = _dialogState.update { it.copy(isApiTokenDialogOpen = true) }
-
-    fun openApiModelDialog() = _dialogState.update { it.copy(isApiModelDialogOpen = true) }
 
     fun openTemperatureDialog() = _dialogState.update { it.copy(isTemperatureDialogOpen = true) }
 
@@ -168,13 +164,9 @@ class SettingViewModel @Inject constructor(
 
     fun openSystemPromptDialog() = _dialogState.update { it.copy(isSystemPromptDialogOpen = true) }
 
-    fun closeThemeDialog() = _dialogState.update { it.copy(isThemeDialogOpen = false) }
-
     fun closeApiUrlDialog() = _dialogState.update { it.copy(isApiUrlDialogOpen = false) }
 
     fun closeApiTokenDialog() = _dialogState.update { it.copy(isApiTokenDialogOpen = false) }
-
-    fun closeApiModelDialog() = _dialogState.update { it.copy(isApiModelDialogOpen = false) }
 
     fun closeTemperatureDialog() = _dialogState.update { it.copy(isTemperatureDialogOpen = false) }
 
@@ -190,10 +182,8 @@ class SettingViewModel @Inject constructor(
     }
 
     data class DialogState(
-        val isThemeDialogOpen: Boolean = false,
         val isApiUrlDialogOpen: Boolean = false,
         val isApiTokenDialogOpen: Boolean = false,
-        val isApiModelDialogOpen: Boolean = false,
         val isTemperatureDialogOpen: Boolean = false,
         val isTopPDialogOpen: Boolean = false,
         val isSystemPromptDialogOpen: Boolean = false

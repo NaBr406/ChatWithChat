@@ -113,31 +113,17 @@ fun ChatScreen(
     val appEnabledPlatforms by chatViewModel.enabledPlatformsInApp.collectAsStateWithLifecycle()
     val chatPlatformModels by chatViewModel.chatPlatformModels.collectAsStateWithLifecycle()
     val lastSelectedModel by chatViewModel.lastSelectedModel.collectAsStateWithLifecycle()
+    val availableChatModels by chatViewModel.availableChatModels.collectAsStateWithLifecycle()
     val enabledPlatformLookup = remember(appEnabledPlatforms) { appEnabledPlatforms.associateBy { it.uid } }
-    val canUseChat = (chatViewModel.enabledPlatformsInChat.toSet() - appEnabledPlatforms.map { it.uid }.toSet()).isEmpty()
     val isIdle = loadingStates.all { it == ChatViewModel.LoadingState.Idle }
-    val platformsInChat = remember(appEnabledPlatforms, chatViewModel.enabledPlatformsInChat) {
-        chatViewModel.enabledPlatformsInChat.mapNotNull { uid ->
-            appEnabledPlatforms.firstOrNull { it.uid == uid }
-        }
-    }
-    var selectedPlatformUid by remember(platformsInChat, lastSelectedModel) {
-        mutableStateOf(
-            lastSelectedModel?.platformUid?.takeIf { uid -> platformsInChat.any { it.uid == uid } }
-                ?: platformsInChat.firstOrNull()?.uid
-        )
-    }
-    val currentModelOptions = remember(platformsInChat, selectedPlatformUid, chatPlatformModels) {
+    val currentModelOptions = remember(availableChatModels, lastSelectedModel) {
         buildModelSelectionOptions(
-            platforms = platformsInChat,
-            selectedPlatformUid = selectedPlatformUid,
-            modelForPlatform = { platform ->
-                chatPlatformModels[platform.uid]
-                    ?.takeIf { it.isNotBlank() }
-                    ?: platform.model
-            }
+            models = availableChatModels,
+            selectedPlatformUid = lastSelectedModel?.platformUid,
+            selectedModel = lastSelectedModel?.model
         )
     }
+    val canUseChat = currentModelOptions.isNotEmpty() && chatPlatformModels.isNotEmpty()
     val currentModelLabel = currentModelOptions.firstOrNull { it.selected }?.label
         ?: currentModelOptions.firstOrNull()?.label
         ?: stringResource(R.string.chat_models)
@@ -183,7 +169,6 @@ fun ChatScreen(
         onFileRemoved = chatViewModel::removeSelectedFile,
         onSendButtonClick = chatViewModel::askQuestion,
         onModelOptionSelected = { option ->
-            selectedPlatformUid = option.platformUid
             chatViewModel.updateChatPlatformModelAndRemember(option.platformUid, option.model)
         },
         navigationIcon = navigationIcon,
@@ -521,11 +506,10 @@ private fun ChatMessagePair(
                     .padding(bottom = if (enabledPlatformsInChat.size > 1) 8.dp else 2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                GPTMobileIcon(loading = isActiveMessage && !isIdle)
                 if (enabledPlatformsInChat.size > 1) {
                     Row(
                         modifier = Modifier
-                            .padding(horizontal = 16.dp)
+                            .padding(start = 4.dp)
                             .fillMaxWidth()
                             .horizontalScroll(rememberScrollState())
                     ) {
@@ -545,7 +529,6 @@ private fun ChatMessagePair(
             OpponentChatBubble(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 48.dp)
                     .widthIn(max = maximumOpponentChatBubbleWidth),
                 canEdit = canUseChat && isIdle,
                 canRetry = canUseChat && isActiveMessage && !isCurrentPlatformLoading,

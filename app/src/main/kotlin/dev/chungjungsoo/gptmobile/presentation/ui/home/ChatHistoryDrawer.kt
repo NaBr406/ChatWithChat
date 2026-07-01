@@ -23,7 +23,6 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -60,6 +59,7 @@ fun ChatHistoryDrawer(
     platformState: List<PlatformV2>,
     searchQuery: String,
     onSearchQueryChanged: (String) -> Unit,
+    onSearchClick: () -> Unit,
     onClearSearch: () -> Unit,
     onNewChatClick: () -> Unit,
     onChatClick: (ChatRoomV2) -> Unit,
@@ -68,7 +68,6 @@ fun ChatHistoryDrawer(
     onCloseSelection: () -> Unit,
     onDuplicateSelected: () -> Unit,
     onDeleteSelected: () -> Unit,
-    onMemoryClick: () -> Unit,
     onSettingsClick: () -> Unit,
     onAboutClick: () -> Unit
 ) {
@@ -80,13 +79,19 @@ fun ChatHistoryDrawer(
             .widthIn(max = 328.dp)
             .padding(horizontal = 14.dp, vertical = 18.dp)
     ) {
-        DrawerHeader(onNewChatClick = onNewChatClick)
-
-        ChatDrawerSearchField(
-            query = searchQuery,
-            onQueryChange = onSearchQueryChanged,
-            onClearSearch = onClearSearch
+        DrawerHeader(
+            onNewChatClick = onNewChatClick,
+            isSearchMode = chatListState.isSearchMode,
+            onSearchClick = onSearchClick
         )
+
+        if (chatListState.isSearchMode || searchQuery.isNotBlank()) {
+            ChatDrawerSearchField(
+                query = searchQuery,
+                onQueryChange = onSearchQueryChanged,
+                onClearSearch = onClearSearch
+            )
+        }
 
         if (chatListState.isSelectionMode) {
             DrawerSelectionToolbar(
@@ -162,12 +167,7 @@ fun ChatHistoryDrawer(
             }
         }
 
-        HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
-        DrawerActionRow(
-            icon = ImageVector.vectorResource(R.drawable.ic_model),
-            label = stringResource(R.string.memory),
-            onClick = onMemoryClick
-        )
+        HorizontalDivider(modifier = Modifier.padding(top = 8.dp, bottom = 6.dp))
         DrawerActionRow(
             icon = Icons.Outlined.Settings,
             label = stringResource(R.string.settings),
@@ -205,8 +205,8 @@ fun ChatHistoryRow(
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(12.dp),
-        color = if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
-        contentColor = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+        color = if (selected) MaterialTheme.colorScheme.surfaceContainerHigh else Color.Transparent,
+        contentColor = MaterialTheme.colorScheme.onSurface
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
@@ -217,16 +217,8 @@ fun ChatHistoryRow(
                     checked = selected,
                     onCheckedChange = { onCheckedChange() }
                 )
-            } else {
-                Icon(
-                    imageVector = ImageVector.vectorResource(id = R.drawable.ic_rounded_chat),
-                    contentDescription = stringResource(R.string.chat_icon),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(22.dp)
-                )
+                Spacer(modifier = Modifier.width(10.dp))
             }
-
-            Spacer(modifier = Modifier.width(12.dp))
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -242,7 +234,7 @@ fun ChatHistoryRow(
                     overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.bodyMedium,
                     color = if (selected) {
-                        MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f)
+                        MaterialTheme.colorScheme.onSurfaceVariant
                     } else {
                         MaterialTheme.colorScheme.onSurfaceVariant
                     }
@@ -253,23 +245,47 @@ fun ChatHistoryRow(
 }
 
 @Composable
-private fun DrawerHeader(onNewChatClick: () -> Unit) {
-    Text(
-        text = stringResource(R.string.chatwithchat_brand),
-        style = MaterialTheme.typography.titleLarge,
-        color = MaterialTheme.colorScheme.onSurface
-    )
-    Button(
+private fun DrawerHeader(
+    onNewChatClick: () -> Unit,
+    isSearchMode: Boolean,
+    onSearchClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            modifier = Modifier.weight(1f),
+            text = stringResource(R.string.chatwithchat_brand),
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        IconButton(onClick = onSearchClick) {
+            Icon(
+                imageVector = if (isSearchMode) Icons.Rounded.Close else Icons.Rounded.Search,
+                contentDescription = stringResource(R.string.search_chats),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+    Surface(
         modifier = Modifier
             .padding(top = 16.dp)
             .fillMaxWidth()
             .heightIn(min = 48.dp),
         shape = RoundedCornerShape(14.dp),
-        onClick = onNewChatClick
+        onClick = onNewChatClick,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        contentColor = MaterialTheme.colorScheme.onSurface
     ) {
-        Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.new_chat))
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(text = stringResource(R.string.new_chat))
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.new_chat))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(text = stringResource(R.string.new_chat))
+        }
     }
 }
 

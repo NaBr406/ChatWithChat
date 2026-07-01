@@ -1,5 +1,6 @@
 package dev.chungjungsoo.gptmobile.data.memory
 
+import dev.chungjungsoo.gptmobile.data.database.entity.PlatformModelV2
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
 import dev.chungjungsoo.gptmobile.data.dto.Platform
 import dev.chungjungsoo.gptmobile.data.dto.ThemeSetting
@@ -17,8 +18,10 @@ import dev.chungjungsoo.gptmobile.data.dto.openai.response.Choice
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.Delta
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.OutputTextDeltaEvent
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.ResponsesStreamEvent
+import dev.chungjungsoo.gptmobile.data.model.AvailableChatModel
 import dev.chungjungsoo.gptmobile.data.model.ClientType
 import dev.chungjungsoo.gptmobile.data.model.LastSelectedModel
+import dev.chungjungsoo.gptmobile.data.model.ModelRefreshResult
 import dev.chungjungsoo.gptmobile.data.network.AnthropicAPI
 import dev.chungjungsoo.gptmobile.data.network.GoogleAPI
 import dev.chungjungsoo.gptmobile.data.network.OpenAIAPI
@@ -356,6 +359,10 @@ private class FakeSettingRepository(
 ) : SettingRepository {
     override suspend fun fetchPlatforms(): List<Platform> = emptyList()
     override suspend fun fetchPlatformV2s(): List<PlatformV2> = platforms
+    override suspend fun fetchPlatformModels(): List<PlatformModelV2> = emptyList()
+    override suspend fun fetchPlatformModels(platformUid: String): List<PlatformModelV2> = emptyList()
+    override suspend fun fetchEnabledChatModels(): List<AvailableChatModel> = emptyList()
+    override suspend fun resolveDefaultChatModel(): AvailableChatModel? = null
     override suspend fun fetchThemes(): ThemeSetting = ThemeSetting()
     override suspend fun fetchLastSelectedModel(): LastSelectedModel? = null
     override suspend fun fetchMemoryEnabled(): Boolean = false
@@ -364,6 +371,9 @@ private class FakeSettingRepository(
     override suspend fun updateThemes(themeSetting: ThemeSetting) = Unit
     override suspend fun updateLastSelectedModel(platformUid: String, model: String) = Unit
     override suspend fun updateMemoryEnabled(enabled: Boolean) = Unit
+    override suspend fun refreshPlatformModels(platformUid: String): ModelRefreshResult = ModelRefreshResult(platforms.first(), emptyList())
+    override suspend fun updatePlatformModelEnabled(platformUid: String, modelId: String, enabled: Boolean) = Unit
+    override suspend fun setPlatformDefaultModel(platformUid: String, modelId: String) = Unit
     override suspend fun addPlatformV2(platform: PlatformV2) = Unit
     override suspend fun updatePlatformV2(platform: PlatformV2) = Unit
     override suspend fun deletePlatformV2(platform: PlatformV2) = Unit

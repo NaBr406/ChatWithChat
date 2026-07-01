@@ -2,12 +2,19 @@ package dev.chungjungsoo.gptmobile.data.repository
 
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
 import dev.chungjungsoo.gptmobile.data.dto.Platform
+import dev.chungjungsoo.gptmobile.data.database.entity.PlatformModelV2
 import dev.chungjungsoo.gptmobile.data.dto.ThemeSetting
+import dev.chungjungsoo.gptmobile.data.model.AvailableChatModel
 import dev.chungjungsoo.gptmobile.data.model.LastSelectedModel
+import dev.chungjungsoo.gptmobile.data.model.ModelRefreshResult
 
 interface SettingRepository {
     suspend fun fetchPlatforms(): List<Platform>
     suspend fun fetchPlatformV2s(): List<PlatformV2>
+    suspend fun fetchPlatformModels(): List<PlatformModelV2>
+    suspend fun fetchPlatformModels(platformUid: String): List<PlatformModelV2>
+    suspend fun fetchEnabledChatModels(): List<AvailableChatModel>
+    suspend fun resolveDefaultChatModel(): AvailableChatModel?
     suspend fun fetchThemes(): ThemeSetting
     suspend fun fetchLastSelectedModel(): LastSelectedModel?
     suspend fun fetchMemoryEnabled(): Boolean
@@ -16,6 +23,9 @@ interface SettingRepository {
     suspend fun updateThemes(themeSetting: ThemeSetting)
     suspend fun updateLastSelectedModel(platformUid: String, model: String)
     suspend fun updateMemoryEnabled(enabled: Boolean)
+    suspend fun refreshPlatformModels(platformUid: String): ModelRefreshResult
+    suspend fun updatePlatformModelEnabled(platformUid: String, modelId: String, enabled: Boolean)
+    suspend fun setPlatformDefaultModel(platformUid: String, modelId: String)
 
     // PlatformV2 CRUD operations
     suspend fun addPlatformV2(platform: PlatformV2)

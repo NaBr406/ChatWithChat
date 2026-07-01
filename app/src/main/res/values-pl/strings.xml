@@ -60,9 +60,6 @@
     <string name="chats">会话</string>
     <string name="settings">设置</string>
     <string name="new_chat">新建会话</string>
-    <string name="select_platform">选择平台</string>
-    <string name="select_platform_description">选择此会话要使用的平台。会话创建后无法更改，如需更改请新建会话。</string>
-    <string name="enable_at_leat_one_platform">请至少启用一个平台才能创建会话。</string>
     <string name="chat_icon">会话图标</string>
     <string name="using_certain_platform">使用 %s</string>
     <string name="confirm">确定</string>
@@ -73,9 +70,7 @@
     <string name="on">开启</string>
     <string name="off">关闭</string>
     <string name="system_default">跟随系统</string>
-    <string name="theme_settings">主题设置</string>
     <string name="supported_soon">即将支持</string>
-    <string name="theme_description">动态主题、深色模式</string>
     <string name="openai_setting">OpenAI 设置</string>
     <string name="anthropic_setting">Anthropic 设置</string>
     <string name="google_setting">Google 设置</string>
@@ -83,8 +78,6 @@
     <string name="enable_api">启用 API</string>
     <string name="api_key">API 密钥</string>
     <string name="api_model">API 模型</string>
-    <string name="dynamic_theme">动态主题</string>
-    <string name="dark_mode">深色模式</string>
     <string name="key_icon">密钥图标</string>
     <string name="model_icon">模型图标</string>
     <string name="send">发送</string>
@@ -157,9 +150,7 @@
     <string name="select_ollama_model_description">请选择 Ollama 模型。Ollama 支持大量模型和标签，你可以自定义模型值。请确认端点确实支持并已运行该模型，否则不会生成响应。</string>
     <string name="custom">自定义</string>
     <string name="custom_description">使用列表之外的模型。</string>
-    <string name="model_name">模型标识符</string>
     <string name="model_custom_example">例如 llama3.2、llava、llama3:latest、...</string>
-    <string name="custom_model_warning">请注意，模型名称必须受 API 支持。</string>
     <string name="enter_api_address">输入 API 地址</string>
     <string name="api_address_description">请输入 Ollama API 地址（包含端口号）。应用会使用 v1/chat/completions 端点，因此只需输入完整地址的前半部分。地址必须以 / 结尾，例如 http://192.168.1.100:11434/</string>
     <string name="ollama_api_address">Ollama API 地址</string>

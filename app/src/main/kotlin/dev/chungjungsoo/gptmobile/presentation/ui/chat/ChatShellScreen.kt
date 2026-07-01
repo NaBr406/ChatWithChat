@@ -11,10 +11,7 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -33,7 +30,6 @@ import kotlinx.coroutines.launch
 fun ChatShellScreen(
     homeViewModel: HomeViewModel = hiltViewModel(),
     settingOnClick: () -> Unit,
-    onMemoryClick: () -> Unit,
     onAboutClick: () -> Unit,
     onExistingChatClick: (ChatRoomV2) -> Unit,
     navigateToNewChat: (enabledPlatforms: List<String>, initialQuestion: String?, initialModel: String?) -> Unit,
@@ -51,12 +47,10 @@ fun ChatShellScreen(
     val showDeleteWarningDialog by homeViewModel.showDeleteWarningDialog.collectAsStateWithLifecycle()
     val platformState by homeViewModel.platformState.collectAsStateWithLifecycle()
     val lastSelectedModel by homeViewModel.lastSelectedModel.collectAsStateWithLifecycle()
+    val availableChatModels by homeViewModel.availableChatModels.collectAsStateWithLifecycle()
     val searchQuery by homeViewModel.searchQuery.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
     val lifecycleState by lifecycleOwner.lifecycle.currentStateFlow.collectAsStateWithLifecycle()
-    var pendingInitialQuestion by remember { mutableStateOf<String?>(null) }
-    var showModelPickerSheet by remember { mutableStateOf(false) }
-    var startAfterModelSelection by remember { mutableStateOf(false) }
 
     fun openDrawer() {
         scope.launch { drawerState.open() }
@@ -66,37 +60,22 @@ fun ChatShellScreen(
         scope.launch { drawerState.close() }
     }
 
-    fun enabledPlatforms() = platformState.filter { it.enabled }
-
-    fun preferredSinglePlatformUid(): String? {
-        val enabledPlatforms = enabledPlatforms()
-        return lastSelectedModel
-            ?.platformUid
-            ?.takeIf { selectedUid -> enabledPlatforms.any { it.uid == selectedUid } }
-            ?: enabledPlatforms.firstOrNull()?.uid
-    }
-
-    fun openNewChatModelPicker(initialQuestion: String?, startAfterSelection: Boolean) {
-        pendingInitialQuestion = initialQuestion
-        startAfterModelSelection = startAfterSelection
-        showModelPickerSheet = true
-    }
+    fun preferredModel() = lastSelectedModel?.let { selectedModel ->
+        availableChatModels.firstOrNull { model ->
+            model.platformUid == selectedModel.platformUid && model.modelId == selectedModel.model
+        }
+    } ?: availableChatModels.firstOrNull()
 
     fun startNewChat(initialQuestion: String?, preferPrimaryPlatform: Boolean) {
-        val enabledPlatformUids = enabledPlatforms().map { it.uid }
-        when {
-            enabledPlatformUids.isEmpty() -> openNewChatModelPicker(initialQuestion, startAfterSelection = true)
-            enabledPlatformUids.size == 1 || preferPrimaryPlatform -> {
-                val platformUid = preferredSinglePlatformUid() ?: return
-                closeDrawer()
-                navigateToNewChat(
-                    listOf(platformUid),
-                    initialQuestion,
-                    lastSelectedModel?.takeIf { it.platformUid == platformUid }?.model
-                )
-            }
-            else -> openNewChatModelPicker(initialQuestion, startAfterSelection = true)
+        val model = preferredModel()
+        if (model == null) {
+            Toast.makeText(context, context.getString(R.string.empty_chat_no_platforms), Toast.LENGTH_SHORT).show()
+            return
         }
+
+        homeViewModel.updateLastSelectedModel(model.platformUid, model.modelId)
+        closeDrawer()
+        navigateToNewChat(listOf(model.platformUid), initialQuestion, model.modelId)
     }
 
     LaunchedEffect(lifecycleState) {
@@ -136,6 +115,13 @@ fun ChatShellScreen(
                             homeViewModel.updateSearchQuery(query)
                         }
                     },
+                    onSearchClick = {
+                        if (chatListState.isSearchMode) {
+                            homeViewModel.disableSearchMode()
+                        } else {
+                            homeViewModel.enableSearchMode()
+                        }
+                    },
                     onClearSearch = homeViewModel::disableSearchMode,
                     onNewChatClick = { startNewChat(null, preferPrimaryPlatform = false) },
                     onChatClick = { chatRoom ->
@@ -153,10 +139,6 @@ fun ChatShellScreen(
                         Toast.makeText(context, context.getString(R.string.duplicated_chat), Toast.LENGTH_SHORT).show()
                     },
                     onDeleteSelected = homeViewModel::openDeleteWarningDialog,
-                    onMemoryClick = {
-                        closeDrawer()
-                        onMemoryClick()
-                    },
                     onSettingsClick = {
                         closeDrawer()
                         settingOnClick()
@@ -173,48 +155,7 @@ fun ChatShellScreen(
             ::openDrawer,
             homeViewModel,
             ::startNewChat,
-            { openNewChatModelPicker(null, startAfterSelection = false) }
-        )
-    }
-
-    if (showModelPickerSheet) {
-        val enabledPlatformUids = enabledPlatforms().map { it.uid }
-        val selectedPlatformUids = preferredSinglePlatformUid()
-            ?.let { listOf(it) }
-            ?: enabledPlatformUids.take(1)
-
-        ModelPickerSheet(
-            platforms = platformState,
-            selectedPlatformUids = selectedPlatformUids,
-            modelOverrides = emptyMap(),
-            lastSelectedModel = lastSelectedModel,
-            allowCompare = enabledPlatformUids.size > 1,
-            onDismissRequest = {
-                pendingInitialQuestion = null
-                startAfterModelSelection = false
-                showModelPickerSheet = false
-            },
-            onSingleModelSelected = { platformUid, model ->
-                homeViewModel.updateLastSelectedModel(platformUid, model)
-                val initialQuestion = pendingInitialQuestion
-                val shouldStartChat = startAfterModelSelection || initialQuestion != null
-                pendingInitialQuestion = null
-                startAfterModelSelection = false
-                showModelPickerSheet = false
-
-                if (shouldStartChat) {
-                    closeDrawer()
-                    navigateToNewChat(listOf(platformUid), initialQuestion, model)
-                }
-            },
-            onCompareSelected = { platformUids ->
-                val initialQuestion = pendingInitialQuestion
-                pendingInitialQuestion = null
-                startAfterModelSelection = false
-                showModelPickerSheet = false
-                closeDrawer()
-                navigateToNewChat(platformUids, initialQuestion, null)
-            }
+            {}
         )
     }
 

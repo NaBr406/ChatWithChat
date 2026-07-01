@@ -69,7 +69,6 @@ fun PlatformSettingScreen(
     )
     val platform by settingViewModel.platformState.collectAsStateWithLifecycle()
     val dialogState by settingViewModel.dialogState.collectAsStateWithLifecycle()
-    val modelFetchState by settingViewModel.modelFetchState.collectAsStateWithLifecycle()
     val isDeleted by settingViewModel.isDeleted.collectAsStateWithLifecycle()
 
     LaunchedEffect(isDeleted) {
@@ -149,21 +148,6 @@ fun PlatformSettingScreen(
                         )
                     }
                 )
-                SettingItem(
-                    modifier = Modifier.height(64.dp),
-                    title = stringResource(R.string.api_model),
-                    description = platformData.model,
-                    enabled = platformData.enabled,
-                    onItemClick = settingViewModel::openApiModelDialog,
-                    showTrailingIcon = false,
-                    showLeadingIcon = true,
-                    leadingIcon = {
-                        Icon(
-                            ImageVector.vectorResource(id = R.drawable.ic_model),
-                            contentDescription = stringResource(R.string.model_icon)
-                        )
-                    }
-                )
                 // Disable temperature and top_p when reasoning is enabled for OpenAI
                 val isReasoningDisabled = platformData.compatibleType == ClientType.OPENAI && platformData.reasoning
                 val notSetText = stringResource(R.string.not_set)
@@ -237,7 +221,6 @@ fun PlatformSettingScreen(
                 PlatformNameDialog(dialogState, platformData.name, settingViewModel)
                 APIUrlDialog(dialogState, platformData.apiUrl, settingViewModel)
                 APIKeyDialog(dialogState, settingViewModel)
-                ModelDialog(dialogState, platformData.model, modelFetchState, settingViewModel)
                 TemperatureDialog(dialogState, platformData.temperature, settingViewModel)
                 TopPDialog(dialogState, platformData.topP, settingViewModel)
                 SystemPromptDialog(dialogState, platformData.systemPrompt ?: "", settingViewModel)
@@ -386,7 +369,7 @@ fun PreferenceSwitchWithContainer(
             .padding(horizontal = 16.dp, vertical = 12.dp)
             .clip(MaterialTheme.shapes.extraLarge)
             .background(
-                MaterialTheme.colorScheme.primaryContainer
+                MaterialTheme.colorScheme.surfaceContainerHigh
             )
             .toggleable(
                 value = isChecked,
@@ -404,7 +387,7 @@ fun PreferenceSwitchWithContainer(
                 modifier = Modifier
                     .padding(start = 8.dp, end = 16.dp)
                     .size(24.dp),
-                tint = MaterialTheme.colorScheme.onPrimaryContainer
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
         Column(
@@ -416,7 +399,7 @@ fun PreferenceSwitchWithContainer(
                 text = title,
                 maxLines = 1,
                 style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onPrimaryContainer
+                color = MaterialTheme.colorScheme.onSurface
             )
         }
         Switch(

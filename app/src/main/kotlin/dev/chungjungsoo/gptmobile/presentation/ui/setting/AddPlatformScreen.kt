@@ -55,7 +55,6 @@ fun AddPlatformScreen(
     var clientTypeExpanded by remember { mutableStateOf(false) }
     var apiUrl by remember { mutableStateOf("") }
     var apiKey by remember { mutableStateOf("") }
-    var model by remember { mutableStateOf("") }
     var reasoningEnabled by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -200,21 +199,6 @@ fun AddPlatformScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Model
-            OutlinedTextField(
-                value = model,
-                onValueChange = { model = it },
-                label = { Text(stringResource(R.string.model)) },
-                placeholder = { Text(getModelPlaceholder(selectedClientType)) },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                supportingText = {
-                    Text(stringResource(R.string.model_supporting))
-                }
-            )
-
-            Spacer(modifier = Modifier.height(24.dp))
-
             // Extended Thinking Toggle
             Row(
                 modifier = Modifier
@@ -250,7 +234,7 @@ fun AddPlatformScreen(
                         enabled = true,
                         apiUrl = apiUrl.trim(),
                         token = apiKey.trim().takeIf { it.isNotEmpty() },
-                        model = model.trim(),
+                        model = "",
                         temperature = 1.0f,
                         topP = 1.0f,
                         systemPrompt = ModelConstants.DEFAULT_PROMPT,
@@ -261,7 +245,7 @@ fun AddPlatformScreen(
                     onSave(platform)
                 },
                 modifier = Modifier.fillMaxWidth(),
-                enabled = platformName.isNotBlank() && apiUrl.isNotBlank() && model.isNotBlank()
+                enabled = platformName.isNotBlank() && apiUrl.isNotBlank()
             ) {
                 Text(stringResource(R.string.save))
             }
@@ -302,13 +286,3 @@ private fun getClientTypeDescription(clientType: ClientType): String = when (cli
     ClientType.CUSTOM -> stringResource(R.string.client_type_custom_desc)
 }
 
-@Composable
-private fun getModelPlaceholder(clientType: ClientType): String = when (clientType) {
-    ClientType.OPENAI -> "gpt-5.2"
-    ClientType.ANTHROPIC -> "claude-sonnet-4-5-20250929"
-    ClientType.GOOGLE -> "gemini-3-pro-preview"
-    ClientType.GROQ -> "openai/gpt-oss-120b"
-    ClientType.OLLAMA -> "gpt-oss"
-    ClientType.OPENROUTER -> "openai/gpt-4o"
-    ClientType.CUSTOM -> stringResource(R.string.model_name)
-}

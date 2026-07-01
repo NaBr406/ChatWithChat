@@ -23,9 +23,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -42,32 +40,20 @@ fun EmptyChatScreen(
     onStartChat: (String) -> Unit,
     onAddProvider: () -> Unit
 ) {
-    val platformState by homeViewModel.platformState.collectAsStateWithLifecycle()
     val lastSelectedModel by homeViewModel.lastSelectedModel.collectAsStateWithLifecycle()
-    val enabledPlatforms = remember(platformState) { platformState.filter { it.enabled } }
-    val platformsInMenu = remember(enabledPlatforms) { enabledPlatforms }
-    var selectedPlatformUid by remember(platformsInMenu, lastSelectedModel) {
-        mutableStateOf(
-            lastSelectedModel?.platformUid?.takeIf { uid -> platformsInMenu.any { it.uid == uid } }
-                ?: platformsInMenu.firstOrNull()?.uid
-        )
-    }
-    val currentModelOptions = remember(platformsInMenu, selectedPlatformUid, lastSelectedModel) {
+    val availableChatModels by homeViewModel.availableChatModels.collectAsStateWithLifecycle()
+    val currentModelOptions = remember(availableChatModels, lastSelectedModel) {
         buildModelSelectionOptions(
-            platforms = platformsInMenu,
-            selectedPlatformUid = selectedPlatformUid,
-            modelForPlatform = { platform ->
-                lastSelectedModel?.takeIf { it.platformUid == platform.uid }?.model
-                    ?.takeIf { it.isNotBlank() }
-                    ?: platform.model
-            }
+            models = availableChatModels,
+            selectedPlatformUid = lastSelectedModel?.platformUid,
+            selectedModel = lastSelectedModel?.model
         )
     }
     val currentModelLabel = currentModelOptions.firstOrNull { it.selected }?.label
         ?: currentModelOptions.firstOrNull()?.label
         ?: stringResource(R.string.chat_models)
     val inputState = rememberTextFieldState()
-    val canChat = platformsInMenu.isNotEmpty()
+    val canChat = currentModelOptions.isNotEmpty()
 
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -86,7 +72,6 @@ fun EmptyChatScreen(
                             options = currentModelOptions,
                             enabled = true,
                             onOptionSelected = { option ->
-                                selectedPlatformUid = option.platformUid
                                 homeViewModel.updateLastSelectedModel(option.platformUid, option.model)
                             }
                         )

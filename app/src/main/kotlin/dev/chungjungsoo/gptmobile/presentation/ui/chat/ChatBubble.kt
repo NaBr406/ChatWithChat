@@ -1,7 +1,6 @@
 package dev.chungjungsoo.gptmobile.presentation.ui.chat
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -37,7 +36,6 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -114,13 +112,31 @@ fun OpponentChatBubble(
         }
 
         Column {
-            val displayText = if (isLoading) text + "●" else text
+            val displayText = if (isLoading && text.isNotBlank()) text + "●" else text
 
-            ChatMarkdown(
-                content = displayText,
-                contentIdentity = contentIdentity,
-                modifier = Modifier.padding(vertical = 6.dp)
-            )
+            if (isLoading && displayText.isBlank()) {
+                Row(
+                    modifier = Modifier.padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(14.dp),
+                        strokeWidth = 2.dp
+                    )
+                    Text(
+                        text = stringResource(R.string.thinking_in_progress),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                ChatMarkdown(
+                    content = displayText,
+                    contentIdentity = contentIdentity,
+                    modifier = Modifier.padding(vertical = 6.dp)
+                )
+            }
 
             MessageFileThumbnailRow(
                 files = attachments,
@@ -184,30 +200,6 @@ fun OpponentChatBubble(
                 }
             }
         }
-    }
-}
-
-@Composable
-fun GPTMobileIcon(loading: Boolean) {
-    Box(
-        modifier = Modifier
-            .padding(start = 8.dp)
-            .size(32.dp)
-            .clip(RoundedCornerShape(32.dp))
-            .background(color = MaterialTheme.colorScheme.surfaceContainerLow),
-        contentAlignment = Alignment.Center
-    ) {
-        if (loading) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(32.dp),
-                strokeWidth = 2.dp
-            )
-        }
-        Image(
-            painter = painterResource(R.drawable.chatwithchat_logo),
-            contentDescription = null,
-            modifier = Modifier.size(20.dp)
-        )
     }
 }
 

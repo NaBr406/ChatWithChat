@@ -17,6 +17,7 @@ import dev.chungjungsoo.gptmobile.data.database.dao.ChatRoomV2Dao
 import dev.chungjungsoo.gptmobile.data.database.dao.MessageDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MessageV2Dao
 import dev.chungjungsoo.gptmobile.data.database.dao.PersonalMemoryDao
+import dev.chungjungsoo.gptmobile.data.database.dao.PlatformModelV2Dao
 import dev.chungjungsoo.gptmobile.data.database.dao.PlatformV2Dao
 import javax.inject.Singleton
 
@@ -31,6 +32,9 @@ object DatabaseModule {
 
     @Provides
     fun providePlatformV2Dao(chatDatabaseV2: ChatDatabaseV2): PlatformV2Dao = chatDatabaseV2.platformDao()
+
+    @Provides
+    fun providePlatformModelV2Dao(chatDatabaseV2: ChatDatabaseV2): PlatformModelV2Dao = chatDatabaseV2.platformModelDao()
 
     @Provides
     fun provideChatRoomDao(chatDatabase: ChatDatabase): ChatRoomDao = chatDatabase.chatRoomDao()
@@ -69,6 +73,7 @@ object DatabaseModule {
         ChatDatabaseV2Migrations.MIGRATION_2_3,
         ChatDatabaseV2Migrations.MIGRATION_3_4,
         ChatDatabaseV2Migrations.MIGRATION_4_5,
-        ChatDatabaseV2Migrations.MIGRATION_5_6
+        ChatDatabaseV2Migrations.MIGRATION_5_6,
+        ChatDatabaseV2Migrations.MIGRATION_6_7
     ).build()
 }

@@ -27,6 +27,7 @@ import dev.chungjungsoo.gptmobile.presentation.ui.migrate.MigrateScreen
 import dev.chungjungsoo.gptmobile.presentation.ui.setting.AboutScreen
 import dev.chungjungsoo.gptmobile.presentation.ui.setting.AddPlatformScreen
 import dev.chungjungsoo.gptmobile.presentation.ui.setting.LicenseScreen
+import dev.chungjungsoo.gptmobile.presentation.ui.setting.ModelManagementScreen
 import dev.chungjungsoo.gptmobile.presentation.ui.setting.PlatformSettingScreen
 import dev.chungjungsoo.gptmobile.presentation.ui.setting.SettingScreen
 import dev.chungjungsoo.gptmobile.presentation.ui.setting.SettingViewModelV2
@@ -128,7 +129,6 @@ fun NavGraphBuilder.homeScreenNavigation(navController: NavHostController) {
     composable(Route.CHAT_LIST) {
         ChatShellScreen(
             settingOnClick = { navController.navigate(Route.SETTING_ROUTE) { launchSingleTop = true } },
-            onMemoryClick = { navController.navigate(Route.MEMORY) { launchSingleTop = true } },
             onAboutClick = { navController.navigate(Route.ABOUT_PAGE) { launchSingleTop = true } },
             onExistingChatClick = { chatRoom ->
                 navController.navigateToChatRoom(chatRoom.id, chatRoom.enabledPlatform)
@@ -177,7 +177,6 @@ fun NavGraphBuilder.chatScreenNavigation(navController: NavHostController) {
     ) {
         ChatShellScreen(
             settingOnClick = { navController.navigate(Route.SETTING_ROUTE) { launchSingleTop = true } },
-            onMemoryClick = { navController.navigate(Route.MEMORY) { launchSingleTop = true } },
             onAboutClick = { navController.navigate(Route.ABOUT_PAGE) { launchSingleTop = true } },
             onExistingChatClick = { chatRoom ->
                 navController.navigateToChatRoom(chatRoom.id, chatRoom.enabledPlatform)
@@ -211,8 +210,19 @@ fun NavGraphBuilder.settingNavigation(navController: NavHostController) {
                         Route.PLATFORM_SETTINGS.replace("{platformUid}", platformUid)
                     )
                 },
+                onNavigateToModelManagement = { navController.navigate(Route.MODEL_MANAGEMENT) },
                 onNavigateToMemory = { navController.navigate(Route.MEMORY) },
                 onNavigateToAboutPage = { navController.navigate(Route.ABOUT_PAGE) }
+            )
+        }
+        composable(Route.MODEL_MANAGEMENT) {
+            val parentEntry = remember(it) {
+                navController.getBackStackEntry(Route.SETTING_ROUTE)
+            }
+            val settingViewModel: SettingViewModelV2 = hiltViewModel(parentEntry)
+            ModelManagementScreen(
+                settingViewModel = settingViewModel,
+                onNavigationClick = { navController.navigateUp() }
             )
         }
         composable(Route.ADD_PLATFORM) {

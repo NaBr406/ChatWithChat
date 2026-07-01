@@ -99,19 +99,25 @@ fun HomeScreen(
     val listState = rememberLazyListState()
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     val chatListState by homeViewModel.chatListState.collectAsStateWithLifecycle()
-    val showSelectModelDialog by homeViewModel.showSelectModelDialog.collectAsStateWithLifecycle()
     val showDeleteWarningDialog by homeViewModel.showDeleteWarningDialog.collectAsStateWithLifecycle()
     val platformState by homeViewModel.platformState.collectAsStateWithLifecycle()
+    val lastSelectedModel by homeViewModel.lastSelectedModel.collectAsStateWithLifecycle()
+    val availableChatModels by homeViewModel.availableChatModels.collectAsStateWithLifecycle()
     val searchQuery by homeViewModel.searchQuery.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
     val lifecycleState by lifecycleOwner.lifecycle.currentStateFlow.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val startNewChat = {
-        val enabledApiTypes = platformState.filter { it.enabled }.map { it.uid }
-        if (enabledApiTypes.size == 1) {
-            navigateToNewChat(enabledApiTypes)
+        val model = lastSelectedModel?.let { selectedModel ->
+            availableChatModels.firstOrNull { model ->
+                model.platformUid == selectedModel.platformUid && model.modelId == selectedModel.model
+            }
+        } ?: availableChatModels.firstOrNull()
+        if (model == null) {
+            Toast.makeText(context, context.getString(R.string.empty_chat_no_platforms), Toast.LENGTH_SHORT).show()
         } else {
-            homeViewModel.openSelectModelDialog()
+            homeViewModel.updateLastSelectedModel(model.platformUid, model.modelId)
+            navigateToNewChat(listOf(model.platformUid))
         }
     }
 
@@ -231,19 +237,6 @@ fun HomeScreen(
             }
         }
 
-        if (showSelectModelDialog) {
-            SelectPlatformDialog(
-                platformState,
-                selectedPlatforms = chatListState.selectedPlatforms,
-                onDismissRequest = { homeViewModel.closeSelectModelDialog() },
-                onConfirmation = {
-                    navigateToNewChat(it)
-                    homeViewModel.closeSelectModelDialog()
-                },
-                onPlatformSelect = { homeViewModel.updatePlatformCheckedState(it) }
-            )
-        }
-
         if (showDeleteWarningDialog) {
             DeleteWarningDialog(
                 onDismissRequest = homeViewModel::closeDeleteWarningDialog,
@@ -336,9 +329,9 @@ fun HomeTopAppBar(
 ) {
     TopAppBar(
         colors = TopAppBarDefaults.topAppBarColors(
-            scrolledContainerColor = if (isSelectionMode) MaterialTheme.colorScheme.primaryContainer else Color.Unspecified,
-            containerColor = if (isSelectionMode) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.background,
-            titleContentColor = if (isSelectionMode) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onBackground
+            scrolledContainerColor = if (isSelectionMode) MaterialTheme.colorScheme.surfaceContainerHigh else Color.Unspecified,
+            containerColor = if (isSelectionMode) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.background,
+            titleContentColor = MaterialTheme.colorScheme.onBackground
         ),
         title = {
             when {
@@ -373,7 +366,7 @@ fun HomeTopAppBar(
                         modifier = Modifier.padding(4.dp),
                         text = stringResource(R.string.chats_selected, selectedChats),
                         maxLines = 1,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        color = MaterialTheme.colorScheme.onSurface,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
@@ -398,7 +391,7 @@ fun HomeTopAppBar(
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Close,
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             contentDescription = stringResource(R.string.close)
                         )
                     }
@@ -447,7 +440,7 @@ fun HomeTopAppBar(
                         ) {
                             Icon(
                                 imageVector = Icons.Outlined.ContentCopy,
-                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 contentDescription = stringResource(R.string.duplicate)
                             )
                         }
@@ -458,7 +451,7 @@ fun HomeTopAppBar(
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.Delete,
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             contentDescription = stringResource(R.string.delete)
                         )
                     }
@@ -528,89 +521,6 @@ fun NewChatButton(
         expanded = expanded,
         icon = { Icon(Icons.Filled.Add, stringResource(R.string.new_chat)) },
         text = { Text(text = stringResource(R.string.new_chat)) }
-    )
-}
-
-@Composable
-fun SelectPlatformDialog(
-    platforms: List<PlatformV2>,
-    selectedPlatforms: List<Boolean>,
-    onDismissRequest: () -> Unit,
-    onConfirmation: (enabledPlatforms: List<String>) -> Unit,
-    onPlatformSelect: (idx: Int) -> Unit
-) {
-    val configuration = LocalWindowInfo.current
-    val screenWidth = with(LocalDensity.current) { configuration.containerSize.width.toDp() }
-    val screenHeight = with(LocalDensity.current) { configuration.containerSize.height.toDp() }
-
-    AlertDialog(
-        properties = DialogProperties(usePlatformDefaultWidth = false),
-        modifier = Modifier
-            .widthIn(max = screenWidth - 40.dp)
-            .heightIn(max = screenHeight - 80.dp),
-        onDismissRequest = onDismissRequest,
-        title = {
-            Column {
-                Text(
-                    text = stringResource(R.string.select_platform),
-                    modifier = Modifier.padding(8.dp),
-                    style = MaterialTheme.typography.headlineSmall
-                )
-                Text(
-                    text = stringResource(R.string.select_platform_description),
-                    modifier = Modifier.padding(8.dp),
-                    style = MaterialTheme.typography.bodyMedium
-                )
-            }
-        },
-        text = {
-            HorizontalDivider()
-            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                if (platforms.any { it.enabled }) {
-                    platforms.forEachIndexed { i, platform ->
-                        PlatformCheckBoxItem(
-                            title = platform.name,
-                            enabled = platform.enabled,
-                            selected = selectedPlatforms[i],
-                            description = null,
-                            onClickEvent = { onPlatformSelect(i) }
-                        )
-                    }
-                } else {
-                    EnablePlatformWarningText()
-                }
-                HorizontalDivider(Modifier.padding(top = 8.dp))
-            }
-        },
-        confirmButton = {
-            TextButton(
-                enabled = selectedPlatforms.any { it },
-                onClick = { onConfirmation(platforms.filterIndexed { i, _ -> selectedPlatforms[i] }.map { it.uid }) }
-            ) {
-                Text(stringResource(R.string.confirm))
-            }
-        },
-        dismissButton = {
-            TextButton(
-                onClick = { onDismissRequest() }
-            ) {
-                Text(stringResource(R.string.cancel))
-            }
-        }
-    )
-}
-
-@Preview
-@Composable
-fun EnablePlatformWarningText() {
-    Text(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(200.dp)
-            .wrapContentHeight(align = Alignment.CenterVertically)
-            .padding(16.dp),
-        textAlign = TextAlign.Center,
-        text = stringResource(R.string.enable_at_leat_one_platform)
     )
 }
 

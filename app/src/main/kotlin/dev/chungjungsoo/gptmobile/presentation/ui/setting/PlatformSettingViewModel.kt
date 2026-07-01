@@ -5,8 +5,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
-import dev.chungjungsoo.gptmobile.data.dto.APIModel
-import dev.chungjungsoo.gptmobile.data.repository.ModelDiscoveryRepository
 import dev.chungjungsoo.gptmobile.data.repository.SettingRepository
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,7 +16,6 @@ import kotlinx.coroutines.launch
 @HiltViewModel
 class PlatformSettingViewModel @Inject constructor(
     private val settingRepository: SettingRepository,
-    private val modelDiscoveryRepository: ModelDiscoveryRepository,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
@@ -29,9 +26,6 @@ class PlatformSettingViewModel @Inject constructor(
 
     private val _dialogState = MutableStateFlow(DialogState())
     val dialogState: StateFlow<DialogState> = _dialogState.asStateFlow()
-
-    private val _modelFetchState = MutableStateFlow(ModelFetchState())
-    val modelFetchState: StateFlow<ModelFetchState> = _modelFetchState.asStateFlow()
 
     private val _isDeleted = MutableStateFlow(false)
     val isDeleted: StateFlow<Boolean> = _isDeleted.asStateFlow()
@@ -76,32 +70,6 @@ class PlatformSettingViewModel @Inject constructor(
     fun openApiTokenDialog() = _dialogState.update { it.copy(isApiTokenDialogOpen = true) }
     fun closeApiTokenDialog() = _dialogState.update { it.copy(isApiTokenDialogOpen = false) }
 
-    fun openApiModelDialog() {
-        _dialogState.update { it.copy(isApiModelDialogOpen = true) }
-        fetchAvailableModels()
-    }
-    fun closeApiModelDialog() = _dialogState.update { it.copy(isApiModelDialogOpen = false) }
-
-    fun fetchAvailableModels() {
-        val platform = _platformState.value ?: return
-        viewModelScope.launch {
-            _modelFetchState.update { it.copy(isLoading = true, errorMessage = null) }
-            runCatching {
-                modelDiscoveryRepository.fetchModels(platform.compatibleType, platform.apiUrl, platform.token)
-            }.onSuccess { models ->
-                _modelFetchState.update { ModelFetchState(models = models, hasLoaded = true) }
-            }.onFailure { throwable ->
-                _modelFetchState.update {
-                    it.copy(
-                        isLoading = false,
-                        hasLoaded = true,
-                        errorMessage = throwable.message ?: "model_fetch_failed"
-                    )
-                }
-            }
-        }
-    }
-
     fun openTemperatureDialog() = _dialogState.update { it.copy(isTemperatureDialogOpen = true) }
     fun closeTemperatureDialog() = _dialogState.update { it.copy(isTemperatureDialogOpen = false) }
 
@@ -132,13 +100,6 @@ class PlatformSettingViewModel @Inject constructor(
         _platformState.value?.let { platform ->
             updatePlatform(platform.copy(token = token.trim().takeIf { it.isNotEmpty() }))
             closeApiTokenDialog()
-        }
-    }
-
-    fun updateApiModel(model: String) {
-        _platformState.value?.let { platform ->
-            updatePlatform(platform.copy(model = model.trim()))
-            closeApiModelDialog()
         }
     }
 
@@ -188,7 +149,6 @@ class PlatformSettingViewModel @Inject constructor(
         val isPlatformNameDialogOpen: Boolean = false,
         val isApiUrlDialogOpen: Boolean = false,
         val isApiTokenDialogOpen: Boolean = false,
-        val isApiModelDialogOpen: Boolean = false,
         val isTemperatureDialogOpen: Boolean = false,
         val isTopPDialogOpen: Boolean = false,
         val isSystemPromptDialogOpen: Boolean = false,
@@ -196,10 +156,4 @@ class PlatformSettingViewModel @Inject constructor(
         val isDeleteDialogOpen: Boolean = false
     )
 
-    data class ModelFetchState(
-        val isLoading: Boolean = false,
-        val hasLoaded: Boolean = false,
-        val models: List<APIModel> = emptyList(),
-        val errorMessage: String? = null
-    )
 }

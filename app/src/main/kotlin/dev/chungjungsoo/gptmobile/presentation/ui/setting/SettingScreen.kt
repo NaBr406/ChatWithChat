@@ -1,34 +1,34 @@
 package dev.chungjungsoo.gptmobile.presentation.ui.setting
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LargeTopAppBar
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -39,17 +39,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.chungjungsoo.gptmobile.R
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
-import dev.chungjungsoo.gptmobile.data.model.DynamicTheme
-import dev.chungjungsoo.gptmobile.data.model.ThemeMode
-import dev.chungjungsoo.gptmobile.presentation.common.LocalDynamicTheme
-import dev.chungjungsoo.gptmobile.presentation.common.LocalThemeMode
-import dev.chungjungsoo.gptmobile.presentation.common.LocalThemeViewModel
-import dev.chungjungsoo.gptmobile.presentation.common.RadioItem
-import dev.chungjungsoo.gptmobile.presentation.common.SettingItem
 import dev.chungjungsoo.gptmobile.util.getClientTypeDisplayName
-import dev.chungjungsoo.gptmobile.util.getDynamicThemeTitle
-import dev.chungjungsoo.gptmobile.util.getThemeModeTitle
-import dev.chungjungsoo.gptmobile.util.pinnedExitUntilCollapsedScrollBehavior
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -59,18 +49,16 @@ fun SettingScreen(
     onNavigationClick: () -> Unit,
     onNavigateToAddPlatform: () -> Unit,
     onNavigateToPlatformSetting: (String) -> Unit,
+    onNavigateToModelManagement: () -> Unit,
     onNavigateToMemory: () -> Unit,
     onNavigateToAboutPage: () -> Unit
 ) {
-    val scrollState = rememberScrollState()
-    val scrollBehavior = pinnedExitUntilCollapsedScrollBehavior(
-        canScroll = { scrollState.canScrollForward || scrollState.canScrollBackward }
-    )
     val platformState by settingViewModel.platformState.collectAsStateWithLifecycle()
     val dialogState by settingViewModel.dialogState.collectAsStateWithLifecycle()
     val memoryEnabled by settingViewModel.memoryEnabled.collectAsStateWithLifecycle()
-
+    val scrollState = rememberScrollState()
     val lifecycleOwner = LocalLifecycleOwner.current
+
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
@@ -79,47 +67,46 @@ fun SettingScreen(
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-        }
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     Scaffold(
-        modifier = modifier
-            .nestedScroll(scrollBehavior.nestedScrollConnection),
+        modifier = modifier.fillMaxSize(),
         topBar = {
-            SettingTopBar(
-                scrollBehavior = scrollBehavior,
-                navigationOnClick = onNavigationClick
+            TopAppBar(
+                title = { Text(stringResource(R.string.settings)) },
+                navigationIcon = {
+                    IconButton(onClick = onNavigationClick) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = stringResource(R.string.go_back)
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
             )
         }
     ) { innerPadding ->
         Column(
-            Modifier
+            modifier = Modifier
                 .padding(innerPadding)
                 .verticalScroll(scrollState)
         ) {
             SettingsSection(title = stringResource(R.string.settings_section_models_providers)) {
-                SettingItem(
+                SettingsRow(
                     title = stringResource(R.string.add_platform),
                     description = stringResource(R.string.add_platform_description),
-                    onItemClick = onNavigateToAddPlatform,
-                    showTrailingIcon = false,
-                    showLeadingIcon = true,
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Filled.Add,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    }
+                    onClick = onNavigateToAddPlatform
                 )
-
+                SettingsRow(
+                    title = stringResource(R.string.model_management),
+                    description = stringResource(R.string.model_management_description),
+                    onClick = onNavigateToModelManagement
+                )
                 platformState.forEach { platform ->
                     PlatformItem(
                         platform = platform,
-                        onItemClick = { onNavigateToPlatformSetting(platform.uid) },
-                        onDeleteClick = { settingViewModel.openDeleteDialog(platform.id) }
+                        onItemClick = { onNavigateToPlatformSetting(platform.uid) }
                     )
                 }
             }
@@ -129,22 +116,22 @@ fun SettingScreen(
                     memoryEnabled = memoryEnabled,
                     onCheckedChange = settingViewModel::updateMemoryEnabled
                 )
-                MemoryPageItem(onItemClick = onNavigateToMemory)
-            }
-
-            SettingsSection(title = stringResource(R.string.settings_section_appearance)) {
-                ThemeSetting { settingViewModel.openThemeDialog() }
+                SettingsRow(
+                    title = stringResource(R.string.memory),
+                    description = stringResource(R.string.memory_page_description),
+                    onClick = onNavigateToMemory
+                )
             }
 
             SettingsSection(title = stringResource(R.string.settings_section_app)) {
-                AboutPageItem(onItemClick = onNavigateToAboutPage)
+                SettingsRow(
+                    title = stringResource(R.string.about),
+                    description = stringResource(R.string.about_description),
+                    onClick = onNavigateToAboutPage
+                )
             }
 
             Spacer(modifier = Modifier.height(24.dp))
-
-            if (dialogState.isThemeDialogOpen) {
-                ThemeSettingDialog(settingViewModel)
-            }
 
             if (dialogState.isDeleteDialogOpen) {
                 DeletePlatformDialog(settingViewModel)
@@ -159,81 +146,55 @@ private fun SettingsSection(
     content: @Composable () -> Unit
 ) {
     Text(
-        modifier = Modifier.padding(PaddingValues(start = 24.dp, top = 18.dp, end = 24.dp, bottom = 6.dp)),
+        modifier = Modifier.padding(start = 24.dp, top = 18.dp, end = 24.dp, bottom = 6.dp),
         text = title,
         style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.primary
+        color = MaterialTheme.colorScheme.onSurfaceVariant
     )
     content()
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SettingTopBar(
-    scrollBehavior: TopAppBarScrollBehavior,
-    navigationOnClick: () -> Unit
+private fun SettingsRow(
+    title: String,
+    description: String?,
+    onClick: () -> Unit,
+    trailingContent: (@Composable () -> Unit)? = null
 ) {
-    LargeTopAppBar(
-        colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = MaterialTheme.colorScheme.background,
-            titleContentColor = MaterialTheme.colorScheme.onBackground
-        ),
-        title = {
+    ListItem(
+        modifier = Modifier.clickable(onClick = onClick),
+        headlineContent = {
             Text(
-                modifier = Modifier.padding(4.dp),
-                text = stringResource(R.string.settings),
+                text = title,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
         },
-        navigationIcon = {
-            IconButton(
-                modifier = Modifier.padding(4.dp),
-                onClick = navigationOnClick
-            ) {
-                Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.go_back))
+        supportingContent = description?.let {
+            {
+                Text(
+                    text = it,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         },
-        scrollBehavior = scrollBehavior
+        trailingContent = trailingContent,
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent)
     )
+    HorizontalDivider(modifier = Modifier.padding(start = 24.dp))
 }
 
 @Composable
-fun ThemeSetting(
+private fun PlatformItem(
+    platform: PlatformV2,
     onItemClick: () -> Unit
 ) {
-    SettingItem(
-        title = stringResource(R.string.theme_settings),
-        description = stringResource(R.string.theme_description),
-        onItemClick = onItemClick,
-        showTrailingIcon = false,
-        showLeadingIcon = false
-    )
-}
-
-@Composable
-fun AboutPageItem(
-    onItemClick: () -> Unit
-) {
-    SettingItem(
-        title = stringResource(R.string.about),
-        description = stringResource(R.string.about_description),
-        onItemClick = onItemClick,
-        showTrailingIcon = true,
-        showLeadingIcon = false
-    )
-}
-
-@Composable
-fun MemoryPageItem(
-    onItemClick: () -> Unit
-) {
-    SettingItem(
-        title = stringResource(R.string.memory),
-        description = stringResource(R.string.memory_page_description),
-        onItemClick = onItemClick,
-        showTrailingIcon = true,
-        showLeadingIcon = false
+    val statusText = if (platform.enabled) stringResource(R.string.enabled) else stringResource(R.string.disabled)
+    SettingsRow(
+        title = platform.name,
+        description = "${getClientTypeDisplayName(platform.compatibleType)} · $statusText",
+        onClick = onItemClick
     )
 }
 
@@ -242,91 +203,16 @@ fun MemoryEnabledItem(
     memoryEnabled: Boolean,
     onCheckedChange: (Boolean) -> Unit
 ) {
-    ListItem(
-        headlineContent = { Text(stringResource(R.string.memory_enabled_title)) },
-        supportingContent = { Text(stringResource(R.string.memory_enabled_description)) },
+    SettingsRow(
+        title = stringResource(R.string.memory_enabled_title),
+        description = stringResource(R.string.memory_enabled_description),
+        onClick = { onCheckedChange(!memoryEnabled) },
         trailingContent = {
             Switch(
                 checked = memoryEnabled,
                 onCheckedChange = onCheckedChange
             )
-        },
-        modifier = Modifier.padding(horizontal = 8.dp)
-    )
-}
-
-@Composable
-fun ThemeSettingDialog(
-    settingViewModel: SettingViewModelV2 = hiltViewModel()
-) {
-    val themeViewModel = LocalThemeViewModel.current
-    AlertDialog(
-        text = {
-            Column(
-                modifier = Modifier.verticalScroll(rememberScrollState())
-            ) {
-                Text(text = stringResource(R.string.dynamic_theme), style = MaterialTheme.typography.titleMedium)
-                Spacer(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(16.dp)
-                )
-                DynamicTheme.entries.forEach { theme ->
-                    RadioItem(
-                        title = getDynamicThemeTitle(theme),
-                        description = null,
-                        value = theme.name,
-                        selected = LocalDynamicTheme.current == theme
-                    ) {
-                        themeViewModel.updateDynamicTheme(theme)
-                    }
-                }
-                Spacer(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(24.dp)
-                )
-                Text(text = stringResource(R.string.dark_mode), style = MaterialTheme.typography.titleMedium)
-                Spacer(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(16.dp)
-                )
-                ThemeMode.entries.forEach { theme ->
-                    RadioItem(
-                        title = getThemeModeTitle(theme),
-                        description = null,
-                        value = theme.name,
-                        selected = LocalThemeMode.current == theme
-                    ) {
-                        themeViewModel.updateThemeMode(theme)
-                    }
-                }
-            }
-        },
-        onDismissRequest = settingViewModel::closeThemeDialog,
-        confirmButton = {
-            TextButton(
-                onClick = settingViewModel::closeThemeDialog
-            ) {
-                Text(stringResource(R.string.confirm))
-            }
         }
-    )
-}
-
-@Composable
-fun PlatformItem(
-    platform: PlatformV2,
-    onItemClick: () -> Unit,
-    onDeleteClick: () -> Unit
-) {
-    SettingItem(
-        title = platform.name,
-        description = "${getClientTypeDisplayName(platform.compatibleType)} • ${if (platform.enabled) stringResource(R.string.enabled) else stringResource(R.string.disabled)}",
-        onItemClick = onItemClick,
-        showTrailingIcon = true,
-        showLeadingIcon = false
     )
 }
 
@@ -335,24 +221,16 @@ fun DeletePlatformDialog(
     settingViewModel: SettingViewModelV2 = hiltViewModel()
 ) {
     AlertDialog(
-        title = {
-            Text(stringResource(R.string.delete_platform))
-        },
-        text = {
-            Text(stringResource(R.string.delete_platform_confirmation))
-        },
+        title = { Text(stringResource(R.string.delete_platform)) },
+        text = { Text(stringResource(R.string.delete_platform_confirmation)) },
         onDismissRequest = settingViewModel::closeDeleteDialog,
         confirmButton = {
-            TextButton(
-                onClick = settingViewModel::confirmDelete
-            ) {
+            TextButton(onClick = settingViewModel::confirmDelete) {
                 Text(stringResource(R.string.delete))
             }
         },
         dismissButton = {
-            TextButton(
-                onClick = settingViewModel::closeDeleteDialog
-            ) {
+            TextButton(onClick = settingViewModel::closeDeleteDialog) {
                 Text(stringResource(R.string.cancel))
             }
         }

@@ -225,6 +225,13 @@ object ChatDatabaseV2Migrations {
         }
     }
 
+    val MIGRATION_6_7 = object : Migration(6, 7) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            ensureMemoryTables(db)
+            ensurePlatformModelTables(db)
+        }
+    }
+
     internal fun legacyFilesToAttachmentsJson(filesValue: String): String {
         val attachments = filesValue
             .split(",")
@@ -304,5 +311,48 @@ object ChatDatabaseV2Migrations {
             )
             """.trimIndent()
         )
+    }
+
+    private fun ensurePlatformModelTables(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE platform_v2 ADD COLUMN model_refresh_status TEXT NOT NULL DEFAULT 'not_loaded'")
+        db.execSQL("ALTER TABLE platform_v2 ADD COLUMN model_refresh_error TEXT")
+        db.execSQL("ALTER TABLE platform_v2 ADD COLUMN model_refreshed_at INTEGER")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_platform_v2_uid` ON `platform_v2` (`uid`)")
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `platform_model_v2` (
+                `platform_uid` TEXT NOT NULL,
+                `model_id` TEXT NOT NULL,
+                `display_name` TEXT NOT NULL,
+                `description` TEXT NOT NULL,
+                `enabled` INTEGER NOT NULL,
+                `is_default` INTEGER NOT NULL,
+                `updated_at` INTEGER NOT NULL,
+                PRIMARY KEY(`platform_uid`, `model_id`),
+                FOREIGN KEY(`platform_uid`) REFERENCES `platform_v2`(`uid`) ON UPDATE NO ACTION ON DELETE CASCADE
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_platform_model_v2_platform_uid` ON `platform_model_v2` (`platform_uid`)")
+
+        val currentTimestamp = System.currentTimeMillis() / 1000
+        db.query("SELECT uid, model FROM platform_v2 WHERE model IS NOT NULL AND TRIM(model) != ''").use { cursor ->
+            val uidIndex = cursor.getColumnIndexOrThrow("uid")
+            val modelIndex = cursor.getColumnIndexOrThrow("model")
+            while (cursor.moveToNext()) {
+                val uid = cursor.getString(uidIndex).orEmpty()
+                val model = cursor.getString(modelIndex).orEmpty().trim()
+                if (uid.isBlank() || model.isBlank()) continue
+
+                db.execSQL(
+                    "INSERT OR IGNORE INTO platform_model_v2 (platform_uid, model_id, display_name, description, enabled, is_default, updated_at) VALUES (?, ?, ?, '', 1, 1, ?)",
+                    arrayOf<Any>(uid, model, model, currentTimestamp)
+                )
+                db.execSQL(
+                    "UPDATE platform_v2 SET model_refresh_status = 'success', model_refreshed_at = ? WHERE uid = ?",
+                    arrayOf<Any>(currentTimestamp, uid)
+                )
+            }
+        }
     }
 }

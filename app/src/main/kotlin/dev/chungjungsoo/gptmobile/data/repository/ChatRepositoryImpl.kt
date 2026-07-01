@@ -3,6 +3,7 @@ package dev.chungjungsoo.gptmobile.data.repository
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.chungjungsoo.gptmobile.data.context.ContextBuilder
+import dev.chungjungsoo.gptmobile.data.context.ConversationContext
 import dev.chungjungsoo.gptmobile.data.context.ConversationTurn
 import dev.chungjungsoo.gptmobile.data.context.ProviderContextPolicy
 import dev.chungjungsoo.gptmobile.data.database.dao.ChatPlatformModelV2Dao
@@ -160,14 +161,14 @@ class ChatRepositoryImpl @Inject constructor(
 
         streamPreparedApiState(
             prepare = {
-                val contextTurns = buildContextTurns(userMessages, assistantMessages, platform)
-                val inputMessages = buildResponsesInputMessages(contextTurns, platform.uid)
+                val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
+                val inputMessages = buildResponsesInputMessages(conversationContext.turns, platform.uid)
 
                 ResponsesRequest(
                     model = platform.model,
                     input = inputMessages,
                     stream = true,
-                    instructions = mergeSystemPrompt(platform.systemPrompt, memoryPrompt),
+                    instructions = mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary),
                     temperature = if (platform.reasoning) null else platform.temperature,
                     topP = if (platform.reasoning) null else platform.topP,
                     reasoning = if (platform.reasoning) {
@@ -217,9 +218,12 @@ class ChatRepositoryImpl @Inject constructor(
     ): Flow<ApiState> = try {
         streamPreparedApiState(
             prepare = {
-                val contextTurns = buildContextTurns(userMessages, assistantMessages, platform)
-                validateInlineBudgetIfNeeded(contextTurns, platform)
-                val messages = buildOpenAIChatMessages(contextTurns, mergeSystemPrompt(platform.systemPrompt, memoryPrompt))
+                val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
+                validateInlineBudgetIfNeeded(conversationContext.turns, platform)
+                val messages = buildOpenAIChatMessages(
+                    conversationContext.turns,
+                    mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary)
+                )
 
                 createGroqChatCompletionRequest(messages, platform)
             },
@@ -268,9 +272,12 @@ class ChatRepositoryImpl @Inject constructor(
 
         streamPreparedApiState(
             prepare = {
-                val contextTurns = buildContextTurns(userMessages, assistantMessages, platform)
-                validateInlineBudgetIfNeeded(contextTurns, platform)
-                val messages = buildOpenAIChatMessages(contextTurns, mergeSystemPrompt(platform.systemPrompt, memoryPrompt))
+                val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
+                validateInlineBudgetIfNeeded(conversationContext.turns, platform)
+                val messages = buildOpenAIChatMessages(
+                    conversationContext.turns,
+                    mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary)
+                )
 
                 ChatCompletionRequest(
                     model = platform.model,
@@ -302,18 +309,20 @@ class ChatRepositoryImpl @Inject constructor(
         flowOf(ApiState.Error(e.message ?: "完成会话失败"))
     }
 
-    private suspend fun buildContextTurns(
+    private suspend fun buildConversationContext(
         userMessages: List<MessageV2>,
         assistantMessages: List<List<MessageV2>>,
         platform: PlatformV2
-    ): List<ConversationTurn> {
+    ): ConversationContext {
         val policy = ProviderContextPolicy.forClientType(platform.compatibleType)
-        val contextTurns = contextBuilder.build(userMessages, assistantMessages, platform, policy)
-        if (!policy.preferProviderFileRefs || contextTurns.isEmpty()) {
-            return contextTurns
+        val conversationContext = contextBuilder.buildContext(userMessages, assistantMessages, platform, policy)
+        if (!policy.preferProviderFileRefs || conversationContext.turns.isEmpty()) {
+            return conversationContext
         }
 
-        return ensureProviderReferencesForTurns(contextTurns, platform)
+        return conversationContext.copy(
+            turns = ensureProviderReferencesForTurns(conversationContext.turns, platform)
+        )
     }
 
     private suspend fun ensureProviderReferencesForTurns(
@@ -526,15 +535,15 @@ class ChatRepositoryImpl @Inject constructor(
 
         streamPreparedApiState(
             prepare = {
-                val contextTurns = buildContextTurns(userMessages, assistantMessages, platform)
-                val messages = buildAnthropicInputMessages(contextTurns, platform.uid)
+                val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
+                val messages = buildAnthropicInputMessages(conversationContext.turns, platform.uid)
 
                 MessageRequest(
                     model = platform.model,
                     messages = messages,
                     maxTokens = if (platform.reasoning) 16000 else 4096,
                     stream = platform.stream,
-                    systemPrompt = mergeSystemPrompt(platform.systemPrompt, memoryPrompt),
+                    systemPrompt = mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary),
                     temperature = if (platform.reasoning) null else platform.temperature,
                     topP = if (platform.reasoning) null else platform.topP,
                     thinking = if (platform.reasoning) {
@@ -633,8 +642,8 @@ class ChatRepositoryImpl @Inject constructor(
 
         streamPreparedApiState(
             prepare = {
-                val contextTurns = buildContextTurns(userMessages, assistantMessages, platform)
-                val contents = buildGoogleContents(contextTurns, platform.uid)
+                val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
+                val contents = buildGoogleContents(conversationContext.turns, platform.uid)
 
                 GenerateContentRequest(
                     contents = contents,
@@ -649,7 +658,7 @@ class ChatRepositoryImpl @Inject constructor(
                             null
                         }
                     ),
-                    systemInstruction = mergeSystemPrompt(platform.systemPrompt, memoryPrompt)?.let {
+                    systemInstruction = mergePromptSections(platform.systemPrompt, memoryPrompt, conversationContext.summary)?.let {
                         Content(
                             parts = listOf(Part.text(it))
                         )
@@ -968,21 +977,12 @@ internal fun createGroqChatCompletionRequest(
 
 internal fun isGroqGptOssModel(model: String): Boolean = model.contains("gpt-oss", ignoreCase = true)
 
-internal fun mergeSystemPrompt(basePrompt: String?, memoryPrompt: String?): String? {
-    val base = basePrompt?.trim().orEmpty()
-    val memory = memoryPrompt?.trim().orEmpty()
+internal fun mergeSystemPrompt(basePrompt: String?, memoryPrompt: String?): String? = mergePromptSections(basePrompt, memoryPrompt)
 
-    return when {
-        base.isBlank() && memory.isBlank() -> null
-        base.isBlank() -> memory
-        memory.isBlank() -> base
-        else -> buildString {
-            appendLine(base)
-            appendLine()
-            append(memory)
-        }
-    }
-}
+internal fun mergePromptSections(vararg sections: String?): String? = sections
+    .mapNotNull { section -> section?.trim()?.takeIf { it.isNotBlank() } }
+    .takeIf { it.isNotEmpty() }
+    ?.joinToString(separator = "\n\n")
 
 internal fun MessageV2.sendableAssistantContent(): String {
     val strippedContent = stripAssistantErrorNote(effectiveContent()).trim()

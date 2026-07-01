@@ -46,9 +46,6 @@ class SetupViewModelV2 @Inject constructor(
     private val _apiKey = MutableStateFlow("")
     val apiKey: StateFlow<String> = _apiKey.asStateFlow()
 
-    private val _model = MutableStateFlow("")
-    val model: StateFlow<String> = _model.asStateFlow()
-
     private val _saveStatus = MutableStateFlow<SaveStatus>(SaveStatus.Idle)
     val saveStatus: StateFlow<SaveStatus> = _saveStatus.asStateFlow()
 
@@ -68,7 +65,6 @@ class SetupViewModelV2 @Inject constructor(
         _platformName.value = getDefaultPlatformName(clientType)
         _apiUrl.value = getDefaultApiUrl(clientType)
         _apiKey.value = ""
-        _model.value = ""
         _wizardStep.value = 0
     }
 
@@ -82,10 +78,6 @@ class SetupViewModelV2 @Inject constructor(
 
     fun updateApiKey(key: String) {
         _apiKey.value = key
-    }
-
-    fun updateModel(modelName: String) {
-        _model.value = modelName
     }
 
     fun nextWizardStep() {
@@ -102,7 +94,6 @@ class SetupViewModelV2 @Inject constructor(
         _platformName.value = ""
         _apiUrl.value = ""
         _apiKey.value = ""
-        _model.value = ""
     }
 
     fun savePlatform() {
@@ -117,7 +108,7 @@ class SetupViewModelV2 @Inject constructor(
                     enabled = true,
                     apiUrl = _apiUrl.value.trim(),
                     token = _apiKey.value.trim().takeIf { it.isNotEmpty() },
-                    model = _model.value.trim(),
+                    model = "",
                     temperature = 1.0f,
                     topP = 1.0f,
                     systemPrompt = ModelConstants.DEFAULT_PROMPT,
@@ -158,7 +149,7 @@ class SetupViewModelV2 @Inject constructor(
         1 -> true
 
         // API key is optional for some providers (e.g., Ollama)
-        2 -> _model.value.isNotBlank()
+        2 -> true
 
         else -> false
     }
@@ -189,7 +180,6 @@ class SetupViewModelV2 @Inject constructor(
         private const val TAG = "SetupViewModelV2"
         const val WIZARD_STEP_BASICS = 0
         const val WIZARD_STEP_API_KEY = 1
-        const val WIZARD_STEP_MODEL = 2
-        const val WIZARD_TOTAL_STEPS = 3
+        const val WIZARD_TOTAL_STEPS = 2
     }
 }

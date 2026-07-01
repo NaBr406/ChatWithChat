@@ -2,11 +2,15 @@ package dev.chungjungsoo.gptmobile.data.database.entity
 
 import androidx.room.ColumnInfo
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import dev.chungjungsoo.gptmobile.data.model.ClientType
 import java.util.*
 
-@Entity(tableName = "platform_v2")
+@Entity(
+    tableName = "platform_v2",
+    indices = [Index(value = ["uid"], unique = true)]
+)
 data class PlatformV2(
     @PrimaryKey(autoGenerate = true)
     @ColumnInfo("platform_id")
@@ -49,5 +53,20 @@ data class PlatformV2(
     val reasoning: Boolean = false,
 
     @ColumnInfo(name = "timeout")
-    val timeout: Int = 30
+    val timeout: Int = 30,
+
+    @ColumnInfo(name = "model_refresh_status")
+    val modelRefreshStatus: String = PlatformModelRefreshStatus.NOT_LOADED,
+
+    @ColumnInfo(name = "model_refresh_error")
+    val modelRefreshError: String? = null,
+
+    @ColumnInfo(name = "model_refreshed_at")
+    val modelRefreshedAt: Long? = null
 )
+
+object PlatformModelRefreshStatus {
+    const val NOT_LOADED = "not_loaded"
+    const val SUCCESS = "success"
+    const val FAILED = "failed"
+}
