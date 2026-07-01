@@ -41,13 +41,7 @@ class SettingRepositoryImpl @Inject constructor(
         val model = settingDataSource.getModel(apiType)
         val temperature = settingDataSource.getTemperature(apiType)
         val topP = settingDataSource.getTopP(apiType)
-        val systemPrompt = when (apiType) {
-            ApiType.OPENAI -> settingDataSource.getSystemPrompt(ApiType.OPENAI) ?: ModelConstants.OPENAI_PROMPT
-            ApiType.ANTHROPIC -> settingDataSource.getSystemPrompt(ApiType.ANTHROPIC) ?: ModelConstants.DEFAULT_PROMPT
-            ApiType.GOOGLE -> settingDataSource.getSystemPrompt(ApiType.GOOGLE) ?: ModelConstants.DEFAULT_PROMPT
-            ApiType.GROQ -> settingDataSource.getSystemPrompt(ApiType.GROQ) ?: ModelConstants.DEFAULT_PROMPT
-            ApiType.OLLAMA -> settingDataSource.getSystemPrompt(ApiType.OLLAMA) ?: ModelConstants.DEFAULT_PROMPT
-        }
+        val systemPrompt = settingDataSource.getSystemPrompt(apiType)
 
         Platform(
             name = apiType,

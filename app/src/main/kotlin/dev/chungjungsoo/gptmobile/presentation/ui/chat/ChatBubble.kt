@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -239,7 +240,6 @@ fun PlatformButton(
         }
     }
 }
-
 @Composable
 private fun CopyTextIcon(onCopyClick: () -> Unit) {
     IconButton(modifier = Modifier.size(36.dp), onClick = onCopyClick) {
@@ -251,7 +251,6 @@ private fun CopyTextIcon(onCopyClick: () -> Unit) {
         )
     }
 }
-
 @Composable
 private fun SelectTextIcon(onSelectClick: () -> Unit) {
     IconButton(modifier = Modifier.size(36.dp), onClick = onSelectClick) {
@@ -387,13 +386,21 @@ private fun MessageFileThumbnail(
                 .background(containerColor)
         ) {
             if (isImage) {
-                Icon(
-                    imageVector = ImageVector.vectorResource(R.drawable.ic_image),
+                LocalImageThumbnail(
+                    filePath = file.absolutePath,
+                    size = 48.dp,
                     contentDescription = file.name,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(8.dp),
-                    tint = contentColor
+                    modifier = Modifier.fillMaxSize(),
+                    fallback = {
+                        Icon(
+                            imageVector = ImageVector.vectorResource(R.drawable.ic_image),
+                            contentDescription = file.name,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(8.dp),
+                            tint = contentColor
+                        )
+                    }
                 )
             } else {
                 Icon(
@@ -419,9 +426,4 @@ private fun MessageFileThumbnail(
                 .width(56.dp)
         )
     }
-}
-
-private fun isImageFile(extension: String?): Boolean {
-    val imageExtensions = setOf("jpg", "jpeg", "png", "gif", "bmp", "webp")
-    return extension?.lowercase() in imageExtensions
 }

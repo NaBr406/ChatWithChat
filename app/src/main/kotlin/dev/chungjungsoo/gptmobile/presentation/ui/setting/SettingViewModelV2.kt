@@ -27,8 +27,13 @@ class SettingViewModelV2 @Inject constructor(
     private val _modelManagementState = MutableStateFlow(ModelManagementState())
     val modelManagementState: StateFlow<ModelManagementState> = _modelManagementState.asStateFlow()
 
+    private val _addPlatformSaveState = MutableStateFlow<AddPlatformSaveState>(AddPlatformSaveState.Idle)
+    val addPlatformSaveState: StateFlow<AddPlatformSaveState> = _addPlatformSaveState.asStateFlow()
+
     private val _dialogState = MutableStateFlow(DialogState())
     val dialogState: StateFlow<DialogState> = _dialogState.asStateFlow()
+
+    private var lastAddedPlatformUid: String? = null
 
     init {
         fetchPlatforms()
@@ -104,6 +109,38 @@ class SettingViewModelV2 @Inject constructor(
         }
     }
 
+    fun addPlatformAndRefreshModels(platform: PlatformV2) {
+        viewModelScope.launch {
+            _addPlatformSaveState.update { AddPlatformSaveState.Saving }
+            runCatching {
+                settingRepository.addPlatformV2(platform)
+                lastAddedPlatformUid = platform.uid
+                _addPlatformSaveState.update { AddPlatformSaveState.RefreshingModels }
+                refreshSavedPlatformModels(platform.uid)
+            }.onFailure { throwable ->
+                _addPlatformSaveState.update {
+                    AddPlatformSaveState.Error(
+                        message = throwable.message ?: "save_platform_failed",
+                        platformSaved = false
+                    )
+                }
+            }
+        }
+    }
+
+    fun retryAddedPlatformModelRefresh() {
+        val platformUid = lastAddedPlatformUid ?: return
+        viewModelScope.launch {
+            _addPlatformSaveState.update { AddPlatformSaveState.RefreshingModels }
+            refreshSavedPlatformModels(platformUid)
+        }
+    }
+
+    fun clearAddPlatformSaveState() {
+        _addPlatformSaveState.update { AddPlatformSaveState.Idle }
+        lastAddedPlatformUid = null
+    }
+
     fun updatePlatform(platform: PlatformV2) {
         viewModelScope.launch {
             settingRepository.updatePlatformV2(platform)
@@ -152,9 +189,34 @@ class SettingViewModelV2 @Inject constructor(
         val platformToDelete: Int? = null
     )
 
+    sealed class AddPlatformSaveState {
+        data object Idle : AddPlatformSaveState()
+        data object Saving : AddPlatformSaveState()
+        data object RefreshingModels : AddPlatformSaveState()
+        data class Success(val modelCount: Int) : AddPlatformSaveState()
+        data class Error(val message: String, val platformSaved: Boolean) : AddPlatformSaveState()
+    }
+
     data class ModelManagementState(
         val platforms: List<PlatformV2> = emptyList(),
         val modelsByPlatformUid: Map<String, List<PlatformModelV2>> = emptyMap(),
         val refreshingPlatformUids: Set<String> = emptySet()
     )
+
+    private suspend fun refreshSavedPlatformModels(platformUid: String) {
+        val result = settingRepository.refreshPlatformModels(platformUid)
+        val platforms = settingRepository.fetchPlatformV2s()
+        _platformState.update { platforms }
+        fetchPlatformModels(platforms)
+        _addPlatformSaveState.update {
+            if (result.isSuccess) {
+                AddPlatformSaveState.Success(modelCount = result.models.count { model -> model.enabled })
+            } else {
+                AddPlatformSaveState.Error(
+                    message = result.errorMessage ?: "model_fetch_failed",
+                    platformSaved = true
+                )
+            }
+        }
+    }
 }

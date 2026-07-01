@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.input.clearText
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Menu
@@ -23,7 +24,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -31,13 +34,14 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.chungjungsoo.gptmobile.R
 import dev.chungjungsoo.gptmobile.presentation.ui.home.HomeViewModel
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EmptyChatScreen(
     homeViewModel: HomeViewModel,
     onOpenDrawer: () -> Unit,
-    onStartChat: (String) -> Unit,
+    onStartChat: (String, List<String>) -> Unit,
     onAddProvider: () -> Unit
 ) {
     val lastSelectedModel by homeViewModel.lastSelectedModel.collectAsStateWithLifecycle()
@@ -53,6 +57,7 @@ fun EmptyChatScreen(
         ?: currentModelOptions.firstOrNull()?.label
         ?: stringResource(R.string.chat_models)
     val inputState = rememberTextFieldState()
+    var selectedAttachments by remember { mutableStateOf(listOf<ChatAttachmentDraft>()) }
     val canChat = currentModelOptions.isNotEmpty()
 
     Scaffold(
@@ -122,11 +127,26 @@ fun EmptyChatScreen(
                     inputState = inputState,
                     chatEnabled = true,
                     sendButtonEnabled = true,
-                    showAttachmentButton = false,
+                    selectedAttachments = selectedAttachments,
+                    onFileSelected = { filePath ->
+                        if (selectedAttachments.none { it.sourceFilePath == filePath }) {
+                            selectedAttachments = selectedAttachments + ChatAttachmentDraft(
+                                sourceFilePath = filePath,
+                                status = ChatAttachmentDraft.Status.Ready
+                            )
+                        }
+                    },
+                    onFileRemoved = { filePath ->
+                        selectedAttachments = selectedAttachments.filter { it.sourceFilePath != filePath }
+                        File(filePath).delete()
+                    },
                     onSendButtonClick = {
                         val prompt = inputState.text.toString().trim()
-                        if (prompt.isNotEmpty()) {
-                            onStartChat(prompt)
+                        val attachmentPaths = selectedAttachments.map { it.sourceFilePath }
+                        if (prompt.isNotEmpty() || attachmentPaths.isNotEmpty()) {
+                            onStartChat(prompt, attachmentPaths)
+                            selectedAttachments = emptyList()
+                            inputState.clearText()
                         }
                     }
                 )

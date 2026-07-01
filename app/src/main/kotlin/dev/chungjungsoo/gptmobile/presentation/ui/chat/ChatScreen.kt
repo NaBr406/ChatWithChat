@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.heightIn
@@ -60,6 +61,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -279,27 +281,71 @@ private fun ChatContent(
     val listState = rememberLazyListState()
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     val lastMessageIndex = groupedMessages.userMessages.lastIndex
+    val bottomItemIndex = groupedMessages.userMessages.size
+    val latestContentVersion = remember(groupedMessages, loadingStates) {
+        buildString {
+            append(groupedMessages.userMessages.size)
+            append('|')
+            groupedMessages.assistantMessages.lastOrNull().orEmpty().forEach { message ->
+                append(message.effectiveContent().length)
+                append(':')
+                append(message.effectiveThoughts().length)
+                append(':')
+                append(message.attachments.size)
+                append('|')
+            }
+            loadingStates.forEach { state ->
+                append(if (state == ChatViewModel.LoadingState.Loading) 'L' else 'I')
+            }
+        }
+    }
     val scope = rememberCoroutineScope()
+    var autoFollowToBottom by remember { mutableStateOf(true) }
+    var programmaticScrollInProgress by remember { mutableStateOf(false) }
 
-    suspend fun animateScrollToLatestMessage() {
-        if (lastMessageIndex >= 0) {
-            listState.animateScrollToItem(lastMessageIndex)
+    suspend fun scrollToLatestMessage(animated: Boolean) {
+        programmaticScrollInProgress = true
+        try {
+            if (animated) {
+                listState.animateScrollToItem(bottomItemIndex)
+            } else {
+                listState.scrollToItem(bottomItemIndex)
+            }
+            autoFollowToBottom = true
+        } finally {
+            programmaticScrollInProgress = false
         }
     }
 
-    LaunchedEffect(isIdle) {
-        animateScrollToLatestMessage()
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.isScrollInProgress to listState.canScrollForward }
+            .collect { (isScrolling, canScrollForward) ->
+                if (!canScrollForward) {
+                    autoFollowToBottom = true
+                } else if (isScrolling && !programmaticScrollInProgress) {
+                    autoFollowToBottom = false
+                }
+            }
     }
 
-    LaunchedEffect(isLoaded) {
-        animateScrollToLatestMessage()
+    LaunchedEffect(isLoaded, bottomItemIndex) {
+        if (isLoaded && autoFollowToBottom) {
+            scrollToLatestMessage(animated = false)
+        }
+    }
+
+    LaunchedEffect(latestContentVersion) {
+        if (autoFollowToBottom) {
+            scrollToLatestMessage(animated = false)
+        }
     }
 
     val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     LaunchedEffect(imeVisible) {
         if (imeVisible) {
+            autoFollowToBottom = true
             delay(100)
-            animateScrollToLatestMessage()
+            scrollToLatestMessage(animated = false)
         }
     }
 
@@ -399,6 +445,10 @@ private fun ChatContent(
                             )
                         }
                     }
+
+                    item(key = "chat-bottom") {
+                        Spacer(modifier = Modifier.height(1.dp))
+                    }
                 }
 
                 if (listState.canScrollForward) {
@@ -410,7 +460,8 @@ private fun ChatContent(
                     ) {
                         ScrollToBottomButton {
                             scope.launch {
-                                animateScrollToLatestMessage()
+                                autoFollowToBottom = true
+                                scrollToLatestMessage(animated = true)
                             }
                         }
                     }
@@ -425,6 +476,7 @@ private fun ChatContent(
                 onFileSelected = onFileSelected,
                 onFileRemoved = onFileRemoved
             ) {
+                autoFollowToBottom = true
                 onSendButtonClick()
                 focusManager.clearFocus()
             }

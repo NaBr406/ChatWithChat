@@ -32,11 +32,11 @@ fun ChatShellScreen(
     settingOnClick: () -> Unit,
     onAboutClick: () -> Unit,
     onExistingChatClick: (ChatRoomV2) -> Unit,
-    navigateToNewChat: (enabledPlatforms: List<String>, initialQuestion: String?, initialModel: String?) -> Unit,
+    navigateToNewChat: (enabledPlatforms: List<String>, initialQuestion: String?, initialModel: String?, initialAttachmentPaths: List<String>) -> Unit,
     content: @Composable (
         openDrawer: () -> Unit,
         homeViewModel: HomeViewModel,
-        startNewChat: (initialQuestion: String?, preferPrimaryPlatform: Boolean) -> Unit,
+        startNewChat: (initialQuestion: String?, initialAttachmentPaths: List<String>, preferPrimaryPlatform: Boolean) -> Unit,
         openModelPicker: () -> Unit
     ) -> Unit
 ) {
@@ -66,7 +66,11 @@ fun ChatShellScreen(
         }
     } ?: availableChatModels.firstOrNull()
 
-    fun startNewChat(initialQuestion: String?, preferPrimaryPlatform: Boolean) {
+    fun startNewChat(
+        initialQuestion: String?,
+        initialAttachmentPaths: List<String>,
+        preferPrimaryPlatform: Boolean
+    ) {
         val model = preferredModel()
         if (model == null) {
             Toast.makeText(context, context.getString(R.string.empty_chat_no_platforms), Toast.LENGTH_SHORT).show()
@@ -75,7 +79,7 @@ fun ChatShellScreen(
 
         homeViewModel.updateLastSelectedModel(model.platformUid, model.modelId)
         closeDrawer()
-        navigateToNewChat(listOf(model.platformUid), initialQuestion, model.modelId)
+        navigateToNewChat(listOf(model.platformUid), initialQuestion, model.modelId, initialAttachmentPaths)
     }
 
     LaunchedEffect(lifecycleState) {
@@ -123,7 +127,7 @@ fun ChatShellScreen(
                         }
                     },
                     onClearSearch = homeViewModel::disableSearchMode,
-                    onNewChatClick = { startNewChat(null, preferPrimaryPlatform = false) },
+                    onNewChatClick = { startNewChat(null, emptyList(), preferPrimaryPlatform = false) },
                     onChatClick = { chatRoom ->
                         closeDrawer()
                         onExistingChatClick(chatRoom)

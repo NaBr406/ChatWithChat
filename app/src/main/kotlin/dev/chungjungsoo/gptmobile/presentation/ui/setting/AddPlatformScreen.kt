@@ -13,6 +13,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
@@ -38,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.chungjungsoo.gptmobile.R
 import dev.chungjungsoo.gptmobile.data.ModelConstants
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
@@ -47,8 +49,8 @@ import dev.chungjungsoo.gptmobile.data.model.ClientType
 @Composable
 fun AddPlatformScreen(
     modifier: Modifier = Modifier,
-    onNavigationClick: () -> Unit,
-    onSave: (PlatformV2) -> Unit
+    settingViewModel: SettingViewModelV2,
+    onNavigationClick: () -> Unit
 ) {
     var platformName by remember { mutableStateOf("") }
     var selectedClientType by remember { mutableStateOf(ClientType.OPENAI) }
@@ -56,6 +58,16 @@ fun AddPlatformScreen(
     var apiUrl by remember { mutableStateOf("") }
     var apiKey by remember { mutableStateOf("") }
     var reasoningEnabled by remember { mutableStateOf(false) }
+    val saveState by settingViewModel.addPlatformSaveState.collectAsStateWithLifecycle()
+    val isBusy = saveState is SettingViewModelV2.AddPlatformSaveState.Saving ||
+        saveState is SettingViewModelV2.AddPlatformSaveState.RefreshingModels
+    val platformSaved = saveState is SettingViewModelV2.AddPlatformSaveState.Success ||
+        (saveState as? SettingViewModelV2.AddPlatformSaveState.Error)?.platformSaved == true
+
+    fun closeScreen() {
+        settingViewModel.clearAddPlatformSaveState()
+        onNavigationClick()
+    }
 
     Scaffold(
         modifier = modifier,
@@ -63,7 +75,10 @@ fun AddPlatformScreen(
             TopAppBar(
                 title = { Text(stringResource(R.string.add_platform)) },
                 navigationIcon = {
-                    IconButton(onClick = onNavigationClick) {
+                    IconButton(
+                        enabled = !isBusy,
+                        onClick = ::closeScreen
+                    ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = stringResource(R.string.go_back)
@@ -102,6 +117,7 @@ fun AddPlatformScreen(
                 label = { Text(stringResource(R.string.platform_name)) },
                 placeholder = { Text(stringResource(R.string.platform_name_hint)) },
                 modifier = Modifier.fillMaxWidth(),
+                enabled = !isBusy && !platformSaved,
                 singleLine = true,
                 supportingText = {
                     Text(stringResource(R.string.platform_name_supporting))
@@ -113,12 +129,13 @@ fun AddPlatformScreen(
             // Client Type Dropdown
             ExposedDropdownMenuBox(
                 expanded = clientTypeExpanded,
-                onExpandedChange = { clientTypeExpanded = it }
+                onExpandedChange = { if (!isBusy && !platformSaved) clientTypeExpanded = it }
             ) {
                 OutlinedTextField(
                     value = getClientTypeName(selectedClientType),
                     onValueChange = {},
                     readOnly = true,
+                    enabled = !isBusy && !platformSaved,
                     label = { Text(stringResource(R.string.api_type)) },
                     trailingIcon = {
                         ExposedDropdownMenuDefaults.TrailingIcon(expanded = clientTypeExpanded)
@@ -178,6 +195,7 @@ fun AddPlatformScreen(
                 label = { Text(stringResource(R.string.api_url)) },
                 placeholder = { Text(stringResource(R.string.api_url_hint)) },
                 modifier = Modifier.fillMaxWidth(),
+                enabled = !isBusy && !platformSaved,
                 singleLine = true
             )
 
@@ -190,6 +208,7 @@ fun AddPlatformScreen(
                 label = { Text(stringResource(R.string.api_key)) },
                 placeholder = { Text(stringResource(R.string.api_key_hint)) },
                 modifier = Modifier.fillMaxWidth(),
+                enabled = !isBusy && !platformSaved,
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
                 supportingText = {
@@ -219,48 +238,187 @@ fun AddPlatformScreen(
                 }
                 Switch(
                     checked = reasoningEnabled,
+                    enabled = !isBusy && !platformSaved,
                     onCheckedChange = { reasoningEnabled = it }
                 )
             }
 
             Spacer(modifier = Modifier.height(32.dp))
 
-            // Action buttons
-            Button(
-                onClick = {
-                    val platform = PlatformV2(
-                        name = platformName.trim(),
-                        compatibleType = selectedClientType,
-                        enabled = true,
-                        apiUrl = apiUrl.trim(),
-                        token = apiKey.trim().takeIf { it.isNotEmpty() },
-                        model = "",
-                        temperature = 1.0f,
-                        topP = 1.0f,
-                        systemPrompt = ModelConstants.DEFAULT_PROMPT,
-                        stream = true,
-                        reasoning = reasoningEnabled,
-                        timeout = 30
-                    )
-                    onSave(platform)
-                },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = platformName.isNotBlank() && apiUrl.isNotBlank()
-            ) {
-                Text(stringResource(R.string.save))
+            AddPlatformSaveStatus(saveState)
+
+            if (saveState !is SettingViewModelV2.AddPlatformSaveState.Idle) {
+                Spacer(modifier = Modifier.height(16.dp))
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            when (val state = saveState) {
+                is SettingViewModelV2.AddPlatformSaveState.Success -> {
+                    Button(
+                        onClick = ::closeScreen,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(stringResource(R.string.done))
+                    }
+                }
 
-            OutlinedButton(
-                onClick = onNavigationClick,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(stringResource(R.string.cancel))
+                is SettingViewModelV2.AddPlatformSaveState.Error -> {
+                    if (state.platformSaved) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedButton(
+                                onClick = settingViewModel::retryAddedPlatformModelRefresh,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(stringResource(R.string.retry))
+                            }
+                            Spacer(modifier = Modifier.padding(horizontal = 6.dp))
+                            Button(
+                                onClick = ::closeScreen,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(stringResource(R.string.done))
+                            }
+                        }
+                    } else {
+                        AddPlatformActionButtons(
+                            platformName = platformName,
+                            apiUrl = apiUrl,
+                            selectedClientType = selectedClientType,
+                            apiKey = apiKey,
+                            reasoningEnabled = reasoningEnabled,
+                            enabled = !isBusy,
+                            onSave = settingViewModel::addPlatformAndRefreshModels,
+                            onCancel = ::closeScreen
+                        )
+                    }
+                }
+
+                SettingViewModelV2.AddPlatformSaveState.Saving,
+                SettingViewModelV2.AddPlatformSaveState.RefreshingModels -> {
+                    AddPlatformActionButtons(
+                        platformName = platformName,
+                        apiUrl = apiUrl,
+                        selectedClientType = selectedClientType,
+                        apiKey = apiKey,
+                        reasoningEnabled = reasoningEnabled,
+                        enabled = false,
+                        onSave = settingViewModel::addPlatformAndRefreshModels,
+                        onCancel = ::closeScreen
+                    )
+                }
+
+                SettingViewModelV2.AddPlatformSaveState.Idle -> {
+                    AddPlatformActionButtons(
+                        platformName = platformName,
+                        apiUrl = apiUrl,
+                        selectedClientType = selectedClientType,
+                        apiKey = apiKey,
+                        reasoningEnabled = reasoningEnabled,
+                        enabled = true,
+                        onSave = settingViewModel::addPlatformAndRefreshModels,
+                        onCancel = ::closeScreen
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(24.dp))
         }
+    }
+}
+
+@Composable
+private fun AddPlatformActionButtons(
+    platformName: String,
+    apiUrl: String,
+    selectedClientType: ClientType,
+    apiKey: String,
+    reasoningEnabled: Boolean,
+    enabled: Boolean,
+    onSave: (PlatformV2) -> Unit,
+    onCancel: () -> Unit
+) {
+    Button(
+        onClick = {
+            val platform = PlatformV2(
+                name = platformName.trim(),
+                compatibleType = selectedClientType,
+                enabled = true,
+                apiUrl = apiUrl.trim(),
+                token = apiKey.trim().takeIf { it.isNotEmpty() },
+                model = "",
+                temperature = 1.0f,
+                topP = 1.0f,
+                systemPrompt = null,
+                stream = true,
+                reasoning = reasoningEnabled,
+                timeout = 30
+            )
+            onSave(platform)
+        },
+        modifier = Modifier.fillMaxWidth(),
+        enabled = enabled && platformName.isNotBlank() && apiUrl.isNotBlank()
+    ) {
+        Text(stringResource(R.string.save))
+    }
+
+    Spacer(modifier = Modifier.height(8.dp))
+
+    OutlinedButton(
+        onClick = onCancel,
+        modifier = Modifier.fillMaxWidth(),
+        enabled = enabled
+    ) {
+        Text(stringResource(R.string.cancel))
+    }
+}
+
+@Composable
+private fun AddPlatformSaveStatus(saveState: SettingViewModelV2.AddPlatformSaveState) {
+    when (saveState) {
+        SettingViewModelV2.AddPlatformSaveState.Idle -> Unit
+        SettingViewModelV2.AddPlatformSaveState.Saving -> SavingStatusText(
+            text = stringResource(R.string.platform_save_saving)
+        )
+
+        SettingViewModelV2.AddPlatformSaveState.RefreshingModels -> SavingStatusText(
+            text = stringResource(R.string.platform_save_refreshing_models)
+        )
+
+        is SettingViewModelV2.AddPlatformSaveState.Success -> Text(
+            text = stringResource(R.string.platform_save_refresh_success, saveState.modelCount),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.primary
+        )
+
+        is SettingViewModelV2.AddPlatformSaveState.Error -> Text(
+            text = if (saveState.platformSaved) {
+                stringResource(R.string.platform_save_refresh_failed, saveState.message)
+            } else {
+                stringResource(R.string.platform_save_failed, saveState.message)
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.error
+        )
+    }
+}
+
+@Composable
+private fun SavingStatusText(text: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.padding(end = 12.dp),
+            strokeWidth = 2.dp
+        )
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 

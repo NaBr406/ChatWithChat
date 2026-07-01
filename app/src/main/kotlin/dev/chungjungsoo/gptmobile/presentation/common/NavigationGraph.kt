@@ -133,14 +133,14 @@ fun NavGraphBuilder.homeScreenNavigation(navController: NavHostController) {
             onExistingChatClick = { chatRoom ->
                 navController.navigateToChatRoom(chatRoom.id, chatRoom.enabledPlatform)
             },
-            navigateToNewChat = { enabledPlatforms, initialQuestion, initialModel ->
-                navController.navigateToChatRoom(0, enabledPlatforms, initialQuestion, initialModel)
+            navigateToNewChat = { enabledPlatforms, initialQuestion, initialModel, initialAttachmentPaths ->
+                navController.navigateToChatRoom(0, enabledPlatforms, initialQuestion, initialModel, initialAttachmentPaths)
             }
         ) { openDrawer, homeViewModel, startNewChat, openModelPicker ->
             EmptyChatScreen(
                 homeViewModel = homeViewModel,
                 onOpenDrawer = openDrawer,
-                onStartChat = { prompt -> startNewChat(prompt, true) },
+                onStartChat = { prompt, attachmentPaths -> startNewChat(prompt, attachmentPaths, true) },
                 onAddProvider = { navController.navigate(Route.ADD_PLATFORM) }
             )
         }
@@ -151,17 +151,20 @@ private fun NavHostController.navigateToChatRoom(
     chatRoomId: Int,
     enabledPlatforms: List<String>,
     initialQuestion: String? = null,
-    initialModel: String? = null
+    initialModel: String? = null,
+    initialAttachmentPaths: List<String> = emptyList()
 ) {
     val enabledPlatformString = enabledPlatforms.joinToString(",")
     val encodedInitialQuestion = Uri.encode(initialQuestion.orEmpty())
     val encodedInitialModel = Uri.encode(initialModel.orEmpty())
+    val encodedInitialAttachments = Uri.encode(initialAttachmentPaths.joinToString("\n"))
     navigate(
         Route.CHAT_ROOM
             .replace(oldValue = "{chatRoomId}", newValue = "$chatRoomId")
             .replace(oldValue = "{enabledPlatforms}", newValue = enabledPlatformString)
             .replace(oldValue = "{initialQuestion}", newValue = encodedInitialQuestion)
             .replace(oldValue = "{initialModel}", newValue = encodedInitialModel)
+            .replace(oldValue = "{initialAttachments}", newValue = encodedInitialAttachments)
     )
 }
 
@@ -172,7 +175,8 @@ fun NavGraphBuilder.chatScreenNavigation(navController: NavHostController) {
             navArgument("chatRoomId") { type = NavType.IntType },
             navArgument("enabledPlatforms") { defaultValue = "" },
             navArgument("initialQuestion") { defaultValue = "" },
-            navArgument("initialModel") { defaultValue = "" }
+            navArgument("initialModel") { defaultValue = "" },
+            navArgument("initialAttachments") { defaultValue = "" }
         )
     ) {
         ChatShellScreen(
@@ -181,8 +185,8 @@ fun NavGraphBuilder.chatScreenNavigation(navController: NavHostController) {
             onExistingChatClick = { chatRoom ->
                 navController.navigateToChatRoom(chatRoom.id, chatRoom.enabledPlatform)
             },
-            navigateToNewChat = { enabledPlatforms, initialQuestion, initialModel ->
-                navController.navigateToChatRoom(0, enabledPlatforms, initialQuestion, initialModel)
+            navigateToNewChat = { enabledPlatforms, initialQuestion, initialModel, initialAttachmentPaths ->
+                navController.navigateToChatRoom(0, enabledPlatforms, initialQuestion, initialModel, initialAttachmentPaths)
             }
         ) { openDrawer, _, _, _ ->
             ChatScreen(
@@ -231,11 +235,8 @@ fun NavGraphBuilder.settingNavigation(navController: NavHostController) {
             }
             val settingViewModel: SettingViewModelV2 = hiltViewModel(parentEntry)
             AddPlatformScreen(
-                onNavigationClick = { navController.navigateUp() },
-                onSave = { platform ->
-                    settingViewModel.addPlatform(platform)
-                    navController.navigateUp()
-                }
+                settingViewModel = settingViewModel,
+                onNavigationClick = { navController.navigateUp() }
             )
         }
         composable(

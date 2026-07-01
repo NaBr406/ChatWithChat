@@ -18,8 +18,9 @@ import kotlinx.coroutines.launch
 sealed class SaveStatus {
     data object Idle : SaveStatus()
     data object Saving : SaveStatus()
-    data object Success : SaveStatus()
-    data class Error(val message: String) : SaveStatus()
+    data object RefreshingModels : SaveStatus()
+    data class Success(val modelCount: Int) : SaveStatus()
+    data class Error(val message: String, val platformSaved: Boolean) : SaveStatus()
 }
 
 @HiltViewModel
@@ -49,15 +50,21 @@ class SetupViewModelV2 @Inject constructor(
     private val _saveStatus = MutableStateFlow<SaveStatus>(SaveStatus.Idle)
     val saveStatus: StateFlow<SaveStatus> = _saveStatus.asStateFlow()
 
+    private var lastSavedPlatformUid: String? = null
+
     init {
         loadPlatforms()
     }
 
     private fun loadPlatforms() {
         viewModelScope.launch {
-            val existingPlatforms = settingRepository.fetchPlatformV2s()
-            _platforms.value = existingPlatforms
+            reloadPlatforms()
         }
+    }
+
+    private suspend fun reloadPlatforms() {
+        val existingPlatforms = settingRepository.fetchPlatformV2s()
+        _platforms.value = existingPlatforms
     }
 
     fun selectClientType(clientType: ClientType) {
@@ -98,6 +105,7 @@ class SetupViewModelV2 @Inject constructor(
 
     fun savePlatform() {
         val clientType = _selectedClientType.value ?: return
+        if (_saveStatus.value is SaveStatus.Saving || _saveStatus.value is SaveStatus.RefreshingModels) return
 
         viewModelScope.launch {
             _saveStatus.value = SaveStatus.Saving
@@ -111,14 +119,15 @@ class SetupViewModelV2 @Inject constructor(
                     model = "",
                     temperature = 1.0f,
                     topP = 1.0f,
-                    systemPrompt = ModelConstants.DEFAULT_PROMPT,
+                    systemPrompt = null,
                     stream = true,
                     reasoning = false,
                     timeout = 30
                 )
                 settingRepository.addPlatformV2(platform)
-                loadPlatforms()
-                _saveStatus.value = SaveStatus.Success
+                lastSavedPlatformUid = platform.uid
+                _saveStatus.value = SaveStatus.RefreshingModels
+                refreshSavedPlatformModels(platform.uid)
                 resetWizard()
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to save platform", e)
@@ -127,13 +136,22 @@ class SetupViewModelV2 @Inject constructor(
                     is android.database.sqlite.SQLiteException -> "数据库错误：${e.message}"
                     else -> e.message ?: "保存平台时发生未知错误。"
                 }
-                _saveStatus.value = SaveStatus.Error(errorMessage)
+                _saveStatus.value = SaveStatus.Error(errorMessage, platformSaved = false)
             }
+        }
+    }
+
+    fun retrySavedPlatformModelRefresh() {
+        val platformUid = lastSavedPlatformUid ?: return
+        viewModelScope.launch {
+            _saveStatus.value = SaveStatus.RefreshingModels
+            refreshSavedPlatformModels(platformUid)
         }
     }
 
     fun clearSaveStatus() {
         _saveStatus.value = SaveStatus.Idle
+        lastSavedPlatformUid = null
     }
 
     fun deletePlatform(platform: PlatformV2) {
@@ -174,6 +192,19 @@ class SetupViewModelV2 @Inject constructor(
         ClientType.OLLAMA -> "http://localhost:11434/"
         ClientType.OPENROUTER -> ModelConstants.OPENROUTER_API_URL
         ClientType.CUSTOM -> ""
+    }
+
+    private suspend fun refreshSavedPlatformModels(platformUid: String) {
+        val result = settingRepository.refreshPlatformModels(platformUid)
+        reloadPlatforms()
+        _saveStatus.value = if (result.isSuccess) {
+            SaveStatus.Success(modelCount = result.models.count { model -> model.enabled })
+        } else {
+            SaveStatus.Error(
+                message = result.errorMessage ?: "model_fetch_failed",
+                platformSaved = true
+            )
+        }
     }
 
     companion object {

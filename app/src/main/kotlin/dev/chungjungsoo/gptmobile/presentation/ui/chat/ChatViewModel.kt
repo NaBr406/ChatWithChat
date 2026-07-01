@@ -79,6 +79,11 @@ class ChatViewModel @Inject constructor(
     private val enabledPlatformString: String = checkNotNull(savedStateHandle["enabledPlatforms"])
     private val initialQuestion: String = Uri.decode(savedStateHandle.get<String>("initialQuestion").orEmpty())
     private val initialModel: String = Uri.decode(savedStateHandle.get<String>("initialModel").orEmpty())
+    private val initialAttachmentPaths: List<String> = Uri.decode(savedStateHandle.get<String>("initialAttachments").orEmpty())
+        .lineSequence()
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .toList()
     private val initialEnabledPlatformsInChat = enabledPlatformString.split(',').filter { it.isNotBlank() }
     val enabledPlatformsInChat: List<String>
         get() = _chatRoom.value.enabledPlatform
@@ -150,6 +155,7 @@ class ChatViewModel @Inject constructor(
 
     private var pendingQuestionText: String? = null
     private var initialQuestionConsumed = false
+    private var initialAttachmentsConsumed = false
     private var lastLearnedMessageSignature: String? = null
     private val memoryLearningSignaturesInFlight = mutableSetOf<String>()
 
@@ -952,14 +958,20 @@ class ChatViewModel @Inject constructor(
     private fun maybeSendInitialQuestion() {
         if (initialQuestionConsumed) return
         if (chatRoomId != 0) return
-        if (initialQuestion.isBlank()) return
+        if (initialQuestion.isBlank() && initialAttachmentPaths.isEmpty()) return
         if (_chatRoom.value.id == -1) return
 
         val enabledPlatformUids = _enabledPlatformsInApp.value.map { it.uid }.toSet()
         if ((enabledPlatformsInChat.toSet() - enabledPlatformUids).isNotEmpty()) return
 
         initialQuestionConsumed = true
-        question.setTextAndPlaceCursorAtEnd(initialQuestion)
+        if (!initialAttachmentsConsumed) {
+            initialAttachmentsConsumed = true
+            initialAttachmentPaths.forEach(::addSelectedFile)
+        }
+        if (initialQuestion.isNotBlank()) {
+            question.setTextAndPlaceCursorAtEnd(initialQuestion)
+        }
         askQuestion()
     }
 

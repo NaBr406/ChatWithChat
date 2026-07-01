@@ -219,11 +219,21 @@ internal fun FileThumbnail(
                 .background(MaterialTheme.colorScheme.surfaceVariant)
         ) {
             if (isImage) {
-                Icon(
-                    imageVector = ImageVector.vectorResource(R.drawable.ic_image),
+                LocalImageThumbnail(
+                    filePath = file.absolutePath,
+                    size = 64.dp,
                     contentDescription = file.name,
                     modifier = Modifier.fillMaxSize(),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    fallback = {
+                        Icon(
+                            imageVector = ImageVector.vectorResource(R.drawable.ic_image),
+                            contentDescription = file.name,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(16.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 )
             } else {
                 Icon(
@@ -375,11 +385,6 @@ private fun sanitizeFileName(fileName: String): String {
         .trim('.')
 
     return sanitized.ifEmpty { "attachment_${System.currentTimeMillis()}" }
-}
-
-private fun isImageFile(extension: String?): Boolean {
-    val imageExtensions = setOf("jpg", "jpeg", "png", "gif", "bmp", "webp")
-    return extension?.lowercase() in imageExtensions
 }
 
 @Preview

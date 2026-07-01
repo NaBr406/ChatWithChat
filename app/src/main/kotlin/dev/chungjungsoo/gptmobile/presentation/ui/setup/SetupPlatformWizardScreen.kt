@@ -22,6 +22,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -62,10 +63,14 @@ fun SetupPlatformWizardScreen(
     val platformNameState = setupViewModel.platformName.collectAsStateWithLifecycle()
     val apiUrlState = setupViewModel.apiUrl.collectAsStateWithLifecycle()
     val apiKeyState = setupViewModel.apiKey.collectAsStateWithLifecycle()
+    val saveStatusState = setupViewModel.saveStatus.collectAsStateWithLifecycle()
 
     // Extract values for use in composables
     val wizardStep = wizardStepState.value
     val selectedClientType = selectedClientTypeState.value
+    val saveStatus = saveStatusState.value
+    val isSaving = saveStatus is SaveStatus.Saving || saveStatus is SaveStatus.RefreshingModels
+    val saveFinished = saveStatus is SaveStatus.Success || (saveStatus as? SaveStatus.Error)?.platformSaved == true
     platformNameState.value
     apiUrlState.value
     apiKeyState.value
@@ -84,6 +89,13 @@ fun SetupPlatformWizardScreen(
 
     // Handle back press
     BackHandler {
+        if (isSaving) return@BackHandler
+        if (saveFinished) {
+            setupViewModel.clearSaveStatus()
+            setupViewModel.resetWizard()
+            onComplete()
+            return@BackHandler
+        }
         if (wizardStep > 0) {
             setupViewModel.previousWizardStep()
         } else {
@@ -97,6 +109,13 @@ fun SetupPlatformWizardScreen(
         topBar = {
             SetupAppBar(
                 backAction = {
+                    if (isSaving) return@SetupAppBar
+                    if (saveFinished) {
+                        setupViewModel.clearSaveStatus()
+                        setupViewModel.resetWizard()
+                        onComplete()
+                        return@SetupAppBar
+                    }
                     if (wizardStep > 0) {
                         setupViewModel.previousWizardStep()
                     } else {
@@ -161,10 +180,21 @@ fun SetupPlatformWizardScreen(
                 }
             }
 
+            SetupSaveStatusPanel(
+                saveStatus = saveStatus,
+                onRetry = setupViewModel::retrySavedPlatformModelRefresh,
+                onContinue = {
+                    setupViewModel.clearSaveStatus()
+                    setupViewModel.resetWizard()
+                    onComplete()
+                }
+            )
+
             // Navigation buttons
             WizardNavigationButtons(
                 currentStep = wizardStep,
                 canProceed = canProceed,
+                buttonsEnabled = !isSaving && !saveFinished,
                 onBack = {
                     if (wizardStep > 0) {
                         setupViewModel.previousWizardStep()
@@ -178,7 +208,6 @@ fun SetupPlatformWizardScreen(
                         setupViewModel.nextWizardStep()
                     } else {
                         setupViewModel.savePlatform()
-                        onComplete()
                     }
                 },
                 isLastStep = wizardStep == WIZARD_TOTAL_STEPS - 1
@@ -410,6 +439,7 @@ private fun ApiKeyStep(
 private fun WizardNavigationButtons(
     currentStep: Int,
     canProceed: Boolean,
+    buttonsEnabled: Boolean,
     onBack: () -> Unit,
     onNext: () -> Unit,
     isLastStep: Boolean,
@@ -424,7 +454,8 @@ private fun WizardNavigationButtons(
         // Back button
         OutlinedButton(
             onClick = onBack,
-            modifier = Modifier.weight(1f)
+            modifier = Modifier.weight(1f),
+            enabled = buttonsEnabled
         ) {
             Text(
                 text = if (currentStep == 0) {
@@ -439,7 +470,7 @@ private fun WizardNavigationButtons(
         Button(
             onClick = onNext,
             modifier = Modifier.weight(1f),
-            enabled = canProceed
+            enabled = buttonsEnabled && canProceed
         ) {
             Text(
                 text = if (isLastStep) {
@@ -449,6 +480,95 @@ private fun WizardNavigationButtons(
                 }
             )
         }
+    }
+}
+
+@Composable
+private fun SetupSaveStatusPanel(
+    saveStatus: SaveStatus,
+    onRetry: () -> Unit,
+    onContinue: () -> Unit
+) {
+    when (saveStatus) {
+        SaveStatus.Idle -> Unit
+        SaveStatus.Saving -> SetupSavingStatusText(text = stringResource(R.string.platform_save_saving))
+        SaveStatus.RefreshingModels -> SetupSavingStatusText(text = stringResource(R.string.platform_save_refreshing_models))
+        is SaveStatus.Success -> {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.platform_save_refresh_success, saveStatus.modelCount),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Button(
+                    onClick = onContinue,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(stringResource(R.string.done))
+                }
+            }
+        }
+
+        is SaveStatus.Error -> {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+            ) {
+                Text(
+                    text = if (saveStatus.platformSaved) {
+                        stringResource(R.string.platform_save_refresh_failed, saveStatus.message)
+                    } else {
+                        stringResource(R.string.platform_save_failed, saveStatus.message)
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error
+                )
+                if (saveStatus.platformSaved) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = onRetry,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(stringResource(R.string.retry))
+                        }
+                        Button(
+                            onClick = onContinue,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(stringResource(R.string.done))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SetupSavingStatusText(text: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        CircularProgressIndicator(strokeWidth = 2.dp)
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
