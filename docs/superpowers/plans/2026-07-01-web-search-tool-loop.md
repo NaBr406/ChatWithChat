@@ -236,22 +236,22 @@ Optional later:
 
 **Implementation:**
 
-- [ ] Define `ToolDefinition` with `name`, `description`, and JSON-schema-like parameters.
-- [ ] Define `ToolCall` with `id`, `name`, and raw JSON arguments.
-- [ ] Define `ToolResult` with `callId`, `name`, `content`, `isError`, and optional `metadata`.
-- [ ] Define `ToolLoopConfig` with `maxToolRounds`, `maxToolCallsPerRound`, `toolTimeoutSeconds`, `maxSearchResults`, and `maxFetchedPageChars`.
-- [ ] Add built-in tool definitions for:
+- [x] Define `ToolDefinition` with `name`, `description`, and JSON-schema-like parameters.
+- [x] Define `ToolCall` with `id`, `name`, and raw JSON arguments.
+- [x] Define `ToolResult` with `callId`, `name`, `content`, `isError`, and optional `metadata`.
+- [x] Define `ToolLoopConfig` with `maxToolRounds`, `maxToolCallsPerRound`, `toolTimeoutSeconds`, `maxSearchResults`, and `maxFetchedPageChars`.
+- [x] Add built-in tool definitions for:
   - `web_search(query: string)`
   - `fetch_url(url: string)`
-- [ ] Add prompt builder for JSON-fallback tool calling.
-- [ ] Ensure all tool protocol prompts are bounded and token-aware enough to avoid unbounded scratchpad growth.
+- [x] Add prompt builder for JSON-fallback tool calling.
+- [x] Ensure all tool protocol prompts are bounded and token-aware enough to avoid unbounded scratchpad growth.
 
 **Tests:**
 
-- [ ] Tool definitions serialize to stable prompt text.
-- [ ] Tool call JSON parses successfully.
-- [ ] Malformed tool call JSON produces a recoverable error.
-- [ ] Tool result formatting is deterministic and bounded.
+- [x] Tool definitions serialize to stable prompt text.
+- [x] Tool call JSON parses successfully.
+- [x] Malformed tool call JSON produces a recoverable error.
+- [x] Tool result formatting is deterministic and bounded.
 
 **Verification:**
 
@@ -678,7 +678,7 @@ Use this order when handing work to Codex:
 - [x] Task 1: Add Web Search Foundation
 - [x] Task 2: Add Manual Web Search Injection
 - [x] Task 3: Add Auto Search Decision
-- [ ] Task 4: Introduce Provider-Neutral Tool Models
+- [x] Task 4: Introduce Provider-Neutral Tool Models
 - [ ] Task 5: Add Tool Executor
 - [ ] Task 6: Add Single-Round Tool Loop Fallback
 - [ ] Task 7: Expand To Full Multi-Round Tool Loop
