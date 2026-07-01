@@ -20,6 +20,7 @@ import dev.chungjungsoo.gptmobile.data.dto.openai.response.ChatCompletionChunk
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.ResponsesStreamEvent
 import dev.chungjungsoo.gptmobile.data.model.ChatAttachment
 import dev.chungjungsoo.gptmobile.data.model.ClientType
+import dev.chungjungsoo.gptmobile.data.model.ReasoningMode
 import dev.chungjungsoo.gptmobile.data.network.AnthropicAPI
 import dev.chungjungsoo.gptmobile.data.network.GoogleAPI
 import dev.chungjungsoo.gptmobile.data.network.GroqAPI
@@ -158,7 +159,8 @@ class ChatRepositoryImplTest {
         repository.completeChat(
             userMessages = listOf(MessageV2(content = "Hi", platformType = null)),
             assistantMessages = emptyList(),
-            platform = groqPlatform(reasoning = false, model = "qwen/qwen3-32b")
+            platform = groqPlatform(reasoning = false, model = "qwen/qwen3-32b"),
+            reasoningMode = ReasoningMode.OFF
         ).toList()
 
         val request = groqAPI.lastRequest
@@ -175,7 +177,8 @@ class ChatRepositoryImplTest {
         repository.completeChat(
             userMessages = listOf(MessageV2(content = "Hi", platformType = null)),
             assistantMessages = emptyList(),
-            platform = groqPlatform(reasoning = false, model = "openai/gpt-oss-20b")
+            platform = groqPlatform(reasoning = false, model = "openai/gpt-oss-20b"),
+            reasoningMode = ReasoningMode.OFF
         ).toList()
 
         val request = groqAPI.lastRequest

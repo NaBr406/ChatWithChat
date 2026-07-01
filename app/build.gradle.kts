@@ -99,6 +99,9 @@ dependencies {
     // Token counting
     implementation(libs.jtokkit)
 
+    // Web extraction
+    implementation(libs.jsoup)
+
     // License page UI
     implementation(libs.auto.license.core)
     implementation(libs.auto.license.ui)

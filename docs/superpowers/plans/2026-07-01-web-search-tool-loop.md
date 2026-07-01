@@ -94,25 +94,25 @@ Optional later:
 
 **Implementation:**
 
-- [ ] Add jsoup dependency through version catalog.
-- [ ] Define `WebSearchResult` with `title`, `url`, `snippet`, `source`, and optional `publishedAt`.
-- [ ] Define `FetchedWebPage` with `url`, `title`, `text`, `excerpt`, and optional `siteName`.
-- [ ] Add `WebSearchRepository.search(query: String, limit: Int): Result<List<WebSearchResult>>`.
-- [ ] Implement SearXNG JSON search using `/search?q=...&format=json`.
-- [ ] Add search timeout and result-count limit.
-- [ ] Treat blank query as an empty result, not an exception.
-- [ ] Implement `WebPageExtractor.fetchAndExtract(url: String): Result<FetchedWebPage>`.
-- [ ] Use Ktor to fetch HTML and jsoup to extract title/body text.
-- [ ] Trim normalized page text to a configurable max character limit.
-- [ ] Add Hilt bindings/providers for repository and extractor.
+- [x] Add jsoup dependency through version catalog.
+- [x] Define `WebSearchResult` with `title`, `url`, `snippet`, `source`, and optional `publishedAt`.
+- [x] Define `FetchedWebPage` with `url`, `title`, `text`, `excerpt`, and optional `siteName`.
+- [x] Add `WebSearchRepository.search(query: String, limit: Int): Result<List<WebSearchResult>>`.
+- [x] Implement SearXNG JSON search using `/search?q=...&format=json`.
+- [x] Add search timeout and result-count limit.
+- [x] Treat blank query as an empty result, not an exception.
+- [x] Implement `WebPageExtractor.fetchAndExtract(url: String): Result<FetchedWebPage>`.
+- [x] Use Ktor to fetch HTML and jsoup to extract title/body text.
+- [x] Trim normalized page text to a configurable max character limit.
+- [x] Add Hilt bindings/providers for repository and extractor.
 
 **Tests:**
 
-- [ ] Parse SearXNG JSON into `WebSearchResult`.
-- [ ] Blank search returns empty list.
-- [ ] HTTP failure returns `Result.failure` or a typed error result.
-- [ ] HTML extraction returns title and readable text.
-- [ ] Oversized page text is clipped.
+- [x] Parse SearXNG JSON into `WebSearchResult`.
+- [x] Blank search returns empty list.
+- [x] HTTP failure returns `Result.failure` or a typed error result.
+- [x] HTML extraction returns title and readable text.
+- [x] Oversized page text is clipped.
 
 **Verification:**
 
@@ -675,7 +675,7 @@ Manual checks:
 
 Use this order when handing work to Codex:
 
-- [ ] Task 1: Add Web Search Foundation
+- [x] Task 1: Add Web Search Foundation
 - [ ] Task 2: Add Manual Web Search Injection
 - [ ] Task 3: Add Auto Search Decision
 - [ ] Task 4: Introduce Provider-Neutral Tool Models
