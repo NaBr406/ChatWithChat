@@ -276,22 +276,22 @@ Optional later:
 
 **Implementation:**
 
-- [ ] Register `web_search` and `fetch_url`.
-- [ ] `web_search` delegates to `WebSearchRepository`.
-- [ ] `fetch_url` delegates to `WebPageExtractor`.
-- [ ] Execute tools on `Dispatchers.IO`.
-- [ ] Add per-tool timeout.
-- [ ] Return `ToolResult(isError=true)` on failure instead of throwing through the chat stream.
-- [ ] Add basic URL validation for `fetch_url`: allow only `http` and `https`.
-- [ ] Add max result and max character clipping at the tool boundary.
+- [x] Register `web_search` and `fetch_url`.
+- [x] `web_search` delegates to `WebSearchRepository`.
+- [x] `fetch_url` delegates to `WebPageExtractor`.
+- [x] Execute tools on `Dispatchers.IO`.
+- [x] Add per-tool timeout.
+- [x] Return `ToolResult(isError=true)` on failure instead of throwing through the chat stream.
+- [x] Add basic URL validation for `fetch_url`: allow only `http` and `https`.
+- [x] Add max result and max character clipping at the tool boundary.
 
 **Tests:**
 
-- [ ] `web_search` returns formatted search results.
-- [ ] `fetch_url` returns title and page excerpt.
-- [ ] Unknown tool returns error result.
-- [ ] Tool timeout returns error result.
-- [ ] Invalid URL returns error result.
+- [x] `web_search` returns formatted search results.
+- [x] `fetch_url` returns title and page excerpt.
+- [x] Unknown tool returns error result.
+- [x] Tool timeout returns error result.
+- [x] Invalid URL returns error result.
 
 **Verification:**
 
@@ -679,7 +679,7 @@ Use this order when handing work to Codex:
 - [x] Task 2: Add Manual Web Search Injection
 - [x] Task 3: Add Auto Search Decision
 - [x] Task 4: Introduce Provider-Neutral Tool Models
-- [ ] Task 5: Add Tool Executor
+- [x] Task 5: Add Tool Executor
 - [ ] Task 6: Add Single-Round Tool Loop Fallback
 - [ ] Task 7: Expand To Full Multi-Round Tool Loop
 - [ ] Task 8: Add Tool Progress States
