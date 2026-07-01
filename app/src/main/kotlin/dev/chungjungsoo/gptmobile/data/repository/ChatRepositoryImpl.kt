@@ -190,7 +190,7 @@ class ChatRepositoryImpl @Inject constructor(
         reasoningMode: ReasoningMode
     ): Flow<ApiState> = flow {
         emit(ApiState.Loading)
-        val loopResult = toolLoopOrchestrator.runSingleRound { toolPrompt ->
+        val loopResult = toolLoopOrchestrator.run { toolPrompt ->
             collectProviderText(
                 completeChatByProvider(
                     userMessages = userMessages,

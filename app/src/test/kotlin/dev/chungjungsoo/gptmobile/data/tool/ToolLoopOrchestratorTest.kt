@@ -13,7 +13,7 @@ class ToolLoopOrchestratorTest {
         val executedCalls = mutableListOf<ToolCall>()
         val orchestrator = ToolLoopOrchestrator(recordingExecutor(executedCalls))
 
-        val result = orchestrator.runSingleRound { prompt ->
+        val result = orchestrator.run { prompt ->
             assertTrue(prompt.contains("Available tools:"))
             Result.success("""{"type":"final_answer","content":"No tool needed."}""")
         }
@@ -26,9 +26,12 @@ class ToolLoopOrchestratorTest {
     @Test
     fun `model tool call path executes web search and produces second request prompt`() = runBlocking {
         val executedCalls = mutableListOf<ToolCall>()
-        val orchestrator = ToolLoopOrchestrator(recordingExecutor(executedCalls))
+        val orchestrator = ToolLoopOrchestrator(
+            toolExecutor = recordingExecutor(executedCalls),
+            config = ToolLoopConfig(maxToolRounds = 1)
+        )
 
-        val result = orchestrator.runSingleRound {
+        val result = orchestrator.run {
             Result.success(
                 """{"type":"tool_calls","tool_calls":[{"id":"call_1","name":"web_search","arguments":{"query":"latest Android SDK"}}]}"""
             )
@@ -61,9 +64,12 @@ class ToolLoopOrchestratorTest {
                 )
             )
         )
-        val orchestrator = ToolLoopOrchestrator(executor)
+        val orchestrator = ToolLoopOrchestrator(
+            toolExecutor = executor,
+            config = ToolLoopConfig(maxToolRounds = 1)
+        )
 
-        val result = orchestrator.runSingleRound {
+        val result = orchestrator.run {
             Result.success(
                 """{"type":"tool_calls","tool_calls":[{"id":"call_1","name":"web_search","arguments":{"query":"news"}}]}"""
             )
@@ -80,10 +86,10 @@ class ToolLoopOrchestratorTest {
         val executedCalls = mutableListOf<ToolCall>()
         val orchestrator = ToolLoopOrchestrator(
             toolExecutor = recordingExecutor(executedCalls),
-            config = ToolLoopConfig(maxToolCallsPerRound = 1)
+            config = ToolLoopConfig(maxToolRounds = 1, maxToolCallsPerRound = 1)
         )
 
-        val result = orchestrator.runSingleRound {
+        val result = orchestrator.run {
             Result.success(
                 """
                 {"type":"tool_calls","tool_calls":[
@@ -99,11 +105,121 @@ class ToolLoopOrchestratorTest {
         assertEquals(listOf("call_1"), (result as ToolLoopResult.ToolResults).calls.map { it.id })
     }
 
+    @Test
+    fun `round one web search round two fetch url round three final answer produces final request prompt`() = runBlocking {
+        val executedCalls = mutableListOf<ToolCall>()
+        val prompts = mutableListOf<String>()
+        val responses = mutableListOf(
+            """{"type":"tool_calls","tool_calls":[{"id":"call_1","name":"web_search","arguments":{"query":"source"}}]}""",
+            """{"type":"tool_calls","tool_calls":[{"id":"call_2","name":"fetch_url","arguments":{"url":"https://example.com/source"}}]}""",
+            """{"type":"final_answer","content":"Answer with sources."}"""
+        )
+        val orchestrator = ToolLoopOrchestrator(recordingExecutor(executedCalls))
+
+        val result = orchestrator.run { prompt ->
+            prompts += prompt
+            Result.success(responses.removeAt(0))
+        }
+
+        assertTrue(result is ToolLoopResult.ToolResults)
+        val toolResults = result as ToolLoopResult.ToolResults
+        assertEquals(listOf("web_search", "fetch_url"), executedCalls.map { it.name })
+        assertTrue(prompts[1].contains("Tool scratchpad:"))
+        assertTrue(prompts[1].contains("Result for web_search"))
+        assertTrue(prompts[2].contains("Result for fetch_url"))
+        assertTrue(toolResults.finalAnswerPrompt.orEmpty().contains("Answer with sources."))
+        assertTrue(toolResults.finalAnswerPrompt.orEmpty().contains("Tool results are available"))
+    }
+
+    @Test
+    fun `infinite tool call behavior stops at max tool rounds`() = runBlocking {
+        val executedCalls = mutableListOf<ToolCall>()
+        val orchestrator = ToolLoopOrchestrator(
+            toolExecutor = recordingExecutor(executedCalls),
+            config = ToolLoopConfig(maxToolRounds = 2)
+        )
+
+        val result = orchestrator.run {
+            Result.success(
+                """{"type":"tool_calls","tool_calls":[{"id":"call_1","name":"web_search","arguments":{"query":"again"}}]}"""
+            )
+        }
+
+        assertTrue(result is ToolLoopResult.ToolResults)
+        assertEquals(2, executedCalls.size)
+        assertTrue((result as ToolLoopResult.ToolResults).finalAnswerPrompt.orEmpty().contains("Tool results are available"))
+    }
+
+    @Test
+    fun `duplicate tool calls in the same round are deduped`() = runBlocking {
+        val executedCalls = mutableListOf<ToolCall>()
+        val orchestrator = ToolLoopOrchestrator(
+            toolExecutor = recordingExecutor(executedCalls),
+            config = ToolLoopConfig(maxToolRounds = 1, maxToolCallsPerRound = 4)
+        )
+
+        val result = orchestrator.run {
+            Result.success(
+                """
+                {"type":"tool_calls","tool_calls":[
+                  {"id":"call_1","name":"web_search","arguments":{"query":"same"}},
+                  {"id":"call_2","name":"web_search","arguments":{"query":"same"}},
+                  {"id":"call_3","name":"web_search","arguments":{"query":"different"}}
+                ]}
+                """.trimIndent()
+            )
+        }
+
+        assertTrue(result is ToolLoopResult.ToolResults)
+        assertEquals(listOf("call_1", "call_3"), executedCalls.map { it.id })
+    }
+
+    @Test
+    fun `final answer prompt can cite urls from tool results`() = runBlocking {
+        val executor = ToolExecutor(
+            ToolRegistry(
+                definitions = listOf(ToolDefinition.WebSearch),
+                handlers = mapOf(
+                    ToolDefinition.WebSearch.name to ToolHandler { call, _ ->
+                        ToolResult(
+                            callId = call.id,
+                            name = call.name,
+                            content = "Title: Example\nURL: https://example.com/source\nSnippet: useful source"
+                        )
+                    }
+                )
+            )
+        )
+        val orchestrator = ToolLoopOrchestrator(
+            toolExecutor = executor,
+            config = ToolLoopConfig(maxToolRounds = 1)
+        )
+
+        val result = orchestrator.run {
+            Result.success(
+                """{"type":"tool_calls","tool_calls":[{"id":"call_1","name":"web_search","arguments":{"query":"source"}}]}"""
+            )
+        }
+
+        assertTrue(result is ToolLoopResult.ToolResults)
+        val prompt = (result as ToolLoopResult.ToolResults).finalAnswerPrompt.orEmpty()
+        assertTrue(prompt.contains("cite the source URLs"))
+        assertTrue(prompt.contains("https://example.com/source"))
+    }
+
     private fun recordingExecutor(executedCalls: MutableList<ToolCall>): ToolExecutor = ToolExecutor(
         ToolRegistry(
-            definitions = listOf(ToolDefinition.WebSearch),
+            definitions = ToolDefinition.BuiltIns,
             handlers = mapOf(
                 ToolDefinition.WebSearch.name to ToolHandler { call, _ ->
+                    executedCalls += call
+                    ToolResult(
+                        callId = call.id,
+                        name = call.name,
+                        content = "Result for ${call.name}"
+                    )
+                },
+                ToolDefinition.FetchUrl.name to ToolHandler { call, _ ->
                     executedCalls += call
                     ToolResult(
                         callId = call.id,

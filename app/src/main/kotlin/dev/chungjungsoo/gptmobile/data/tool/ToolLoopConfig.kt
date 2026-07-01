@@ -1,7 +1,7 @@
 package dev.chungjungsoo.gptmobile.data.tool
 
 data class ToolLoopConfig(
-    val maxToolRounds: Int = 1,
+    val maxToolRounds: Int = 3,
     val maxToolCallsPerRound: Int = 4,
     val toolTimeoutSeconds: Long = 20,
     val maxSearchResults: Int = 5,

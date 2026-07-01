@@ -382,21 +382,21 @@ Final answer shape:
 
 **Implementation:**
 
-- [ ] Increase default `maxToolRounds` to 3.
-- [ ] Maintain a bounded scratchpad of model tool requests and tool results.
-- [ ] After each tool round, ask the model again.
-- [ ] Stop when the model returns final answer.
-- [ ] If max rounds are reached, force a final-answer request using available tool results.
-- [ ] Prevent duplicate identical tool calls in the same round.
-- [ ] Preserve streaming final answer output.
-- [ ] Do not stream intermediate raw JSON tool protocol to the user as assistant text.
+- [x] Increase default `maxToolRounds` to 3.
+- [x] Maintain a bounded scratchpad of model tool requests and tool results.
+- [x] After each tool round, ask the model again.
+- [x] Stop when the model returns final answer.
+- [x] If max rounds are reached, force a final-answer request using available tool results.
+- [x] Prevent duplicate identical tool calls in the same round.
+- [x] Preserve streaming final answer output.
+- [x] Do not stream intermediate raw JSON tool protocol to the user as assistant text.
 
 **Tests:**
 
-- [ ] Round 1 `web_search`, round 2 `fetch_url`, round 3 final answer.
-- [ ] Infinite tool-call behavior stops at `maxToolRounds`.
-- [ ] Duplicate tool calls are deduped or clipped.
-- [ ] Final answer can cite URLs from tool results.
+- [x] Round 1 `web_search`, round 2 `fetch_url`, round 3 final answer.
+- [x] Infinite tool-call behavior stops at `maxToolRounds`.
+- [x] Duplicate tool calls are deduped or clipped.
+- [x] Final answer can cite URLs from tool results.
 
 **Verification:**
 
@@ -681,7 +681,7 @@ Use this order when handing work to Codex:
 - [x] Task 4: Introduce Provider-Neutral Tool Models
 - [x] Task 5: Add Tool Executor
 - [x] Task 6: Add Single-Round Tool Loop Fallback
-- [ ] Task 7: Expand To Full Multi-Round Tool Loop
+- [x] Task 7: Expand To Full Multi-Round Tool Loop
 - [ ] Task 8: Add Tool Progress States
 - [ ] Task 9: Add Minimal Tool UI
 - [ ] Task 10: Add Settings UI For Web Search

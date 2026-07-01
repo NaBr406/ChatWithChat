@@ -415,6 +415,7 @@ class ChatRepositoryImplTest {
                 chatCompletionFlow(
                     """{"type":"tool_calls","tool_calls":[{"id":"call_1","name":"web_search","arguments":{"query":"current Android target SDK"}}]}"""
                 ),
+                chatCompletionFlow("""{"type":"final_answer","content":"Draft searched answer"}"""),
                 chatCompletionFlow("Final searched answer")
             )
         )
@@ -442,11 +443,13 @@ class ChatRepositoryImplTest {
             states
         )
         assertEquals(listOf("current Android target SDK"), webSearchRepository.queries)
-        assertEquals(2, openAIAPI.streamChatCompletionCalls)
+        assertEquals(3, openAIAPI.streamChatCompletionCalls)
         assertTrue(openAIAPI.chatCompletionRequests[0].systemText().contains("Available tools:"))
-        assertTrue(openAIAPI.chatCompletionRequests[1].systemText().contains("Tool results are available"))
+        assertTrue(openAIAPI.chatCompletionRequests[1].systemText().contains("Tool scratchpad:"))
         assertTrue(openAIAPI.chatCompletionRequests[1].systemText().contains("Example Source"))
         assertTrue(openAIAPI.chatCompletionRequests[1].systemText().contains("https://example.com/source"))
+        assertTrue(openAIAPI.chatCompletionRequests[2].systemText().contains("Tool results are available"))
+        assertTrue(openAIAPI.chatCompletionRequests[2].systemText().contains("Draft searched answer"))
     }
 
     @Test
