@@ -26,6 +26,8 @@ import dev.chungjungsoo.gptmobile.data.network.GoogleAPI
 import dev.chungjungsoo.gptmobile.data.network.GroqAPI
 import dev.chungjungsoo.gptmobile.data.network.OpenAIAPI
 import dev.chungjungsoo.gptmobile.data.network.UploadedProviderFile
+import dev.chungjungsoo.gptmobile.data.websearch.SearchDecisionModelClient
+import dev.chungjungsoo.gptmobile.data.websearch.SearchDecisionService
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchMode
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchRepository
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchResult
@@ -401,6 +403,56 @@ class ChatRepositoryImplTest {
     }
 
     @Test
+    fun `auto web search uses approved decision queries`() = runBlocking {
+        val webSearchRepository = RecordingWebSearchRepository(
+            Result.success(listOf(webSearchResult()))
+        )
+        val repository = createRepository(
+            settingRepository = settingRepository(WebSearchMode.Auto),
+            webSearchRepository = webSearchRepository,
+            searchDecisionService = searchDecisionService(
+                """{"shouldSearch":true,"queries":["current Android target SDK","unused third query","extra"],"reason":"current fact"}"""
+            )
+        )
+
+        repository.completeChat(
+            userMessages = listOf(MessageV2(content = "What is the current Android target SDK?", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform()
+        ).toList()
+
+        assertEquals(
+            listOf("current Android target SDK", "unused third query"),
+            webSearchRepository.queries
+        )
+    }
+
+    @Test
+    fun `auto search decision failure does not call web search`() = runBlocking {
+        val webSearchRepository = RecordingWebSearchRepository(
+            Result.success(listOf(webSearchResult()))
+        )
+        val repository = createRepository(
+            settingRepository = settingRepository(WebSearchMode.Auto),
+            webSearchRepository = webSearchRepository,
+            searchDecisionService = SearchDecisionService(
+                SearchDecisionModelClient { _, _ ->
+                    Result.failure(IllegalStateException("decision failed"))
+                }
+            )
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "What happened today?", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform()
+        ).toList()
+
+        assertEquals(listOf(ApiState.Loading, ApiState.Done), states)
+        assertTrue(webSearchRepository.queries.isEmpty())
+    }
+
+    @Test
     fun `mergeSystemPrompt keeps base prompt and memory prompt`() {
         val merged = mergeSystemPrompt(
             basePrompt = "Base system prompt.",
@@ -420,7 +472,10 @@ class ChatRepositoryImplTest {
         groqAPI: GroqAPI = FakeGroqAPI(emptyFlow()),
         openAIAPI: OpenAIAPI = RecordingOpenAIAPI(),
         settingRepository: SettingRepository = settingRepository(WebSearchMode.Off),
-        webSearchRepository: WebSearchRepository = RecordingWebSearchRepository()
+        webSearchRepository: WebSearchRepository = RecordingWebSearchRepository(),
+        searchDecisionService: SearchDecisionService = searchDecisionService(
+            """{"shouldSearch":false,"queries":[],"reason":"default"}"""
+        )
     ): ChatRepositoryImpl = ChatRepositoryImpl(
         context = ContextWrapper(null),
         chatRoomDao = proxy(),
@@ -439,7 +494,8 @@ class ChatRepositoryImplTest {
             FakeGoogleAPI()
         ),
         contextBuilder = ContextBuilder(),
-        webSearchRepository = webSearchRepository
+        webSearchRepository = webSearchRepository,
+        searchDecisionService = searchDecisionService
     )
 
     private fun groqPlatform(reasoning: Boolean, model: String) = PlatformV2(
@@ -492,6 +548,9 @@ class ChatRepositoryImplTest {
             handler
         ) as SettingRepository
     }
+
+    private fun searchDecisionService(rawDecision: String): SearchDecisionService =
+        SearchDecisionService(SearchDecisionModelClient { _, _ -> Result.success(rawDecision) })
 
     @Suppress("UNCHECKED_CAST")
     private inline fun <reified T> proxy(): T {

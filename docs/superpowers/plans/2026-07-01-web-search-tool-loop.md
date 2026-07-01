@@ -184,7 +184,7 @@ Optional later:
 
 **Implementation:**
 
-- [ ] Add `WebSearchMode.Auto`.
+- [x] Add `WebSearchMode.Auto`.
 - [ ] Define strict JSON decision shape:
 
 ```json
@@ -195,21 +195,21 @@ Optional later:
 }
 ```
 
-- [ ] `SearchDecisionService` asks the current provider whether search is needed.
-- [ ] Keep the decision prompt short and cheap. Include only latest user message plus minimal conversation context.
-- [ ] Limit to at most 2 search queries.
-- [ ] If parsing fails, default to `shouldSearch=false`.
-- [ ] If decision request fails, continue normal chat without search.
-- [ ] If `shouldSearch=true`, search all approved queries, merge/dedupe results, and inject them into final answer request.
-- [ ] Add logging-friendly internal reason text, but do not expose it as final answer content.
+- [x] `SearchDecisionService` asks the current provider whether search is needed.
+- [x] Keep the decision prompt short and cheap. Include only latest user message plus minimal conversation context.
+- [x] Limit to at most 2 search queries.
+- [x] If parsing fails, default to `shouldSearch=false`.
+- [x] If decision request fails, continue normal chat without search.
+- [x] If `shouldSearch=true`, search all approved queries, merge/dedupe results, and inject them into final answer request.
+- [x] Add logging-friendly internal reason text, but do not expose it as final answer content.
 
 **Tests:**
 
-- [ ] Time-sensitive/current-events question triggers search.
-- [ ] Translation/math/casual chat does not trigger search.
-- [ ] Invalid JSON defaults to no search.
-- [ ] Too many queries are clipped.
-- [ ] Search decision failure does not fail chat.
+- [x] Time-sensitive/current-events question triggers search.
+- [x] Translation/math/casual chat does not trigger search.
+- [x] Invalid JSON defaults to no search.
+- [x] Too many queries are clipped.
+- [x] Search decision failure does not fail chat.
 
 **Verification:**
 
@@ -677,7 +677,7 @@ Use this order when handing work to Codex:
 
 - [x] Task 1: Add Web Search Foundation
 - [x] Task 2: Add Manual Web Search Injection
-- [ ] Task 3: Add Auto Search Decision
+- [x] Task 3: Add Auto Search Decision
 - [ ] Task 4: Introduce Provider-Neutral Tool Models
 - [ ] Task 5: Add Tool Executor
 - [ ] Task 6: Add Single-Round Tool Loop Fallback

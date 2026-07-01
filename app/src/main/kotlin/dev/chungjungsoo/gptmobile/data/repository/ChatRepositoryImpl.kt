@@ -59,9 +59,11 @@ import dev.chungjungsoo.gptmobile.data.network.AnthropicAPI
 import dev.chungjungsoo.gptmobile.data.network.GoogleAPI
 import dev.chungjungsoo.gptmobile.data.network.GroqAPI
 import dev.chungjungsoo.gptmobile.data.network.OpenAIAPI
+import dev.chungjungsoo.gptmobile.data.websearch.SearchDecisionService
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchMode
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchPromptBuilder
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchRepository
+import dev.chungjungsoo.gptmobile.data.websearch.WebSearchResult
 import dev.chungjungsoo.gptmobile.util.AttachmentPayloadCache
 import dev.chungjungsoo.gptmobile.util.FileUtils
 import dev.chungjungsoo.gptmobile.util.isAssistantErrorMessage
@@ -91,6 +93,7 @@ class ChatRepositoryImpl @Inject constructor(
     private val attachmentUploadCoordinator: AttachmentUploadCoordinator,
     private val contextBuilder: ContextBuilder,
     private val webSearchRepository: WebSearchRepository,
+    private val searchDecisionService: SearchDecisionService,
     private val webSearchPromptBuilder: WebSearchPromptBuilder = WebSearchPromptBuilder()
 ) : ChatRepository {
 
@@ -174,7 +177,7 @@ class ChatRepositoryImpl @Inject constructor(
             prepare = {
                 val reasoningParameters = mapReasoningMode(platform, reasoningMode)
                 val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
-                val webSearchPrompt = prepareWebSearchPrompt(userMessages)
+                val webSearchPrompt = prepareWebSearchPrompt(userMessages, assistantMessages, platform)
                 val inputMessages = buildResponsesInputMessages(conversationContext.turns, platform.uid)
 
                 ResponsesRequest(
@@ -231,7 +234,7 @@ class ChatRepositoryImpl @Inject constructor(
         streamPreparedApiState(
             prepare = {
                 val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
-                val webSearchPrompt = prepareWebSearchPrompt(userMessages)
+                val webSearchPrompt = prepareWebSearchPrompt(userMessages, assistantMessages, platform)
                 validateInlineBudgetIfNeeded(conversationContext.turns, platform)
                 val messages = buildOpenAIChatMessages(
                     conversationContext.turns,
@@ -288,7 +291,7 @@ class ChatRepositoryImpl @Inject constructor(
             prepare = {
                 val reasoningParameters = mapReasoningMode(platform, reasoningMode)
                 val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
-                val webSearchPrompt = prepareWebSearchPrompt(userMessages)
+                val webSearchPrompt = prepareWebSearchPrompt(userMessages, assistantMessages, platform)
                 validateInlineBudgetIfNeeded(conversationContext.turns, platform)
                 val messages = buildOpenAIChatMessages(
                     conversationContext.turns,
@@ -342,21 +345,70 @@ class ChatRepositoryImpl @Inject constructor(
         )
     }
 
-    private suspend fun prepareWebSearchPrompt(userMessages: List<MessageV2>): String? {
+    private suspend fun prepareWebSearchPrompt(
+        userMessages: List<MessageV2>,
+        assistantMessages: List<List<MessageV2>>,
+        platform: PlatformV2
+    ): String? {
         val webSearchMode = runCatching { settingRepository.fetchWebSearchMode() }
             .getOrNull()
             ?: WebSearchMode.Off
-        if (webSearchMode != WebSearchMode.Always) return null
-
         val latestUserMessage = userMessages.lastOrNull()
             ?.content
             ?.trim()
             ?.takeIf { it.isNotBlank() }
             ?: return null
 
-        return webSearchRepository.search(latestUserMessage, WEB_SEARCH_RESULT_LIMIT)
-            .getOrNull()
-            ?.let { results -> webSearchPromptBuilder.build(results) }
+        val searchQueries = when (webSearchMode) {
+            WebSearchMode.Off -> return null
+            WebSearchMode.Always -> listOf(latestUserMessage)
+            WebSearchMode.Auto -> {
+                val decision = searchDecisionService.decide(
+                    platform = platform,
+                    latestUserMessage = latestUserMessage,
+                    recentContext = buildSearchDecisionContext(userMessages, assistantMessages)
+                )
+                if (!decision.shouldSearch) return null
+                decision.queries
+            }
+        }
+
+        return searchWebQueries(searchQueries)
+            .let { results -> webSearchPromptBuilder.build(results) }
+    }
+
+    private suspend fun searchWebQueries(queries: List<String>): List<WebSearchResult> =
+        queries
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .take(MAX_SEARCH_QUERY_COUNT)
+            .flatMap { query ->
+                webSearchRepository.search(query, WEB_SEARCH_RESULT_LIMIT)
+                    .getOrDefault(emptyList())
+            }
+            .distinctBy { it.url }
+            .take(WEB_SEARCH_RESULT_LIMIT)
+
+    private fun buildSearchDecisionContext(
+        userMessages: List<MessageV2>,
+        assistantMessages: List<List<MessageV2>>
+    ): String? {
+        val recentTurns = userMessages.dropLast(1).takeLast(2)
+        if (recentTurns.isEmpty()) return null
+
+        return recentTurns.mapIndexed { index, userMessage ->
+            val assistantText = assistantMessages
+                .getOrNull(userMessages.lastIndex - recentTurns.size + index)
+                ?.firstOrNull()
+                ?.sendableAssistantContent()
+                .orEmpty()
+            listOfNotNull(
+                userMessage.content.trim().takeIf { it.isNotBlank() }?.let { "User: $it" },
+                assistantText.trim().takeIf { it.isNotBlank() }?.let { "Assistant: $it" }
+            ).joinToString("\n")
+        }.filter { it.isNotBlank() }
+            .joinToString("\n\n")
+            .takeIf { it.isNotBlank() }
     }
 
     private suspend fun ensureProviderReferencesForTurns(
@@ -572,7 +624,7 @@ class ChatRepositoryImpl @Inject constructor(
             prepare = {
                 val reasoningParameters = mapReasoningMode(platform, reasoningMode)
                 val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
-                val webSearchPrompt = prepareWebSearchPrompt(userMessages)
+                val webSearchPrompt = prepareWebSearchPrompt(userMessages, assistantMessages, platform)
                 val messages = buildAnthropicInputMessages(conversationContext.turns, platform.uid)
 
                 MessageRequest(
@@ -680,7 +732,7 @@ class ChatRepositoryImpl @Inject constructor(
             prepare = {
                 val reasoningParameters = mapReasoningMode(platform, reasoningMode)
                 val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
-                val webSearchPrompt = prepareWebSearchPrompt(userMessages)
+                val webSearchPrompt = prepareWebSearchPrompt(userMessages, assistantMessages, platform)
                 val contents = buildGoogleContents(conversationContext.turns, platform.uid)
 
                 GenerateContentRequest(
@@ -1026,6 +1078,7 @@ internal fun createGroqChatCompletionRequest(
 internal fun isGroqGptOssModel(model: String): Boolean = isGptOssModel(model)
 
 private const val WEB_SEARCH_RESULT_LIMIT = 5
+private const val MAX_SEARCH_QUERY_COUNT = 2
 
 internal fun mergeSystemPrompt(basePrompt: String?, memoryPrompt: String?): String? = mergePromptSections(basePrompt, memoryPrompt)
 
