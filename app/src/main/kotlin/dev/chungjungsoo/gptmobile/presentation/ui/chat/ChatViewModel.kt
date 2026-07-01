@@ -611,29 +611,9 @@ class ChatViewModel @Inject constructor(
         platformIndex: Int,
         progress: ApiState
     ) {
-        val progressState = when (progress) {
-            is ApiState.ToolStarted -> ToolProgressState(
-                toolName = progress.toolName,
-                label = progress.label,
-                status = ToolProgressStatus.Running
-            )
-            is ApiState.ToolFinished -> ToolProgressState(
-                toolName = progress.toolName,
-                label = progress.label,
-                status = ToolProgressStatus.Finished
-            )
-            is ApiState.ToolFailed -> ToolProgressState(
-                toolName = progress.toolName,
-                label = progress.toolName,
-                status = ToolProgressStatus.Failed,
-                message = progress.message
-            )
-            else -> return
-        }
-
         val key = toolProgressKey(turnIndex, platformIndex)
         _toolProgressStates.update { current ->
-            current + (key to (current[key].orEmpty() + progressState))
+            current + (key to current[key].orEmpty().appendToolProgress(progress))
         }
     }
 
@@ -1300,6 +1280,49 @@ class ChatViewModel @Inject constructor(
         fun toolProgressKey(turnIndex: Int, platformIndex: Int): String = "$turnIndex:$platformIndex"
     }
 }
+
+internal fun List<ChatViewModel.ToolProgressState>.appendToolProgress(progress: ApiState): List<ChatViewModel.ToolProgressState> {
+    val progressState = when (progress) {
+        is ApiState.ToolStarted -> ChatViewModel.ToolProgressState(
+            toolName = progress.toolName,
+            label = progress.label,
+            status = ChatViewModel.ToolProgressStatus.Running
+        )
+        is ApiState.ToolFinished -> ChatViewModel.ToolProgressState(
+            toolName = progress.toolName,
+            label = progress.label,
+            status = ChatViewModel.ToolProgressStatus.Finished
+        )
+        is ApiState.ToolFailed -> ChatViewModel.ToolProgressState(
+            toolName = progress.toolName,
+            label = lastRunningLabelFor(progress.toolName) ?: progress.toolName,
+            status = ChatViewModel.ToolProgressStatus.Failed,
+            message = progress.message
+        )
+        else -> return this
+    }
+
+    if (progressState.status == ChatViewModel.ToolProgressStatus.Running) {
+        return this + progressState
+    }
+
+    val runningIndex = indexOfLast { state ->
+        state.status == ChatViewModel.ToolProgressStatus.Running &&
+            state.toolName == progressState.toolName &&
+            state.label == progressState.label
+    }
+    if (runningIndex < 0) return this + progressState
+
+    return toMutableList().apply {
+        this[runningIndex] = progressState
+    }
+}
+
+private fun List<ChatViewModel.ToolProgressState>.lastRunningLabelFor(toolName: String): String? =
+    lastOrNull { state ->
+        state.status == ChatViewModel.ToolProgressStatus.Running &&
+            state.toolName == toolName
+    }?.label
 
 internal fun groupedMessagesThroughTurn(
     groupedMessages: ChatViewModel.GroupedMessages,
