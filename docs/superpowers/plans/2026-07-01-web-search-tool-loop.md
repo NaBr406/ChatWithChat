@@ -612,16 +612,16 @@ Manual checks:
 
 **Implementation:**
 
-- [ ] Define adapter responsibilities:
+- [x] Define adapter responsibilities:
   - Render tool definitions.
   - Parse model tool calls.
   - Render tool results.
   - Decide whether native or JSON fallback mode is supported.
-- [ ] Keep orchestration provider-neutral.
-- [ ] Implement OpenAI-compatible JSON adapter first.
-- [ ] Add Anthropic native adapter only after DTO support is verified.
-- [ ] Add Google native adapter only after DTO support is verified.
-- [ ] Keep Groq/OpenRouter/Ollama on JSON fallback unless native support is confirmed and tested.
+- [x] Keep orchestration provider-neutral.
+- [x] Implement OpenAI-compatible JSON adapter first.
+- [x] Add Anthropic native adapter only after DTO support is verified.
+- [x] Add Google native adapter only after DTO support is verified.
+- [x] Keep Groq/OpenRouter/Ollama on JSON fallback unless native support is confirmed and tested.
 
 **Verification:**
 
@@ -687,7 +687,7 @@ Use this order when handing work to Codex:
 - [x] Task 10: Add Settings UI For Web Search
 - [x] Task 11: Add Source Metadata Persistence
 - [x] Task 12: Add OpenAI Responses Native Tool Calling
-- [ ] Task 13: Add Provider Tool Adapters
+- [x] Task 13: Add Provider Tool Adapters
 - [ ] Task 14: Hardening And Safety
 
 Tasks 1-3 are enough to ship a useful "LLM decides whether to search" MVP.

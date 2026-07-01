@@ -69,7 +69,11 @@ import dev.chungjungsoo.gptmobile.data.tool.ToolDefinition
 import dev.chungjungsoo.gptmobile.data.tool.ToolLoopOrchestrator
 import dev.chungjungsoo.gptmobile.data.tool.ToolLoopResult
 import dev.chungjungsoo.gptmobile.data.tool.ToolResult
+import dev.chungjungsoo.gptmobile.data.tool.provider.AnthropicToolAdapter
+import dev.chungjungsoo.gptmobile.data.tool.provider.GoogleToolAdapter
+import dev.chungjungsoo.gptmobile.data.tool.provider.OpenAICompatibleJsonToolAdapter
 import dev.chungjungsoo.gptmobile.data.tool.provider.OpenAIResponsesToolAdapter
+import dev.chungjungsoo.gptmobile.data.tool.provider.ToolCallingAdapter
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchMode
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchPromptBuilder
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchRepository
@@ -105,7 +109,10 @@ class ChatRepositoryImpl @Inject constructor(
     private val webSearchRepository: WebSearchRepository,
     private val toolLoopOrchestrator: ToolLoopOrchestrator,
     private val webSearchPromptBuilder: WebSearchPromptBuilder = WebSearchPromptBuilder(),
-    private val openAIResponsesToolAdapter: OpenAIResponsesToolAdapter = OpenAIResponsesToolAdapter()
+    private val openAIResponsesToolAdapter: OpenAIResponsesToolAdapter = OpenAIResponsesToolAdapter(),
+    private val openAICompatibleJsonToolAdapter: ToolCallingAdapter = OpenAICompatibleJsonToolAdapter(),
+    private val anthropicToolAdapter: ToolCallingAdapter = AnthropicToolAdapter(),
+    private val googleToolAdapter: ToolCallingAdapter = GoogleToolAdapter()
 ) : ChatRepository {
 
     private fun isImageFile(extension: String): Boolean = extension in setOf("jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff", "svg")
@@ -204,7 +211,9 @@ class ChatRepositoryImpl @Inject constructor(
         reasoningMode: ReasoningMode
     ): Flow<ApiState> = flow {
         emit(ApiState.Loading)
+        val toolCallingAdapter = toolCallingAdapterFor(platform.compatibleType)
         val loopResult = toolLoopOrchestrator.runLoop(
+            adapter = toolCallingAdapter,
             onProgress = { progress -> emit(progress) },
             requestModel = { toolPrompt ->
                 collectProviderText(
@@ -257,6 +266,16 @@ class ChatRepositoryImpl @Inject constructor(
     }.catch { e ->
         emit(ApiState.Error(e.message ?: "鏈煡閿欒"))
         emit(ApiState.Done)
+    }
+
+    private fun toolCallingAdapterFor(clientType: ClientType): ToolCallingAdapter = when (clientType) {
+        ClientType.ANTHROPIC -> anthropicToolAdapter
+        ClientType.GOOGLE -> googleToolAdapter
+        ClientType.OPENAI,
+        ClientType.GROQ,
+        ClientType.OLLAMA,
+        ClientType.OPENROUTER,
+        ClientType.CUSTOM -> openAICompatibleJsonToolAdapter
     }
 
     private suspend fun collectProviderText(states: Flow<ApiState>): Result<String> = runCatching {

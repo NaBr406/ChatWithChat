@@ -1,6 +1,8 @@
 package dev.chungjungsoo.gptmobile.data.tool
 
 import dev.chungjungsoo.gptmobile.data.dto.ApiState
+import dev.chungjungsoo.gptmobile.data.tool.provider.OpenAICompatibleJsonToolAdapter
+import dev.chungjungsoo.gptmobile.data.tool.provider.ToolCallingAdapter
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -8,6 +10,10 @@ class ToolLoopOrchestrator(
     private val toolExecutor: ToolExecutor,
     private val toolPromptBuilder: ToolPromptBuilder = ToolPromptBuilder(),
     private val jsonToolCallParser: JsonToolCallParser = JsonToolCallParser(),
+    private val defaultToolCallingAdapter: ToolCallingAdapter = OpenAICompatibleJsonToolAdapter(
+        toolPromptBuilder = toolPromptBuilder,
+        jsonToolCallParser = jsonToolCallParser
+    ),
     private val config: ToolLoopConfig = ToolLoopConfig.Default
 ) {
     val configuration: ToolLoopConfig
@@ -17,6 +23,7 @@ class ToolLoopOrchestrator(
         get() = toolExecutor.definitions
 
     suspend fun runLoop(
+        adapter: ToolCallingAdapter = defaultToolCallingAdapter,
         onProgress: suspend (ApiState) -> Unit = {},
         requestModel: suspend (toolPrompt: String) -> Result<String>
     ): ToolLoopResult {
@@ -28,20 +35,22 @@ class ToolLoopOrchestrator(
         val allResults = mutableListOf<ToolResult>()
 
         repeat(maxRounds) {
-            val toolPrompt = toolPromptBuilder.buildJsonFallbackPrompt(
+            val toolPrompt = adapter.buildToolPrompt(
                 tools = toolExecutor.definitions,
                 scratchpad = scratchpad,
                 config = config
             )
             val modelText = requestModel(toolPrompt).getOrElse { throwable ->
                 return fallbackOrFailure(
+                    adapter = adapter,
                     allCalls = allCalls,
                     allResults = allResults,
                     failure = "tool_loop_model_failed:${throwable.message ?: throwable::class.simpleName.orEmpty()}"
                 )
             }
-            val modelOutput = jsonToolCallParser.parse(modelText).getOrElse { throwable ->
+            val modelOutput = adapter.parseModelOutput(modelText).getOrElse { throwable ->
                 return fallbackOrFailure(
+                    adapter = adapter,
                     allCalls = allCalls,
                     allResults = allResults,
                     failure = "tool_loop_parse_failed:${throwable.message ?: throwable::class.simpleName.orEmpty()}"
@@ -55,6 +64,7 @@ class ToolLoopOrchestrator(
                             calls = allCalls,
                             results = allResults,
                             finalAnswerPrompt = buildFinalAnswerPrompt(
+                                adapter = adapter,
                                 results = allResults,
                                 draftFinalAnswer = modelOutput.content
                             )
@@ -69,6 +79,7 @@ class ToolLoopOrchestrator(
                         .take(config.maxToolCallsPerRound.coerceAtLeast(0))
                     if (calls.isEmpty()) {
                         return fallbackOrFailure(
+                            adapter = adapter,
                             allCalls = allCalls,
                             allResults = allResults,
                             failure = "tool_loop_no_tool_calls"
@@ -85,6 +96,7 @@ class ToolLoopOrchestrator(
         }
 
         return fallbackOrFailure(
+            adapter = adapter,
             allCalls = allCalls,
             allResults = allResults,
             failure = "tool_loop_max_rounds_reached"
@@ -119,6 +131,7 @@ class ToolLoopOrchestrator(
     }
 
     private fun fallbackOrFailure(
+        adapter: ToolCallingAdapter,
         allCalls: List<ToolCall>,
         allResults: List<ToolResult>,
         failure: String
@@ -126,35 +139,17 @@ class ToolLoopOrchestrator(
         ToolLoopResult.ToolResults(
             calls = allCalls,
             results = allResults,
-            finalAnswerPrompt = buildFinalAnswerPrompt(results = allResults)
+            finalAnswerPrompt = buildFinalAnswerPrompt(adapter = adapter, results = allResults)
         )
     } else {
         ToolLoopResult.Failed(failure)
     }
 
     private fun buildFinalAnswerPrompt(
+        adapter: ToolCallingAdapter,
         results: List<ToolResult>,
         draftFinalAnswer: String? = null
-    ): String? {
-        val formattedResults = toolPromptBuilder.formatToolResults(results, config) ?: return null
-        return buildString {
-            appendLine("Tool results are available for the latest user request.")
-            appendLine("Use them only when relevant. If you use web sources, cite the source URLs in the answer.")
-            draftFinalAnswer?.trim()?.takeIf { it.isNotBlank() }?.let { draft ->
-                appendLine()
-                appendLine("The tool loop drafted this final answer. Use it as guidance, but answer naturally:")
-                appendLine(draft.clip(config.maxToolResultChars))
-            }
-            appendLine()
-            append(formattedResults)
-        }.trim()
-    }
-
-    private fun String.clip(maxChars: Int): String {
-        val boundedMax = maxChars.coerceAtLeast(0)
-        if (length <= boundedMax) return this
-        return take(boundedMax).trimEnd()
-    }
+    ): String? = adapter.buildFinalAnswerPrompt(results, draftFinalAnswer, config)
 
     private fun ToolCall.progressLabel(): String {
         val arguments = argumentsObject().getOrNull()
