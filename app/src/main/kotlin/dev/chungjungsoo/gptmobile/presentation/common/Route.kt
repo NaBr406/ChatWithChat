@@ -15,6 +15,7 @@ object Route {
 
     const val SETTING_ROUTE = "setting_route"
     const val SETTINGS = "settings"
+    const val TOOL_SETTINGS = "tool_settings"
     const val MODEL_MANAGEMENT = "model_management"
     const val ADD_PLATFORM = "add_platform"
     const val PLATFORM_SETTINGS = "platform_settings/{platformUid}"

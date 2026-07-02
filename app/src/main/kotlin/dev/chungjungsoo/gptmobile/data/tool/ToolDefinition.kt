@@ -66,6 +66,18 @@ data class ToolDefinition(
             )
         )
 
-        val BuiltIns = listOf(WebSearch, FetchUrl)
+        val CurrentDateTime = ToolDefinition(
+            name = "current_datetime",
+            description = "Returns the device's current local date, time, UTC offset, and timezone. Use this for local date or time questions. This tool does not access the network.",
+            parameters = Parameters()
+        )
+
+        val DeviceLocation = ToolDefinition(
+            name = "device_location",
+            description = "Returns the device's current latitude, longitude, accuracy, provider, and timestamp when Android system location permission has been granted. If permission is missing, the tool returns tool_permission_denied so the user can enable the app's location permission. Use only when the latest user request explicitly asks for their current device location or location-based help. This tool does not search the web.",
+            parameters = Parameters()
+        )
+
+        val BuiltIns = listOf(WebSearch, FetchUrl, CurrentDateTime, DeviceLocation)
     }
 }

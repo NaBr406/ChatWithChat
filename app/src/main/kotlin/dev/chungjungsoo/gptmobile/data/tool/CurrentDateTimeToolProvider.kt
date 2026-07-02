@@ -9,11 +9,7 @@ class CurrentDateTimeToolProvider(
     private val clock: Clock = Clock.systemDefaultZone(),
     private val zoneId: ZoneId = ZoneId.systemDefault()
 ) : ToolProvider {
-    override val definition: ToolDefinition = ToolDefinition(
-        name = "current_datetime",
-        description = "Returns the device's current local date, time, UTC offset, and timezone. Use this for local date or time questions. This tool does not access the network.",
-        parameters = ToolDefinition.Parameters()
-    )
+    override val definition: ToolDefinition = ToolDefinition.CurrentDateTime
 
     override val policy: ToolPolicy = ToolPolicy(
         maxCallsPerRequest = 1,

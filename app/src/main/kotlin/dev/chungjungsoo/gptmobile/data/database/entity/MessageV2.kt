@@ -6,6 +6,7 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import dev.chungjungsoo.gptmobile.data.model.ChatAttachment
+import dev.chungjungsoo.gptmobile.data.token.TokenUsageRecord
 import kotlinx.serialization.Serializable
 
 @Entity(
@@ -46,6 +47,9 @@ data class MessageV2(
     @ColumnInfo(name = "source_metadata")
     val sourceMetadata: List<MessageSourceMetadata> = listOf(),
 
+    @ColumnInfo(name = "token_usage")
+    val tokenUsage: TokenUsageRecord? = null,
+
     @ColumnInfo(name = "linked_message_id")
     val linkedMessageId: Int = 0,
 
@@ -60,7 +64,8 @@ data class MessageV2(
 data class AssistantRevision(
     val content: String,
     val thoughts: String = "",
-    val createdAt: Long
+    val createdAt: Long,
+    val tokenUsage: TokenUsageRecord? = null
 )
 
 @Serializable
@@ -85,6 +90,11 @@ fun MessageV2.effectiveThoughts(): String = revisions
     ?.thoughts
     ?: thoughts
 
+fun MessageV2.effectiveTokenUsage(): TokenUsageRecord? = revisions
+    .getOrNull(activeRevisionIndex)
+    ?.tokenUsage
+    ?: tokenUsage
+
 fun MessageV2.isEffectivelyBlank(): Boolean = effectiveContent().isBlank() && attachments.isEmpty()
 
 fun MessageV2.resetActiveRevision(): MessageV2 = copy(activeRevisionIndex = ACTIVE_REVISION_LATEST)
@@ -100,6 +110,7 @@ fun MessageV2.snapshotLatestAssistantRevision(timestamp: Long = System.currentTi
     return AssistantRevision(
         content = content,
         thoughts = thoughts,
-        createdAt = timestamp
+        createdAt = timestamp,
+        tokenUsage = tokenUsage
     )
 }

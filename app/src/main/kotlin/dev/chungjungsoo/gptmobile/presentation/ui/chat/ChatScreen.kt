@@ -6,7 +6,11 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.util.Log
 import android.widget.Toast
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -56,6 +60,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -64,6 +69,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
@@ -85,6 +91,7 @@ import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
 import dev.chungjungsoo.gptmobile.data.database.entity.effectiveContent
 import dev.chungjungsoo.gptmobile.data.database.entity.effectiveThoughts
+import dev.chungjungsoo.gptmobile.data.database.entity.effectiveTokenUsage
 import dev.chungjungsoo.gptmobile.data.model.ReasoningMode
 import java.io.File
 import kotlinx.coroutines.delay
@@ -283,6 +290,7 @@ private fun ChatContent(
 ) {
     val containerSize = LocalWindowInfo.current.containerSize
     val screenWidthDp = with(LocalDensity.current) { containerSize.width.toDp() }
+    val screenHeightDp = with(LocalDensity.current) { containerSize.height.toDp() }
     val focusManager = LocalFocusManager.current
     val systemChatMargin = 32.dp
     val maximumUserChatBubbleWidth = (screenWidthDp - systemChatMargin) * 0.8F
@@ -291,7 +299,19 @@ private fun ChatContent(
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     val lastMessageIndex = groupedMessages.userMessages.lastIndex
     val bottomItemIndex = groupedMessages.userMessages.size
-    val latestContentVersion = remember(groupedMessages, loadingStates, toolProgressStates) {
+    val roundNavigationItems = remember(groupedMessages, loadingStates, enabledPlatformsInChat, enabledPlatformLookup) {
+        buildRoundNavigationItems(
+            groupedMessages = groupedMessages,
+            loadingStates = loadingStates,
+            enabledPlatformsInChat = enabledPlatformsInChat,
+            enabledPlatformLookup = enabledPlatformLookup
+        )
+    }
+    val completedRoundCount = remember(roundNavigationItems) {
+        roundNavigationItems.count { it.hasSuccessfulAnswer }
+    }
+    val roundNavigatorMaxHeight = (screenHeightDp * 0.62f).coerceAtMost(520.dp)
+    val latestStreamingContentVersion = remember(groupedMessages, toolProgressStates) {
         buildString {
             append(groupedMessages.userMessages.size)
             append('|')
@@ -302,9 +322,6 @@ private fun ChatContent(
                 append(':')
                 append(message.attachments.size)
                 append('|')
-            }
-            loadingStates.forEach { state ->
-                append(if (state == ChatViewModel.LoadingState.Loading) 'L' else 'I')
             }
             toolProgressStates.entries.sortedBy { it.key }.forEach { (key, states) ->
                 append('|')
@@ -319,6 +336,16 @@ private fun ChatContent(
     val scope = rememberCoroutineScope()
     var autoFollowToBottom by remember { mutableStateOf(true) }
     var programmaticScrollInProgress by remember { mutableStateOf(false) }
+    var previousBottomItemIndex by remember { mutableStateOf(bottomItemIndex) }
+    var hasHandledInitialLoad by remember { mutableStateOf(false) }
+    var isRoundNavigatorOpen by remember { mutableStateOf(false) }
+    val showScrollToBottomButton by remember {
+        derivedStateOf {
+            listState.canScrollForward &&
+                !autoFollowToBottom &&
+                !programmaticScrollInProgress
+        }
+    }
 
     suspend fun scrollToLatestMessage(animated: Boolean) {
         programmaticScrollInProgress = true
@@ -345,13 +372,22 @@ private fun ChatContent(
             }
     }
 
-    LaunchedEffect(isLoaded, bottomItemIndex) {
-        if (isLoaded && autoFollowToBottom) {
+    LaunchedEffect(isLoaded) {
+        if (isLoaded && !hasHandledInitialLoad && autoFollowToBottom) {
+            hasHandledInitialLoad = true
             scrollToLatestMessage(animated = false)
         }
     }
 
-    LaunchedEffect(latestContentVersion) {
+    LaunchedEffect(bottomItemIndex) {
+        val previousIndex = previousBottomItemIndex
+        previousBottomItemIndex = bottomItemIndex
+        if (bottomItemIndex > previousIndex && autoFollowToBottom) {
+            scrollToLatestMessage(animated = false)
+        }
+    }
+
+    LaunchedEffect(latestStreamingContentVersion) {
         if (autoFollowToBottom) {
             scrollToLatestMessage(animated = false)
         }
@@ -379,11 +415,13 @@ private fun ChatContent(
                 currentModelLabel = currentModelLabel,
                 currentModelOptions = currentModelOptions,
                 currentReasoningMode = currentReasoningMode,
+                completedRoundCount = completedRoundCount,
                 isMenuItemEnabled = isMenuItemEnabled,
                 onBackAction = onBackAction,
                 navigationIcon = navigationIcon,
                 navigationIconContentDescription = navigationIconContentDescription,
                 scrollBehavior = scrollBehavior,
+                onRoundCountClick = { isRoundNavigatorOpen = true },
                 onChatTitleItemClick = onChatTitleItemClick,
                 onModelOptionSelected = onModelOptionSelected,
                 onReasoningModeSelected = onReasoningModeSelected,
@@ -472,7 +510,7 @@ private fun ChatContent(
                     }
                 }
 
-                if (listState.canScrollForward) {
+                if (showScrollToBottomButton) {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -486,6 +524,38 @@ private fun ChatContent(
                             }
                         }
                     }
+                }
+
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = isRoundNavigatorOpen,
+                    enter = fadeIn(animationSpec = tween(140)) + scaleIn(
+                        animationSpec = tween(180),
+                        initialScale = 0.96f,
+                        transformOrigin = TransformOrigin(1f, 0f)
+                    ),
+                    exit = fadeOut(animationSpec = tween(110)) + scaleOut(
+                        animationSpec = tween(130),
+                        targetScale = 0.96f,
+                        transformOrigin = TransformOrigin(1f, 0f)
+                    )
+                ) {
+                    RoundNavigatorOverlay(
+                        items = roundNavigationItems,
+                        maxHeight = roundNavigatorMaxHeight,
+                        onDismiss = { isRoundNavigatorOpen = false },
+                        onTurnClick = { turnIndex ->
+                            isRoundNavigatorOpen = false
+                            scope.launch {
+                                autoFollowToBottom = false
+                                programmaticScrollInProgress = true
+                                try {
+                                    listState.animateScrollToItem(turnIndex)
+                                } finally {
+                                    programmaticScrollInProgress = false
+                                }
+                            }
+                        }
+                    )
                 }
             }
 
@@ -532,6 +602,8 @@ private fun ChatMessagePair(
     val selectedAssistantMessage = assistantMessages.getOrNull(platformIndexState)
     val assistantContent = selectedAssistantMessage?.effectiveContent() ?: ""
     val assistantThoughts = selectedAssistantMessage?.effectiveThoughts() ?: ""
+    val selectedTokenUsage = selectedAssistantMessage?.effectiveTokenUsage()
+    val turnTokenUsages = remember(assistantMessages) { assistantMessages.mapNotNull { it.effectiveTokenUsage() } }
     val canShowPreviousRevision = selectedAssistantMessage?.let { assistantMessage ->
         assistantMessage.revisions.isNotEmpty() &&
             assistantMessage.activeRevisionIndex < assistantMessage.revisions.lastIndex
@@ -644,14 +716,23 @@ private fun ChatMessagePair(
                 onShowPreviousRevision = { onShowPreviousRevision(messageIndex, platformIndexState) },
                 onShowNextRevision = { onShowNextRevision(messageIndex, platformIndexState) }
             )
+            TokenUsageRow(
+                usage = selectedTokenUsage,
+                turnUsages = turnTokenUsages,
+                modifier = Modifier
+                    .padding(top = 4.dp)
+                    .widthIn(max = maximumOpponentChatBubbleWidth)
+            )
         }
     }
 }
 
-private fun chatMessagePairKey(message: MessageV2, index: Int): String = if (message.id > 0) {
-    "message-${message.id}"
-} else {
-    "message-${message.createdAt}-$index"
+private fun chatMessagePairKey(message: MessageV2, index: Int): String {
+    // New chats sync Room ids after streaming, so the list key must not depend on id.
+    val attachmentSignature = message.attachments.fold(0) { signature, attachment ->
+        31 * signature + attachment.filePathForDisplay.hashCode()
+    }
+    return "message-${message.createdAt}-$index-${message.content.hashCode()}-$attachmentSignature"
 }
 
 @Composable
@@ -661,11 +742,13 @@ private fun ChatTopBar(
     currentModelLabel: String,
     currentModelOptions: List<ModelSelectionOption>,
     currentReasoningMode: ReasoningMode,
+    completedRoundCount: Int,
     isMenuItemEnabled: Boolean,
     onBackAction: () -> Unit,
     navigationIcon: ImageVector,
     navigationIconContentDescription: String,
     scrollBehavior: TopAppBarScrollBehavior,
+    onRoundCountClick: () -> Unit,
     onChatTitleItemClick: () -> Unit,
     onModelOptionSelected: (ModelSelectionOption) -> Unit,
     onReasoningModeSelected: (ReasoningMode) -> Unit,
@@ -699,6 +782,10 @@ private fun ChatTopBar(
             }
         },
         actions = {
+            CompletedRoundButton(
+                completedRoundCount = completedRoundCount,
+                onClick = onRoundCountClick
+            )
             IconButton(
                 onClick = { isDropDownMenuExpanded = isDropDownMenuExpanded.not() }
             ) {

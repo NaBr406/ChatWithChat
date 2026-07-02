@@ -24,6 +24,7 @@ class ToolPromptBuilder(
             appendLine("- Use at most ${config.maxToolCallsPerRound.coerceAtLeast(0)} tool calls in one response.")
             appendLine("- Use at most ${config.maxToolRounds.coerceAtLeast(0)} tool rounds before returning final_answer.")
             appendLine("- Keep arguments concise and match each tool parameter schema.")
+            appendLine("- If a tool result is an error with tool_permission_denied, tell the user which Android permission is missing and ask them to enable it before retrying.")
             if (tools.any { tool -> tool.name == ToolDefinition.WebSearch.name }) {
                 appendLine("- For web_search, rewrite the user's request into a search-engine query with likely entity, topic/category, timeframe, and geography/source scope; do not merely copy the user's wording.")
                 appendLine("- Prefer official, primary, or local-language source terms for factual data such as weather, laws, finance, health, releases, and schedules.")

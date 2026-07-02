@@ -20,6 +20,7 @@ import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
 import dev.chungjungsoo.gptmobile.data.database.entity.effectiveContent
 import dev.chungjungsoo.gptmobile.data.dto.ApiState
+import dev.chungjungsoo.gptmobile.data.dto.ProviderUsage
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.common.ImageContent as AnthropicImageContent
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.common.ImageSource
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.common.MediaType
@@ -34,7 +35,9 @@ import dev.chungjungsoo.gptmobile.data.dto.anthropic.request.ThinkingConfig
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ContentBlockType
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ContentDeltaResponseChunk
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ErrorResponseChunk
+import dev.chungjungsoo.gptmobile.data.dto.anthropic.response.MessageDeltaResponseChunk
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.response.MessageResponseChunk
+import dev.chungjungsoo.gptmobile.data.dto.anthropic.response.MessageStartResponseChunk
 import dev.chungjungsoo.gptmobile.data.dto.google.common.Content
 import dev.chungjungsoo.gptmobile.data.dto.google.common.Part
 import dev.chungjungsoo.gptmobile.data.dto.google.common.Role as GoogleRole
@@ -50,6 +53,7 @@ import dev.chungjungsoo.gptmobile.data.dto.openai.common.MessageContent as OpenA
 import dev.chungjungsoo.gptmobile.data.dto.openai.common.Role as OpenAIRole
 import dev.chungjungsoo.gptmobile.data.dto.openai.common.TextContent as OpenAITextContent
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ChatCompletionRequest
+import dev.chungjungsoo.gptmobile.data.dto.openai.request.ChatCompletionStreamOptions
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ChatCompletionTool
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ChatCompletionToolChoice
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ChatMessage
@@ -65,6 +69,7 @@ import dev.chungjungsoo.gptmobile.data.dto.openai.response.ChatCompletionChunk
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.OutputTextDeltaEvent
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.OutputTextDoneEvent
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.ReasoningSummaryTextDeltaEvent
+import dev.chungjungsoo.gptmobile.data.dto.openai.response.ResponseCompletedEvent
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.ResponseErrorEvent
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.ResponseFailedEvent
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.ResponsesStreamEvent
@@ -77,7 +82,11 @@ import dev.chungjungsoo.gptmobile.data.model.isGptOssModel
 import dev.chungjungsoo.gptmobile.data.network.AnthropicAPI
 import dev.chungjungsoo.gptmobile.data.network.GoogleAPI
 import dev.chungjungsoo.gptmobile.data.network.GroqAPI
+import dev.chungjungsoo.gptmobile.data.network.NetworkClient
 import dev.chungjungsoo.gptmobile.data.network.OpenAIAPI
+import dev.chungjungsoo.gptmobile.data.token.TokenUsageEstimator
+import dev.chungjungsoo.gptmobile.data.token.TokenUsageRecord
+import dev.chungjungsoo.gptmobile.data.token.sumTokenUsage
 import dev.chungjungsoo.gptmobile.data.tool.ToolCall
 import dev.chungjungsoo.gptmobile.data.tool.ToolCallingMode
 import dev.chungjungsoo.gptmobile.data.tool.ToolDefinition
@@ -324,6 +333,7 @@ class ChatRepositoryImpl @Inject constructor(
         }
 
         val toolCallingAdapter = toolCallingAdapterFor(platform.compatibleType)
+        val toolUsageRecords = mutableListOf<TokenUsageRecord>()
         val loopResult = toolLoopOrchestrator.runLoop(
             adapter = toolCallingAdapter,
             onProgress = { progress -> emit(progress) },
@@ -338,7 +348,7 @@ class ChatRepositoryImpl @Inject constructor(
                         reasoningMode = reasoningMode,
                         extraPrompt = toolPrompt
                     )
-                )
+                ) { usage -> toolUsageRecords += usage.asToolRelated() }
             }
         )
 
@@ -347,6 +357,12 @@ class ChatRepositoryImpl @Inject constructor(
                 loopResult.content.takeIf { it.isNotBlank() }?.let { content ->
                     emit(ApiState.Success(content))
                 }
+                aggregateToolUsage(
+                    currentAnswerUsage = toolUsageRecords.lastOrNull(),
+                    toolUsages = toolUsageRecords,
+                    platform = platform,
+                    label = "工具请求合计"
+                )?.let { usage -> emit(ApiState.UsageUpdated(usage)) }
                 emit(ApiState.Done)
             }
             is ToolLoopResult.ToolResults -> {
@@ -355,16 +371,34 @@ class ChatRepositoryImpl @Inject constructor(
                     .takeIf { it.isNotEmpty() }?.let { sources ->
                     emit(ApiState.SourcesUpdated(sources))
                 }
-                emitProviderStatesSkippingLoading(
-                    completeChatByProvider(
-                        userMessages = userMessages,
-                        assistantMessages = assistantMessages,
-                        platform = platform,
-                        memoryPrompt = memoryPrompt,
-                        reasoningMode = reasoningMode,
-                        extraPrompt = loopResult.finalAnswerPrompt
-                    )
-                )
+                var finalAnswerUsage: TokenUsageRecord? = null
+                var isDone = false
+                completeChatByProvider(
+                    userMessages = userMessages,
+                    assistantMessages = assistantMessages,
+                    platform = platform,
+                    memoryPrompt = memoryPrompt,
+                    reasoningMode = reasoningMode,
+                    extraPrompt = loopResult.finalAnswerPrompt
+                ).collect { state ->
+                    when (state) {
+                        is ApiState.Loading -> {}
+                        is ApiState.UsageUpdated -> {
+                            val relatedUsage = state.usage.asToolRelated()
+                            finalAnswerUsage = relatedUsage
+                            toolUsageRecords += relatedUsage
+                        }
+                        ApiState.Done -> isDone = true
+                        else -> emit(state)
+                    }
+                }
+                aggregateToolUsage(
+                    currentAnswerUsage = finalAnswerUsage,
+                    toolUsages = toolUsageRecords,
+                    platform = platform,
+                    label = "工具请求合计"
+                )?.let { usage -> emit(ApiState.UsageUpdated(usage)) }
+                if (isDone) emit(ApiState.Done)
             }
             is ToolLoopResult.Failed -> {
                 emitProviderStatesSkippingLoading(
@@ -462,13 +496,17 @@ class ChatRepositoryImpl @Inject constructor(
         return recentTurns.joinToString(separator = "\n\n").takeIf { it.isNotBlank() }
     }
 
-    private suspend fun collectProviderText(states: Flow<ApiState>): Result<String> = runCatching {
+    private suspend fun collectProviderText(
+        states: Flow<ApiState>,
+        onUsage: (TokenUsageRecord) -> Unit = {}
+    ): Result<String> = runCatching {
         val text = StringBuilder()
         var errorMessage: String? = null
         states.collect { state ->
             when (state) {
                 is ApiState.Success -> text.append(state.textChunk)
                 is ApiState.Error -> errorMessage = errorMessage ?: state.message
+                is ApiState.UsageUpdated -> onUsage(state.usage)
                 else -> {}
             }
         }
@@ -525,6 +563,7 @@ class ChatRepositoryImpl @Inject constructor(
         val tools = openAIResponsesToolAdapter.toResponseTools(activeToolDefinitions)
         val continuationItems = mutableListOf<ResponseInputItem>()
         val allResults = mutableListOf<ToolResult>()
+        val toolUsageRecords = mutableListOf<TokenUsageRecord>()
         val maxRounds = config.maxToolRounds.coerceAtLeast(1)
 
         val searchDecisionPrompt = executeSearchDecisionIfNeeded(
@@ -547,14 +586,16 @@ class ChatRepositoryImpl @Inject constructor(
             return@flow
         }
 
-        repeat(maxRounds) {
+        repeat(maxRounds) { roundIndex ->
             val round = collectOpenAIResponsesNativeRound(
                 request = prepared.toRequest(
                     continuationItems = continuationItems,
                     tools = tools,
                     toolChoice = ResponseToolChoice.Auto
                 ),
-                timeoutSeconds = platform.timeout
+                timeoutSeconds = platform.timeout,
+                platform = platform,
+                label = "工具请求 ${roundIndex + 1}"
             )
             if (round.errorMessage != null) {
                 if (allResults.isEmpty()) {
@@ -567,12 +608,16 @@ class ChatRepositoryImpl @Inject constructor(
                 }
                 return@flow
             }
+            round.usage?.let { toolUsageRecords += it }
 
             val calls = openAIResponsesToolAdapter
                 .toolCallsFromEvents(round.events)
                 .distinctBy { call -> "${call.name}:${call.arguments}" }
                 .take(config.maxToolCallsPerRound.coerceAtLeast(0))
             if (calls.isEmpty()) {
+                aggregateToolUsage(round.usage, toolUsageRecords, platform, "工具请求合计")?.let { usage ->
+                    emit(ApiState.UsageUpdated(usage))
+                }
                 emit(ApiState.Done)
                 return@flow
             }
@@ -604,10 +649,16 @@ class ChatRepositoryImpl @Inject constructor(
                 toolChoice = ResponseToolChoice.None,
                 extraInstruction = OPENAI_NATIVE_FINAL_TOOL_INSTRUCTION
             ),
-            timeoutSeconds = platform.timeout
+            timeoutSeconds = platform.timeout,
+            platform = platform,
+            label = "工具最终回答"
         )
+        finalRound.usage?.let { toolUsageRecords += it }
         finalRound.errorMessage?.let { message ->
             emit(ApiState.Error(message))
+        }
+        aggregateToolUsage(finalRound.usage, toolUsageRecords, platform, "工具请求合计")?.let { usage ->
+            emit(ApiState.UsageUpdated(usage))
         }
         emit(ApiState.Done)
     }.catch { e ->
@@ -617,11 +668,14 @@ class ChatRepositoryImpl @Inject constructor(
 
     private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.collectOpenAIResponsesNativeRound(
         request: ResponsesRequest,
-        timeoutSeconds: Int
+        timeoutSeconds: Int,
+        platform: PlatformV2,
+        label: String
     ): OpenAIResponsesNativeRound {
         val events = mutableListOf<ResponsesStreamEvent>()
         var errorMessage: String? = null
         var emittedOutputTextDelta = false
+        val outputText = StringBuilder()
 
         openAIAPI.streamResponses(request, timeoutSeconds).collect { event ->
             events += event
@@ -630,12 +684,14 @@ class ChatRepositoryImpl @Inject constructor(
 
                 is OutputTextDeltaEvent -> {
                     emittedOutputTextDelta = true
+                    outputText.append(event.delta)
                     emit(ApiState.Success(event.delta))
                 }
 
                 is OutputTextDoneEvent -> {
                     if (!emittedOutputTextDelta && event.text.isNotBlank()) {
                         emittedOutputTextDelta = true
+                        outputText.append(event.text)
                         emit(ApiState.Success(event.text))
                     }
                 }
@@ -654,7 +710,19 @@ class ChatRepositoryImpl @Inject constructor(
 
         return OpenAIResponsesNativeRound(
             events = events,
-            errorMessage = errorMessage
+            errorMessage = errorMessage,
+            usage = if (errorMessage == null) {
+                openAIResponsesUsageFromEvents(
+                    events = events,
+                    request = request,
+                    outputText = outputText.toString().ifBlank { events.joinToString(separator = "\n") },
+                    platform = platform,
+                    label = label,
+                    isToolRelated = true
+                )
+            } else {
+                null
+            }
         )
     }
 
@@ -717,16 +785,19 @@ class ChatRepositoryImpl @Inject constructor(
         val tools = openAIChatCompletionsToolAdapter.toChatCompletionTools(activeToolDefinitions)
         val continuationMessages = mutableListOf<ChatMessage>()
         val allResults = mutableListOf<ToolResult>()
+        val toolUsageRecords = mutableListOf<TokenUsageRecord>()
         val maxRounds = config.maxToolRounds.coerceAtLeast(1)
 
-        repeat(maxRounds) {
+        repeat(maxRounds) { roundIndex ->
             val round = collectOpenAIChatCompletionsNativeRound(
                 request = prepared.toRequest(
                     continuationMessages = continuationMessages,
                     tools = tools,
                     toolChoice = ChatCompletionToolChoice.Auto
                 ),
-                timeoutSeconds = platform.timeout
+                timeoutSeconds = platform.timeout,
+                platform = platform,
+                label = "工具请求 ${roundIndex + 1}"
             )
             if (round.errorMessage != null) {
                 if (allResults.isEmpty()) {
@@ -739,12 +810,16 @@ class ChatRepositoryImpl @Inject constructor(
                 }
                 return@flow
             }
+            round.usage?.let { toolUsageRecords += it }
 
             val calls = openAIChatCompletionsToolAdapter
                 .toolCallsFromChunks(round.chunks)
                 .distinctBy { call -> "${call.name}:${call.arguments}" }
                 .take(config.maxToolCallsPerRound.coerceAtLeast(0))
             if (calls.isEmpty()) {
+                aggregateToolUsage(round.usage, toolUsageRecords, platform, "工具请求合计")?.let { usage ->
+                    emit(ApiState.UsageUpdated(usage))
+                }
                 emit(ApiState.Done)
                 return@flow
             }
@@ -776,10 +851,16 @@ class ChatRepositoryImpl @Inject constructor(
                 toolChoice = ChatCompletionToolChoice.None,
                 extraInstruction = OPENAI_NATIVE_FINAL_TOOL_INSTRUCTION
             ),
-            timeoutSeconds = platform.timeout
+            timeoutSeconds = platform.timeout,
+            platform = platform,
+            label = "工具最终回答"
         )
+        finalRound.usage?.let { toolUsageRecords += it }
         finalRound.errorMessage?.let { message ->
             emit(ApiState.Error(message))
+        }
+        aggregateToolUsage(finalRound.usage, toolUsageRecords, platform, "工具请求合计")?.let { usage ->
+            emit(ApiState.UsageUpdated(usage))
         }
         emit(ApiState.Done)
     }.catch { e ->
@@ -789,10 +870,13 @@ class ChatRepositoryImpl @Inject constructor(
 
     private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.collectOpenAIChatCompletionsNativeRound(
         request: ChatCompletionRequest,
-        timeoutSeconds: Int
+        timeoutSeconds: Int,
+        platform: PlatformV2,
+        label: String
     ): OpenAIChatCompletionsNativeRound {
         val chunks = mutableListOf<ChatCompletionChunk>()
         var errorMessage: String? = null
+        val outputText = StringBuilder()
 
         openAIAPI.streamChatCompletion(request, timeoutSeconds).collect { chunk ->
             chunks += chunk
@@ -801,6 +885,7 @@ class ChatRepositoryImpl @Inject constructor(
 
                 else -> chunk.choices.orEmpty().forEach { choice ->
                     choice.delta.content?.let { content ->
+                        outputText.append(content)
                         emit(ApiState.Success(content))
                     }
                 }
@@ -809,7 +894,19 @@ class ChatRepositoryImpl @Inject constructor(
 
         return OpenAIChatCompletionsNativeRound(
             chunks = chunks,
-            errorMessage = errorMessage
+            errorMessage = errorMessage,
+            usage = if (errorMessage == null) {
+                openAIChatUsageFromChunks(
+                    chunks = chunks,
+                    request = request,
+                    outputText = outputText.toString().ifBlank { chunks.joinToString(separator = "\n") },
+                    platform = platform,
+                    label = label,
+                    isToolRelated = true
+                )
+            } else {
+                null
+            }
         )
     }
 
@@ -875,16 +972,19 @@ class ChatRepositoryImpl @Inject constructor(
         val tools = anthropicNativeToolAdapter.toAnthropicTools(activeToolDefinitions)
         val continuationMessages = mutableListOf<InputMessage>()
         val allResults = mutableListOf<ToolResult>()
+        val toolUsageRecords = mutableListOf<TokenUsageRecord>()
         val maxRounds = config.maxToolRounds.coerceAtLeast(1)
 
-        repeat(maxRounds) {
+        repeat(maxRounds) { roundIndex ->
             val round = collectAnthropicNativeRound(
                 request = prepared.toRequest(
                     continuationMessages = continuationMessages,
                     tools = tools,
                     toolChoice = AnthropicToolChoice.Auto
                 ),
-                timeoutSeconds = platform.timeout
+                timeoutSeconds = platform.timeout,
+                platform = platform,
+                label = "工具请求 ${roundIndex + 1}"
             )
             if (round.errorMessage != null) {
                 if (allResults.isEmpty()) {
@@ -897,12 +997,16 @@ class ChatRepositoryImpl @Inject constructor(
                 }
                 return@flow
             }
+            round.usage?.let { toolUsageRecords += it }
 
             val calls = anthropicNativeToolAdapter
                 .toolCallsFromChunks(round.chunks)
                 .distinctBy { call -> "${call.name}:${call.arguments}" }
                 .take(config.maxToolCallsPerRound.coerceAtLeast(0))
             if (calls.isEmpty()) {
+                aggregateToolUsage(round.usage, toolUsageRecords, platform, "工具请求合计")?.let { usage ->
+                    emit(ApiState.UsageUpdated(usage))
+                }
                 emit(ApiState.Done)
                 return@flow
             }
@@ -934,10 +1038,16 @@ class ChatRepositoryImpl @Inject constructor(
                 toolChoice = AnthropicToolChoice.None,
                 extraInstruction = OPENAI_NATIVE_FINAL_TOOL_INSTRUCTION
             ),
-            timeoutSeconds = platform.timeout
+            timeoutSeconds = platform.timeout,
+            platform = platform,
+            label = "工具最终回答"
         )
+        finalRound.usage?.let { toolUsageRecords += it }
         finalRound.errorMessage?.let { message ->
             emit(ApiState.Error(message))
+        }
+        aggregateToolUsage(finalRound.usage, toolUsageRecords, platform, "工具请求合计")?.let { usage ->
+            emit(ApiState.UsageUpdated(usage))
         }
         emit(ApiState.Done)
     }.catch { e ->
@@ -947,10 +1057,13 @@ class ChatRepositoryImpl @Inject constructor(
 
     private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.collectAnthropicNativeRound(
         request: MessageRequest,
-        timeoutSeconds: Int
+        timeoutSeconds: Int,
+        platform: PlatformV2,
+        label: String
     ): AnthropicNativeRound {
         val chunks = mutableListOf<MessageResponseChunk>()
         var errorMessage: String? = null
+        val outputText = StringBuilder()
 
         anthropicAPI.streamChatMessage(request, timeoutSeconds).collect { chunk ->
             chunks += chunk
@@ -962,7 +1075,10 @@ class ChatRepositoryImpl @Inject constructor(
                         }
 
                         ContentBlockType.DELTA -> {
-                            chunk.delta.text?.let { emit(ApiState.Success(it)) }
+                            chunk.delta.text?.let {
+                                outputText.append(it)
+                                emit(ApiState.Success(it))
+                            }
                         }
 
                         else -> {}
@@ -979,7 +1095,19 @@ class ChatRepositoryImpl @Inject constructor(
 
         return AnthropicNativeRound(
             chunks = chunks,
-            errorMessage = errorMessage
+            errorMessage = errorMessage,
+            usage = if (errorMessage == null) {
+                anthropicUsageFromChunks(
+                    chunks = chunks,
+                    request = request,
+                    outputText = outputText.toString().ifBlank { chunks.joinToString(separator = "\n") },
+                    platform = platform,
+                    label = label,
+                    isToolRelated = true
+                )
+            } else {
+                null
+            }
         )
     }
 
@@ -1049,9 +1177,10 @@ class ChatRepositoryImpl @Inject constructor(
         val tools = googleNativeToolAdapter.toGoogleTools(activeToolDefinitions)
         val continuationContents = mutableListOf<Content>()
         val allResults = mutableListOf<ToolResult>()
+        val toolUsageRecords = mutableListOf<TokenUsageRecord>()
         val maxRounds = config.maxToolRounds.coerceAtLeast(1)
 
-        repeat(maxRounds) {
+        repeat(maxRounds) { roundIndex ->
             val round = collectGoogleNativeRound(
                 request = prepared.toRequest(
                     continuationContents = continuationContents,
@@ -1059,7 +1188,9 @@ class ChatRepositoryImpl @Inject constructor(
                     toolConfig = GoogleToolConfig.Auto
                 ),
                 model = platform.model,
-                timeoutSeconds = platform.timeout
+                timeoutSeconds = platform.timeout,
+                platform = platform,
+                label = "工具请求 ${roundIndex + 1}"
             )
             if (round.errorMessage != null) {
                 if (allResults.isEmpty()) {
@@ -1072,12 +1203,16 @@ class ChatRepositoryImpl @Inject constructor(
                 }
                 return@flow
             }
+            round.usage?.let { toolUsageRecords += it }
 
             val calls = googleNativeToolAdapter
                 .toolCallsFromResponses(round.responses)
                 .distinctBy { call -> "${call.name}:${call.arguments}" }
                 .take(config.maxToolCallsPerRound.coerceAtLeast(0))
             if (calls.isEmpty()) {
+                aggregateToolUsage(round.usage, toolUsageRecords, platform, "工具请求合计")?.let { usage ->
+                    emit(ApiState.UsageUpdated(usage))
+                }
                 emit(ApiState.Done)
                 return@flow
             }
@@ -1110,10 +1245,16 @@ class ChatRepositoryImpl @Inject constructor(
                 extraInstruction = OPENAI_NATIVE_FINAL_TOOL_INSTRUCTION
             ),
             model = platform.model,
-            timeoutSeconds = platform.timeout
+            timeoutSeconds = platform.timeout,
+            platform = platform,
+            label = "工具最终回答"
         )
+        finalRound.usage?.let { toolUsageRecords += it }
         finalRound.errorMessage?.let { message ->
             emit(ApiState.Error(message))
+        }
+        aggregateToolUsage(finalRound.usage, toolUsageRecords, platform, "工具请求合计")?.let { usage ->
+            emit(ApiState.UsageUpdated(usage))
         }
         emit(ApiState.Done)
     }.catch { e ->
@@ -1124,10 +1265,13 @@ class ChatRepositoryImpl @Inject constructor(
     private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.collectGoogleNativeRound(
         request: GenerateContentRequest,
         model: String,
-        timeoutSeconds: Int
+        timeoutSeconds: Int,
+        platform: PlatformV2,
+        label: String
     ): GoogleNativeRound {
         val responses = mutableListOf<GenerateContentResponse>()
         var errorMessage: String? = null
+        val outputText = StringBuilder()
 
         googleAPI.streamGenerateContent(request, model, timeoutSeconds).collect { response ->
             responses += response
@@ -1141,6 +1285,7 @@ class ChatRepositoryImpl @Inject constructor(
                             if (part.thought == true) {
                                 emit(ApiState.Thinking(text))
                             } else {
+                                outputText.append(text)
                                 emit(ApiState.Success(text))
                             }
                         }
@@ -1151,7 +1296,19 @@ class ChatRepositoryImpl @Inject constructor(
 
         return GoogleNativeRound(
             responses = responses,
-            errorMessage = errorMessage
+            errorMessage = errorMessage,
+            usage = if (errorMessage == null) {
+                googleUsageFromResponses(
+                    responses = responses,
+                    request = request,
+                    outputText = outputText.toString().ifBlank { responses.joinToString(separator = "\n") },
+                    platform = platform,
+                    label = label,
+                    isToolRelated = true
+                )
+            } else {
+                null
+            }
         )
     }
 
@@ -1193,21 +1350,55 @@ class ChatRepositoryImpl @Inject constructor(
             },
             stream = { prepared ->
                 flow {
+                    val events = mutableListOf<ResponsesStreamEvent>()
+                    val outputText = StringBuilder()
+                    var emittedOutputTextDelta = false
+                    var hasTerminalError = false
                     openAIAPI.streamResponses(prepared.request, platform.timeout).collect { event ->
+                        events += event
                         when (event) {
                             is ReasoningSummaryTextDeltaEvent -> emit(ApiState.Thinking(event.delta))
 
-                            is OutputTextDeltaEvent -> emit(ApiState.Success(event.delta))
+                            is OutputTextDeltaEvent -> {
+                                emittedOutputTextDelta = true
+                                outputText.append(event.delta)
+                                emit(ApiState.Success(event.delta))
+                            }
+
+                            is OutputTextDoneEvent -> {
+                                if (!emittedOutputTextDelta && event.text.isNotBlank()) {
+                                    outputText.append(event.text)
+                                    emit(ApiState.Success(event.text))
+                                }
+                            }
 
                             is ResponseFailedEvent -> {
+                                hasTerminalError = true
                                 val errorMessage = event.response.error?.message ?: "响应失败"
                                 emit(ApiState.Error(errorMessage))
                             }
 
-                            is ResponseErrorEvent -> emit(ApiState.Error(event.message))
+                            is ResponseErrorEvent -> {
+                                hasTerminalError = true
+                                emit(ApiState.Error(event.message))
+                            }
 
                             else -> {}
                         }
+                    }
+                    if (!hasTerminalError && outputText.isNotBlank()) {
+                        emit(
+                            ApiState.UsageUpdated(
+                                openAIResponsesUsageFromEvents(
+                                    events = events,
+                                    request = prepared.request,
+                                    outputText = outputText.toString(),
+                                    platform = platform,
+                                    label = "OpenAI Responses",
+                                    isToolRelated = false
+                                )
+                            )
+                        )
                     }
                 }
             },
@@ -1247,26 +1438,57 @@ class ChatRepositoryImpl @Inject constructor(
             stream = { prepared ->
                 flow {
                     val parser = GroqReasoningParser()
+                    val chunks = mutableListOf<dev.chungjungsoo.gptmobile.data.dto.groq.response.GroqChatCompletionChunk>()
+                    val outputText = StringBuilder()
+                    var hasTerminalError = false
                     groqAPI.streamChatCompletion(
                         request = prepared.request,
                         timeoutSeconds = platform.timeout,
                         token = platform.token,
                         apiUrl = platform.apiUrl
                     ).collect { chunk ->
+                        chunks += chunk
                         when {
-                            chunk.error != null -> emit(ApiState.Error(chunk.error.message))
+                            chunk.error != null -> {
+                                hasTerminalError = true
+                                emit(ApiState.Error(chunk.error.message))
+                            }
 
                             else -> {
                                 val choice = chunk.choices?.firstOrNull()
                                 parser.append(
                                     reasoningChunk = choice?.delta?.reasoning ?: choice?.message?.reasoning,
                                     contentChunk = choice?.delta?.content ?: choice?.message?.content
-                                ).forEach { emit(it) }
+                                ).forEach { state ->
+                                    if (state is ApiState.Success) {
+                                        outputText.append(state.textChunk)
+                                    }
+                                    emit(state)
+                                }
                             }
                         }
                     }
 
-                    parser.flush().forEach { emit(it) }
+                    parser.flush().forEach { state ->
+                        if (state is ApiState.Success) {
+                            outputText.append(state.textChunk)
+                        }
+                        emit(state)
+                    }
+                    if (!hasTerminalError && outputText.isNotBlank()) {
+                        emit(
+                            ApiState.UsageUpdated(
+                                groqUsageFromChunks(
+                                    chunks = chunks,
+                                    request = prepared.request,
+                                    outputText = outputText.toString(),
+                                    platform = platform,
+                                    label = "Groq",
+                                    isToolRelated = false
+                                )
+                            )
+                        )
+                    }
                 }
             },
             sourceMetadata = { it.sources }
@@ -1308,21 +1530,45 @@ class ChatRepositoryImpl @Inject constructor(
                         stream = platform.stream,
                         temperature = platform.temperature,
                         topP = platform.topP,
-                        reasoningEffort = reasoningParameters.openAICompatibleReasoningEffort
+                        reasoningEffort = reasoningParameters.openAICompatibleReasoningEffort,
+                        streamOptions = chatCompletionStreamOptionsFor(platform)
                     ),
                     sources = webSearchContext.sources
                 )
             },
             stream = { prepared ->
                 flow {
+                    val chunks = mutableListOf<ChatCompletionChunk>()
+                    val outputText = StringBuilder()
+                    var hasTerminalError = false
                     openAIAPI.streamChatCompletion(prepared.request, platform.timeout).collect { chunk ->
+                        chunks += chunk
                         when {
-                            chunk.error != null -> emit(ApiState.Error(chunk.error.message))
+                            chunk.error != null -> {
+                                hasTerminalError = true
+                                emit(ApiState.Error(chunk.error.message))
+                            }
 
                             chunk.choices?.firstOrNull()?.delta?.content != null -> {
-                                emit(ApiState.Success(chunk.choices.first().delta.content!!))
+                                val content = chunk.choices.first().delta.content!!
+                                outputText.append(content)
+                                emit(ApiState.Success(content))
                             }
                         }
+                    }
+                    if (!hasTerminalError && outputText.isNotBlank()) {
+                        emit(
+                            ApiState.UsageUpdated(
+                                openAIChatUsageFromChunks(
+                                    chunks = chunks,
+                                    request = prepared.request,
+                                    outputText = outputText.toString(),
+                                    platform = platform,
+                                    label = "Chat Completions",
+                                    isToolRelated = false
+                                )
+                            )
+                        )
                     }
                 }
             },
@@ -1625,7 +1871,11 @@ class ChatRepositoryImpl @Inject constructor(
             },
             stream = { prepared ->
                 flow {
+                    val chunks = mutableListOf<MessageResponseChunk>()
+                    val outputText = StringBuilder()
+                    var hasTerminalError = false
                     anthropicAPI.streamChatMessage(prepared.request, platform.timeout).collect { chunk ->
+                        chunks += chunk
                         when (chunk) {
                             is dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ContentDeltaResponseChunk -> {
                                 when (chunk.delta.type) {
@@ -1634,7 +1884,10 @@ class ChatRepositoryImpl @Inject constructor(
                                     }
 
                                     dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ContentBlockType.DELTA -> {
-                                        chunk.delta.text?.let { emit(ApiState.Success(it)) }
+                                        chunk.delta.text?.let { text ->
+                                            outputText.append(text)
+                                            emit(ApiState.Success(text))
+                                        }
                                     }
 
                                     else -> {}
@@ -1642,11 +1895,26 @@ class ChatRepositoryImpl @Inject constructor(
                             }
 
                             is dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ErrorResponseChunk -> {
+                                hasTerminalError = true
                                 emit(ApiState.Error(chunk.error.message))
                             }
 
                             else -> {}
                         }
+                    }
+                    if (!hasTerminalError && outputText.isNotBlank()) {
+                        emit(
+                            ApiState.UsageUpdated(
+                                anthropicUsageFromChunks(
+                                    chunks = chunks,
+                                    request = prepared.request,
+                                    outputText = outputText.toString(),
+                                    platform = platform,
+                                    label = "Anthropic",
+                                    isToolRelated = false
+                                )
+                            )
+                        )
                     }
                 }
             },
@@ -1741,9 +2009,16 @@ class ChatRepositoryImpl @Inject constructor(
             },
             stream = { prepared ->
                 flow {
+                    val responses = mutableListOf<GenerateContentResponse>()
+                    val outputText = StringBuilder()
+                    var hasTerminalError = false
                     googleAPI.streamGenerateContent(prepared.request, platform.model, platform.timeout).collect { response ->
+                        responses += response
                         when {
-                            response.error != null -> emit(ApiState.Error(response.error.message))
+                            response.error != null -> {
+                                hasTerminalError = true
+                                emit(ApiState.Error(response.error.message))
+                            }
 
                             response.candidates?.firstOrNull()?.content?.parts != null -> {
                                 val parts = response.candidates.first().content.parts
@@ -1752,12 +2027,27 @@ class ChatRepositoryImpl @Inject constructor(
                                         if (part.thought == true) {
                                             emit(ApiState.Thinking(text))
                                         } else {
+                                            outputText.append(text)
                                             emit(ApiState.Success(text))
                                         }
                                     }
                                 }
                             }
                         }
+                    }
+                    if (!hasTerminalError && outputText.isNotBlank()) {
+                        emit(
+                            ApiState.UsageUpdated(
+                                googleUsageFromResponses(
+                                    responses = responses,
+                                    request = prepared.request,
+                                    outputText = outputText.toString(),
+                                    platform = platform,
+                                    label = "Google",
+                                    isToolRelated = false
+                                )
+                            )
+                        )
                     }
                 }
             },
@@ -2057,7 +2347,8 @@ internal fun createGroqChatCompletionRequest(
         topP = platform.topP,
         reasoningEffort = reasoningParameters.groqReasoningEffort,
         reasoningFormat = reasoningParameters.groqReasoningFormat,
-        includeReasoning = reasoningParameters.groqIncludeReasoning
+        includeReasoning = reasoningParameters.groqIncludeReasoning,
+        streamOptions = ChatCompletionStreamOptions()
     )
 }
 
@@ -2117,7 +2408,8 @@ private data class OpenAIResponsesNativeToolRequest(
 
 private data class OpenAIResponsesNativeRound(
     val events: List<ResponsesStreamEvent>,
-    val errorMessage: String?
+    val errorMessage: String?,
+    val usage: TokenUsageRecord?
 )
 
 private data class OpenAIChatCompletionsNativeToolRequest(
@@ -2140,13 +2432,15 @@ private data class OpenAIChatCompletionsNativeToolRequest(
         topP = topP,
         reasoningEffort = reasoningEffort,
         tools = tools,
-        toolChoice = toolChoice
+        toolChoice = toolChoice,
+        streamOptions = ChatCompletionStreamOptions()
     )
 }
 
 private data class OpenAIChatCompletionsNativeRound(
     val chunks: List<ChatCompletionChunk>,
-    val errorMessage: String?
+    val errorMessage: String?,
+    val usage: TokenUsageRecord?
 )
 
 private data class AnthropicNativeToolRequest(
@@ -2179,7 +2473,8 @@ private data class AnthropicNativeToolRequest(
 
 private data class AnthropicNativeRound(
     val chunks: List<MessageResponseChunk>,
-    val errorMessage: String?
+    val errorMessage: String?,
+    val usage: TokenUsageRecord?
 )
 
 private data class GoogleNativeToolRequest(
@@ -2203,7 +2498,8 @@ private data class GoogleNativeToolRequest(
 
 private data class GoogleNativeRound(
     val responses: List<GenerateContentResponse>,
-    val errorMessage: String?
+    val errorMessage: String?,
+    val usage: TokenUsageRecord?
 )
 
 private fun List<ChatMessage>.withAdditionalSystemInstruction(extraInstruction: String?): List<ChatMessage> {
@@ -2315,4 +2611,197 @@ internal fun <T> streamPreparedApiState(
         emit(ApiState.SourcesUpdated(sources))
     }
     emitAll(stream(preparedRequest))
+}
+
+private fun usageFromProviderOrEstimate(
+    providerUsage: ProviderUsage?,
+    requestText: String,
+    outputText: String,
+    platform: PlatformV2,
+    label: String,
+    isToolRelated: Boolean
+): TokenUsageRecord = providerUsage
+    ?.toTokenUsageRecord(
+        platform = platform,
+        label = label,
+        isToolRelated = isToolRelated
+    )
+    ?: TokenUsageEstimator.estimateRequestUsage(
+        requestText = requestText,
+        outputText = outputText,
+        platform = platform,
+        label = label,
+        isToolRelated = isToolRelated
+    )
+
+private fun openAIResponsesUsageFromEvents(
+    events: List<ResponsesStreamEvent>,
+    request: ResponsesRequest,
+    outputText: String,
+    platform: PlatformV2,
+    label: String,
+    isToolRelated: Boolean
+): TokenUsageRecord = usageFromProviderOrEstimate(
+    providerUsage = events
+        .filterIsInstance<ResponseCompletedEvent>()
+        .lastOrNull()
+        ?.response
+        ?.usage,
+    requestText = NetworkClient.openAIJson.encodeToString(request),
+    outputText = outputText,
+    platform = platform,
+    label = label,
+    isToolRelated = isToolRelated
+)
+
+private fun openAIChatUsageFromChunks(
+    chunks: List<ChatCompletionChunk>,
+    request: ChatCompletionRequest,
+    outputText: String,
+    platform: PlatformV2,
+    label: String,
+    isToolRelated: Boolean
+): TokenUsageRecord = usageFromProviderOrEstimate(
+    providerUsage = chunks.lastOrNull { chunk -> chunk.usage != null }?.usage,
+    requestText = NetworkClient.openAIJson.encodeToString(request),
+    outputText = outputText,
+    platform = platform,
+    label = label,
+    isToolRelated = isToolRelated
+)
+
+private fun groqUsageFromChunks(
+    chunks: List<dev.chungjungsoo.gptmobile.data.dto.groq.response.GroqChatCompletionChunk>,
+    request: GroqChatCompletionRequest,
+    outputText: String,
+    platform: PlatformV2,
+    label: String,
+    isToolRelated: Boolean
+): TokenUsageRecord = usageFromProviderOrEstimate(
+    providerUsage = chunks
+        .mapNotNull { chunk -> chunk.usage ?: chunk.xGroq?.usage }
+        .lastOrNull(),
+    requestText = NetworkClient.openAIJson.encodeToString(request),
+    outputText = outputText,
+    platform = platform,
+    label = label,
+    isToolRelated = isToolRelated
+)
+
+private fun anthropicUsageFromChunks(
+    chunks: List<MessageResponseChunk>,
+    request: MessageRequest,
+    outputText: String,
+    platform: PlatformV2,
+    label: String,
+    isToolRelated: Boolean
+): TokenUsageRecord {
+    val startUsage = chunks
+        .filterIsInstance<MessageStartResponseChunk>()
+        .lastOrNull()
+        ?.message
+        ?.usage
+    val deltaUsage = chunks
+        .filterIsInstance<MessageDeltaResponseChunk>()
+        .lastOrNull()
+        ?.usage
+    val inputTokens = startUsage?.let { usage ->
+        usage.inputTokens + (usage.cacheCreationInputTokens ?: 0) + (usage.cacheReadInputTokens ?: 0)
+    }
+    val providerUsage = if (inputTokens != null || deltaUsage != null || startUsage != null) {
+        ProviderUsage(
+            inputTokens = inputTokens ?: 0,
+            outputTokens = deltaUsage?.outputTokens ?: startUsage?.outputTokens ?: 0
+        )
+    } else {
+        null
+    }
+
+    return usageFromProviderOrEstimate(
+        providerUsage = providerUsage,
+        requestText = kotlinx.serialization.json.Json.encodeToString(request),
+        outputText = outputText,
+        platform = platform,
+        label = label,
+        isToolRelated = isToolRelated
+    )
+}
+
+private fun googleUsageFromResponses(
+    responses: List<GenerateContentResponse>,
+    request: GenerateContentRequest,
+    outputText: String,
+    platform: PlatformV2,
+    label: String,
+    isToolRelated: Boolean
+): TokenUsageRecord {
+    val usageMetadata = responses.lastOrNull { response -> response.usageMetadata != null }?.usageMetadata
+    val providerUsage = usageMetadata?.let { metadata ->
+        ProviderUsage(
+            promptTokens = metadata.promptTokenCount,
+            completionTokens = (metadata.candidatesTokenCount ?: 0) + (metadata.thoughtsTokenCount ?: 0),
+            totalTokens = metadata.totalTokenCount
+        )
+    }
+
+    return usageFromProviderOrEstimate(
+        providerUsage = providerUsage,
+        requestText = NetworkClient.json.encodeToString(request),
+        outputText = outputText,
+        platform = platform,
+        label = label,
+        isToolRelated = isToolRelated
+    )
+}
+
+private fun TokenUsageRecord.withToolAggregate(toolUsages: List<TokenUsageRecord>): TokenUsageRecord {
+    val relatedUsages = toolUsages.map { usage -> usage.asToolRelated() }
+    val toolInputTokens = relatedUsages.sumOf { usage -> usage.inputTokens }
+    val toolOutputTokens = relatedUsages.sumOf { usage -> usage.outputTokens }
+    val toolTotalTokens = relatedUsages.sumOf { usage -> usage.totalTokens }
+
+    return copy(
+        toolInputTokens = toolInputTokens,
+        toolOutputTokens = toolOutputTokens,
+        toolTotalTokens = toolTotalTokens,
+        isEstimated = isEstimated || relatedUsages.any { usage -> usage.isEstimated },
+        details = relatedUsages.flatMap { usage -> usage.details }
+    )
+}
+
+private fun TokenUsageRecord.asToolRelated(): TokenUsageRecord = copy(
+    toolInputTokens = inputTokens,
+    toolOutputTokens = outputTokens,
+    toolTotalTokens = totalTokens,
+    details = details.map { detail -> detail.copy(isToolRelated = true) }
+)
+
+private fun aggregateToolUsage(
+    currentAnswerUsage: TokenUsageRecord?,
+    toolUsages: List<TokenUsageRecord>,
+    platform: PlatformV2,
+    label: String
+): TokenUsageRecord? {
+    val answerUsage = currentAnswerUsage ?: toolUsages.lastOrNull()
+    if (answerUsage != null) return answerUsage.withToolAggregate(toolUsages)
+    if (toolUsages.isEmpty()) return null
+
+    return toolUsages
+        .map { usage -> usage.asToolRelated() }
+        .sumTokenUsage(
+            provider = platform.name,
+            platformUid = platform.uid,
+            model = platform.model,
+            label = label
+        )
+}
+
+private fun chatCompletionStreamOptionsFor(platform: PlatformV2): ChatCompletionStreamOptions? = when (platform.compatibleType) {
+    ClientType.OPENAI,
+    ClientType.OPENROUTER -> ChatCompletionStreamOptions()
+    ClientType.GROQ,
+    ClientType.OLLAMA,
+    ClientType.ANTHROPIC,
+    ClientType.GOOGLE,
+    ClientType.CUSTOM -> null
 }

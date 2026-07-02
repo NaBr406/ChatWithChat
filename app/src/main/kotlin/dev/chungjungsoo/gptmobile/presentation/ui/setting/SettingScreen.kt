@@ -30,6 +30,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -57,13 +58,13 @@ fun SettingScreen(
     onNavigateToAddPlatform: () -> Unit,
     onNavigateToPlatformSetting: (String) -> Unit,
     onNavigateToModelManagement: () -> Unit,
+    onNavigateToToolSettings: () -> Unit,
     onNavigateToMemory: () -> Unit,
     onNavigateToAboutPage: () -> Unit
 ) {
     val platformState by settingViewModel.platformState.collectAsStateWithLifecycle()
     val dialogState by settingViewModel.dialogState.collectAsStateWithLifecycle()
     val memoryEnabled by settingViewModel.memoryEnabled.collectAsStateWithLifecycle()
-    val webSearchSettings by settingViewModel.webSearchSettings.collectAsStateWithLifecycle()
     val scrollState = rememberScrollState()
     val lifecycleOwner = LocalLifecycleOwner.current
 
@@ -72,7 +73,6 @@ fun SettingScreen(
             if (event == Lifecycle.Event.ON_RESUME) {
                 settingViewModel.fetchPlatforms()
                 settingViewModel.fetchMemoryEnabled()
-                settingViewModel.fetchWebSearchSettings()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -132,6 +132,78 @@ fun SettingScreen(
                 )
             }
 
+            SettingsSection(title = stringResource(R.string.settings_section_tools)) {
+                SettingsRow(
+                    title = stringResource(R.string.tool_settings_title),
+                    description = stringResource(R.string.tool_settings_description),
+                    onClick = onNavigateToToolSettings
+                )
+            }
+
+            SettingsSection(title = stringResource(R.string.settings_section_app)) {
+                SettingsRow(
+                    title = stringResource(R.string.about),
+                    description = stringResource(R.string.about_description),
+                    onClick = onNavigateToAboutPage
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            if (dialogState.isDeleteDialogOpen) {
+                DeletePlatformDialog(settingViewModel)
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ToolSettingsScreen(
+    modifier: Modifier = Modifier,
+    settingViewModel: SettingViewModelV2 = hiltViewModel(),
+    onNavigationClick: () -> Unit
+) {
+    val webSearchSettings by settingViewModel.webSearchSettings.collectAsStateWithLifecycle()
+    val scrollState = rememberScrollState()
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    LaunchedEffect(Unit) {
+        settingViewModel.fetchWebSearchSettings()
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                settingViewModel.fetchWebSearchSettings()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    Scaffold(
+        modifier = modifier.fillMaxSize(),
+        topBar = {
+            TopAppBar(
+                title = { Text(stringResource(R.string.tool_settings_title)) },
+                navigationIcon = {
+                    IconButton(onClick = onNavigationClick) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = stringResource(R.string.go_back)
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
+            )
+        }
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .padding(innerPadding)
+                .verticalScroll(scrollState)
+        ) {
             SettingsSection(title = stringResource(R.string.settings_section_tool_calling)) {
                 ToolCallingModeItem(
                     mode = ToolCallingMode.Off,
@@ -178,19 +250,7 @@ fun SettingScreen(
                 )
             }
 
-            SettingsSection(title = stringResource(R.string.settings_section_app)) {
-                SettingsRow(
-                    title = stringResource(R.string.about),
-                    description = stringResource(R.string.about_description),
-                    onClick = onNavigateToAboutPage
-                )
-            }
-
             Spacer(modifier = Modifier.height(24.dp))
-
-            if (dialogState.isDeleteDialogOpen) {
-                DeletePlatformDialog(settingViewModel)
-            }
         }
     }
 }

@@ -215,6 +215,96 @@ class ToolExecutorTest {
     }
 
     @Test
+    fun `missing provider permission returns structured permission error without executing tool`() = runBlocking {
+        var didExecute = false
+        val requirement = ToolPermissionRequirement(
+            permissions = listOf(
+                "android.permission.ACCESS_FINE_LOCATION",
+                "android.permission.ACCESS_COARSE_LOCATION"
+            ),
+            label = "Location",
+            deniedMessage = "Location permission is required.",
+            grantMode = ToolPermissionGrantMode.ANY_OF
+        )
+        val executor = ToolExecutor(
+            toolRegistry = ToolRegistry(
+                listOf(
+                    object : ToolProvider {
+                        override val definition: ToolDefinition = ToolDefinition(
+                            name = "permission_tool",
+                            description = "Needs permission.",
+                            parameters = ToolDefinition.Parameters()
+                        )
+                        override val permissionRequirements: List<ToolPermissionRequirement> = listOf(requirement)
+
+                        override suspend fun execute(call: ToolCall, config: ToolLoopConfig): ToolResult {
+                            didExecute = true
+                            return ToolResult(call.id, call.name, "done")
+                        }
+                    }
+                )
+            ),
+            permissionChecker = ToolPermissionChecker { requirements -> requirements }
+        )
+
+        val toolResult = executor.execute(
+            ToolCall(
+                id = "call_permission",
+                name = "permission_tool",
+                arguments = "{}"
+            )
+        )
+
+        assertTrue(toolResult.isError)
+        assertFalse(didExecute)
+        assertTrue(toolResult.content.contains("tool_permission_denied"))
+        assertTrue(toolResult.content.contains("android.permission.ACCESS_FINE_LOCATION"))
+        assertEquals("tool_permission_denied", toolResult.metadata["error_code"])
+        assertEquals(
+            "android.permission.ACCESS_FINE_LOCATION,android.permission.ACCESS_COARSE_LOCATION",
+            toolResult.metadata["missing_permissions"]
+        )
+    }
+
+    @Test
+    fun `provider thrown permission exception returns structured permission error`() = runBlocking {
+        val requirement = ToolPermissionRequirement(
+            permissions = listOf("android.permission.ACCESS_FINE_LOCATION"),
+            label = "Location",
+            deniedMessage = "Location permission is required."
+        )
+        val executor = ToolExecutor(
+            ToolRegistry(
+                listOf(
+                    object : ToolProvider {
+                        override val definition: ToolDefinition = ToolDefinition(
+                            name = "throwing_permission_tool",
+                            description = "Throws permission errors.",
+                            parameters = ToolDefinition.Parameters()
+                        )
+
+                        override suspend fun execute(call: ToolCall, config: ToolLoopConfig): ToolResult {
+                            throw ToolPermissionDeniedException(call.name, listOf(requirement))
+                        }
+                    }
+                )
+            )
+        )
+
+        val toolResult = executor.execute(
+            ToolCall(
+                id = "call_thrown_permission",
+                name = "throwing_permission_tool",
+                arguments = "{}"
+            )
+        )
+
+        assertTrue(toolResult.isError)
+        assertTrue(toolResult.content.contains("tool_permission_denied"))
+        assertEquals("tool_permission_denied", toolResult.metadata["error_code"])
+    }
+
+    @Test
     fun `invalid fetch url returns error result`() = runBlocking {
         val executor = builtInExecutor(FakeWebSearchRepository(emptyList()))
 
@@ -351,6 +441,26 @@ class ToolExecutorTest {
     }
 
     @Test
+    fun `built in device location tool returns structured permission error without Android reader`() = runBlocking {
+        val searchRepository = FakeWebSearchRepository(emptyList())
+        val executor = builtInExecutor(searchRepository)
+
+        val toolResult = executor.execute(
+            ToolCall(
+                id = "call_location",
+                name = "device_location",
+                arguments = "{}"
+            )
+        )
+
+        assertTrue(toolResult.isError)
+        assertTrue(toolResult.content.contains("tool_permission_denied"))
+        assertTrue(toolResult.content.contains("android.permission.ACCESS_FINE_LOCATION"))
+        assertEquals("tool_permission_denied", toolResult.metadata["error_code"])
+        assertTrue(searchRepository.queries.isEmpty())
+    }
+
+    @Test
     fun `built in providers expose default tool policies`() {
         val executor = builtInExecutor(FakeWebSearchRepository(emptyList()))
 
@@ -370,6 +480,27 @@ class ToolExecutorTest {
         assertEquals(1, currentDateTimePolicy.maxCallsPerRequest)
         assertEquals(2, currentDateTimePolicy.maxCallsPerChat)
         assertEquals(2L, currentDateTimePolicy.timeoutSeconds)
+
+        val deviceLocationPolicy = executor.policyFor("device_location")
+        assertEquals(1, deviceLocationPolicy.maxCallsPerRequest)
+        assertEquals(2, deviceLocationPolicy.maxCallsPerChat)
+        assertEquals(12L, deviceLocationPolicy.timeoutSeconds)
+    }
+
+    @Test
+    fun `built in registry exposes location runtime permissions`() {
+        val permissions = BuiltInTools(
+            webSearchRepository = FakeWebSearchRepository(emptyList()),
+            webPageExtractor = WebPageExtractor(NetworkClient(CIO))
+        ).registry().requestedRuntimePermissions()
+
+        assertEquals(
+            listOf(
+                "android.permission.ACCESS_FINE_LOCATION",
+                "android.permission.ACCESS_COARSE_LOCATION"
+            ),
+            permissions
+        )
     }
 
     private fun builtInExecutor(searchRepository: WebSearchRepository): ToolExecutor = ToolExecutor(

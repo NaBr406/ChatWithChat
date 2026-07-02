@@ -31,6 +31,7 @@ import dev.chungjungsoo.gptmobile.presentation.ui.setting.ModelManagementScreen
 import dev.chungjungsoo.gptmobile.presentation.ui.setting.PlatformSettingScreen
 import dev.chungjungsoo.gptmobile.presentation.ui.setting.SettingScreen
 import dev.chungjungsoo.gptmobile.presentation.ui.setting.SettingViewModelV2
+import dev.chungjungsoo.gptmobile.presentation.ui.setting.ToolSettingsScreen
 import dev.chungjungsoo.gptmobile.presentation.ui.setup.SetupCompleteScreen
 import dev.chungjungsoo.gptmobile.presentation.ui.setup.SetupPlatformListScreen
 import dev.chungjungsoo.gptmobile.presentation.ui.setup.SetupPlatformTypeScreen
@@ -215,8 +216,19 @@ fun NavGraphBuilder.settingNavigation(navController: NavHostController) {
                     )
                 },
                 onNavigateToModelManagement = { navController.navigate(Route.MODEL_MANAGEMENT) },
+                onNavigateToToolSettings = { navController.navigate(Route.TOOL_SETTINGS) },
                 onNavigateToMemory = { navController.navigate(Route.MEMORY) },
                 onNavigateToAboutPage = { navController.navigate(Route.ABOUT_PAGE) }
+            )
+        }
+        composable(Route.TOOL_SETTINGS) {
+            val parentEntry = remember(it) {
+                navController.getBackStackEntry(Route.SETTING_ROUTE)
+            }
+            val settingViewModel: SettingViewModelV2 = hiltViewModel(parentEntry)
+            ToolSettingsScreen(
+                settingViewModel = settingViewModel,
+                onNavigationClick = { navController.navigateUp() }
             )
         }
         composable(Route.MODEL_MANAGEMENT) {

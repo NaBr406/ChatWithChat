@@ -5,12 +5,14 @@ import dev.chungjungsoo.gptmobile.data.websearch.WebSearchRepository
 
 class BuiltInTools(
     private val webSearchRepository: WebSearchRepository,
-    private val webPageExtractor: WebPageExtractor
+    private val webPageExtractor: WebPageExtractor,
+    private val deviceLocationReader: DeviceLocationReader = UnavailableDeviceLocationReader
 ) {
     fun providers(): List<ToolProvider> = listOf(
         WebSearchToolProvider(webSearchRepository),
         FetchUrlToolProvider(webPageExtractor),
-        CurrentDateTimeToolProvider()
+        CurrentDateTimeToolProvider(),
+        DeviceLocationToolProvider(deviceLocationReader)
     )
 
     fun registry(): ToolRegistry = ToolRegistry(providers())

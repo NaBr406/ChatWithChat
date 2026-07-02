@@ -1,5 +1,6 @@
 package dev.chungjungsoo.gptmobile.data.dto.openai.response
 
+import dev.chungjungsoo.gptmobile.data.dto.ProviderUsage
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -19,6 +20,9 @@ data class ChatCompletionChunk(
 
     @SerialName("choices")
     val choices: List<Choice>? = null,
+
+    @SerialName("usage")
+    val usage: ProviderUsage? = null,
 
     @SerialName("error")
     val error: ErrorDetail? = null

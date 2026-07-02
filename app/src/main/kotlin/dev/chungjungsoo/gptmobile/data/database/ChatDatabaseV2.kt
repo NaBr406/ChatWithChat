@@ -21,6 +21,7 @@ import dev.chungjungsoo.gptmobile.data.database.entity.PersonalMemory
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformModelV2
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
 import dev.chungjungsoo.gptmobile.data.database.entity.StringListConverter
+import dev.chungjungsoo.gptmobile.data.database.entity.TokenUsageRecordConverter
 
 @Database(
     entities = [
@@ -32,14 +33,15 @@ import dev.chungjungsoo.gptmobile.data.database.entity.StringListConverter
         PersonalMemory::class,
         ChatClassification::class
     ],
-    version = 9,
+    version = 10,
     exportSchema = true
 )
 @TypeConverters(
     StringListConverter::class,
     ChatAttachmentListConverter::class,
     AssistantRevisionListConverter::class,
-    MessageSourceMetadataListConverter::class
+    MessageSourceMetadataListConverter::class,
+    TokenUsageRecordConverter::class
 )
 abstract class ChatDatabaseV2 : RoomDatabase() {
 

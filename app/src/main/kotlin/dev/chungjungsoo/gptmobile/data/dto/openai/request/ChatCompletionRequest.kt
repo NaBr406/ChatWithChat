@@ -55,5 +55,15 @@ data class ChatCompletionRequest(
 
     @SerialName("tool_choice")
     @EncodeDefault(EncodeDefault.Mode.NEVER)
-    val toolChoice: ChatCompletionToolChoice? = null
+    val toolChoice: ChatCompletionToolChoice? = null,
+
+    @SerialName("stream_options")
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val streamOptions: ChatCompletionStreamOptions? = null
+)
+
+@Serializable
+data class ChatCompletionStreamOptions(
+    @SerialName("include_usage")
+    val includeUsage: Boolean = true
 )

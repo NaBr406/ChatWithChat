@@ -1,5 +1,6 @@
 package dev.chungjungsoo.gptmobile.data.dto.openai.response
 
+import dev.chungjungsoo.gptmobile.data.dto.ProviderUsage
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -312,7 +313,10 @@ data class ResponseObject(
     val status: String? = null,
 
     @SerialName("error")
-    val error: ResponseError? = null
+    val error: ResponseError? = null,
+
+    @SerialName("usage")
+    val usage: ProviderUsage? = null
 )
 
 @Serializable

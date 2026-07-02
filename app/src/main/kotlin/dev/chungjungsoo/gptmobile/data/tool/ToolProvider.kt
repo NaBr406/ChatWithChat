@@ -8,6 +8,9 @@ interface ToolProvider {
     val policy: ToolPolicy
         get() = ToolPolicy.default()
 
+    val permissionRequirements: List<ToolPermissionRequirement>
+        get() = emptyList()
+
     fun progressLabel(call: ToolCall): String = definition.name
 
     suspend fun execute(call: ToolCall, config: ToolLoopConfig): ToolResult

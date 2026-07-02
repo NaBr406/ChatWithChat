@@ -508,6 +508,7 @@ class ChatViewModel @Inject constructor(
                     thoughts = updatedThoughts,
                     attachments = updatedAttachments,
                     revisions = updatedRevisions,
+                    tokenUsage = if (textChanged) null else assistantMessage.tokenUsage,
                     createdAt = assistantMessage.createdAt
                 ).resetActiveRevision()
             }

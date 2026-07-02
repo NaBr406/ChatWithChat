@@ -150,8 +150,9 @@ class ChatRepositoryImplTest {
                 ApiState.Success("Answer"),
                 ApiState.Done
             ),
-            states
+            states.withoutUsageUpdates()
         )
+        assertTrue(states.any { it is ApiState.UsageUpdated })
         assertEquals(1, groqAPI.streamCalls)
         assertEquals(0, openAIAPI.streamChatCompletionCalls)
     }
@@ -185,7 +186,7 @@ class ChatRepositoryImplTest {
                 ApiState.Success("Visible"),
                 ApiState.Done
             ),
-            states
+            states.withoutUsageUpdates()
         )
     }
 
@@ -482,7 +483,7 @@ class ChatRepositoryImplTest {
                 ApiState.Success("Final searched answer"),
                 ApiState.Done
             ),
-            states
+            states.withoutUsageUpdates()
         )
         assertEquals(listOf("current Android target SDK"), webSearchRepository.queries)
         assertEquals(3, openAIAPI.streamChatCompletionCalls)
@@ -525,7 +526,7 @@ class ChatRepositoryImplTest {
                 ApiState.Success("Normal answer"),
                 ApiState.Done
             ),
-            states
+            states.withoutUsageUpdates()
         )
         assertTrue(webSearchRepository.queries.isEmpty())
         assertEquals(1, openAIAPI.streamChatCompletionCalls)
@@ -563,13 +564,14 @@ class ChatRepositoryImplTest {
                 ApiState.Success("Normal answer"),
                 ApiState.Done
             ),
-            states
+            states.withoutUsageUpdates()
         )
         assertTrue(webSearchRepository.queries.isEmpty())
         assertEquals(1, openAIAPI.streamChatCompletionCalls)
         val toolPrompt = openAIAPI.chatCompletionRequests.single().systemText()
         assertTrue(toolPrompt.contains("Available tools:"))
         assertTrue(toolPrompt.contains("current_datetime"))
+        assertTrue(toolPrompt.contains("device_location"))
         assertFalse(toolPrompt.contains("web_search"))
         assertFalse(toolPrompt.contains("fetch_url"))
     }
@@ -606,13 +608,14 @@ class ChatRepositoryImplTest {
                 ApiState.Success("Normal answer"),
                 ApiState.Done
             ),
-            states
+            states.withoutUsageUpdates()
         )
         assertTrue(webSearchRepository.queries.isEmpty())
         assertEquals(1, openAIAPI.streamChatCompletionCalls)
         val toolPrompt = openAIAPI.chatCompletionRequests.single().systemText()
         assertTrue(toolPrompt.contains("Available tools:"))
         assertTrue(toolPrompt.contains("current_datetime"))
+        assertTrue(toolPrompt.contains("device_location"))
         assertFalse(toolPrompt.contains("web_search"))
         assertFalse(toolPrompt.contains("fetch_url"))
     }
@@ -656,6 +659,7 @@ class ChatRepositoryImplTest {
         val firstToolPrompt = openAIAPI.chatCompletionRequests[0].systemText()
         assertTrue(firstToolPrompt.contains("Available tools:"))
         assertTrue(firstToolPrompt.contains("current_datetime"))
+        assertTrue(firstToolPrompt.contains("device_location"))
         assertFalse(firstToolPrompt.contains("web_search"))
         assertFalse(firstToolPrompt.contains("fetch_url"))
     }
@@ -746,7 +750,10 @@ class ChatRepositoryImplTest {
         assertEquals(ApiState.Done, states.last())
         assertTrue(webSearchRepository.queries.isEmpty())
         assertEquals(2, openAIAPI.streamResponsesCalls)
-        assertEquals(listOf("current_datetime"), openAIAPI.responsesRequests[0].tools.orEmpty().map { tool -> tool.name })
+        assertEquals(
+            listOf("current_datetime", "device_location"),
+            openAIAPI.responsesRequests[0].tools.orEmpty().map { tool -> tool.name }
+        )
         assertFalse(openAIAPI.responsesRequests[0].instructions.orEmpty().contains("web_search"))
     }
 
@@ -854,7 +861,7 @@ class ChatRepositoryImplTest {
                 ApiState.Success("Final searched answer"),
                 ApiState.Done
             ),
-            states
+            states.withoutUsageUpdates()
         )
         assertEquals(listOf("current Android target SDK"), webSearchRepository.queries)
         assertEquals(0, openAIAPI.streamChatCompletionCalls)
@@ -913,7 +920,7 @@ class ChatRepositoryImplTest {
                 ApiState.Success("Final searched answer"),
                 ApiState.Done
             ),
-            states
+            states.withoutUsageUpdates()
         )
         assertEquals(listOf("current Android target SDK"), webSearchRepository.queries)
         assertEquals(2, openAIAPI.streamChatCompletionCalls)
@@ -1001,7 +1008,7 @@ class ChatRepositoryImplTest {
                 ApiState.Success("Final searched answer"),
                 ApiState.Done
             ),
-            states
+            states.withoutUsageUpdates()
         )
         assertEquals(listOf("current Android target SDK"), webSearchRepository.queries)
         assertEquals(2, anthropicAPI.streamCalls)
@@ -1096,7 +1103,7 @@ class ChatRepositoryImplTest {
                 ApiState.Success("Final searched answer"),
                 ApiState.Done
             ),
-            states
+            states.withoutUsageUpdates()
         )
         assertEquals(listOf("current Android target SDK"), webSearchRepository.queries)
         assertEquals(2, googleAPI.streamCalls)
@@ -1149,7 +1156,7 @@ class ChatRepositoryImplTest {
                 ApiState.Success("Normal answer"),
                 ApiState.Done
             ),
-            states
+            states.withoutUsageUpdates()
         )
         assertTrue(webSearchRepository.queries.isEmpty())
         assertEquals(2, openAIAPI.streamChatCompletionCalls)
@@ -1242,6 +1249,9 @@ class ChatRepositoryImplTest {
         toolLoopOrchestrator = toolLoopOrchestrator,
         searchDecisionService = searchDecisionService
     )
+
+    private fun List<ApiState>.withoutUsageUpdates(): List<ApiState> =
+        filterNot { it is ApiState.UsageUpdated }
 
     private fun groqPlatform(reasoning: Boolean, model: String) = PlatformV2(
         uid = "groq-platform",

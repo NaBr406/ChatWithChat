@@ -9,6 +9,7 @@ Core tool types live in `app/src/main/kotlin/dev/chungjungsoo/gptmobile/data/too
 - `ToolDefinition`: model-facing name, description, and JSON parameter schema.
 - `ToolProvider`: owns one tool's definition, policy, progress label, execution, and optional source metadata mapping.
 - `ToolPolicy`: per-tool limits for calls, timeout, and result size.
+- `ToolPermissionRequirement`: runtime permissions a tool needs before execution.
 - `ToolRegistry`: stores providers and exposes definitions, handlers, policies, labels, and source metadata.
 - `ToolExecutor`: executes calls safely through the registry.
 - `ToolLoopOrchestrator`: runs the JSON fallback loop, enforces active-tool filtering, budgets, progress, and final prompt construction.
@@ -19,6 +20,8 @@ DI is split by ownership:
 - `ToolModule` provides the built-in tool provider list, `ToolRegistry`, `ToolExecutor`, `JsonToolCallParser`, and `ToolLoopOrchestrator`.
 
 `ChatRepositoryImpl` chooses the active tool list for each chat request. It does not need tool-specific execution code for normal read-only tools.
+
+Current built-in tools are `web_search`, `fetch_url`, `current_datetime`, and `device_location`. The location tool declares Android location permissions through `ToolProvider.permissionRequirements`. `MainActivity` requests all declared tool runtime permissions on launch with Activity Result APIs, and `ToolExecutor` checks permissions again before execution. Missing permissions become structured `tool_permission_denied` tool results for the LLM; settings UI must not be treated as the source of truth. Keep the Android location read timeout shorter than the tool executor timeout so slow GPS fixes return a recoverable location error instead of `tool_timeout`.
 
 ## Add A Tool Provider
 
@@ -36,6 +39,8 @@ class ExampleToolProvider : ToolProvider {
 
     override val policy: ToolPolicy = ToolPolicy(maxCallsPerRequest = 1)
 
+    override val permissionRequirements: List<ToolPermissionRequirement> = emptyList()
+
     override fun progressLabel(call: ToolCall): String = definition.name
 
     override suspend fun execute(call: ToolCall, config: ToolLoopConfig): ToolResult =
@@ -44,6 +49,24 @@ class ExampleToolProvider : ToolProvider {
 ```
 
 Register built-in tools in `BuiltInTools.providers()`. Do not edit `ChatRepositoryImpl` for ordinary read-only tools.
+
+If a tool needs Android runtime permission, declare it on the provider:
+
+```kotlin
+override val permissionRequirements: List<ToolPermissionRequirement> = listOf(
+    ToolPermissionRequirement(
+        permissions = listOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ),
+        label = "Location",
+        deniedMessage = "The tool requires Android Location permission.",
+        grantMode = ToolPermissionGrantMode.ANY_OF
+    )
+)
+```
+
+Use `ANY_OF` when coarse permission is enough, and `ALL_OF` only when every listed permission is truly required. Do not add one-off permission request rows to Settings; startup requests and execution checks come from provider declarations.
 
 ## Parameters
 
@@ -70,6 +93,8 @@ Use `ToolPolicy` for per-tool limits:
 Global limits remain in `ToolLoopConfig`, including rounds, calls per round, calls per chat, scratchpad size, and total injected result size.
 
 Budget rejections return recoverable `ToolResult(isError = true)` values. Unknown or inactive tool calls return `tool_unavailable:<name>` before execution.
+
+Permission denials throw `ToolPermissionDeniedException` inside the executor path and are converted into `ToolResult(isError = true)` values with `error_code=tool_permission_denied`. The result content is JSON so both native tool calls and JSON fallback prompts can tell the user which Android permission is missing.
 
 ## Availability
 
@@ -125,6 +150,7 @@ Before adding or enabling a tool:
 - Is output bounded by `ToolPolicy.maxResultChars` or global result limits?
 - Are network targets validated and blocked where needed?
 - Are private/local network addresses rejected unless explicitly allowed?
+- Are runtime permissions declared on the provider and checked through `ToolExecutor` instead of ad hoc UI state?
 - Are file paths, tokens, and sensitive arguments hidden from UI progress and final assistant text?
 - Does the tool fail as `ToolResult(isError = true)` instead of throwing into the chat flow?
 - Does availability filtering prevent disabled tools from being advertised or executed?

@@ -32,6 +32,14 @@ class ToolRegistry private constructor(
 
     fun policyFor(toolName: String): ToolPolicy = providerFor(toolName)?.policy ?: ToolPolicy.default()
 
+    fun permissionRequirementsFor(toolName: String): List<ToolPermissionRequirement> =
+        providerFor(toolName)?.permissionRequirements.orEmpty()
+
+    fun requestedRuntimePermissions(): List<String> = providersByName.values
+        .flatMap { provider -> provider.permissionRequirements }
+        .flatMap { requirement -> requirement.requestedPermissions() }
+        .distinct()
+
     fun progressLabel(call: ToolCall): String = providerFor(call.name)
         ?.progressLabel(call)
         ?.trim()

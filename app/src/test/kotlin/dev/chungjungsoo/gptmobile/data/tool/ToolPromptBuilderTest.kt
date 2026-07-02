@@ -15,11 +15,16 @@ class ToolPromptBuilderTest {
 
         assertTrue(prompt.contains("Name: web_search"))
         assertTrue(prompt.contains("Name: fetch_url"))
+        assertTrue(prompt.contains("Name: current_datetime"))
+        assertTrue(prompt.contains("Name: device_location"))
         assertTrue(prompt.indexOf("Name: web_search") < prompt.indexOf("Name: fetch_url"))
+        assertTrue(prompt.indexOf("Name: fetch_url") < prompt.indexOf("Name: current_datetime"))
+        assertTrue(prompt.indexOf("Name: current_datetime") < prompt.indexOf("Name: device_location"))
         assertTrue(prompt.contains("Do not use this for the user's local date"))
         assertTrue(prompt.contains(""""query":{"type":"string","description":"A concise, structured public-web search query. Include concrete dates/years, canonical names, geography, category/source terms, and official or primary-source terms when useful. Do not use clock/time-only queries."}"""))
         assertTrue(prompt.contains(""""required":["query"]"""))
         assertTrue(prompt.contains(""""url":{"type":"string","description":"The http or https URL to fetch."}"""))
+        assertTrue(prompt.contains("Android system location permission"))
     }
 
     @Test
@@ -27,6 +32,14 @@ class ToolPromptBuilderTest {
         val prompt = ToolPromptBuilder().buildJsonFallbackPrompt()
 
         assertTrue(prompt.contains("Do not call web_search for the user's local date, time, timezone, device state, or app settings."))
+    }
+
+    @Test
+    fun `fallback prompt tells model how to handle permission denied tool errors`() {
+        val prompt = ToolPromptBuilder().buildJsonFallbackPrompt()
+
+        assertTrue(prompt.contains("tool_permission_denied"))
+        assertTrue(prompt.contains("which Android permission is missing"))
     }
 
     @Test

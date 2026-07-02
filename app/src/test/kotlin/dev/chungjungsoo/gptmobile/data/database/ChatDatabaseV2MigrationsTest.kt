@@ -123,6 +123,16 @@ class ChatDatabaseV2MigrationsTest {
         assertTrue(executedSql.any { it == "ALTER TABLE messages_v2 ADD COLUMN source_metadata TEXT NOT NULL DEFAULT ''" })
     }
 
+    @Test
+    fun `migration 9 to 10 adds token usage to messages`() {
+        val executedSql = mutableListOf<String>()
+        val db = recordingDatabase(executedSql)
+
+        ChatDatabaseV2Migrations.MIGRATION_9_10.migrate(db)
+
+        assertTrue(executedSql.any { it == "ALTER TABLE messages_v2 ADD COLUMN token_usage TEXT" })
+    }
+
     private fun recordingDatabase(executedSql: MutableList<String>): SupportSQLiteDatabase = Proxy.newProxyInstance(
         SupportSQLiteDatabase::class.java.classLoader,
         arrayOf(SupportSQLiteDatabase::class.java),

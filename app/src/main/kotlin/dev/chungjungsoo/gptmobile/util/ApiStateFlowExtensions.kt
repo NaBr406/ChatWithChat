@@ -4,6 +4,7 @@ import dev.chungjungsoo.gptmobile.data.database.entity.AssistantRevision
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageSourceMetadata
 import dev.chungjungsoo.gptmobile.data.database.entity.resetActiveRevision
 import dev.chungjungsoo.gptmobile.data.dto.ApiState
+import dev.chungjungsoo.gptmobile.data.token.TokenUsageRecord
 import dev.chungjungsoo.gptmobile.presentation.ui.chat.ChatViewModel
 import dev.chungjungsoo.gptmobile.presentation.ui.chat.updateAssistantSlot
 import kotlinx.coroutines.flow.Flow
@@ -41,6 +42,10 @@ suspend fun Flow<ApiState>.handleStates(
 
                 is ApiState.SourcesUpdated -> {
                     messageFlow.setSourceMetadata(turnIndex, platformIdx, chunk.sources)
+                }
+
+                is ApiState.UsageUpdated -> {
+                    messageFlow.setTokenUsage(turnIndex, platformIdx, chunk.usage)
                 }
 
                 ApiState.Done -> {
@@ -101,6 +106,31 @@ private fun MutableStateFlow<ChatViewModel.GroupedMessages>.setSourceMetadata(
                 currentMessage
             } else {
                 currentMessage.copy(sourceMetadata = distinctSources)
+            }
+        }
+    }
+}
+
+private fun MutableStateFlow<ChatViewModel.GroupedMessages>.setTokenUsage(
+    turnIndex: Int,
+    platformIdx: Int,
+    usage: TokenUsageRecord
+) {
+    update { groupedMessages ->
+        updateAssistantSlot(
+            groupedMessages = groupedMessages,
+            turnIndex = turnIndex,
+            platformIndex = platformIdx
+        ) { currentMessage ->
+            val boundUsage = usage.withBinding(
+                turnIndex = turnIndex,
+                platformIndex = platformIdx,
+                messageId = currentMessage.id
+            )
+            if (currentMessage.tokenUsage == boundUsage) {
+                currentMessage
+            } else {
+                currentMessage.copy(tokenUsage = boundUsage)
             }
         }
     }

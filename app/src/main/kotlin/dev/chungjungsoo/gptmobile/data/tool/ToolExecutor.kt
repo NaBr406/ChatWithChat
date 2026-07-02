@@ -9,7 +9,8 @@ import kotlinx.coroutines.withTimeout
 
 class ToolExecutor(
     private val toolRegistry: ToolRegistry,
-    private val dispatcher: CoroutineDispatcher = Dispatchers.IO
+    private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val permissionChecker: ToolPermissionChecker = AlwaysGrantedToolPermissionChecker
 ) {
     val definitions: List<ToolDefinition>
         get() = toolRegistry.definitions
@@ -23,15 +24,23 @@ class ToolExecutor(
         val policy = toolRegistry.policyFor(call.name)
 
         return try {
+            val missingPermissions = permissionChecker.missingRequirements(toolRegistry.permissionRequirementsFor(call.name))
+            if (missingPermissions.isNotEmpty()) {
+                throw ToolPermissionDeniedException(call.name, missingPermissions)
+            }
+
             withContext(dispatcher) {
                 withTimeout(config.timeoutMillis(policy)) {
                     runCatching {
                         handler.execute(call, config)
                     }.getOrElse { throwable ->
+                        if (throwable is ToolPermissionDeniedException) throw throwable
                         call.errorResult("tool_failed:${throwable.message ?: throwable::class.simpleName.orEmpty()}")
                     }.clipContent(policy.maxResultChars ?: config.maxToolResultChars)
                 }
             }
+        } catch (throwable: ToolPermissionDeniedException) {
+            call.permissionDeniedResult(throwable)
         } catch (throwable: TimeoutCancellationException) {
             call.errorResult("tool_timeout:${call.name}")
         }

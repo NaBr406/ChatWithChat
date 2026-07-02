@@ -1,13 +1,18 @@
 package dev.chungjungsoo.gptmobile.di
 
+import android.content.Context
 import dagger.Module
 import dagger.Provides
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import dev.chungjungsoo.gptmobile.data.tool.AndroidDeviceLocationReader
+import dev.chungjungsoo.gptmobile.data.tool.AndroidToolPermissionChecker
 import dev.chungjungsoo.gptmobile.data.tool.BuiltInTools
 import dev.chungjungsoo.gptmobile.data.tool.JsonToolCallParser
 import dev.chungjungsoo.gptmobile.data.tool.ToolExecutor
 import dev.chungjungsoo.gptmobile.data.tool.ToolLoopOrchestrator
+import dev.chungjungsoo.gptmobile.data.tool.ToolPermissionChecker
 import dev.chungjungsoo.gptmobile.data.tool.ToolProvider
 import dev.chungjungsoo.gptmobile.data.tool.ToolRegistry
 import dev.chungjungsoo.gptmobile.data.websearch.WebPageExtractor
@@ -22,10 +27,12 @@ object ToolModule {
     @Singleton
     fun provideToolProviders(
         webSearchRepository: WebSearchRepository,
-        webPageExtractor: WebPageExtractor
+        webPageExtractor: WebPageExtractor,
+        @ApplicationContext context: Context
     ): List<ToolProvider> = BuiltInTools(
         webSearchRepository,
-        webPageExtractor
+        webPageExtractor,
+        AndroidDeviceLocationReader(context)
     ).providers()
 
     @Provides
@@ -35,7 +42,19 @@ object ToolModule {
 
     @Provides
     @Singleton
-    fun provideToolExecutor(toolRegistry: ToolRegistry): ToolExecutor = ToolExecutor(toolRegistry)
+    fun provideToolPermissionChecker(
+        @ApplicationContext context: Context
+    ): ToolPermissionChecker = AndroidToolPermissionChecker(context)
+
+    @Provides
+    @Singleton
+    fun provideToolExecutor(
+        toolRegistry: ToolRegistry,
+        toolPermissionChecker: ToolPermissionChecker
+    ): ToolExecutor = ToolExecutor(
+        toolRegistry = toolRegistry,
+        permissionChecker = toolPermissionChecker
+    )
 
     @Provides
     @Singleton

@@ -43,6 +43,7 @@ class OpenAICompatibleJsonToolAdapter(
         return buildString {
             appendLine("Tool results are available for the latest user request.")
             appendLine("Use them only when relevant. If you use web sources, cite the source URLs in the answer.")
+            appendLine("If a tool result reports tool_permission_denied, explain the missing Android permission and ask the user to enable it before retrying.")
             appendLine("If the user's request is broad or underspecified but the tool results are usable, answer with the most reasonable default scope, state that scope briefly, and avoid asking a clarifying question before giving useful content.")
             draftFinalAnswer?.trim()?.takeIf { it.isNotBlank() }?.let { draft ->
                 appendLine()
