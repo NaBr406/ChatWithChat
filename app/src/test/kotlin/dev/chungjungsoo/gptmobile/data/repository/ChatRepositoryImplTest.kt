@@ -36,9 +36,15 @@ import dev.chungjungsoo.gptmobile.data.network.NetworkClient
 import dev.chungjungsoo.gptmobile.data.network.OpenAIAPI
 import dev.chungjungsoo.gptmobile.data.network.UploadedProviderFile
 import dev.chungjungsoo.gptmobile.data.tool.BuiltInTools
+import dev.chungjungsoo.gptmobile.data.tool.ToolCall
 import dev.chungjungsoo.gptmobile.data.tool.ToolCallingMode
+import dev.chungjungsoo.gptmobile.data.tool.ToolDefinition
 import dev.chungjungsoo.gptmobile.data.tool.ToolExecutor
+import dev.chungjungsoo.gptmobile.data.tool.ToolLoopConfig
 import dev.chungjungsoo.gptmobile.data.tool.ToolLoopOrchestrator
+import dev.chungjungsoo.gptmobile.data.tool.ToolProvider
+import dev.chungjungsoo.gptmobile.data.tool.ToolRegistry
+import dev.chungjungsoo.gptmobile.data.tool.ToolResult
 import dev.chungjungsoo.gptmobile.data.websearch.SearchDecisionModelClient
 import dev.chungjungsoo.gptmobile.data.websearch.SearchDecisionService
 import dev.chungjungsoo.gptmobile.data.websearch.WebPageExtractor
@@ -553,6 +559,194 @@ class ChatRepositoryImplTest {
     }
 
     @Test
+    fun `tool calling auto skips web search tools when backend is not configured`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatCompletionFlow("Normal answer")
+            )
+        )
+        val webSearchRepository = RecordingWebSearchRepository(
+            Result.success(listOf(webSearchResult()))
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Auto,
+                toolCallingMode = ToolCallingMode.Auto,
+                webSearchBaseUrl = ""
+            ),
+            webSearchRepository = webSearchRepository
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "What is the current Android target SDK?", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform()
+        ).toList()
+
+        assertEquals(
+            listOf(
+                ApiState.Loading,
+                ApiState.Success("Normal answer"),
+                ApiState.Done
+            ),
+            states
+        )
+        assertTrue(webSearchRepository.queries.isEmpty())
+        assertEquals(1, openAIAPI.streamChatCompletionCalls)
+        assertFalse(openAIAPI.chatCompletionRequests.single().systemText().contains("Available tools:"))
+    }
+
+    @Test
+    fun `tool calling auto keeps non search tool when web search mode is off`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatCompletionFlow(
+                    """{"type":"tool_calls","tool_calls":[{"id":"call_1","name":"current_datetime","arguments":{}}]}"""
+                ),
+                chatCompletionFlow("""{"type":"final_answer","content":"Draft from datetime"}"""),
+                chatCompletionFlow("Final answer with datetime")
+            )
+        )
+        val webSearchRepository = RecordingWebSearchRepository(
+            Result.success(listOf(webSearchResult()))
+        )
+        val executedCalls = mutableListOf<String>()
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Off,
+                toolCallingMode = ToolCallingMode.Auto
+            ),
+            webSearchRepository = webSearchRepository,
+            toolLoopOrchestrator = toolLoopOrchestrator(
+                webSearchRepository = webSearchRepository,
+                extraProviders = listOf(currentDateTimeProvider(executedCalls))
+            )
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "What time is it?", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform()
+        ).toList()
+
+        assertEquals(ApiState.Loading, states.first())
+        assertTrue(states.contains(ApiState.ToolStarted("current_datetime", "current_datetime")))
+        assertTrue(states.contains(ApiState.ToolFinished("current_datetime", "current_datetime")))
+        assertTrue(states.contains(ApiState.Success("Final answer with datetime")))
+        assertEquals(ApiState.Done, states.last())
+        assertEquals(listOf("current_datetime"), executedCalls)
+        assertTrue(webSearchRepository.queries.isEmpty())
+        assertEquals(3, openAIAPI.streamChatCompletionCalls)
+        val firstToolPrompt = openAIAPI.chatCompletionRequests[0].systemText()
+        assertTrue(firstToolPrompt.contains("Available tools:"))
+        assertTrue(firstToolPrompt.contains("current_datetime"))
+        assertFalse(firstToolPrompt.contains("web_search"))
+        assertFalse(firstToolPrompt.contains("fetch_url"))
+    }
+
+    @Test
+    fun `disabled web search tool call is rejected without execution`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatCompletionFlow(
+                    """{"type":"tool_calls","tool_calls":[{"id":"call_1","name":"web_search","arguments":{"query":"current news"}}]}"""
+                ),
+                chatCompletionFlow("""{"type":"final_answer","content":"Draft without unavailable tool"}"""),
+                chatCompletionFlow("Final answer after rejection")
+            )
+        )
+        val webSearchRepository = RecordingWebSearchRepository(
+            Result.success(listOf(webSearchResult()))
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Off,
+                toolCallingMode = ToolCallingMode.Auto
+            ),
+            webSearchRepository = webSearchRepository,
+            toolLoopOrchestrator = toolLoopOrchestrator(
+                webSearchRepository = webSearchRepository,
+                extraProviders = listOf(currentDateTimeProvider())
+            )
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "Search current news", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform()
+        ).toList()
+
+        assertEquals(ApiState.Loading, states.first())
+        assertTrue(states.contains(ApiState.ToolFailed("web_search", "tool_unavailable:web_search")))
+        assertTrue(states.contains(ApiState.Success("Final answer after rejection")))
+        assertEquals(ApiState.Done, states.last())
+        assertTrue(webSearchRepository.queries.isEmpty())
+        assertEquals(3, openAIAPI.streamChatCompletionCalls)
+        assertTrue(openAIAPI.chatCompletionRequests[1].systemText().contains("tool_unavailable:web_search"))
+    }
+
+    @Test
+    fun `openai native tools use filtered non search tool list`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            responsesResponses = mutableListOf(
+                flowOf(
+                    FunctionCallArgumentsDoneEvent(
+                        itemId = "fc_1",
+                        outputIndex = 0,
+                        callId = "call_1",
+                        name = "current_datetime",
+                        arguments = "{}"
+                    )
+                ),
+                flowOf(
+                    OutputTextDeltaEvent(
+                        itemId = "msg_1",
+                        outputIndex = 0,
+                        contentIndex = 0,
+                        delta = "Final native datetime answer"
+                    )
+                )
+            )
+        )
+        val webSearchRepository = RecordingWebSearchRepository(
+            Result.success(listOf(webSearchResult()))
+        )
+        val executedCalls = mutableListOf<String>()
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Off,
+                toolCallingMode = ToolCallingMode.Auto
+            ),
+            webSearchRepository = webSearchRepository,
+            toolLoopOrchestrator = toolLoopOrchestrator(
+                webSearchRepository = webSearchRepository,
+                extraProviders = listOf(currentDateTimeProvider(executedCalls))
+            )
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "What time is it?", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = openAIPlatform()
+        ).toList()
+
+        assertEquals(ApiState.Loading, states.first())
+        assertTrue(states.contains(ApiState.ToolStarted("current_datetime", "current_datetime")))
+        assertTrue(states.contains(ApiState.ToolFinished("current_datetime", "current_datetime")))
+        assertTrue(states.contains(ApiState.Success("Final native datetime answer")))
+        assertEquals(ApiState.Done, states.last())
+        assertEquals(listOf("current_datetime"), executedCalls)
+        assertTrue(webSearchRepository.queries.isEmpty())
+        assertEquals(2, openAIAPI.streamResponsesCalls)
+        assertEquals(listOf("current_datetime"), openAIAPI.responsesRequests[0].tools.orEmpty().map { tool -> tool.name })
+        assertFalse(openAIAPI.responsesRequests[0].instructions.orEmpty().contains("web_search"))
+    }
+
+    @Test
     fun `auto search decision executes web search before final provider request`() = runBlocking {
         val openAIAPI = RecordingOpenAIAPI(
             chatCompletionResponses = mutableListOf(
@@ -842,7 +1036,8 @@ class ChatRepositoryImplTest {
 
     private fun settingRepository(
         webSearchMode: WebSearchMode,
-        toolCallingMode: ToolCallingMode = ToolCallingMode.Off
+        toolCallingMode: ToolCallingMode = ToolCallingMode.Off,
+        webSearchBaseUrl: String = if (webSearchMode == WebSearchMode.Off) "" else "https://search.example"
     ): SettingRepository {
         val handler = InvocationHandler { _, method, _ ->
             when (method.name) {
@@ -850,6 +1045,8 @@ class ChatRepositoryImplTest {
                 "updateToolCallingMode" -> Unit
                 "fetchWebSearchMode" -> webSearchMode
                 "updateWebSearchMode" -> Unit
+                "fetchWebSearchSearxngBaseUrl" -> webSearchBaseUrl
+                "updateWebSearchSearxngBaseUrl" -> Unit
                 else -> defaultReturnValue(method.returnType)
             }
         }
@@ -861,15 +1058,38 @@ class ChatRepositoryImplTest {
         ) as SettingRepository
     }
 
-    private fun toolLoopOrchestrator(webSearchRepository: WebSearchRepository): ToolLoopOrchestrator =
+    private fun toolLoopOrchestrator(
+        webSearchRepository: WebSearchRepository,
+        extraProviders: List<ToolProvider> = emptyList()
+    ): ToolLoopOrchestrator =
         ToolLoopOrchestrator(
             ToolExecutor(
-                BuiltInTools(
-                    webSearchRepository = webSearchRepository,
-                    webPageExtractor = WebPageExtractor(NetworkClient(CIO))
-                ).registry()
+                ToolRegistry(
+                    BuiltInTools(
+                        webSearchRepository = webSearchRepository,
+                        webPageExtractor = WebPageExtractor(NetworkClient(CIO))
+                    ).providers() + extraProviders
+                )
             )
         )
+
+    private fun currentDateTimeProvider(executedCalls: MutableList<String> = mutableListOf()): ToolProvider =
+        object : ToolProvider {
+            override val definition: ToolDefinition = ToolDefinition(
+                name = "current_datetime",
+                description = "Returns the current date and time.",
+                parameters = ToolDefinition.Parameters()
+            )
+
+            override suspend fun execute(call: ToolCall, config: ToolLoopConfig): ToolResult {
+                executedCalls += call.name
+                return ToolResult(
+                    callId = call.id,
+                    name = call.name,
+                    content = "Current date/time: 2026-07-02T00:00:00Z"
+                )
+            }
+        }
 
     private fun chatCompletionFlow(content: String): Flow<ChatCompletionChunk> = flowOf(
         ChatCompletionChunk(

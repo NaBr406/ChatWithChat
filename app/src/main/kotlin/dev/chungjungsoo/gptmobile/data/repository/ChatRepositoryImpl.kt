@@ -176,14 +176,48 @@ class ChatRepositoryImpl @Inject constructor(
         val webSearchMode = runCatching { settingRepository.fetchWebSearchMode() }
             .getOrNull()
             ?: WebSearchMode.Off
-        return if (toolCallingMode == ToolCallingMode.Auto && webSearchMode == WebSearchMode.Auto) {
+        val activeToolDefinitions = activeToolDefinitions(toolCallingMode, webSearchMode)
+        return if (activeToolDefinitions.isNotEmpty()) {
             if (platform.compatibleType == ClientType.OPENAI) {
-                completeChatWithOpenAIResponsesNativeToolLoop(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+                completeChatWithOpenAIResponsesNativeToolLoop(
+                    userMessages = userMessages,
+                    assistantMessages = assistantMessages,
+                    platform = platform,
+                    memoryPrompt = memoryPrompt,
+                    reasoningMode = reasoningMode,
+                    activeToolDefinitions = activeToolDefinitions
+                )
             } else {
-                completeChatWithToolLoopFallback(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+                completeChatWithToolLoopFallback(
+                    userMessages = userMessages,
+                    assistantMessages = assistantMessages,
+                    platform = platform,
+                    memoryPrompt = memoryPrompt,
+                    reasoningMode = reasoningMode,
+                    activeToolDefinitions = activeToolDefinitions
+                )
             }
         } else {
             completeChatByProvider(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+        }
+    }
+
+    private suspend fun activeToolDefinitions(
+        toolCallingMode: ToolCallingMode,
+        webSearchMode: WebSearchMode
+    ): List<ToolDefinition> {
+        if (toolCallingMode != ToolCallingMode.Auto) return emptyList()
+
+        val webSearchToolsAvailable = webSearchMode == WebSearchMode.Auto &&
+            runCatching { settingRepository.fetchWebSearchSearxngBaseUrl().trim().isNotBlank() }
+                .getOrDefault(false)
+
+        return toolLoopOrchestrator.availableToolDefinitions { definition ->
+            when (definition.name) {
+                ToolDefinition.WebSearch.name,
+                ToolDefinition.FetchUrl.name -> webSearchToolsAvailable
+                else -> true
+            }
         }
     }
 
@@ -223,13 +257,15 @@ class ChatRepositoryImpl @Inject constructor(
         assistantMessages: List<List<MessageV2>>,
         platform: PlatformV2,
         memoryPrompt: String?,
-        reasoningMode: ReasoningMode
+        reasoningMode: ReasoningMode,
+        activeToolDefinitions: List<ToolDefinition>
     ): Flow<ApiState> = flow {
         emit(ApiState.Loading)
         val searchDecisionPrompt = executeSearchDecisionIfNeeded(
             userMessages = userMessages,
             assistantMessages = assistantMessages,
-            platform = platform
+            platform = platform,
+            activeToolDefinitions = activeToolDefinitions
         )
         if (searchDecisionPrompt != null) {
             emitProviderStatesSkippingLoading(
@@ -249,6 +285,7 @@ class ChatRepositoryImpl @Inject constructor(
         val loopResult = toolLoopOrchestrator.runLoop(
             adapter = toolCallingAdapter,
             onProgress = { progress -> emit(progress) },
+            tools = activeToolDefinitions,
             requestModel = { toolPrompt ->
                 collectProviderText(
                     completeChatByProvider(
@@ -315,8 +352,13 @@ class ChatRepositoryImpl @Inject constructor(
     private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.executeSearchDecisionIfNeeded(
         userMessages: List<MessageV2>,
         assistantMessages: List<List<MessageV2>>,
-        platform: PlatformV2
+        platform: PlatformV2,
+        activeToolDefinitions: List<ToolDefinition>
     ): String? {
+        if (activeToolDefinitions.none { definition -> definition.name == ToolDefinition.WebSearch.name }) {
+            return null
+        }
+
         val decision = runCatching {
             searchDecisionService?.decide(
                 platform = platform,
@@ -331,9 +373,10 @@ class ChatRepositoryImpl @Inject constructor(
         val calls = decision.toWebSearchToolCalls()
         if (calls.isEmpty()) return null
 
-        val results = toolLoopOrchestrator.executeToolCalls(calls) { progress ->
-            emit(progress)
-        }
+        val results = toolLoopOrchestrator.executeToolCalls(
+            calls = calls,
+            tools = activeToolDefinitions
+        ) { progress -> emit(progress) }
         results.toMessageSourceMetadata().takeIf { it.isNotEmpty() }?.let { sources ->
             emit(ApiState.SourcesUpdated(sources))
         }
@@ -400,7 +443,8 @@ class ChatRepositoryImpl @Inject constructor(
         assistantMessages: List<List<MessageV2>>,
         platform: PlatformV2,
         memoryPrompt: String?,
-        reasoningMode: ReasoningMode
+        reasoningMode: ReasoningMode,
+        activeToolDefinitions: List<ToolDefinition>
     ): Flow<ApiState> = flow {
         emit(ApiState.Loading)
         openAIAPI.setToken(platform.token)
@@ -418,7 +462,7 @@ class ChatRepositoryImpl @Inject constructor(
                     currentRuntimeContextPrompt(),
                     memoryPrompt,
                     conversationContext.summary,
-                    OPENAI_NATIVE_TOOL_INSTRUCTION
+                    openAINativeToolInstruction(activeToolDefinitions)
                 ),
                 temperature = if (reasoningParameters.hasExplicitReasoning) null else platform.temperature,
                 topP = if (reasoningParameters.hasExplicitReasoning) null else platform.topP,
@@ -432,7 +476,7 @@ class ChatRepositoryImpl @Inject constructor(
         }
 
         val config = toolLoopOrchestrator.configuration
-        val tools = openAIResponsesToolAdapter.toResponseTools(toolLoopOrchestrator.toolDefinitions)
+        val tools = openAIResponsesToolAdapter.toResponseTools(activeToolDefinitions)
         val continuationItems = mutableListOf<ResponseInputItem>()
         val allResults = mutableListOf<ToolResult>()
         val maxRounds = config.maxToolRounds.coerceAtLeast(1)
@@ -440,7 +484,8 @@ class ChatRepositoryImpl @Inject constructor(
         val searchDecisionPrompt = executeSearchDecisionIfNeeded(
             userMessages = userMessages,
             assistantMessages = assistantMessages,
-            platform = platform
+            platform = platform,
+            activeToolDefinitions = activeToolDefinitions
         )
         if (searchDecisionPrompt != null) {
             emitProviderStatesSkippingLoading(
@@ -486,9 +531,10 @@ class ChatRepositoryImpl @Inject constructor(
                 return@flow
             }
 
-            val results = toolLoopOrchestrator.executeToolCalls(calls) { progress ->
-                emit(progress)
-            }
+            val results = toolLoopOrchestrator.executeToolCalls(
+                calls = calls,
+                tools = activeToolDefinitions
+            ) { progress -> emit(progress) }
             allResults += results
             results.toMessageSourceMetadata().takeIf { it.isNotEmpty() }?.let { sources ->
                 emit(ApiState.SourcesUpdated(sources))
@@ -1481,6 +1527,9 @@ private const val OPENAI_NATIVE_TOOL_INSTRUCTION =
         "Prefer the user's language for local or regional facts. " +
         "Do not use web_search for the user's local date, time, timezone, device state, or app settings. " +
         "Prefer answering directly when the conversation is enough. If you use web sources, cite source URLs in the answer."
+private const val OPENAI_NATIVE_GENERIC_TOOL_INSTRUCTION =
+    "Use the available tools only when the latest user request needs them. " +
+        "Keep tool arguments concise and prefer answering directly when the conversation is enough."
 private const val OPENAI_NATIVE_FINAL_TOOL_INSTRUCTION =
     "Do not call more tools. Use the available function_call_output items when relevant and provide the final answer. " +
         "If the user's request is broad or underspecified but the tool results are usable, answer with the most reasonable default scope, state that scope briefly, and avoid asking a clarifying question before giving useful content."
@@ -1607,8 +1656,15 @@ internal fun currentRuntimeContextPrompt(): String {
     val now = ZonedDateTime.now(zone)
     return "Runtime context:\n" +
         "- Current local date/time: ${now.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)} (${zone.id}).\n" +
-        "- Use this runtime context for simple date, time, and timezone questions. Do not call web_search to determine local clock time."
+        "- Use this runtime context for simple date, time, and timezone questions. Do not use external lookup to determine local clock time."
 }
+
+private fun openAINativeToolInstruction(activeToolDefinitions: List<ToolDefinition>): String =
+    if (activeToolDefinitions.any { definition -> definition.name == ToolDefinition.WebSearch.name }) {
+        OPENAI_NATIVE_TOOL_INSTRUCTION
+    } else {
+        OPENAI_NATIVE_GENERIC_TOOL_INSTRUCTION
+    }
 
 internal fun mergePromptSections(vararg sections: String?): String? = sections
     .mapNotNull { section -> section?.trim()?.takeIf { it.isNotBlank() } }

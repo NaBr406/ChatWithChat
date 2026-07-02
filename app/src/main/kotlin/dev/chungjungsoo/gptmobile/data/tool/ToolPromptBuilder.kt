@@ -17,19 +17,23 @@ class ToolPromptBuilder(
             appendLine("""{"type":"final_answer","content":"answer text"}""")
             appendLine()
             appendLine("If tools are needed, return:")
-            appendLine("""{"type":"tool_calls","tool_calls":[{"id":"call_1","name":"web_search","arguments":{"query":"search query"}}]}""")
+            appendLine(exampleToolCallJson(tools))
             appendLine()
             appendLine("Rules:")
             appendLine("- Use only the listed tool names.")
             appendLine("- Use at most ${config.maxToolCallsPerRound.coerceAtLeast(0)} tool calls in one response.")
             appendLine("- Use at most ${config.maxToolRounds.coerceAtLeast(0)} tool rounds before returning final_answer.")
             appendLine("- Keep arguments concise and match each tool parameter schema.")
-            appendLine("- For web_search, rewrite the user's request into a search-engine query with likely entity, topic/category, timeframe, and geography/source scope; do not merely copy the user's wording.")
-            appendLine("- Prefer official, primary, or local-language source terms for factual data such as weather, laws, finance, health, releases, and schedules.")
-            appendLine("- Resolve relative dates such as today, yesterday, latest, or current into concrete dates or years when the conversation/runtime context provides them.")
-            appendLine("- For broad search requests, choose sensible default scopes and complementary queries instead of asking a clarifying question first.")
-            appendLine("- Do not call web_search for the user's local date, time, timezone, device state, or app settings.")
-            appendLine("- After web_search results, use fetch_url only for pages that are clearly worth reading.")
+            if (tools.any { tool -> tool.name == ToolDefinition.WebSearch.name }) {
+                appendLine("- For web_search, rewrite the user's request into a search-engine query with likely entity, topic/category, timeframe, and geography/source scope; do not merely copy the user's wording.")
+                appendLine("- Prefer official, primary, or local-language source terms for factual data such as weather, laws, finance, health, releases, and schedules.")
+                appendLine("- Resolve relative dates such as today, yesterday, latest, or current into concrete dates or years when the conversation/runtime context provides them.")
+                appendLine("- For broad search requests, choose sensible default scopes and complementary queries instead of asking a clarifying question first.")
+                appendLine("- Do not call web_search for the user's local date, time, timezone, device state, or app settings.")
+            }
+            if (tools.any { tool -> tool.name == ToolDefinition.FetchUrl.name }) {
+                appendLine("- Use fetch_url only for pages that are clearly worth reading.")
+            }
             appendLine("- Prefer final_answer when the existing conversation is enough.")
             appendLine()
             appendLine("Available tools:")
@@ -47,6 +51,26 @@ class ToolPromptBuilder(
     fun formatToolDefinitions(tools: List<ToolDefinition>): String = tools.joinToString(separator = "\n\n") { tool ->
         tool.toPromptText()
     }.trim()
+
+    private fun exampleToolCallJson(tools: List<ToolDefinition>): String {
+        val tool = tools.firstOrNull()
+            ?: return """{"type":"tool_calls","tool_calls":[]}"""
+        val arguments = when (tool.name) {
+            ToolDefinition.WebSearch.name -> """{"query":"search query"}"""
+            ToolDefinition.FetchUrl.name -> """{"url":"https://example.com/page"}"""
+            else -> tool.exampleArgumentsJson()
+        }
+        return """{"type":"tool_calls","tool_calls":[{"id":"call_1","name":"${tool.name}","arguments":$arguments}]}"""
+    }
+
+    private fun ToolDefinition.exampleArgumentsJson(): String {
+        val keys = (parameters.required + parameters.properties.keys)
+            .distinct()
+        if (keys.isEmpty()) return "{}"
+        return keys.joinToString(prefix = "{", postfix = "}") { key ->
+            """"$key":"value""""
+        }
+    }
 
     fun formatToolResults(
         results: List<ToolResult>,

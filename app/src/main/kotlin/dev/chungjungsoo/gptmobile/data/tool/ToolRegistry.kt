@@ -26,6 +26,8 @@ class ToolRegistry private constructor(
 
     fun providerFor(toolName: String): ToolProvider? = providersByName[toolName]
 
+    fun availableDefinitions(includeTool: (ToolDefinition) -> Boolean): List<ToolDefinition> = definitions.filter(includeTool)
+
     fun policyFor(toolName: String): ToolPolicy = providerFor(toolName)?.policy ?: ToolPolicy.default()
 
     fun progressLabel(call: ToolCall): String = providerFor(call.name)

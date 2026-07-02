@@ -45,6 +45,9 @@ class ToolExecutor(
 
     fun progressLabel(call: ToolCall): String = toolRegistry.progressLabel(call)
 
+    fun availableDefinitions(includeTool: (ToolDefinition) -> Boolean): List<ToolDefinition> =
+        toolRegistry.availableDefinitions(includeTool)
+
     fun policyFor(toolName: String): ToolPolicy = toolRegistry.policyFor(toolName)
 
     private fun ToolLoopConfig.timeoutMillis(policy: ToolPolicy): Long =

@@ -315,6 +315,29 @@ class ToolLoopOrchestratorTest {
     }
 
     @Test
+    fun `unavailable tool calls are rejected before executor runs`() = runBlocking {
+        val executedCalls = mutableListOf<ToolCall>()
+        val orchestrator = ToolLoopOrchestrator(
+            toolExecutor = recordingExecutor(executedCalls),
+            config = ToolLoopConfig(maxToolRounds = 1, maxToolCallsPerRound = 4)
+        )
+
+        val result = orchestrator.runLoop(
+            tools = listOf(ToolDefinition.FetchUrl)
+        ) {
+            Result.success(
+                """{"type":"tool_calls","tool_calls":[{"id":"call_1","name":"web_search","arguments":{"query":"news"}}]}"""
+            )
+        }
+
+        assertTrue(result is ToolLoopResult.ToolResults)
+        val toolResults = result as ToolLoopResult.ToolResults
+        assertTrue(executedCalls.isEmpty())
+        assertTrue(toolResults.results.single { it.callId == "call_1" }.isError)
+        assertTrue(toolResults.finalAnswerPrompt.orEmpty().contains("tool_unavailable:web_search"))
+    }
+
+    @Test
     fun `global tool call budget is enforced across rounds`() = runBlocking {
         val executedCalls = mutableListOf<ToolCall>()
         val responses = mutableListOf(

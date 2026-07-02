@@ -40,6 +40,24 @@ class ToolPromptBuilderTest {
     }
 
     @Test
+    fun `fallback prompt only names active non search tools`() {
+        val prompt = ToolPromptBuilder().buildJsonFallbackPrompt(
+            tools = listOf(
+                ToolDefinition(
+                    name = "current_datetime",
+                    description = "Returns the current date and time.",
+                    parameters = ToolDefinition.Parameters()
+                )
+            )
+        )
+
+        assertTrue(prompt.contains("current_datetime"))
+        assertTrue(prompt.contains("Available tools:"))
+        assertFalse(prompt.contains("web_search"))
+        assertFalse(prompt.contains("fetch_url"))
+    }
+
+    @Test
     fun `fallback tool call json parses successfully`() {
         val result = ToolCall.parseFallbackCalls(
             """
