@@ -1,5 +1,6 @@
 package dev.chungjungsoo.gptmobile.data.tool
 
+import dev.chungjungsoo.gptmobile.data.dto.ApiState
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -21,6 +22,42 @@ class ToolLoopOrchestratorTest {
         assertTrue(result is ToolLoopResult.FinalAnswer)
         assertEquals("No tool needed.", (result as ToolLoopResult.FinalAnswer).content)
         assertTrue(executedCalls.isEmpty())
+    }
+
+    @Test
+    fun `provider owned progress label is used for test tool`() = runBlocking {
+        val progress = mutableListOf<ApiState>()
+        val provider = object : ToolProvider {
+            override val definition: ToolDefinition = ToolDefinition(
+                name = "test_tool",
+                description = "A test tool.",
+                parameters = ToolDefinition.Parameters()
+            )
+
+            override fun progressLabel(call: ToolCall): String = "label:${call.id}"
+
+            override suspend fun execute(call: ToolCall, config: ToolLoopConfig): ToolResult =
+                ToolResult(callId = call.id, name = call.name, content = "done")
+        }
+        val orchestrator = ToolLoopOrchestrator(
+            toolExecutor = ToolExecutor(ToolRegistry(listOf(provider))),
+            config = ToolLoopConfig(maxToolRounds = 1)
+        )
+
+        val result = orchestrator.runLoop(
+            onProgress = { state -> progress += state }
+        ) {
+            Result.success("""{"type":"tool_calls","tool_calls":[{"id":"call_provider","name":"test_tool","arguments":{}}]}""")
+        }
+
+        assertTrue(result is ToolLoopResult.ToolResults)
+        assertEquals(
+            listOf(
+                ApiState.ToolStarted("test_tool", "label:call_provider"),
+                ApiState.ToolFinished("test_tool", "label:call_provider")
+            ),
+            progress
+        )
     }
 
     @Test

@@ -42,6 +42,8 @@ class ToolExecutor(
         .take(config.maxToolCallsPerRound.coerceAtLeast(0))
         .map { call -> execute(call, config) }
 
+    fun progressLabel(call: ToolCall): String = toolRegistry.progressLabel(call)
+
     private fun ToolLoopConfig.timeoutMillis(): Long = toolTimeoutSeconds.coerceAtLeast(0) * 1_000L
 }
 

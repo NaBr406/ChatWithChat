@@ -228,6 +228,32 @@ class ToolExecutorTest {
         assertEquals("web_search_failed:search backend unavailable: mojeek: access denied", toolResult.content)
     }
 
+    @Test
+    fun `built in providers keep web search and fetch url progress labels`() {
+        val executor = builtInExecutor(FakeWebSearchRepository(emptyList()))
+
+        assertEquals(
+            "latest Android SDK",
+            executor.progressLabel(
+                ToolCall(
+                    id = "call_search",
+                    name = "web_search",
+                    arguments = """{"query":"latest Android SDK"}"""
+                )
+            )
+        )
+        assertEquals(
+            "https://example.com/page",
+            executor.progressLabel(
+                ToolCall(
+                    id = "call_fetch",
+                    name = "fetch_url",
+                    arguments = """{"url":"https://example.com/page"}"""
+                )
+            )
+        )
+    }
+
     private fun builtInExecutor(searchRepository: WebSearchRepository): ToolExecutor = ToolExecutor(
         BuiltInTools(
             webSearchRepository = searchRepository,

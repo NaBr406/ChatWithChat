@@ -3,8 +3,6 @@ package dev.chungjungsoo.gptmobile.data.tool
 import dev.chungjungsoo.gptmobile.data.dto.ApiState
 import dev.chungjungsoo.gptmobile.data.tool.provider.OpenAICompatibleJsonToolAdapter
 import dev.chungjungsoo.gptmobile.data.tool.provider.ToolCallingAdapter
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonPrimitive
 
 class ToolLoopOrchestrator(
     private val toolExecutor: ToolExecutor,
@@ -124,7 +122,7 @@ class ToolLoopOrchestrator(
         calls: List<ToolCall>,
         onProgress: suspend (ApiState) -> Unit
     ): List<ToolResult> = calls.map { call ->
-        val label = call.progressLabel()
+        val label = toolExecutor.progressLabel(call)
         onProgress(ApiState.ToolStarted(call.name, label))
         val result = toolExecutor.execute(call, config)
         if (result.isError) {
@@ -155,26 +153,6 @@ class ToolLoopOrchestrator(
         results: List<ToolResult>,
         draftFinalAnswer: String? = null
     ): String? = adapter.buildFinalAnswerPrompt(results, draftFinalAnswer, config)
-
-    private fun ToolCall.progressLabel(): String {
-        val arguments = argumentsObject().getOrNull()
-        val label = when (name) {
-            ToolDefinition.WebSearch.name -> arguments
-                ?.get("query")
-                ?.jsonPrimitive
-                ?.contentOrNull
-            ToolDefinition.FetchUrl.name -> arguments
-                ?.get("url")
-                ?.jsonPrimitive
-                ?.contentOrNull
-            else -> null
-        }
-
-        return label
-            ?.trim()
-            ?.takeIf { it.isNotBlank() }
-            ?: name
-    }
 }
 
 private class ToolBudgetState(config: ToolLoopConfig) {
