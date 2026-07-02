@@ -6,7 +6,14 @@ import dev.chungjungsoo.gptmobile.data.database.entity.MessageSourceMetadata
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
 import dev.chungjungsoo.gptmobile.data.dto.ApiState
+import dev.chungjungsoo.gptmobile.data.dto.anthropic.common.ToolResultContent
+import dev.chungjungsoo.gptmobile.data.dto.anthropic.common.ToolUseContent
+import dev.chungjungsoo.gptmobile.data.dto.anthropic.request.AnthropicToolChoice
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.request.MessageRequest
+import dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ContentBlock
+import dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ContentBlockType
+import dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ContentDeltaResponseChunk
+import dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ContentStartResponseChunk
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.response.MessageResponseChunk
 import dev.chungjungsoo.gptmobile.data.dto.google.request.GenerateContentRequest
 import dev.chungjungsoo.gptmobile.data.dto.google.response.GenerateContentResponse
@@ -61,6 +68,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.buildJsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -919,6 +927,96 @@ class ChatRepositoryImplTest {
     }
 
     @Test
+    fun `auto web search uses anthropic native tools`() = runBlocking {
+        val anthropicAPI = RecordingAnthropicAPI(
+            responses = mutableListOf(
+                flowOf(
+                    ContentStartResponseChunk(
+                        index = 0,
+                        contentBlock = ContentBlock(
+                            type = ContentBlockType.TOOL_USE,
+                            id = "toolu_1",
+                            name = "web_search",
+                            input = buildJsonObject {}
+                        )
+                    ),
+                    ContentDeltaResponseChunk(
+                        index = 0,
+                        delta = ContentBlock(
+                            type = ContentBlockType.INPUT_JSON_DELTA,
+                            partialJson = """{"query":"current Android target SDK"}"""
+                        )
+                    )
+                ),
+                flowOf(
+                    ContentDeltaResponseChunk(
+                        index = 0,
+                        delta = ContentBlock(
+                            type = ContentBlockType.DELTA,
+                            text = "Final searched answer"
+                        )
+                    )
+                )
+            )
+        )
+        val webSearchRepository = RecordingWebSearchRepository(
+            Result.success(listOf(webSearchResult()))
+        )
+        val repository = createRepository(
+            anthropicAPI = anthropicAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Auto,
+                toolCallingMode = ToolCallingMode.Auto
+            ),
+            webSearchRepository = webSearchRepository
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "What is the current Android target SDK?", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = anthropicPlatform()
+        ).toList()
+
+        assertEquals(
+            listOf(
+                ApiState.Loading,
+                ApiState.ToolStarted("web_search", "current Android target SDK"),
+                ApiState.ToolFinished("web_search", "current Android target SDK"),
+                ApiState.SourcesUpdated(
+                    listOf(
+                        MessageSourceMetadata(
+                            title = "Example Source",
+                            url = "https://example.com/source",
+                            snippet = "Example search snippet",
+                            sourceToolName = "web_search"
+                        )
+                    )
+                ),
+                ApiState.Success("Final searched answer"),
+                ApiState.Done
+            ),
+            states
+        )
+        assertEquals(listOf("current Android target SDK"), webSearchRepository.queries)
+        assertEquals(2, anthropicAPI.streamCalls)
+        assertEquals(AnthropicToolChoice.Auto, anthropicAPI.requests[0].toolChoice)
+        assertTrue(anthropicAPI.requests[0].tools.orEmpty().any { tool -> tool.name == "web_search" })
+        assertFalse(anthropicAPI.requests[0].systemPrompt.orEmpty().contains("Available tools:"))
+        assertEquals(AnthropicToolChoice.Auto, anthropicAPI.requests[1].toolChoice)
+        assertTrue(anthropicAPI.requests[1].messages.any { message ->
+            message.role.name == "ASSISTANT" &&
+                message.content.filterIsInstance<ToolUseContent>().any { call -> call.id == "toolu_1" && call.name == "web_search" }
+        })
+        assertTrue(anthropicAPI.requests[1].messages.any { message ->
+            message.role.name == "USER" &&
+                message.content.filterIsInstance<ToolResultContent>().any { result ->
+                    result.toolUseId == "toolu_1" &&
+                        result.content.contains("Example Source")
+                }
+        })
+    }
+
+    @Test
     fun `auto tool loop parse failure falls back to normal chat completion`() = runBlocking {
         val openAIAPI = RecordingOpenAIAPI(
             chatCompletionResponses = mutableListOf(
@@ -1015,6 +1113,7 @@ class ChatRepositoryImplTest {
     private fun createRepository(
         groqAPI: GroqAPI = FakeGroqAPI(emptyFlow()),
         openAIAPI: OpenAIAPI = RecordingOpenAIAPI(),
+        anthropicAPI: AnthropicAPI = RecordingAnthropicAPI(),
         settingRepository: SettingRepository = settingRepository(WebSearchMode.Off),
         webSearchRepository: WebSearchRepository = RecordingWebSearchRepository(),
         toolLoopOrchestrator: ToolLoopOrchestrator = toolLoopOrchestrator(webSearchRepository),
@@ -1029,11 +1128,11 @@ class ChatRepositoryImplTest {
         settingRepository = settingRepository,
         openAIAPI = openAIAPI,
         groqAPI = groqAPI,
-        anthropicAPI = FakeAnthropicAPI(),
+        anthropicAPI = anthropicAPI,
         googleAPI = FakeGoogleAPI(),
         attachmentUploadCoordinator = AttachmentUploadCoordinator(
             openAIAPI,
-            FakeAnthropicAPI(),
+            anthropicAPI,
             FakeGoogleAPI()
         ),
         contextBuilder = ContextBuilder(),
@@ -1068,6 +1167,17 @@ class ChatRepositoryImplTest {
         apiUrl = "https://api.openai.com/",
         token = "token",
         model = "gpt-5",
+        systemPrompt = systemPrompt,
+        stream = true
+    )
+
+    private fun anthropicPlatform(systemPrompt: String? = null) = PlatformV2(
+        uid = "anthropic-platform",
+        name = "Anthropic",
+        compatibleType = ClientType.ANTHROPIC,
+        apiUrl = "https://api.anthropic.com/",
+        token = "token",
+        model = "claude-sonnet",
         systemPrompt = systemPrompt,
         stream = true
     )
@@ -1276,12 +1386,25 @@ class ChatRepositoryImplTest {
         override suspend fun isFileAvailable(fileId: String): Boolean = false
     }
 
-    private class FakeAnthropicAPI : AnthropicAPI {
+    private class RecordingAnthropicAPI(
+        private val responses: MutableList<Flow<MessageResponseChunk>> = mutableListOf(emptyFlow())
+    ) : AnthropicAPI {
+        var streamCalls = 0
+        val requests = mutableListOf<MessageRequest>()
+
         override fun setToken(token: String?) = Unit
 
         override fun setAPIUrl(url: String) = Unit
 
-        override fun streamChatMessage(messageRequest: MessageRequest, timeoutSeconds: Int): Flow<MessageResponseChunk> = emptyFlow()
+        override fun streamChatMessage(messageRequest: MessageRequest, timeoutSeconds: Int): Flow<MessageResponseChunk> {
+            streamCalls += 1
+            requests += messageRequest
+            return if (responses.isNotEmpty()) {
+                responses.removeAt(0)
+            } else {
+                emptyFlow()
+            }
+        }
 
         override suspend fun uploadFile(
             filePath: String,

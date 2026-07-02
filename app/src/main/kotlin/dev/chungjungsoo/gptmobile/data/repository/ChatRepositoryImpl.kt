@@ -26,8 +26,15 @@ import dev.chungjungsoo.gptmobile.data.dto.anthropic.common.MediaType
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.common.MessageContent as AnthropicMessageContent
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.common.MessageRole
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.common.TextContent as AnthropicTextContent
+import dev.chungjungsoo.gptmobile.data.dto.anthropic.request.AnthropicTool
+import dev.chungjungsoo.gptmobile.data.dto.anthropic.request.AnthropicToolChoice
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.request.InputMessage
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.request.MessageRequest
+import dev.chungjungsoo.gptmobile.data.dto.anthropic.request.ThinkingConfig
+import dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ContentBlockType
+import dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ContentDeltaResponseChunk
+import dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ErrorResponseChunk
+import dev.chungjungsoo.gptmobile.data.dto.anthropic.response.MessageResponseChunk
 import dev.chungjungsoo.gptmobile.data.dto.google.common.Content
 import dev.chungjungsoo.gptmobile.data.dto.google.common.Part
 import dev.chungjungsoo.gptmobile.data.dto.google.common.Role as GoogleRole
@@ -75,6 +82,7 @@ import dev.chungjungsoo.gptmobile.data.tool.ToolLoopOrchestrator
 import dev.chungjungsoo.gptmobile.data.tool.ToolLoopResult
 import dev.chungjungsoo.gptmobile.data.tool.ToolResult
 import dev.chungjungsoo.gptmobile.data.tool.toolProtocolJson
+import dev.chungjungsoo.gptmobile.data.tool.provider.AnthropicNativeToolAdapter
 import dev.chungjungsoo.gptmobile.data.tool.provider.AnthropicToolAdapter
 import dev.chungjungsoo.gptmobile.data.tool.provider.GoogleToolAdapter
 import dev.chungjungsoo.gptmobile.data.tool.provider.OpenAIChatCompletionsToolAdapter
@@ -127,6 +135,7 @@ class ChatRepositoryImpl @Inject constructor(
     private val webSearchPromptBuilder: WebSearchPromptBuilder = WebSearchPromptBuilder(),
     private val openAIResponsesToolAdapter: OpenAIResponsesToolAdapter = OpenAIResponsesToolAdapter(),
     private val openAIChatCompletionsToolAdapter: OpenAIChatCompletionsToolAdapter = OpenAIChatCompletionsToolAdapter(),
+    private val anthropicNativeToolAdapter: AnthropicNativeToolAdapter = AnthropicNativeToolAdapter(),
     private val openAICompatibleJsonToolAdapter: ToolCallingAdapter = OpenAICompatibleJsonToolAdapter(),
     private val anthropicToolAdapter: ToolCallingAdapter = AnthropicToolAdapter(),
     private val googleToolAdapter: ToolCallingAdapter = GoogleToolAdapter()
@@ -193,6 +202,14 @@ class ChatRepositoryImpl @Inject constructor(
                     activeToolDefinitions = activeToolDefinitions
                 )
                 ClientType.OPENROUTER -> completeChatWithOpenAIChatCompletionsNativeToolLoop(
+                    userMessages = userMessages,
+                    assistantMessages = assistantMessages,
+                    platform = platform,
+                    memoryPrompt = memoryPrompt,
+                    reasoningMode = reasoningMode,
+                    activeToolDefinitions = activeToolDefinitions
+                )
+                ClientType.ANTHROPIC -> completeChatWithAnthropicNativeToolLoop(
                     userMessages = userMessages,
                     assistantMessages = assistantMessages,
                     platform = platform,
@@ -778,6 +795,176 @@ class ChatRepositoryImpl @Inject constructor(
         }
 
         return OpenAIChatCompletionsNativeRound(
+            chunks = chunks,
+            errorMessage = errorMessage
+        )
+    }
+
+    private suspend fun completeChatWithAnthropicNativeToolLoop(
+        userMessages: List<MessageV2>,
+        assistantMessages: List<List<MessageV2>>,
+        platform: PlatformV2,
+        memoryPrompt: String?,
+        reasoningMode: ReasoningMode,
+        activeToolDefinitions: List<ToolDefinition>
+    ): Flow<ApiState> = flow {
+        emit(ApiState.Loading)
+        anthropicAPI.setToken(platform.token)
+        anthropicAPI.setAPIUrl(platform.apiUrl)
+
+        val searchDecisionPrompt = executeSearchDecisionIfNeeded(
+            userMessages = userMessages,
+            assistantMessages = assistantMessages,
+            platform = platform,
+            activeToolDefinitions = activeToolDefinitions
+        )
+        if (searchDecisionPrompt != null) {
+            emitProviderStatesSkippingLoading(
+                completeChatWithAnthropic(
+                    userMessages = userMessages,
+                    assistantMessages = assistantMessages,
+                    platform = platform,
+                    memoryPrompt = memoryPrompt,
+                    reasoningMode = reasoningMode,
+                    extraPrompt = searchDecisionPrompt
+                )
+            )
+            return@flow
+        }
+
+        val prepared = withContext(Dispatchers.Default) {
+            val reasoningParameters = mapReasoningMode(platform, reasoningMode)
+            val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
+            val messages = buildAnthropicInputMessages(conversationContext.turns, platform.uid)
+            AnthropicNativeToolRequest(
+                model = platform.model,
+                messages = messages,
+                maxTokens = reasoningParameters.anthropicMaxTokens ?: 4096,
+                systemPrompt = mergePromptSections(
+                    platform.systemPrompt,
+                    currentRuntimeContextPrompt(),
+                    memoryPrompt,
+                    conversationContext.summary,
+                    openAINativeToolInstruction(activeToolDefinitions)
+                ),
+                temperature = if (reasoningParameters.hasExplicitReasoning) null else platform.temperature,
+                topP = if (reasoningParameters.hasExplicitReasoning) null else platform.topP,
+                thinking = reasoningParameters.anthropicBudgetTokens?.let { budgetTokens ->
+                    ThinkingConfig(
+                        type = "enabled",
+                        budgetTokens = budgetTokens
+                    )
+                }
+            )
+        }
+
+        val config = toolLoopOrchestrator.configuration
+        val tools = anthropicNativeToolAdapter.toAnthropicTools(activeToolDefinitions)
+        val continuationMessages = mutableListOf<InputMessage>()
+        val allResults = mutableListOf<ToolResult>()
+        val maxRounds = config.maxToolRounds.coerceAtLeast(1)
+
+        repeat(maxRounds) {
+            val round = collectAnthropicNativeRound(
+                request = prepared.toRequest(
+                    continuationMessages = continuationMessages,
+                    tools = tools,
+                    toolChoice = AnthropicToolChoice.Auto
+                ),
+                timeoutSeconds = platform.timeout
+            )
+            if (round.errorMessage != null) {
+                if (allResults.isEmpty()) {
+                    emitProviderStatesSkippingLoading(
+                        completeChatWithAnthropic(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+                    )
+                } else {
+                    emit(ApiState.Error(round.errorMessage))
+                    emit(ApiState.Done)
+                }
+                return@flow
+            }
+
+            val calls = anthropicNativeToolAdapter
+                .toolCallsFromChunks(round.chunks)
+                .distinctBy { call -> "${call.name}:${call.arguments}" }
+                .take(config.maxToolCallsPerRound.coerceAtLeast(0))
+            if (calls.isEmpty()) {
+                emit(ApiState.Done)
+                return@flow
+            }
+
+            val results = toolLoopOrchestrator.executeToolCalls(
+                calls = calls,
+                tools = activeToolDefinitions
+            ) { progress -> emit(progress) }
+            allResults += results
+            toolLoopOrchestrator.sourceMetadata(results)
+                .dedupeMessageSources()
+                .takeIf { it.isNotEmpty() }?.let { sources ->
+                emit(ApiState.SourcesUpdated(sources))
+            }
+            continuationMessages += anthropicNativeToolAdapter.continuationMessages(calls, results, config)
+        }
+
+        if (continuationMessages.isEmpty()) {
+            emitProviderStatesSkippingLoading(
+                completeChatWithAnthropic(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+            )
+            return@flow
+        }
+
+        val finalRound = collectAnthropicNativeRound(
+            request = prepared.toRequest(
+                continuationMessages = continuationMessages,
+                tools = tools,
+                toolChoice = AnthropicToolChoice.None,
+                extraInstruction = OPENAI_NATIVE_FINAL_TOOL_INSTRUCTION
+            ),
+            timeoutSeconds = platform.timeout
+        )
+        finalRound.errorMessage?.let { message ->
+            emit(ApiState.Error(message))
+        }
+        emit(ApiState.Done)
+    }.catch { e ->
+        emit(ApiState.Error(e.message ?: "鏈煡閿欒"))
+        emit(ApiState.Done)
+    }
+
+    private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.collectAnthropicNativeRound(
+        request: MessageRequest,
+        timeoutSeconds: Int
+    ): AnthropicNativeRound {
+        val chunks = mutableListOf<MessageResponseChunk>()
+        var errorMessage: String? = null
+
+        anthropicAPI.streamChatMessage(request, timeoutSeconds).collect { chunk ->
+            chunks += chunk
+            when (chunk) {
+                is ContentDeltaResponseChunk -> {
+                    when (chunk.delta.type) {
+                        ContentBlockType.THINKING_DELTA -> {
+                            chunk.delta.thinking?.let { emit(ApiState.Thinking(it)) }
+                        }
+
+                        ContentBlockType.DELTA -> {
+                            chunk.delta.text?.let { emit(ApiState.Success(it)) }
+                        }
+
+                        else -> {}
+                    }
+                }
+
+                is ErrorResponseChunk -> {
+                    errorMessage = chunk.error.message
+                }
+
+                else -> {}
+            }
+        }
+
+        return AnthropicNativeRound(
             chunks = chunks,
             errorMessage = errorMessage
         )
@@ -1774,6 +1961,39 @@ private data class OpenAIChatCompletionsNativeToolRequest(
 
 private data class OpenAIChatCompletionsNativeRound(
     val chunks: List<ChatCompletionChunk>,
+    val errorMessage: String?
+)
+
+private data class AnthropicNativeToolRequest(
+    val model: String,
+    val messages: List<InputMessage>,
+    val maxTokens: Int,
+    val systemPrompt: String?,
+    val temperature: Float?,
+    val topP: Float?,
+    val thinking: ThinkingConfig?
+) {
+    fun toRequest(
+        continuationMessages: List<InputMessage>,
+        tools: List<AnthropicTool>,
+        toolChoice: AnthropicToolChoice,
+        extraInstruction: String? = null
+    ): MessageRequest = MessageRequest(
+        model = model,
+        messages = messages + continuationMessages,
+        maxTokens = maxTokens,
+        stream = true,
+        systemPrompt = mergePromptSections(systemPrompt, extraInstruction),
+        temperature = temperature,
+        topP = topP,
+        thinking = thinking,
+        tools = tools,
+        toolChoice = toolChoice
+    )
+}
+
+private data class AnthropicNativeRound(
+    val chunks: List<MessageResponseChunk>,
     val errorMessage: String?
 )
 

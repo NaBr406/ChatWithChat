@@ -50,7 +50,7 @@ class ProviderToolAdapterTest {
     }
 
     @Test
-    fun `anthropic adapter keeps json fallback until native dto support is verified`() {
+    fun `anthropic json fallback adapter remains available for unsupported paths`() {
         val adapter = AnthropicToolAdapter()
 
         val prompt = adapter.buildToolPrompt(

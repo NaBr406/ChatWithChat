@@ -51,7 +51,15 @@ data class MessageRequest(
 
     @SerialName("thinking")
     @EncodeDefault(EncodeDefault.Mode.NEVER)
-    val thinking: ThinkingConfig? = null
+    val thinking: ThinkingConfig? = null,
+
+    @SerialName("tools")
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val tools: List<AnthropicTool>? = null,
+
+    @SerialName("tool_choice")
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val toolChoice: AnthropicToolChoice? = null
 )
 
 @OptIn(ExperimentalSerializationApi::class)
