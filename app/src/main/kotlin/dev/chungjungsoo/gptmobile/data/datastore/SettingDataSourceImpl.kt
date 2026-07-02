@@ -72,6 +72,7 @@ class SettingDataSourceImpl @Inject constructor(
     private val lastSelectedModelKey = stringPreferencesKey("last_selected_model")
     private val lastSelectedReasoningModeKey = stringPreferencesKey("last_selected_reasoning_mode")
     private val memoryEnabledKey = booleanPreferencesKey("memory_enabled")
+    private val toolCallingModeKey = stringPreferencesKey("tool_calling_mode")
     private val webSearchModeKey = stringPreferencesKey("web_search_mode")
     private val webSearchSearxngBaseUrlKey = stringPreferencesKey("web_search_searxng_base_url")
 
@@ -140,6 +141,12 @@ class SettingDataSourceImpl @Inject constructor(
     override suspend fun updateMemoryEnabled(enabled: Boolean) {
         dataStore.edit { pref ->
             pref[memoryEnabledKey] = enabled
+        }
+    }
+
+    override suspend fun updateToolCallingMode(mode: String) {
+        dataStore.edit { pref ->
+            pref[toolCallingModeKey] = mode
         }
     }
 
@@ -213,6 +220,10 @@ class SettingDataSourceImpl @Inject constructor(
 
     override suspend fun getMemoryEnabled(): Boolean? = dataStore.data.map { pref ->
         pref[memoryEnabledKey]
+    }.first()
+
+    override suspend fun getToolCallingMode(): String? = dataStore.data.map { pref ->
+        pref[toolCallingModeKey]
     }.first()
 
     override suspend fun getWebSearchMode(): String? = dataStore.data.map { pref ->

@@ -67,6 +67,7 @@ import dev.chungjungsoo.gptmobile.data.network.GroqAPI
 import dev.chungjungsoo.gptmobile.data.network.OpenAIAPI
 import dev.chungjungsoo.gptmobile.data.tool.ToolDefinition
 import dev.chungjungsoo.gptmobile.data.tool.ToolCall
+import dev.chungjungsoo.gptmobile.data.tool.ToolCallingMode
 import dev.chungjungsoo.gptmobile.data.tool.ToolLoopOrchestrator
 import dev.chungjungsoo.gptmobile.data.tool.ToolLoopResult
 import dev.chungjungsoo.gptmobile.data.tool.ToolResult
@@ -169,10 +170,13 @@ class ChatRepositoryImpl @Inject constructor(
         memoryPrompt: String?,
         reasoningMode: ReasoningMode
     ): Flow<ApiState> {
+        val toolCallingMode = runCatching { settingRepository.fetchToolCallingMode() }
+            .getOrNull()
+            ?: ToolCallingMode.Off
         val webSearchMode = runCatching { settingRepository.fetchWebSearchMode() }
             .getOrNull()
             ?: WebSearchMode.Off
-        return if (webSearchMode == WebSearchMode.Auto) {
+        return if (toolCallingMode == ToolCallingMode.Auto && webSearchMode == WebSearchMode.Auto) {
             if (platform.compatibleType == ClientType.OPENAI) {
                 completeChatWithOpenAIResponsesNativeToolLoop(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
             } else {

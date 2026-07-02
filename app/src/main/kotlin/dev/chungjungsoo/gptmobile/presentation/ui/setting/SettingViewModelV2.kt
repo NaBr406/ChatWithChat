@@ -6,6 +6,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformModelV2
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
 import dev.chungjungsoo.gptmobile.data.repository.SettingRepository
+import dev.chungjungsoo.gptmobile.data.tool.ToolCallingMode
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchMode
 import java.net.URI
 import javax.inject.Inject
@@ -85,10 +86,18 @@ class SettingViewModelV2 @Inject constructor(
         viewModelScope.launch {
             _webSearchSettings.update {
                 WebSearchSettingsState(
+                    toolCallingMode = settingRepository.fetchToolCallingMode(),
                     mode = settingRepository.fetchWebSearchMode(),
                     searxngBaseUrl = settingRepository.fetchWebSearchSearxngBaseUrl()
                 )
             }
+        }
+    }
+
+    fun updateToolCallingMode(mode: ToolCallingMode) {
+        _webSearchSettings.update { currentState -> currentState.copy(toolCallingMode = mode) }
+        viewModelScope.launch {
+            settingRepository.updateToolCallingMode(mode)
         }
     }
 
@@ -233,6 +242,7 @@ class SettingViewModelV2 @Inject constructor(
     )
 
     data class WebSearchSettingsState(
+        val toolCallingMode: ToolCallingMode = ToolCallingMode.Off,
         val mode: WebSearchMode = WebSearchMode.Off,
         val searxngBaseUrl: String = "",
         val searxngBaseUrlError: Boolean = false

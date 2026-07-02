@@ -36,6 +36,7 @@ import dev.chungjungsoo.gptmobile.data.network.NetworkClient
 import dev.chungjungsoo.gptmobile.data.network.OpenAIAPI
 import dev.chungjungsoo.gptmobile.data.network.UploadedProviderFile
 import dev.chungjungsoo.gptmobile.data.tool.BuiltInTools
+import dev.chungjungsoo.gptmobile.data.tool.ToolCallingMode
 import dev.chungjungsoo.gptmobile.data.tool.ToolExecutor
 import dev.chungjungsoo.gptmobile.data.tool.ToolLoopOrchestrator
 import dev.chungjungsoo.gptmobile.data.websearch.SearchDecisionModelClient
@@ -432,7 +433,10 @@ class ChatRepositoryImplTest {
         )
         val repository = createRepository(
             openAIAPI = openAIAPI,
-            settingRepository = settingRepository(WebSearchMode.Auto),
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Auto,
+                toolCallingMode = ToolCallingMode.Auto
+            ),
             webSearchRepository = webSearchRepository
         )
 
@@ -473,6 +477,82 @@ class ChatRepositoryImplTest {
     }
 
     @Test
+    fun `tool calling off skips tool loop even when web search mode is auto`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatCompletionFlow("Normal answer")
+            )
+        )
+        val webSearchRepository = RecordingWebSearchRepository(
+            Result.success(listOf(webSearchResult()))
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Auto,
+                toolCallingMode = ToolCallingMode.Off
+            ),
+            webSearchRepository = webSearchRepository
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "What is the current Android target SDK?", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform()
+        ).toList()
+
+        assertEquals(
+            listOf(
+                ApiState.Loading,
+                ApiState.Success("Normal answer"),
+                ApiState.Done
+            ),
+            states
+        )
+        assertTrue(webSearchRepository.queries.isEmpty())
+        assertEquals(1, openAIAPI.streamChatCompletionCalls)
+        assertFalse(openAIAPI.chatCompletionRequests.single().systemText().contains("Available tools:"))
+    }
+
+    @Test
+    fun `tool calling auto skips web search tools when web search mode is off`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatCompletionFlow("Normal answer")
+            )
+        )
+        val webSearchRepository = RecordingWebSearchRepository(
+            Result.success(listOf(webSearchResult()))
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Off,
+                toolCallingMode = ToolCallingMode.Auto
+            ),
+            webSearchRepository = webSearchRepository
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "What is the current Android target SDK?", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform()
+        ).toList()
+
+        assertEquals(
+            listOf(
+                ApiState.Loading,
+                ApiState.Success("Normal answer"),
+                ApiState.Done
+            ),
+            states
+        )
+        assertTrue(webSearchRepository.queries.isEmpty())
+        assertEquals(1, openAIAPI.streamChatCompletionCalls)
+        assertFalse(openAIAPI.chatCompletionRequests.single().systemText().contains("Available tools:"))
+    }
+
+    @Test
     fun `auto search decision executes web search before final provider request`() = runBlocking {
         val openAIAPI = RecordingOpenAIAPI(
             chatCompletionResponses = mutableListOf(
@@ -492,7 +572,10 @@ class ChatRepositoryImplTest {
         )
         val repository = createRepository(
             openAIAPI = openAIAPI,
-            settingRepository = settingRepository(WebSearchMode.Auto),
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Auto,
+                toolCallingMode = ToolCallingMode.Auto
+            ),
             webSearchRepository = webSearchRepository,
             searchDecisionService = searchDecisionService
         )
@@ -542,7 +625,10 @@ class ChatRepositoryImplTest {
         )
         val repository = createRepository(
             openAIAPI = openAIAPI,
-            settingRepository = settingRepository(WebSearchMode.Auto),
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Auto,
+                toolCallingMode = ToolCallingMode.Auto
+            ),
             webSearchRepository = webSearchRepository
         )
 
@@ -594,7 +680,10 @@ class ChatRepositoryImplTest {
         )
         val repository = createRepository(
             openAIAPI = openAIAPI,
-            settingRepository = settingRepository(WebSearchMode.Auto),
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Auto,
+                toolCallingMode = ToolCallingMode.Auto
+            ),
             webSearchRepository = webSearchRepository
         )
 
@@ -632,7 +721,10 @@ class ChatRepositoryImplTest {
         )
         val repository = createRepository(
             openAIAPI = openAIAPI,
-            settingRepository = settingRepository(WebSearchMode.Auto),
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Auto,
+                toolCallingMode = ToolCallingMode.Auto
+            ),
             webSearchRepository = webSearchRepository
         )
 
@@ -748,9 +840,14 @@ class ChatRepositoryImplTest {
         source = "searxng"
     )
 
-    private fun settingRepository(webSearchMode: WebSearchMode): SettingRepository {
+    private fun settingRepository(
+        webSearchMode: WebSearchMode,
+        toolCallingMode: ToolCallingMode = ToolCallingMode.Off
+    ): SettingRepository {
         val handler = InvocationHandler { _, method, _ ->
             when (method.name) {
+                "fetchToolCallingMode" -> toolCallingMode
+                "updateToolCallingMode" -> Unit
                 "fetchWebSearchMode" -> webSearchMode
                 "updateWebSearchMode" -> Unit
                 else -> defaultReturnValue(method.returnType)

@@ -44,6 +44,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.chungjungsoo.gptmobile.R
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
+import dev.chungjungsoo.gptmobile.data.tool.ToolCallingMode
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchMode
 import dev.chungjungsoo.gptmobile.util.getClientTypeDisplayName
 
@@ -128,6 +129,23 @@ fun SettingScreen(
                     title = stringResource(R.string.memory),
                     description = stringResource(R.string.memory_page_description),
                     onClick = onNavigateToMemory
+                )
+            }
+
+            SettingsSection(title = stringResource(R.string.settings_section_tool_calling)) {
+                ToolCallingModeItem(
+                    mode = ToolCallingMode.Off,
+                    selectedMode = webSearchSettings.toolCallingMode,
+                    title = stringResource(R.string.tool_calling_mode_off),
+                    description = stringResource(R.string.tool_calling_mode_off_description),
+                    onSelected = settingViewModel::updateToolCallingMode
+                )
+                ToolCallingModeItem(
+                    mode = ToolCallingMode.Auto,
+                    selectedMode = webSearchSettings.toolCallingMode,
+                    title = stringResource(R.string.tool_calling_mode_auto),
+                    description = stringResource(R.string.tool_calling_mode_auto_description),
+                    onSelected = settingViewModel::updateToolCallingMode
                 )
             }
 
@@ -220,6 +238,27 @@ private fun SettingsRow(
         colors = ListItemDefaults.colors(containerColor = Color.Transparent)
     )
     HorizontalDivider(modifier = Modifier.padding(start = 24.dp))
+}
+
+@Composable
+private fun ToolCallingModeItem(
+    mode: ToolCallingMode,
+    selectedMode: ToolCallingMode,
+    title: String,
+    description: String,
+    onSelected: (ToolCallingMode) -> Unit
+) {
+    SettingsRow(
+        title = title,
+        description = description,
+        onClick = { onSelected(mode) },
+        trailingContent = {
+            RadioButton(
+                selected = selectedMode == mode,
+                onClick = { onSelected(mode) }
+            )
+        }
+    )
 }
 
 @Composable

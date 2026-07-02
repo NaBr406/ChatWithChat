@@ -8,6 +8,7 @@ import dev.chungjungsoo.gptmobile.data.model.AvailableChatModel
 import dev.chungjungsoo.gptmobile.data.model.LastSelectedModel
 import dev.chungjungsoo.gptmobile.data.model.ModelRefreshResult
 import dev.chungjungsoo.gptmobile.data.model.ReasoningMode
+import dev.chungjungsoo.gptmobile.data.tool.ToolCallingMode
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchMode
 
 interface SettingRepository {
@@ -20,6 +21,7 @@ interface SettingRepository {
     suspend fun fetchThemes(): ThemeSetting
     suspend fun fetchLastSelectedModel(): LastSelectedModel?
     suspend fun fetchMemoryEnabled(): Boolean
+    suspend fun fetchToolCallingMode(): ToolCallingMode
     suspend fun fetchWebSearchMode(): WebSearchMode
     suspend fun fetchWebSearchSearxngBaseUrl(): String
     suspend fun migrateToPlatformV2()
@@ -27,6 +29,7 @@ interface SettingRepository {
     suspend fun updateThemes(themeSetting: ThemeSetting)
     suspend fun updateLastSelectedModel(platformUid: String, model: String, reasoningMode: ReasoningMode = ReasoningMode.AUTO)
     suspend fun updateMemoryEnabled(enabled: Boolean)
+    suspend fun updateToolCallingMode(mode: ToolCallingMode)
     suspend fun updateWebSearchMode(mode: WebSearchMode)
     suspend fun updateWebSearchSearxngBaseUrl(baseUrl: String)
     suspend fun refreshPlatformModels(platformUid: String): ModelRefreshResult

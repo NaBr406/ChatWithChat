@@ -20,6 +20,7 @@ import dev.chungjungsoo.gptmobile.data.model.ModelRefreshResult
 import dev.chungjungsoo.gptmobile.data.model.ReasoningMode
 import dev.chungjungsoo.gptmobile.data.model.defaultReasoningMode
 import dev.chungjungsoo.gptmobile.data.model.ThemeMode
+import dev.chungjungsoo.gptmobile.data.tool.ToolCallingMode
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchMode
 import javax.inject.Inject
 
@@ -124,6 +125,9 @@ class SettingRepositoryImpl @Inject constructor(
 
     override suspend fun fetchMemoryEnabled(): Boolean = settingDataSource.getMemoryEnabled() ?: false
 
+    override suspend fun fetchToolCallingMode(): ToolCallingMode =
+        ToolCallingMode.fromStorageValue(settingDataSource.getToolCallingMode())
+
     override suspend fun fetchWebSearchMode(): WebSearchMode =
         WebSearchMode.fromStorageValue(settingDataSource.getWebSearchMode())
 
@@ -202,6 +206,10 @@ class SettingRepositoryImpl @Inject constructor(
 
     override suspend fun updateMemoryEnabled(enabled: Boolean) {
         settingDataSource.updateMemoryEnabled(enabled)
+    }
+
+    override suspend fun updateToolCallingMode(mode: ToolCallingMode) {
+        settingDataSource.updateToolCallingMode(mode.storageValue)
     }
 
     override suspend fun updateWebSearchMode(mode: WebSearchMode) {
