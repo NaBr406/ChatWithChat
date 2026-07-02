@@ -17,7 +17,7 @@ class ToolPromptBuilderTest {
         assertTrue(prompt.contains("Name: fetch_url"))
         assertTrue(prompt.indexOf("Name: web_search") < prompt.indexOf("Name: fetch_url"))
         assertTrue(prompt.contains("Do not use this for the user's local date"))
-        assertTrue(prompt.contains(""""query":{"type":"string","description":"The concise public-web search query to run. Do not use clock/time-only queries."}"""))
+        assertTrue(prompt.contains(""""query":{"type":"string","description":"A concise, structured public-web search query. Include concrete dates/years, canonical names, geography, and category/source terms when useful. Do not use clock/time-only queries."}"""))
         assertTrue(prompt.contains(""""required":["query"]"""))
         assertTrue(prompt.contains(""""url":{"type":"string","description":"The http or https URL to fetch."}"""))
     }
@@ -27,6 +27,15 @@ class ToolPromptBuilderTest {
         val prompt = ToolPromptBuilder().buildJsonFallbackPrompt()
 
         assertTrue(prompt.contains("Do not call web_search for the user's local date, time, timezone, device state, or app settings."))
+    }
+
+    @Test
+    fun `fallback prompt requires structured search query planning`() {
+        val prompt = ToolPromptBuilder().buildJsonFallbackPrompt()
+
+        assertTrue(prompt.contains("rewrite the user's request into a search-engine query"))
+        assertTrue(prompt.contains("Resolve relative dates such as today, yesterday"))
+        assertTrue(prompt.contains("choose sensible default scopes and complementary queries"))
     }
 
     @Test

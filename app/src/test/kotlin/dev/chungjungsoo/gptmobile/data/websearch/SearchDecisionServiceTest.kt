@@ -22,13 +22,17 @@ class SearchDecisionServiceTest {
         val decision = service.decide(
             platform = platform(),
             latestUserMessage = "What is the latest Android target SDK?",
-            recentContext = "User: We are updating an Android app."
+            recentContext = "User: We are updating an Android app.",
+            runtimeContext = "Current local date/time: 2026-07-02T16:00:00+08:00 (Asia/Shanghai)."
         )
 
         assertTrue(decision.shouldSearch)
         assertEquals(listOf("latest Android target SDK 2026"), decision.queries)
         assertTrue(client.lastPrompt.contains("Latest user message"))
         assertTrue(client.lastPrompt.contains("We are updating an Android app."))
+        assertTrue(client.lastPrompt.contains("Runtime context"))
+        assertTrue(client.lastPrompt.contains("2026-07-02"))
+        assertTrue(client.lastPrompt.contains("Rewrite the user's natural-language request into search-engine queries"))
     }
 
     @Test
@@ -76,6 +80,27 @@ class SearchDecisionServiceTest {
     }
 
     @Test
+    fun `decision prompt instructs broad requests to use sensible default scopes`() = runBlocking {
+        val client = RecordingDecisionClient(
+            Result.success(
+                """{"shouldSearch":true,"queries":["2026-07-01 top news headlines","2026-07-01 international news"],"reason":"broad news request"}"""
+            )
+        )
+        val service = SearchDecisionService(client)
+
+        service.decide(
+            platform = platform(),
+            latestUserMessage = "昨天有什么新闻吗",
+            recentContext = null,
+            runtimeContext = "Current local date/time: 2026-07-02T16:00:00+08:00 (Asia/Shanghai)."
+        )
+
+        assertTrue(client.lastPrompt.contains("Convert relative dates such as today, yesterday"))
+        assertTrue(client.lastPrompt.contains("For broad or underspecified requests, choose sensible default scopes"))
+        assertTrue(client.lastPrompt.contains("one Chinese query and one English query"))
+    }
+
+    @Test
     fun `decision request failure defaults to no search`() = runBlocking {
         val service = SearchDecisionService(
             RecordingDecisionClient(Result.failure(IllegalStateException("provider failed")))
@@ -105,4 +130,3 @@ class SearchDecisionServiceTest {
         }
     }
 }
-

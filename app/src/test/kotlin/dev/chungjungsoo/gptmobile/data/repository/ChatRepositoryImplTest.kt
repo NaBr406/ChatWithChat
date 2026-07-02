@@ -485,6 +485,8 @@ class ChatRepositoryImplTest {
         val searchDecisionService = SearchDecisionService(
             SearchDecisionModelClient { _, prompt ->
                 assertTrue(prompt.contains("latest Kotlin release"))
+                assertTrue(prompt.contains("Runtime context"))
+                assertTrue(prompt.contains("Current local date/time"))
                 Result.success("""{"shouldSearch":true,"queries":["latest Kotlin release"],"reason":"latest requested"}""")
             }
         )

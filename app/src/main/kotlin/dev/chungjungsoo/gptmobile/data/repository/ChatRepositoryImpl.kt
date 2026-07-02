@@ -317,7 +317,8 @@ class ChatRepositoryImpl @Inject constructor(
             searchDecisionService?.decide(
                 platform = platform,
                 latestUserMessage = userMessages.lastOrNull()?.content.orEmpty(),
-                recentContext = searchDecisionRecentContext(userMessages, assistantMessages, platform)
+                recentContext = searchDecisionRecentContext(userMessages, assistantMessages, platform),
+                runtimeContext = currentRuntimeContextPrompt()
             )
         }.getOrNull()
             ?.takeIf { it.shouldSearch }
@@ -1472,10 +1473,12 @@ private const val MAX_SEARCH_QUERY_COUNT = 2
 private const val MAX_SOURCE_SNIPPET_CHARS = 240
 private const val OPENAI_NATIVE_TOOL_INSTRUCTION =
     "Use the available tools only when the latest user request needs current web information or source inspection. " +
+        "When calling web_search, rewrite the user's request into a concise search-engine query with the likely entity, topic, timeframe, and geography/source scope; do not merely copy the user's wording. " +
         "Do not use web_search for the user's local date, time, timezone, device state, or app settings. " +
         "Prefer answering directly when the conversation is enough. If you use web sources, cite source URLs in the answer."
 private const val OPENAI_NATIVE_FINAL_TOOL_INSTRUCTION =
-    "Do not call more tools. Use the available function_call_output items when relevant and provide the final answer."
+    "Do not call more tools. Use the available function_call_output items when relevant and provide the final answer. " +
+        "If the user's request is broad or underspecified but the tool results are usable, answer with the most reasonable default scope, state that scope briefly, and avoid asking a clarifying question before giving useful content."
 
 private data class WebSearchContext(
     val prompt: String? = null,

@@ -44,6 +44,7 @@ class ProviderToolAdapterTest {
         assertTrue(output is JsonToolModelOutput.ToolCalls)
         assertEquals("web_search", (output as JsonToolModelOutput.ToolCalls).calls.single().name)
         assertTrue(finalPrompt.contains("Tool results are available"))
+        assertTrue(finalPrompt.contains("answer with the most reasonable default scope"))
         assertTrue(finalPrompt.contains("Draft answer"))
         assertTrue(finalPrompt.contains("https://example.com/source"))
     }

@@ -37,12 +37,17 @@ class SearchDecisionService(
     suspend fun decide(
         platform: PlatformV2,
         latestUserMessage: String,
-        recentContext: String?
+        recentContext: String?,
+        runtimeContext: String? = null
     ): SearchDecision {
         val normalizedMessage = latestUserMessage.trim()
         if (normalizedMessage.isBlank()) return SearchDecision.NoSearch
 
-        val prompt = promptBuilder.build(normalizedMessage, recentContext)
+        val prompt = promptBuilder.build(
+            latestUserMessage = normalizedMessage,
+            recentContext = recentContext,
+            runtimeContext = runtimeContext
+        )
         val rawDecision = modelClient.requestDecision(platform, prompt).getOrNull() ?: return SearchDecision.NoSearch
         return SearchDecisionParser.parse(rawDecision)
     }
@@ -220,6 +225,6 @@ class ProviderSearchDecisionModelClient(
     companion object {
         private const val DECISION_MAX_OUTPUT_TOKENS = 400
         private const val DECISION_SYSTEM_PROMPT =
-            "You decide whether web search is needed. Return only the requested JSON object and no markdown."
+            "You are a web-search planner. Decide if search is needed, then output optimized search queries. Return only the requested JSON object and no markdown."
     }
 }
