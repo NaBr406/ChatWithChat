@@ -7,6 +7,7 @@ import dev.chungjungsoo.gptmobile.data.dto.openai.request.ResponseToolChoice
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ResponsesRequest
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.ResponsesStreamEvent
 import dev.chungjungsoo.gptmobile.data.network.NetworkClient
+import dev.chungjungsoo.gptmobile.data.tool.CurrentDateTimeToolProvider
 import dev.chungjungsoo.gptmobile.data.tool.ToolDefinition
 import dev.chungjungsoo.gptmobile.data.tool.ToolResult
 import kotlinx.serialization.decodeFromString
@@ -51,6 +52,16 @@ class OpenAIResponsesToolAdapterTest {
         assertTrue(payload.contains(""""tool_choice":"auto""""))
         assertTrue(payload.contains(""""type":"function_call_output""""))
         assertTrue(payload.contains(""""call_id":"call_1""""))
+    }
+
+    @Test
+    fun `openai tool serialization supports current datetime tool`() {
+        val payload = NetworkClient.openAIJson.encodeToString(
+            adapter.toResponseTools(listOf(CurrentDateTimeToolProvider().definition))
+        )
+
+        assertTrue(payload.contains(""""name":"current_datetime""""))
+        assertTrue(payload.contains(""""parameters":{"type":"object","properties":{},"required":[],"additionalProperties":false}"""))
     }
 
     @Test

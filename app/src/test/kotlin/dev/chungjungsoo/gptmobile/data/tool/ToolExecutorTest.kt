@@ -332,6 +332,25 @@ class ToolExecutorTest {
     }
 
     @Test
+    fun `built in current datetime tool executes without network search`() = runBlocking {
+        val searchRepository = FakeWebSearchRepository(emptyList())
+        val executor = builtInExecutor(searchRepository)
+
+        val toolResult = executor.execute(
+            ToolCall(
+                id = "call_datetime",
+                name = "current_datetime",
+                arguments = "{}"
+            )
+        )
+
+        assertFalse(toolResult.isError)
+        assertTrue(toolResult.content.contains("Current local date/time:"))
+        assertTrue(toolResult.metadata["timezone"].orEmpty().isNotBlank())
+        assertTrue(searchRepository.queries.isEmpty())
+    }
+
+    @Test
     fun `built in providers expose default tool policies`() {
         val executor = builtInExecutor(FakeWebSearchRepository(emptyList()))
 
@@ -346,6 +365,11 @@ class ToolExecutorTest {
         assertEquals(4, fetchUrlPolicy.maxCallsPerChat)
         assertEquals("max_fetched_urls_per_request", fetchUrlPolicy.maxCallsPerRequestErrorKey)
         assertEquals("max_fetched_urls_per_chat", fetchUrlPolicy.maxCallsPerChatErrorKey)
+
+        val currentDateTimePolicy = executor.policyFor("current_datetime")
+        assertEquals(1, currentDateTimePolicy.maxCallsPerRequest)
+        assertEquals(2, currentDateTimePolicy.maxCallsPerChat)
+        assertEquals(2L, currentDateTimePolicy.timeoutSeconds)
     }
 
     private fun builtInExecutor(searchRepository: WebSearchRepository): ToolExecutor = ToolExecutor(

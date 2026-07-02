@@ -13,6 +13,7 @@ import dev.chungjungsoo.gptmobile.data.tool.ToolRegistry
 import dev.chungjungsoo.gptmobile.data.websearch.WebPageExtractor
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchRepository
 import javax.inject.Singleton
+import kotlin.jvm.JvmSuppressWildcards
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -29,7 +30,8 @@ object ToolModule {
 
     @Provides
     @Singleton
-    fun provideToolRegistry(toolProviders: List<ToolProvider>): ToolRegistry = ToolRegistry(toolProviders)
+    fun provideToolRegistry(toolProviders: List<@JvmSuppressWildcards ToolProvider>): ToolRegistry =
+        ToolRegistry(toolProviders)
 
     @Provides
     @Singleton

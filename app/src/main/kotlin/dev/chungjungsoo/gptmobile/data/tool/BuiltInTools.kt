@@ -9,7 +9,8 @@ class BuiltInTools(
 ) {
     fun providers(): List<ToolProvider> = listOf(
         WebSearchToolProvider(webSearchRepository),
-        FetchUrlToolProvider(webPageExtractor)
+        FetchUrlToolProvider(webPageExtractor),
+        CurrentDateTimeToolProvider()
     )
 
     fun registry(): ToolRegistry = ToolRegistry(providers())

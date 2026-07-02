@@ -1,6 +1,10 @@
 package dev.chungjungsoo.gptmobile.data.tool
 
 import dev.chungjungsoo.gptmobile.data.dto.ApiState
+import java.time.Clock
+import java.time.Instant
+import java.time.ZoneId
+import java.time.ZoneOffset
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -58,6 +62,29 @@ class ToolLoopOrchestratorTest {
             ),
             progress
         )
+    }
+
+    @Test
+    fun `current datetime tool executes through json fallback loop`() = runBlocking {
+        val provider = CurrentDateTimeToolProvider(
+            clock = Clock.fixed(Instant.parse("2026-07-02T03:04:05Z"), ZoneOffset.UTC),
+            zoneId = ZoneId.of("Asia/Shanghai")
+        )
+        val orchestrator = ToolLoopOrchestrator(
+            toolExecutor = ToolExecutor(ToolRegistry(listOf(provider))),
+            config = ToolLoopConfig(maxToolRounds = 1)
+        )
+
+        val result = orchestrator.runLoop {
+            Result.success("""{"type":"tool_calls","tool_calls":[{"id":"call_datetime","name":"current_datetime","arguments":{}}]}""")
+        }
+
+        assertTrue(result is ToolLoopResult.ToolResults)
+        val toolResults = result as ToolLoopResult.ToolResults
+        assertEquals(1, toolResults.results.size)
+        assertFalse(toolResults.results.single().isError)
+        assertTrue(toolResults.results.single().content.contains("2026-07-02T11:04:05+08:00"))
+        assertTrue(toolResults.finalAnswerPrompt.orEmpty().contains("current_datetime"))
     }
 
     @Test
