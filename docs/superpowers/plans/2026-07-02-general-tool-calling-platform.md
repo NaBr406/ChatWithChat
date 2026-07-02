@@ -405,17 +405,17 @@ This task can be split across future PRs. Do not block Tasks 1-7 on this.
 
 **Implementation order:**
 
-- [ ] Add native OpenAI Chat Completions / OpenRouter tool support if the app's OpenAI-compatible DTO path supports it.
+- [x] Add native OpenAI Chat Completions / OpenRouter tool support if the app's OpenAI-compatible DTO path supports it.
 - [ ] Add Anthropic native `tool_use` / `tool_result` support with DTO tests.
 - [ ] Add Google function-calling support with DTO tests.
-- [ ] Keep JSON fallback as a provider capability fallback.
-- [ ] Add per-provider tests that prove unsupported native tool protocols do not break normal chat.
+- [x] Keep JSON fallback as a provider capability fallback.
+- [x] Add per-provider tests that prove unsupported native tool protocols do not break normal chat.
 
 **Acceptance criteria:**
 
-- [ ] Native adapters are selected only when the provider path supports them.
-- [ ] JSON fallback remains available.
-- [ ] Provider-specific tool parsing is isolated in adapter classes.
+- [x] Native adapters are selected only when the provider path supports them.
+- [x] JSON fallback remains available.
+- [x] Provider-specific tool parsing is isolated in adapter classes.
 
 **Verification:**
 
@@ -483,4 +483,3 @@ Report:
 - [ ] Search source metadata remains collapsed by default and persists where currently supported.
 - [ ] Existing web search and fetch URL behavior does not regress.
 - [ ] `./gradlew.bat :app:testDebugUnitTest` and `./gradlew.bat :app:compileDebugKotlin` pass.
-

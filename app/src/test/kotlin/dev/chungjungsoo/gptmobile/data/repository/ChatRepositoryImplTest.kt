@@ -14,13 +14,17 @@ import dev.chungjungsoo.gptmobile.data.dto.groq.request.GroqChatCompletionReques
 import dev.chungjungsoo.gptmobile.data.dto.groq.response.GroqChatCompletionChunk
 import dev.chungjungsoo.gptmobile.data.dto.groq.response.GroqChoice
 import dev.chungjungsoo.gptmobile.data.dto.groq.response.GroqDelta
+import dev.chungjungsoo.gptmobile.data.dto.openai.common.Role as OpenAIRole
 import dev.chungjungsoo.gptmobile.data.dto.openai.common.TextContent as OpenAITextContent
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ChatCompletionRequest
+import dev.chungjungsoo.gptmobile.data.dto.openai.request.ChatCompletionToolChoice
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ResponseFunctionCallInputItem
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ResponseFunctionCallOutputItem
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ResponseToolChoice
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ResponsesRequest
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.ChatCompletionChunk
+import dev.chungjungsoo.gptmobile.data.dto.openai.response.ChatCompletionFunctionCallDelta
+import dev.chungjungsoo.gptmobile.data.dto.openai.response.ChatCompletionToolCallDelta
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.Choice
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.Delta
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.FunctionCallArgumentsDoneEvent
@@ -848,6 +852,73 @@ class ChatRepositoryImplTest {
     }
 
     @Test
+    fun `auto web search uses openrouter native chat completion tools`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatToolCallFlow(
+                    callId = "call_1",
+                    name = "web_search",
+                    arguments = """{"query":"current Android target SDK"}"""
+                ),
+                chatCompletionFlow("Final searched answer")
+            )
+        )
+        val webSearchRepository = RecordingWebSearchRepository(
+            Result.success(listOf(webSearchResult()))
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Auto,
+                toolCallingMode = ToolCallingMode.Auto
+            ),
+            webSearchRepository = webSearchRepository
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "What is the current Android target SDK?", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = openRouterPlatform()
+        ).toList()
+
+        assertEquals(
+            listOf(
+                ApiState.Loading,
+                ApiState.ToolStarted("web_search", "current Android target SDK"),
+                ApiState.ToolFinished("web_search", "current Android target SDK"),
+                ApiState.SourcesUpdated(
+                    listOf(
+                        MessageSourceMetadata(
+                            title = "Example Source",
+                            url = "https://example.com/source",
+                            snippet = "Example search snippet",
+                            sourceToolName = "web_search"
+                        )
+                    )
+                ),
+                ApiState.Success("Final searched answer"),
+                ApiState.Done
+            ),
+            states
+        )
+        assertEquals(listOf("current Android target SDK"), webSearchRepository.queries)
+        assertEquals(2, openAIAPI.streamChatCompletionCalls)
+        assertEquals(ChatCompletionToolChoice.Auto, openAIAPI.chatCompletionRequests[0].toolChoice)
+        assertTrue(openAIAPI.chatCompletionRequests[0].tools.orEmpty().any { tool -> tool.function.name == "web_search" })
+        assertFalse(openAIAPI.chatCompletionRequests[0].systemText().contains("Available tools:"))
+        assertEquals(ChatCompletionToolChoice.Auto, openAIAPI.chatCompletionRequests[1].toolChoice)
+        assertTrue(openAIAPI.chatCompletionRequests[1].messages.any { message ->
+            message.role == OpenAIRole.ASSISTANT &&
+                message.toolCalls.orEmpty().any { call -> call.id == "call_1" && call.function.name == "web_search" }
+        })
+        assertTrue(openAIAPI.chatCompletionRequests[1].messages.any { message ->
+            message.role == OpenAIRole.TOOL &&
+                message.toolCallId == "call_1" &&
+                message.contentText.orEmpty().contains("Example Source")
+        })
+    }
+
+    @Test
     fun `auto tool loop parse failure falls back to normal chat completion`() = runBlocking {
         val openAIAPI = RecordingOpenAIAPI(
             chatCompletionResponses = mutableListOf(
@@ -1001,6 +1072,17 @@ class ChatRepositoryImplTest {
         stream = true
     )
 
+    private fun openRouterPlatform(systemPrompt: String? = null) = PlatformV2(
+        uid = "openrouter-platform",
+        name = "OpenRouter",
+        compatibleType = ClientType.OPENROUTER,
+        apiUrl = "https://openrouter.ai/api/",
+        token = "token",
+        model = "openrouter-model",
+        systemPrompt = systemPrompt,
+        stream = true
+    )
+
     private fun systemText(openAIAPI: RecordingOpenAIAPI): String = openAIAPI.lastChatCompletionRequest
         ?.systemText()
         .orEmpty()
@@ -1060,6 +1142,34 @@ class ChatRepositoryImplTest {
                 Choice(
                     index = 0,
                     delta = Delta(content = content)
+                )
+            )
+        )
+    )
+
+    private fun chatToolCallFlow(
+        callId: String,
+        name: String,
+        arguments: String
+    ): Flow<ChatCompletionChunk> = flowOf(
+        ChatCompletionChunk(
+            choices = listOf(
+                Choice(
+                    index = 0,
+                    delta = Delta(
+                        toolCalls = listOf(
+                            ChatCompletionToolCallDelta(
+                                index = 0,
+                                id = callId,
+                                type = "function",
+                                function = ChatCompletionFunctionCallDelta(
+                                    name = name,
+                                    arguments = arguments
+                                )
+                            )
+                        )
+                    ),
+                    finishReason = "tool_calls"
                 )
             )
         )

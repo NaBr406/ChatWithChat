@@ -42,7 +42,34 @@ data class Delta(
     val role: String? = null,
 
     @SerialName("content")
-    val content: String? = null
+    val content: String? = null,
+
+    @SerialName("tool_calls")
+    val toolCalls: List<ChatCompletionToolCallDelta>? = null
+)
+
+@Serializable
+data class ChatCompletionToolCallDelta(
+    @SerialName("index")
+    val index: Int? = null,
+
+    @SerialName("id")
+    val id: String? = null,
+
+    @SerialName("type")
+    val type: String? = null,
+
+    @SerialName("function")
+    val function: ChatCompletionFunctionCallDelta? = null
+)
+
+@Serializable
+data class ChatCompletionFunctionCallDelta(
+    @SerialName("name")
+    val name: String? = null,
+
+    @SerialName("arguments")
+    val arguments: String? = null
 )
 
 @Serializable
