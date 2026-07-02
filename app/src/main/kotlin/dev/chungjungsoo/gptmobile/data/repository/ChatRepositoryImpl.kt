@@ -308,7 +308,9 @@ class ChatRepositoryImpl @Inject constructor(
                 emit(ApiState.Done)
             }
             is ToolLoopResult.ToolResults -> {
-                loopResult.results.toMessageSourceMetadata().takeIf { it.isNotEmpty() }?.let { sources ->
+                toolLoopOrchestrator.sourceMetadata(loopResult.results)
+                    .dedupeMessageSources()
+                    .takeIf { it.isNotEmpty() }?.let { sources ->
                     emit(ApiState.SourcesUpdated(sources))
                 }
                 emitProviderStatesSkippingLoading(
@@ -377,7 +379,9 @@ class ChatRepositoryImpl @Inject constructor(
             calls = calls,
             tools = activeToolDefinitions
         ) { progress -> emit(progress) }
-        results.toMessageSourceMetadata().takeIf { it.isNotEmpty() }?.let { sources ->
+        toolLoopOrchestrator.sourceMetadata(results)
+            .dedupeMessageSources()
+            .takeIf { it.isNotEmpty() }?.let { sources ->
             emit(ApiState.SourcesUpdated(sources))
         }
 
@@ -536,7 +540,9 @@ class ChatRepositoryImpl @Inject constructor(
                 tools = activeToolDefinitions
             ) { progress -> emit(progress) }
             allResults += results
-            results.toMessageSourceMetadata().takeIf { it.isNotEmpty() }?.let { sources ->
+            toolLoopOrchestrator.sourceMetadata(results)
+                .dedupeMessageSources()
+                .takeIf { it.isNotEmpty() }?.let { sources ->
                 emit(ApiState.SourcesUpdated(sources))
             }
             continuationItems += openAIResponsesToolAdapter.continuationInputItems(round.events, calls, results, config)
@@ -1603,43 +1609,6 @@ private fun SearchDecision.toWebSearchToolCalls(): List<ToolCall> = queries
             )
         )
     }
-
-private fun List<ToolResult>.toMessageSourceMetadata(): List<MessageSourceMetadata> =
-    flatMap { result -> result.toMessageSourceMetadata() }.dedupeMessageSources()
-
-private fun ToolResult.toMessageSourceMetadata(): List<MessageSourceMetadata> = when (name) {
-    ToolDefinition.WebSearch.name -> {
-        val sources = mutableListOf<MessageSourceMetadata>()
-        var index = 0
-        while (true) {
-            val url = metadata["source_${index}_url"]?.trim()?.takeIf { it.isNotBlank() } ?: break
-            sources += MessageSourceMetadata(
-                title = metadata["source_${index}_title"]?.trim()?.takeIf { it.isNotBlank() } ?: url,
-                url = url,
-                snippet = metadata["source_${index}_snippet"].orEmpty().toSourceSnippet(),
-                sourceToolName = metadata["source_${index}_tool"]?.trim()?.takeIf { it.isNotBlank() } ?: name
-            )
-            index += 1
-        }
-        sources
-    }
-    ToolDefinition.FetchUrl.name -> {
-        val url = metadata["url"]?.trim()?.takeIf { it.isNotBlank() }
-        if (url == null) {
-            emptyList()
-        } else {
-            listOf(
-                MessageSourceMetadata(
-                    title = metadata["title"]?.trim()?.takeIf { it.isNotBlank() } ?: url,
-                    url = url,
-                    snippet = metadata["snippet"].orEmpty().toSourceSnippet(),
-                    sourceToolName = metadata["source_tool"]?.trim()?.takeIf { it.isNotBlank() } ?: name
-                )
-            )
-        }
-    }
-    else -> emptyList()
-}
 
 private fun List<MessageSourceMetadata>.dedupeMessageSources(): List<MessageSourceMetadata> =
     filter { source -> source.url.isNotBlank() }

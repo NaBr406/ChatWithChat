@@ -1,5 +1,6 @@
 package dev.chungjungsoo.gptmobile.data.tool
 
+import dev.chungjungsoo.gptmobile.data.database.entity.MessageSourceMetadata
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
@@ -49,6 +50,8 @@ class ToolExecutor(
         toolRegistry.availableDefinitions(includeTool)
 
     fun policyFor(toolName: String): ToolPolicy = toolRegistry.policyFor(toolName)
+
+    fun sourceMetadata(result: ToolResult): List<MessageSourceMetadata> = toolRegistry.sourceMetadata(result)
 
     private fun ToolLoopConfig.timeoutMillis(policy: ToolPolicy): Long =
         (policy.timeoutSeconds ?: toolTimeoutSeconds).coerceAtLeast(0) * 1_000L

@@ -31,6 +31,18 @@ class ChatViewModelToolProgressTest {
     }
 
     @Test
+    fun `generic tool progress replaces matching running state`() {
+        val states = emptyList<ChatViewModel.ToolProgressState>()
+            .appendToolProgress(ApiState.ToolStarted("current_datetime", "current_datetime"))
+            .appendToolProgress(ApiState.ToolFinished("current_datetime", "current_datetime"))
+
+        assertEquals(1, states.size)
+        assertEquals("current_datetime", states.single().toolName)
+        assertEquals("current_datetime", states.single().label)
+        assertEquals(ChatViewModel.ToolProgressStatus.Finished, states.single().status)
+    }
+
+    @Test
     fun `failed tool progress without matching running state is retained`() {
         val states = emptyList<ChatViewModel.ToolProgressState>()
             .appendToolProgress(ApiState.ToolFailed("web_search", "web_search_backend_not_configured"))

@@ -1,5 +1,7 @@
 package dev.chungjungsoo.gptmobile.data.tool
 
+import dev.chungjungsoo.gptmobile.data.database.entity.MessageSourceMetadata
+
 class ToolRegistry private constructor(
     val definitions: List<ToolDefinition>,
     private val handlers: Map<String, ToolHandler>,
@@ -35,6 +37,9 @@ class ToolRegistry private constructor(
         ?.trim()
         ?.takeIf { it.isNotBlank() }
         ?: call.name
+
+    fun sourceMetadata(result: ToolResult): List<MessageSourceMetadata> =
+        providerFor(result.name)?.sourceMetadata(result).orEmpty()
 }
 
 fun interface ToolHandler {

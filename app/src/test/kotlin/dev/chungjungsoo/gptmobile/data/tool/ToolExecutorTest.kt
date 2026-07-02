@@ -46,6 +46,15 @@ class ToolExecutorTest {
         assertFalse(toolResult.content.contains("Duplicate"))
         assertEquals("latest Android SDK", searchRepository.queries.single())
         assertEquals(2, searchRepository.limits.single())
+
+        val sources = executor.sourceMetadata(toolResult)
+        assertEquals(2, sources.size)
+        assertEquals("One", sources[0].title)
+        assertEquals("https://one.example", sources[0].url)
+        assertEquals("first", sources[0].snippet)
+        assertEquals("web_search", sources[0].sourceToolName)
+        assertEquals("Two", sources[1].title)
+        assertEquals("https://two.example", sources[1].url)
     }
 
     @Test

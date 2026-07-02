@@ -1,5 +1,6 @@
 package dev.chungjungsoo.gptmobile.data.tool
 
+import dev.chungjungsoo.gptmobile.data.database.entity.MessageSourceMetadata
 import dev.chungjungsoo.gptmobile.data.dto.ApiState
 import dev.chungjungsoo.gptmobile.data.tool.provider.OpenAICompatibleJsonToolAdapter
 import dev.chungjungsoo.gptmobile.data.tool.provider.ToolCallingAdapter
@@ -22,6 +23,9 @@ class ToolLoopOrchestrator(
 
     fun availableToolDefinitions(includeTool: (ToolDefinition) -> Boolean): List<ToolDefinition> =
         toolExecutor.availableDefinitions(includeTool)
+
+    fun sourceMetadata(results: List<ToolResult>): List<MessageSourceMetadata> =
+        results.flatMap { result -> toolExecutor.sourceMetadata(result) }
 
     suspend fun runLoop(
         adapter: ToolCallingAdapter = defaultToolCallingAdapter,
