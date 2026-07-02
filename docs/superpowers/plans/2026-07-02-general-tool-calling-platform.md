@@ -86,11 +86,11 @@ git status --short
 
 **Checklist:**
 
-- [ ] Confirm `ChatRepositoryImpl.completeChat(...)` still uses `WebSearchMode.Auto` as the tool-loop trigger.
-- [ ] Confirm `BuiltInTools.registry()` still hard-codes `ToolDefinition.BuiltIns`.
-- [ ] Confirm `ToolBudgetState` still contains web-search/fetch-url-specific budget logic.
-- [ ] Confirm `ToolActivityBlock` still has special copy for `web_search` and `fetch_url`.
-- [ ] Confirm source metadata is still mapped mainly from web-search/fetch-url `ToolResult.metadata`.
+- [x] Confirm `ChatRepositoryImpl.completeChat(...)` still uses `WebSearchMode.Auto` as the tool-loop trigger.
+- [x] Confirm `BuiltInTools.registry()` still hard-codes `ToolDefinition.BuiltIns`.
+- [x] Confirm `ToolBudgetState` still contains web-search/fetch-url-specific budget logic.
+- [x] Confirm `ToolActivityBlock` still has special copy for `web_search` and `fetch_url`.
+- [x] Confirm source metadata is still mapped mainly from web-search/fetch-url `ToolResult.metadata`.
 
 **Verification:**
 
@@ -118,24 +118,24 @@ No code changes in this task.
 
 **Implementation:**
 
-- [ ] Add `ToolCallingMode` with at least `Off` and `Auto`.
-- [ ] Store `ToolCallingMode` in DataStore with default `Off`.
-- [ ] Keep `WebSearchMode` for search availability and search-specific behavior.
-- [ ] Update `ChatRepositoryImpl.completeChat(...)`:
+- [x] Add `ToolCallingMode` with at least `Off` and `Auto`.
+- [x] Store `ToolCallingMode` in DataStore with default `Off`.
+- [x] Keep `WebSearchMode` for search availability and search-specific behavior.
+- [x] Update `ChatRepositoryImpl.completeChat(...)`:
   - if `ToolCallingMode.Auto`, run the tool loop path
   - if `ToolCallingMode.Off`, do not run the tool loop
   - preserve existing `WebSearchMode.Always` direct search injection behavior unless intentionally migrated in a later task
-- [ ] Ensure `web_search` is only advertised/executable when web search is enabled or allowed by mode.
-- [ ] Add Settings UI copy that separates:
+- [x] Ensure `web_search` is only advertised/executable when web search is enabled or allowed by mode.
+- [x] Add Settings UI copy that separates:
   - tool calling
   - web search backend/mode
 
 **Acceptance criteria:**
 
-- [ ] `ToolCallingMode.Off` never executes `ToolExecutor`.
-- [ ] `ToolCallingMode.Auto` can execute tools.
-- [ ] `WebSearchMode.Off` prevents `web_search` from being available to the model.
-- [ ] Existing `WebSearchMode.Always` behavior still works or is explicitly migrated with matching tests.
+- [x] `ToolCallingMode.Off` never executes `ToolExecutor`.
+- [x] `ToolCallingMode.Auto` can execute tools.
+- [x] `WebSearchMode.Off` prevents `web_search` from being available to the model.
+- [x] Existing `WebSearchMode.Always` behavior still works or is explicitly migrated with matching tests.
 
 **Verification:**
 
@@ -177,19 +177,19 @@ Use the exact API that best fits the codebase, but preserve the boundary: a tool
 
 **Implementation:**
 
-- [ ] Create `ToolProvider`.
-- [ ] Make `ToolRegistry` accept a list of providers.
-- [ ] Keep `handlerFor(...)` compatibility if that reduces churn, but prefer provider lookup.
-- [ ] Move `web_search` execution into a `WebSearchToolProvider`.
-- [ ] Move `fetch_url` execution into a `FetchUrlToolProvider`.
-- [ ] Remove `ToolDefinition.BuiltIns` as the central source of truth, or leave it only as a compatibility helper backed by providers.
-- [ ] Move `ToolLoopOrchestrator.progressLabel()` hard-coded logic into provider-owned `progressLabel(...)`.
+- [x] Create `ToolProvider`.
+- [x] Make `ToolRegistry` accept a list of providers.
+- [x] Keep `handlerFor(...)` compatibility if that reduces churn, but prefer provider lookup.
+- [x] Move `web_search` execution into a `WebSearchToolProvider`.
+- [x] Move `fetch_url` execution into a `FetchUrlToolProvider`.
+- [x] Remove `ToolDefinition.BuiltIns` as the central source of truth, or leave it only as a compatibility helper backed by providers.
+- [x] Move `ToolLoopOrchestrator.progressLabel()` hard-coded logic into provider-owned `progressLabel(...)`.
 
 **Acceptance criteria:**
 
-- [ ] Adding a test-only tool provider does not require editing `ToolLoopOrchestrator`.
-- [ ] `web_search` and `fetch_url` still execute through the same public behavior.
-- [ ] Tool progress labels are identical to current behavior for search and fetch.
+- [x] Adding a test-only tool provider does not require editing `ToolLoopOrchestrator`.
+- [x] `web_search` and `fetch_url` still execute through the same public behavior.
+- [x] Tool progress labels are identical to current behavior for search and fetch.
 
 **Verification:**
 
@@ -229,22 +229,22 @@ Keep global defaults in `ToolLoopConfig`, but allow tool-specific overrides.
 
 **Implementation:**
 
-- [ ] Keep global `maxToolRounds`, `maxToolCallsPerRound`, `maxToolCallsPerChat`, and total scratchpad/result limits.
-- [ ] Move search query limits into `WebSearchToolProvider.policy`.
-- [ ] Move fetched URL limits into `FetchUrlToolProvider.policy`.
-- [ ] Make `ToolBudgetState` generic by tool name.
-- [ ] Preserve existing default limits:
+- [x] Keep global `maxToolRounds`, `maxToolCallsPerRound`, `maxToolCallsPerChat`, and total scratchpad/result limits.
+- [x] Move search query limits into `WebSearchToolProvider.policy`.
+- [x] Move fetched URL limits into `FetchUrlToolProvider.policy`.
+- [x] Make `ToolBudgetState` generic by tool name.
+- [x] Preserve existing default limits:
   - search queries per request: 2
   - search queries per chat: 4
   - fetched URLs per request: 2
   - fetched URLs per chat: 4
-- [ ] Keep current error messages stable if tests rely on them, or update tests deliberately.
+- [x] Keep current error messages stable if tests rely on them, or update tests deliberately.
 
 **Acceptance criteria:**
 
-- [ ] Existing budget tests pass with generic policy implementation.
-- [ ] A new tool can define `maxCallsPerRequest=1` without adding a new config field.
-- [ ] Budget rejection remains recoverable as a `ToolResult(isError=true)`.
+- [x] Existing budget tests pass with generic policy implementation.
+- [x] A new tool can define `maxCallsPerRequest=1` without adding a new config field.
+- [x] Budget rejection remains recoverable as a `ToolResult(isError=true)`.
 
 **Verification:**
 
@@ -267,18 +267,18 @@ Keep global defaults in `ToolLoopConfig`, but allow tool-specific overrides.
 
 **Implementation:**
 
-- [ ] Add a way to ask for available tool definitions for the current chat/platform/settings.
-- [ ] Hide `web_search` and `fetch_url` when web search is disabled or no backend is configured.
-- [ ] Keep non-search tools available when tool calling is enabled.
-- [ ] Make OpenAI native `tools` request use the filtered active tool list.
-- [ ] Make JSON fallback prompt use the same filtered active tool list.
-- [ ] If the filtered active tool list is empty, skip tool loop and run normal provider completion.
+- [x] Add a way to ask for available tool definitions for the current chat/platform/settings.
+- [x] Hide `web_search` and `fetch_url` when web search is disabled or no backend is configured.
+- [x] Keep non-search tools available when tool calling is enabled.
+- [x] Make OpenAI native `tools` request use the filtered active tool list.
+- [x] Make JSON fallback prompt use the same filtered active tool list.
+- [x] If the filtered active tool list is empty, skip tool loop and run normal provider completion.
 
 **Acceptance criteria:**
 
-- [ ] The model is not prompted with unavailable tools.
-- [ ] Unknown or disabled tool calls are rejected safely if they somehow appear.
-- [ ] Tool calling mode can be Auto while web search is Off, leaving room for non-search tools.
+- [x] The model is not prompted with unavailable tools.
+- [x] Unknown or disabled tool calls are rejected safely if they somehow appear.
+- [x] Tool calling mode can be Auto while web search is Off, leaving room for non-search tools.
 
 **Verification:**
 
@@ -303,19 +303,19 @@ Keep global defaults in `ToolLoopConfig`, but allow tool-specific overrides.
 
 **Implementation:**
 
-- [ ] Keep `MessageSourceMetadata` for citation-worthy web sources.
-- [ ] Add a generic transient `ToolTrace` or enrich `ToolProgressState` for non-source results.
-- [ ] Keep tool activity default collapsed or compact.
-- [ ] Do not persist raw tool results unless there is a clear UI requirement.
-- [ ] Avoid showing sensitive arguments or full tool outputs by default.
-- [ ] Let each `ToolProvider` optionally map `ToolResult` to source metadata.
-- [ ] Remove web-search/fetch-url-specific source mapping from `ChatRepositoryImpl` if provider-level mapping is available.
+- [x] Keep `MessageSourceMetadata` for citation-worthy web sources.
+- [x] Add a generic transient `ToolTrace` or enrich `ToolProgressState` for non-source results.
+- [x] Keep tool activity default collapsed or compact.
+- [x] Do not persist raw tool results unless there is a clear UI requirement.
+- [x] Avoid showing sensitive arguments or full tool outputs by default.
+- [x] Let each `ToolProvider` optionally map `ToolResult` to source metadata.
+- [x] Remove web-search/fetch-url-specific source mapping from `ChatRepositoryImpl` if provider-level mapping is available.
 
 **Acceptance criteria:**
 
-- [ ] Search results still show as collapsed source metadata under assistant answers.
-- [ ] Non-source tools show useful compact progress without raw JSON.
-- [ ] Assistant message content is not polluted by progress or trace data.
+- [x] Search results still show as collapsed source metadata under assistant answers.
+- [x] Non-source tools show useful compact progress without raw JSON.
+- [x] Assistant message content is not polluted by progress or trace data.
 
 **Verification:**
 
@@ -337,16 +337,16 @@ Keep global defaults in `ToolLoopConfig`, but allow tool-specific overrides.
 
 **Implementation:**
 
-- [ ] Move generic tool bindings to `ToolModule`.
-- [ ] Keep `WebSearchRepository`, `WebPageExtractor`, and search decision bindings in `WebSearchModule`.
-- [ ] Provide `Set<ToolProvider>` or a list of providers through Hilt.
-- [ ] Ensure tests and compile still pass.
+- [x] Move generic tool bindings to `ToolModule`.
+- [x] Keep `WebSearchRepository`, `WebPageExtractor`, and search decision bindings in `WebSearchModule`.
+- [x] Provide `Set<ToolProvider>` or a list of providers through Hilt.
+- [x] Ensure tests and compile still pass.
 
 **Acceptance criteria:**
 
-- [ ] Generic tool types are no longer provided from a module named only `WebSearchModule`.
-- [ ] Search-specific dependencies remain clearly grouped.
-- [ ] Hilt compiles cleanly.
+- [x] Generic tool types are no longer provided from a module named only `WebSearchModule`.
+- [x] Search-specific dependencies remain clearly grouped.
+- [x] Hilt compiles cleanly.
 
 **Verification:**
 
@@ -373,17 +373,17 @@ Be careful: if the tool duplicates existing runtime context, mark it internal/te
 
 **Implementation:**
 
-- [ ] Add the demo provider without modifying `ChatRepositoryImpl`.
-- [ ] Register through the new provider registry.
-- [ ] Give it a policy with low limits.
-- [ ] Add progress label.
-- [ ] Keep output bounded and non-sensitive.
+- [x] Add the demo provider without modifying `ChatRepositoryImpl`.
+- [x] Register through the new provider registry.
+- [x] Give it a policy with low limits.
+- [x] Add progress label.
+- [x] Keep output bounded and non-sensitive.
 
 **Acceptance criteria:**
 
-- [ ] New tool can be added with no `ChatRepositoryImpl` changes.
-- [ ] New tool can be disabled through availability filtering.
-- [ ] Tool loop tests prove it executes and returns results.
+- [x] New tool can be added with no `ChatRepositoryImpl` changes.
+- [x] New tool can be disabled through availability filtering.
+- [x] Tool loop tests prove it executes and returns results.
 
 **Verification:**
 
@@ -435,13 +435,13 @@ This task can be split across future PRs. Do not block Tasks 1-7 on this.
 
 **Documentation should include:**
 
-- [ ] How to add a new tool provider.
-- [ ] How to define parameters.
-- [ ] How to set policy and budgets.
-- [ ] How to expose/hide a tool by setting.
-- [ ] How to map source metadata.
-- [ ] Required tests for a new tool.
-- [ ] Safety checklist for network, file, or write-capable tools.
+- [x] How to add a new tool provider.
+- [x] How to define parameters.
+- [x] How to set policy and budgets.
+- [x] How to expose/hide a tool by setting.
+- [x] How to map source metadata.
+- [x] Required tests for a new tool.
+- [x] Safety checklist for network, file, or write-capable tools.
 
 **Verification:**
 
@@ -473,13 +473,13 @@ Report:
 
 ## Full Plan Acceptance Criteria
 
-- [ ] Tool calling mode is independent from web search mode.
-- [ ] Web search can be disabled without disabling future non-search tools.
-- [ ] New read-only tools can be added without editing `ChatRepositoryImpl`.
-- [ ] Tool definitions, handlers, policies, labels, and metadata mapping live close to the tool implementation.
-- [ ] Budgeting is generic by tool name and policy.
-- [ ] OpenAI native tools and JSON fallback use the same active tool list.
-- [ ] Tool progress UI remains compact and does not expose raw JSON.
-- [ ] Search source metadata remains collapsed by default and persists where currently supported.
-- [ ] Existing web search and fetch URL behavior does not regress.
-- [ ] `./gradlew.bat :app:testDebugUnitTest` and `./gradlew.bat :app:compileDebugKotlin` pass.
+- [x] Tool calling mode is independent from web search mode.
+- [x] Web search can be disabled without disabling future non-search tools.
+- [x] New read-only tools can be added without editing `ChatRepositoryImpl`.
+- [x] Tool definitions, handlers, policies, labels, and metadata mapping live close to the tool implementation.
+- [x] Budgeting is generic by tool name and policy.
+- [x] OpenAI native tools and JSON fallback use the same active tool list.
+- [x] Tool progress UI remains compact and does not expose raw JSON.
+- [x] Search source metadata remains collapsed by default and persists where currently supported.
+- [x] Existing web search and fetch URL behavior does not regress.
+- [x] `./gradlew.bat :app:testDebugUnitTest` and `./gradlew.bat :app:compileDebugKotlin` pass.
