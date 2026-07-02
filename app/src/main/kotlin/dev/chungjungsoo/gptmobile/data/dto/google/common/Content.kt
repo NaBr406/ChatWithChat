@@ -2,6 +2,7 @@ package dev.chungjungsoo.gptmobile.data.dto.google.common
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
 
 @Serializable
 data class Content(
@@ -29,6 +30,12 @@ data class Part(
     @SerialName("file_data")
     val fileData: FileData? = null,
 
+    @SerialName("functionCall")
+    val functionCall: FunctionCall? = null,
+
+    @SerialName("functionResponse")
+    val functionResponse: FunctionResponse? = null,
+
     @SerialName("thought")
     val thought: Boolean? = null
 ) {
@@ -36,8 +43,46 @@ data class Part(
         fun text(text: String) = Part(text = text)
         fun inlineData(mimeType: String, data: String) = Part(inlineData = InlineData(mimeType, data))
         fun fileData(mimeType: String, fileUri: String) = Part(fileData = FileData(mimeType, fileUri))
+        fun functionCall(id: String?, name: String, args: JsonObject) = Part(
+            functionCall = FunctionCall(
+                id = id,
+                name = name,
+                args = args
+            )
+        )
+        fun functionResponse(id: String?, name: String, response: JsonObject) = Part(
+            functionResponse = FunctionResponse(
+                id = id,
+                name = name,
+                response = response
+            )
+        )
     }
 }
+
+@Serializable
+data class FunctionCall(
+    @SerialName("id")
+    val id: String? = null,
+
+    @SerialName("name")
+    val name: String,
+
+    @SerialName("args")
+    val args: JsonObject
+)
+
+@Serializable
+data class FunctionResponse(
+    @SerialName("id")
+    val id: String? = null,
+
+    @SerialName("name")
+    val name: String,
+
+    @SerialName("response")
+    val response: JsonObject
+)
 
 @Serializable
 data class InlineData(

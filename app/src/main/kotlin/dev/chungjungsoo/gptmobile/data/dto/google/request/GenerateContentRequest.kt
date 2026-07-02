@@ -5,6 +5,7 @@ import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
 
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
@@ -18,7 +19,15 @@ data class GenerateContentRequest(
 
     @SerialName("systemInstruction")
     @EncodeDefault(EncodeDefault.Mode.NEVER)
-    val systemInstruction: Content? = null
+    val systemInstruction: Content? = null,
+
+    @SerialName("tools")
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val tools: List<GoogleTool>? = null,
+
+    @SerialName("toolConfig")
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val toolConfig: GoogleToolConfig? = null
 )
 
 @OptIn(ExperimentalSerializationApi::class)
@@ -59,4 +68,45 @@ data class ThinkingConfig(
     @SerialName("includeThoughts")
     @EncodeDefault(EncodeDefault.Mode.NEVER)
     val includeThoughts: Boolean = false
+)
+
+@Serializable
+data class GoogleTool(
+    @SerialName("functionDeclarations")
+    val functionDeclarations: List<GoogleFunctionDeclaration>
+)
+
+@Serializable
+data class GoogleFunctionDeclaration(
+    @SerialName("name")
+    val name: String,
+
+    @SerialName("description")
+    val description: String,
+
+    @SerialName("parameters")
+    val parameters: JsonObject
+)
+
+@Serializable
+data class GoogleToolConfig(
+    @SerialName("functionCallingConfig")
+    val functionCallingConfig: GoogleFunctionCallingConfig
+) {
+    companion object {
+        val Auto = GoogleToolConfig(GoogleFunctionCallingConfig(mode = "AUTO"))
+        val None = GoogleToolConfig(GoogleFunctionCallingConfig(mode = "NONE"))
+        val Any = GoogleToolConfig(GoogleFunctionCallingConfig(mode = "ANY"))
+    }
+}
+
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+data class GoogleFunctionCallingConfig(
+    @SerialName("mode")
+    val mode: String,
+
+    @SerialName("allowedFunctionNames")
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val allowedFunctionNames: List<String>? = null
 )

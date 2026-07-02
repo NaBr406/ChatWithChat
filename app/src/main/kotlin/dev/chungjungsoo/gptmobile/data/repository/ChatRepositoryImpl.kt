@@ -40,6 +40,9 @@ import dev.chungjungsoo.gptmobile.data.dto.google.common.Part
 import dev.chungjungsoo.gptmobile.data.dto.google.common.Role as GoogleRole
 import dev.chungjungsoo.gptmobile.data.dto.google.request.GenerateContentRequest
 import dev.chungjungsoo.gptmobile.data.dto.google.request.GenerationConfig
+import dev.chungjungsoo.gptmobile.data.dto.google.request.GoogleTool
+import dev.chungjungsoo.gptmobile.data.dto.google.request.GoogleToolConfig
+import dev.chungjungsoo.gptmobile.data.dto.google.response.GenerateContentResponse
 import dev.chungjungsoo.gptmobile.data.dto.groq.request.GroqChatCompletionRequest
 import dev.chungjungsoo.gptmobile.data.dto.openai.common.ImageContent as OpenAIImageContent
 import dev.chungjungsoo.gptmobile.data.dto.openai.common.ImageUrl
@@ -84,6 +87,7 @@ import dev.chungjungsoo.gptmobile.data.tool.ToolResult
 import dev.chungjungsoo.gptmobile.data.tool.toolProtocolJson
 import dev.chungjungsoo.gptmobile.data.tool.provider.AnthropicNativeToolAdapter
 import dev.chungjungsoo.gptmobile.data.tool.provider.AnthropicToolAdapter
+import dev.chungjungsoo.gptmobile.data.tool.provider.GoogleNativeToolAdapter
 import dev.chungjungsoo.gptmobile.data.tool.provider.GoogleToolAdapter
 import dev.chungjungsoo.gptmobile.data.tool.provider.OpenAIChatCompletionsToolAdapter
 import dev.chungjungsoo.gptmobile.data.tool.provider.OpenAICompatibleJsonToolAdapter
@@ -136,6 +140,7 @@ class ChatRepositoryImpl @Inject constructor(
     private val openAIResponsesToolAdapter: OpenAIResponsesToolAdapter = OpenAIResponsesToolAdapter(),
     private val openAIChatCompletionsToolAdapter: OpenAIChatCompletionsToolAdapter = OpenAIChatCompletionsToolAdapter(),
     private val anthropicNativeToolAdapter: AnthropicNativeToolAdapter = AnthropicNativeToolAdapter(),
+    private val googleNativeToolAdapter: GoogleNativeToolAdapter = GoogleNativeToolAdapter(),
     private val openAICompatibleJsonToolAdapter: ToolCallingAdapter = OpenAICompatibleJsonToolAdapter(),
     private val anthropicToolAdapter: ToolCallingAdapter = AnthropicToolAdapter(),
     private val googleToolAdapter: ToolCallingAdapter = GoogleToolAdapter()
@@ -210,6 +215,14 @@ class ChatRepositoryImpl @Inject constructor(
                     activeToolDefinitions = activeToolDefinitions
                 )
                 ClientType.ANTHROPIC -> completeChatWithAnthropicNativeToolLoop(
+                    userMessages = userMessages,
+                    assistantMessages = assistantMessages,
+                    platform = platform,
+                    memoryPrompt = memoryPrompt,
+                    reasoningMode = reasoningMode,
+                    activeToolDefinitions = activeToolDefinitions
+                )
+                ClientType.GOOGLE -> completeChatWithGoogleNativeToolLoop(
                     userMessages = userMessages,
                     assistantMessages = assistantMessages,
                     platform = platform,
@@ -966,6 +979,178 @@ class ChatRepositoryImpl @Inject constructor(
 
         return AnthropicNativeRound(
             chunks = chunks,
+            errorMessage = errorMessage
+        )
+    }
+
+    private suspend fun completeChatWithGoogleNativeToolLoop(
+        userMessages: List<MessageV2>,
+        assistantMessages: List<List<MessageV2>>,
+        platform: PlatformV2,
+        memoryPrompt: String?,
+        reasoningMode: ReasoningMode,
+        activeToolDefinitions: List<ToolDefinition>
+    ): Flow<ApiState> = flow {
+        emit(ApiState.Loading)
+        googleAPI.setToken(platform.token)
+        googleAPI.setAPIUrl(platform.apiUrl)
+
+        val searchDecisionPrompt = executeSearchDecisionIfNeeded(
+            userMessages = userMessages,
+            assistantMessages = assistantMessages,
+            platform = platform,
+            activeToolDefinitions = activeToolDefinitions
+        )
+        if (searchDecisionPrompt != null) {
+            emitProviderStatesSkippingLoading(
+                completeChatWithGoogle(
+                    userMessages = userMessages,
+                    assistantMessages = assistantMessages,
+                    platform = platform,
+                    memoryPrompt = memoryPrompt,
+                    reasoningMode = reasoningMode,
+                    extraPrompt = searchDecisionPrompt
+                )
+            )
+            return@flow
+        }
+
+        val prepared = withContext(Dispatchers.Default) {
+            val reasoningParameters = mapReasoningMode(platform, reasoningMode)
+            val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
+            val contents = buildGoogleContents(conversationContext.turns, platform.uid)
+            GoogleNativeToolRequest(
+                contents = contents,
+                generationConfig = GenerationConfig(
+                    temperature = platform.temperature,
+                    topP = platform.topP,
+                    thinkingConfig = reasoningParameters.googleThinkingBudget?.let { thinkingBudget ->
+                        dev.chungjungsoo.gptmobile.data.dto.google.request.ThinkingConfig(
+                            thinkingBudget = thinkingBudget,
+                            includeThoughts = reasoningParameters.googleIncludeThoughts ?: false
+                        )
+                    }
+                ),
+                systemInstruction = mergePromptSections(
+                    platform.systemPrompt,
+                    currentRuntimeContextPrompt(),
+                    memoryPrompt,
+                    conversationContext.summary,
+                    openAINativeToolInstruction(activeToolDefinitions)
+                )?.let { prompt ->
+                    Content(
+                        parts = listOf(Part.text(prompt))
+                    )
+                }
+            )
+        }
+
+        val config = toolLoopOrchestrator.configuration
+        val tools = googleNativeToolAdapter.toGoogleTools(activeToolDefinitions)
+        val continuationContents = mutableListOf<Content>()
+        val allResults = mutableListOf<ToolResult>()
+        val maxRounds = config.maxToolRounds.coerceAtLeast(1)
+
+        repeat(maxRounds) {
+            val round = collectGoogleNativeRound(
+                request = prepared.toRequest(
+                    continuationContents = continuationContents,
+                    tools = tools,
+                    toolConfig = GoogleToolConfig.Auto
+                ),
+                model = platform.model,
+                timeoutSeconds = platform.timeout
+            )
+            if (round.errorMessage != null) {
+                if (allResults.isEmpty()) {
+                    emitProviderStatesSkippingLoading(
+                        completeChatWithGoogle(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+                    )
+                } else {
+                    emit(ApiState.Error(round.errorMessage))
+                    emit(ApiState.Done)
+                }
+                return@flow
+            }
+
+            val calls = googleNativeToolAdapter
+                .toolCallsFromResponses(round.responses)
+                .distinctBy { call -> "${call.name}:${call.arguments}" }
+                .take(config.maxToolCallsPerRound.coerceAtLeast(0))
+            if (calls.isEmpty()) {
+                emit(ApiState.Done)
+                return@flow
+            }
+
+            val results = toolLoopOrchestrator.executeToolCalls(
+                calls = calls,
+                tools = activeToolDefinitions
+            ) { progress -> emit(progress) }
+            allResults += results
+            toolLoopOrchestrator.sourceMetadata(results)
+                .dedupeMessageSources()
+                .takeIf { it.isNotEmpty() }?.let { sources ->
+                emit(ApiState.SourcesUpdated(sources))
+            }
+            continuationContents += googleNativeToolAdapter.continuationContents(calls, results, config)
+        }
+
+        if (continuationContents.isEmpty()) {
+            emitProviderStatesSkippingLoading(
+                completeChatWithGoogle(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+            )
+            return@flow
+        }
+
+        val finalRound = collectGoogleNativeRound(
+            request = prepared.toRequest(
+                continuationContents = continuationContents,
+                tools = tools,
+                toolConfig = GoogleToolConfig.None,
+                extraInstruction = OPENAI_NATIVE_FINAL_TOOL_INSTRUCTION
+            ),
+            model = platform.model,
+            timeoutSeconds = platform.timeout
+        )
+        finalRound.errorMessage?.let { message ->
+            emit(ApiState.Error(message))
+        }
+        emit(ApiState.Done)
+    }.catch { e ->
+        emit(ApiState.Error(e.message ?: "鏈煡閿欒"))
+        emit(ApiState.Done)
+    }
+
+    private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.collectGoogleNativeRound(
+        request: GenerateContentRequest,
+        model: String,
+        timeoutSeconds: Int
+    ): GoogleNativeRound {
+        val responses = mutableListOf<GenerateContentResponse>()
+        var errorMessage: String? = null
+
+        googleAPI.streamGenerateContent(request, model, timeoutSeconds).collect { response ->
+            responses += response
+            when {
+                response.error != null -> errorMessage = response.error.message
+
+                response.candidates?.firstOrNull()?.content?.parts != null -> {
+                    val parts = response.candidates.first().content.parts
+                    parts.forEach { part ->
+                        part.text?.let { text ->
+                            if (part.thought == true) {
+                                emit(ApiState.Thinking(text))
+                            } else {
+                                emit(ApiState.Success(text))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return GoogleNativeRound(
+            responses = responses,
             errorMessage = errorMessage
         )
     }
@@ -1997,6 +2182,30 @@ private data class AnthropicNativeRound(
     val errorMessage: String?
 )
 
+private data class GoogleNativeToolRequest(
+    val contents: List<Content>,
+    val generationConfig: GenerationConfig?,
+    val systemInstruction: Content?
+) {
+    fun toRequest(
+        continuationContents: List<Content>,
+        tools: List<GoogleTool>,
+        toolConfig: GoogleToolConfig,
+        extraInstruction: String? = null
+    ): GenerateContentRequest = GenerateContentRequest(
+        contents = contents + continuationContents,
+        generationConfig = generationConfig,
+        systemInstruction = systemInstruction.withAdditionalText(extraInstruction),
+        tools = tools,
+        toolConfig = toolConfig
+    )
+}
+
+private data class GoogleNativeRound(
+    val responses: List<GenerateContentResponse>,
+    val errorMessage: String?
+)
+
 private fun List<ChatMessage>.withAdditionalSystemInstruction(extraInstruction: String?): List<ChatMessage> {
     val instruction = extraInstruction?.trim()?.takeIf { it.isNotBlank() } ?: return this
     val first = firstOrNull()
@@ -2015,6 +2224,12 @@ private fun List<ChatMessage>.withAdditionalSystemInstruction(extraInstruction: 
             )
         ) + this
     }
+}
+
+private fun Content?.withAdditionalText(extraInstruction: String?): Content? {
+    val instruction = extraInstruction?.trim()?.takeIf { it.isNotBlank() } ?: return this
+    return this?.copy(parts = parts + Part.text(instruction))
+        ?: Content(parts = listOf(Part.text(instruction)))
 }
 
 private fun List<WebSearchResult>.toMessageSourceMetadata(sourceToolName: String): List<MessageSourceMetadata> =

@@ -66,7 +66,7 @@ class ProviderToolAdapterTest {
     }
 
     @Test
-    fun `google adapter keeps json fallback until native dto support is verified`() {
+    fun `google json fallback adapter remains available for unsupported paths`() {
         val adapter = GoogleToolAdapter()
 
         val result = adapter.parseModelOutput("""{"type":"final_answer","content":"No tool needed."}""").getOrThrow()

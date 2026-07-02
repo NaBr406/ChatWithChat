@@ -15,7 +15,12 @@ import dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ContentBlockType
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ContentDeltaResponseChunk
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ContentStartResponseChunk
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.response.MessageResponseChunk
+import dev.chungjungsoo.gptmobile.data.dto.google.common.Content
+import dev.chungjungsoo.gptmobile.data.dto.google.common.Part
+import dev.chungjungsoo.gptmobile.data.dto.google.common.Role as GoogleRole
 import dev.chungjungsoo.gptmobile.data.dto.google.request.GenerateContentRequest
+import dev.chungjungsoo.gptmobile.data.dto.google.request.GoogleToolConfig
+import dev.chungjungsoo.gptmobile.data.dto.google.response.Candidate
 import dev.chungjungsoo.gptmobile.data.dto.google.response.GenerateContentResponse
 import dev.chungjungsoo.gptmobile.data.dto.groq.request.GroqChatCompletionRequest
 import dev.chungjungsoo.gptmobile.data.dto.groq.response.GroqChatCompletionChunk
@@ -68,6 +73,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -1017,6 +1023,101 @@ class ChatRepositoryImplTest {
     }
 
     @Test
+    fun `auto web search uses google native function calling`() = runBlocking {
+        val googleAPI = RecordingGoogleAPI(
+            responses = mutableListOf(
+                flowOf(
+                    GenerateContentResponse(
+                        candidates = listOf(
+                            Candidate(
+                                content = Content(
+                                    role = GoogleRole.MODEL,
+                                    parts = listOf(
+                                        Part.functionCall(
+                                            id = "func_1",
+                                            name = "web_search",
+                                            args = buildJsonObject {
+                                                put("query", JsonPrimitive("current Android target SDK"))
+                                            }
+                                        )
+                                    )
+                                )
+                            )
+                        )
+                    )
+                ),
+                flowOf(
+                    GenerateContentResponse(
+                        candidates = listOf(
+                            Candidate(
+                                content = Content(
+                                    role = GoogleRole.MODEL,
+                                    parts = listOf(Part.text("Final searched answer"))
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        )
+        val webSearchRepository = RecordingWebSearchRepository(
+            Result.success(listOf(webSearchResult()))
+        )
+        val repository = createRepository(
+            googleAPI = googleAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Auto,
+                toolCallingMode = ToolCallingMode.Auto
+            ),
+            webSearchRepository = webSearchRepository
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "What is the current Android target SDK?", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = googlePlatform()
+        ).toList()
+
+        assertEquals(
+            listOf(
+                ApiState.Loading,
+                ApiState.ToolStarted("web_search", "current Android target SDK"),
+                ApiState.ToolFinished("web_search", "current Android target SDK"),
+                ApiState.SourcesUpdated(
+                    listOf(
+                        MessageSourceMetadata(
+                            title = "Example Source",
+                            url = "https://example.com/source",
+                            snippet = "Example search snippet",
+                            sourceToolName = "web_search"
+                        )
+                    )
+                ),
+                ApiState.Success("Final searched answer"),
+                ApiState.Done
+            ),
+            states
+        )
+        assertEquals(listOf("current Android target SDK"), webSearchRepository.queries)
+        assertEquals(2, googleAPI.streamCalls)
+        assertEquals(GoogleToolConfig.Auto, googleAPI.requests[0].toolConfig)
+        assertTrue(googleAPI.requests[0].tools.orEmpty().flatMap { tool -> tool.functionDeclarations }.any { declaration -> declaration.name == "web_search" })
+        assertFalse(googleAPI.requests[0].systemInstruction?.parts.orEmpty().any { part -> part.text.orEmpty().contains("Available tools:") })
+        assertEquals(GoogleToolConfig.Auto, googleAPI.requests[1].toolConfig)
+        assertTrue(googleAPI.requests[1].contents.any { content ->
+            content.role == GoogleRole.MODEL &&
+                content.parts.any { part -> part.functionCall?.id == "func_1" && part.functionCall.name == "web_search" }
+        })
+        assertTrue(googleAPI.requests[1].contents.any { content ->
+            content.role == GoogleRole.USER &&
+                content.parts.any { part ->
+                    part.functionResponse?.id == "func_1" &&
+                        part.functionResponse.response.toString().contains("Example Source")
+                }
+        })
+    }
+
+    @Test
     fun `auto tool loop parse failure falls back to normal chat completion`() = runBlocking {
         val openAIAPI = RecordingOpenAIAPI(
             chatCompletionResponses = mutableListOf(
@@ -1114,6 +1215,7 @@ class ChatRepositoryImplTest {
         groqAPI: GroqAPI = FakeGroqAPI(emptyFlow()),
         openAIAPI: OpenAIAPI = RecordingOpenAIAPI(),
         anthropicAPI: AnthropicAPI = RecordingAnthropicAPI(),
+        googleAPI: GoogleAPI = RecordingGoogleAPI(),
         settingRepository: SettingRepository = settingRepository(WebSearchMode.Off),
         webSearchRepository: WebSearchRepository = RecordingWebSearchRepository(),
         toolLoopOrchestrator: ToolLoopOrchestrator = toolLoopOrchestrator(webSearchRepository),
@@ -1129,11 +1231,11 @@ class ChatRepositoryImplTest {
         openAIAPI = openAIAPI,
         groqAPI = groqAPI,
         anthropicAPI = anthropicAPI,
-        googleAPI = FakeGoogleAPI(),
+        googleAPI = googleAPI,
         attachmentUploadCoordinator = AttachmentUploadCoordinator(
             openAIAPI,
             anthropicAPI,
-            FakeGoogleAPI()
+            googleAPI
         ),
         contextBuilder = ContextBuilder(),
         webSearchRepository = webSearchRepository,
@@ -1167,6 +1269,17 @@ class ChatRepositoryImplTest {
         apiUrl = "https://api.openai.com/",
         token = "token",
         model = "gpt-5",
+        systemPrompt = systemPrompt,
+        stream = true
+    )
+
+    private fun googlePlatform(systemPrompt: String? = null) = PlatformV2(
+        uid = "google-platform",
+        name = "Google",
+        compatibleType = ClientType.GOOGLE,
+        apiUrl = "https://generativelanguage.googleapis.com",
+        token = "token",
+        model = "gemini-pro",
         systemPrompt = systemPrompt,
         stream = true
     )
@@ -1415,7 +1528,12 @@ class ChatRepositoryImplTest {
         override suspend fun isFileAvailable(fileId: String): Boolean = false
     }
 
-    private class FakeGoogleAPI : GoogleAPI {
+    private class RecordingGoogleAPI(
+        private val responses: MutableList<Flow<GenerateContentResponse>> = mutableListOf(emptyFlow())
+    ) : GoogleAPI {
+        var streamCalls = 0
+        val requests = mutableListOf<GenerateContentRequest>()
+
         override fun setToken(token: String?) = Unit
 
         override fun setAPIUrl(url: String) = Unit
@@ -1424,7 +1542,15 @@ class ChatRepositoryImplTest {
             request: GenerateContentRequest,
             model: String,
             timeoutSeconds: Int
-        ): Flow<GenerateContentResponse> = emptyFlow()
+        ): Flow<GenerateContentResponse> {
+            streamCalls += 1
+            requests += request
+            return if (responses.isNotEmpty()) {
+                responses.removeAt(0)
+            } else {
+                emptyFlow()
+            }
+        }
 
         override suspend fun uploadFile(
             filePath: String,

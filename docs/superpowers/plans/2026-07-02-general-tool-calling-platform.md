@@ -407,7 +407,7 @@ This task can be split across future PRs. Do not block Tasks 1-7 on this.
 
 - [x] Add native OpenAI Chat Completions / OpenRouter tool support if the app's OpenAI-compatible DTO path supports it.
 - [x] Add Anthropic native `tool_use` / `tool_result` support with DTO tests.
-- [ ] Add Google function-calling support with DTO tests.
+- [x] Add Google function-calling support with DTO tests.
 - [x] Keep JSON fallback as a provider capability fallback.
 - [x] Add per-provider tests that prove unsupported native tool protocols do not break normal chat.
 
