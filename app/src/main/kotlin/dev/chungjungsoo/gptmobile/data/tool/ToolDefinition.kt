@@ -40,12 +40,12 @@ data class ToolDefinition(
     companion object {
         val WebSearch = ToolDefinition(
             name = "web_search",
-            description = "Search the public web for recent news, changing facts, or external source material. Rewrite natural-language requests into concise search-engine queries with likely entity, topic/category, timeframe, and geography/source scope. Do not use this for the user's local date, time, timezone, device state, or app settings.",
+            description = "Search the public web for recent news, changing facts, or external source material. Rewrite natural-language requests into concise search-engine queries with likely entity, topic/category, timeframe, geography/source scope, and primary or official source terms when useful. Prefer the user's language for local/regional facts. Do not use this for the user's local date, time, timezone, device state, or app settings.",
             parameters = Parameters(
                 properties = mapOf(
                     "query" to Parameter(
                         type = "string",
-                        description = "A concise, structured public-web search query. Include concrete dates/years, canonical names, geography, and category/source terms when useful. Do not use clock/time-only queries."
+                        description = "A concise, structured public-web search query. Include concrete dates/years, canonical names, geography, category/source terms, and official or primary-source terms when useful. Do not use clock/time-only queries."
                     )
                 ),
                 required = listOf("query")

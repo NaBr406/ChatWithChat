@@ -25,6 +25,7 @@ class ToolPromptBuilder(
             appendLine("- Use at most ${config.maxToolRounds.coerceAtLeast(0)} tool rounds before returning final_answer.")
             appendLine("- Keep arguments concise and match each tool parameter schema.")
             appendLine("- For web_search, rewrite the user's request into a search-engine query with likely entity, topic/category, timeframe, and geography/source scope; do not merely copy the user's wording.")
+            appendLine("- Prefer official, primary, or local-language source terms for factual data such as weather, laws, finance, health, releases, and schedules.")
             appendLine("- Resolve relative dates such as today, yesterday, latest, or current into concrete dates or years when the conversation/runtime context provides them.")
             appendLine("- For broad search requests, choose sensible default scopes and complementary queries instead of asking a clarifying question first.")
             appendLine("- Do not call web_search for the user's local date, time, timezone, device state, or app settings.")

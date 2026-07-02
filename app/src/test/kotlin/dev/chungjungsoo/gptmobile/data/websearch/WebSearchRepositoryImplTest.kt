@@ -47,9 +47,10 @@ class WebSearchRepositoryImplTest {
                 config = WebSearchConfig(searxngBaseUrl = baseUrl, maxResults = 5)
             )
 
-            val results = repository.search("android", limit = 10).getOrThrow()
+            val results = repository.search("android kotlin", limit = 10).getOrThrow()
 
             assertEquals(2, results.size)
+            val androidResult = results.first { it.url == "https://developer.android.com/example" }
             assertEquals(
                 WebSearchResult(
                     title = "Android target SDK",
@@ -58,9 +59,52 @@ class WebSearchRepositoryImplTest {
                     source = "google",
                     publishedAt = "2026-01-01"
                 ),
-                results.first()
+                androidResult
             )
-            assertEquals("https://kotlinlang.org", results[1].url)
+            assertTrue(results.any { it.url == "https://kotlinlang.org" })
+        }
+    }
+
+    @Test
+    fun `search filters search engine redirects and ranks matching local results`() = runBlocking {
+        withServer(
+            statusCode = 200,
+            body = """
+            {
+              "results": [
+                {
+                  "title": "How to get help in Windows - Microsoft Support",
+                  "url": "https://www.bing.com/ck/a?u=a1aHR0cHM6Ly9zdXBwb3J0Lm1pY3Jvc29mdC5jb20vZW4tdXMvd2luZG93cw&ntb=1",
+                  "content": "Search for help in Windows settings and apps.",
+                  "engine": "bing web html"
+                },
+                {
+                  "title": "荆门天气预报_2026年07月02日荆门市天气 - 东方天气",
+                  "url": "https://tianqi.eastday.com/tianqi/jingmen/20260702.html",
+                  "content": "今天是2026年07月02日。荆门天气关键词是阴。",
+                  "engine": "presearch"
+                },
+                {
+                  "title": "荆门-天气预报 - 中央气象台",
+                  "url": "http://www.nmc.cn/publish/forecast/AHB/jingmen.html",
+                  "content": "湖北荆门天气预报 中央气象台",
+                  "engine": "presearch"
+                }
+              ]
+            }
+            """.trimIndent()
+        ) { baseUrl, _ ->
+            val repository = WebSearchRepositoryImpl(
+                httpClient = NetworkClient(CIO)(),
+                config = WebSearchConfig(searxngBaseUrl = baseUrl, maxResults = 5)
+            )
+
+            val results = repository.search("荆门市 天气预报 2026-07-02 湖北", limit = 5).getOrThrow()
+
+            assertEquals(2, results.size)
+            assertTrue(results.none { it.url.contains("bing.com") })
+            assertEquals("http://www.nmc.cn/publish/forecast/AHB/jingmen.html", results[0].url)
+            assertEquals("https://tianqi.eastday.com/tianqi/jingmen/20260702.html", results[1].url)
         }
     }
 

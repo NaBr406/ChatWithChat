@@ -24,6 +24,7 @@ class SearchDecisionPromptBuilder(
         appendLine("- Convert relative dates such as today, yesterday, this week, latest, or current into concrete dates or years using the runtime context when available.")
         appendLine("- Remove chat filler words, requests to explain/summarize, and app/tool wording that does not help web search.")
         appendLine("- For broad or underspecified requests, choose sensible default scopes instead of refusing: use the user's language and context, and add one broader complementary query when useful.")
+        appendLine("- Prefer official, primary, or local-language sources for factual data such as weather, laws, finance, health, releases, and schedules.")
         appendLine("- Prefer canonical names and terms likely to match sources; for Chinese requests about international topics, one Chinese query and one English query is often better than two near-duplicates.")
         appendLine("- Keep each query concise, specific, and source-searchable; avoid question sentences unless that wording is itself the target.")
         runtimeContext?.trim()?.takeIf { it.isNotBlank() }?.let { context ->

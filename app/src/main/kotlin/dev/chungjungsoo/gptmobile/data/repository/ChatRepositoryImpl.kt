@@ -1473,7 +1473,8 @@ private const val MAX_SEARCH_QUERY_COUNT = 2
 private const val MAX_SOURCE_SNIPPET_CHARS = 240
 private const val OPENAI_NATIVE_TOOL_INSTRUCTION =
     "Use the available tools only when the latest user request needs current web information or source inspection. " +
-        "When calling web_search, rewrite the user's request into a concise search-engine query with the likely entity, topic, timeframe, and geography/source scope; do not merely copy the user's wording. " +
+        "When calling web_search, rewrite the user's request into a concise search-engine query with the likely entity, topic, timeframe, geography/source scope, and official or primary-source terms when useful; do not merely copy the user's wording. " +
+        "Prefer the user's language for local or regional facts. " +
         "Do not use web_search for the user's local date, time, timezone, device state, or app settings. " +
         "Prefer answering directly when the conversation is enough. If you use web sources, cite source URLs in the answer."
 private const val OPENAI_NATIVE_FINAL_TOOL_INSTRUCTION =
