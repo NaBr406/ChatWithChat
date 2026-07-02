@@ -31,7 +31,7 @@ class ToolLoopOrchestrator(
         val scratchpad = mutableListOf<ToolMessage>()
         val allCalls = mutableListOf<ToolCall>()
         val allResults = mutableListOf<ToolResult>()
-        val budget = ToolBudgetState(config)
+        val budget = ToolBudgetState(config, toolExecutor::policyFor)
 
         repeat(maxRounds) {
             val toolPrompt = adapter.buildToolPrompt(
@@ -113,10 +113,16 @@ class ToolLoopOrchestrator(
     suspend fun executeToolCalls(
         calls: List<ToolCall>,
         onProgress: suspend (ApiState) -> Unit = {}
-    ): List<ToolResult> = calls
-        .distinctBy { call -> "${call.name}:${call.arguments}" }
-        .take(config.maxToolCallsPerRound.coerceAtLeast(0))
-        .let { boundedCalls -> executeCallsWithProgress(boundedCalls, onProgress) }
+    ): List<ToolResult> {
+        val boundedCalls = calls
+            .distinctBy { call -> "${call.name}:${call.arguments}" }
+            .take(config.maxToolCallsPerRound.coerceAtLeast(0))
+        val budgetedCalls = ToolBudgetState(config, toolExecutor::policyFor).select(boundedCalls)
+        budgetedCalls.rejected.forEach { rejected ->
+            onProgress(ApiState.ToolFailed(rejected.name, rejected.content))
+        }
+        return executeCallsWithProgress(budgetedCalls.allowed, onProgress) + budgetedCalls.rejected
+    }
 
     private suspend fun executeCallsWithProgress(
         calls: List<ToolCall>,
@@ -155,30 +161,28 @@ class ToolLoopOrchestrator(
     ): String? = adapter.buildFinalAnswerPrompt(results, draftFinalAnswer, config)
 }
 
-private class ToolBudgetState(config: ToolLoopConfig) {
+private class ToolBudgetState(
+    config: ToolLoopConfig,
+    private val policyFor: (String) -> ToolPolicy
+) {
     private var remainingToolCalls = config.maxToolCallsPerChat.coerceAtLeast(0)
-    private var remainingSearchQueries = config.maxSearchQueriesPerChat.coerceAtLeast(0)
-    private var remainingFetchedUrls = config.maxFetchedUrlsPerChat.coerceAtLeast(0)
-    private val maxSearchQueriesPerRequest = config.maxSearchQueriesPerRequest.coerceAtLeast(0)
-    private val maxFetchedUrlsPerRequest = config.maxFetchedUrlsPerRequest.coerceAtLeast(0)
+    private val remainingToolCallsByName = mutableMapOf<String, Int>()
 
     fun select(calls: List<ToolCall>): BudgetedToolCalls {
         val allowed = mutableListOf<ToolCall>()
         val rejected = mutableListOf<ToolResult>()
-        var requestSearchQueries = 0
-        var requestFetchedUrls = 0
+        val requestToolCallsByName = mutableMapOf<String, Int>()
 
         calls.forEach { call ->
+            val policy = policyFor(call.name)
+            val requestToolCalls = requestToolCallsByName[call.name] ?: 0
+            val remainingPolicyCalls = remainingPolicyCalls(call.name, policy)
             val rejection = when {
                 remainingToolCalls <= 0 -> "tool_budget_exceeded:max_tool_calls_per_chat"
-                call.name == ToolDefinition.WebSearch.name && requestSearchQueries >= maxSearchQueriesPerRequest ->
-                    "tool_budget_exceeded:max_search_queries_per_request"
-                call.name == ToolDefinition.WebSearch.name && remainingSearchQueries <= 0 ->
-                    "tool_budget_exceeded:max_search_queries_per_chat"
-                call.name == ToolDefinition.FetchUrl.name && requestFetchedUrls >= maxFetchedUrlsPerRequest ->
-                    "tool_budget_exceeded:max_fetched_urls_per_request"
-                call.name == ToolDefinition.FetchUrl.name && remainingFetchedUrls <= 0 ->
-                    "tool_budget_exceeded:max_fetched_urls_per_chat"
+                policy.maxCallsPerRequest != null && requestToolCalls >= policy.maxCallsPerRequest.coerceAtLeast(0) ->
+                    "tool_budget_exceeded:${policy.maxCallsPerRequestKey(call.name)}"
+                remainingPolicyCalls != null && remainingPolicyCalls <= 0 ->
+                    "tool_budget_exceeded:${policy.maxCallsPerChatKey(call.name)}"
                 else -> null
             }
 
@@ -187,21 +191,26 @@ private class ToolBudgetState(config: ToolLoopConfig) {
             } else {
                 allowed += call
                 remainingToolCalls -= 1
-                when (call.name) {
-                    ToolDefinition.WebSearch.name -> {
-                        remainingSearchQueries -= 1
-                        requestSearchQueries += 1
-                    }
-                    ToolDefinition.FetchUrl.name -> {
-                        remainingFetchedUrls -= 1
-                        requestFetchedUrls += 1
-                    }
+                requestToolCallsByName[call.name] = requestToolCalls + 1
+                remainingPolicyCalls?.let { remaining ->
+                    remainingToolCallsByName[call.name] = remaining - 1
                 }
             }
         }
 
         return BudgetedToolCalls(allowed, rejected)
     }
+
+    private fun remainingPolicyCalls(toolName: String, policy: ToolPolicy): Int? =
+        policy.maxCallsPerChat?.coerceAtLeast(0)?.let { limit ->
+            remainingToolCallsByName.getOrPut(toolName) { limit }
+        }
+
+    private fun ToolPolicy.maxCallsPerRequestKey(toolName: String): String =
+        maxCallsPerRequestErrorKey ?: "max_${toolName}_calls_per_request"
+
+    private fun ToolPolicy.maxCallsPerChatKey(toolName: String): String =
+        maxCallsPerChatErrorKey ?: "max_${toolName}_calls_per_chat"
 }
 
 private data class BudgetedToolCalls(

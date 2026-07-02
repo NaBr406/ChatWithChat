@@ -138,6 +138,74 @@ class ToolExecutorTest {
     }
 
     @Test
+    fun `provider policy timeout overrides global timeout`() = runBlocking {
+        val executor = ToolExecutor(
+            ToolRegistry(
+                listOf(
+                    object : ToolProvider {
+                        override val definition: ToolDefinition = ToolDefinition(
+                            name = "slow_tool",
+                            description = "Sleeps longer than the timeout.",
+                            parameters = ToolDefinition.Parameters()
+                        )
+                        override val policy: ToolPolicy = ToolPolicy(timeoutSeconds = 0)
+
+                        override suspend fun execute(call: ToolCall, config: ToolLoopConfig): ToolResult {
+                            delay(1_000)
+                            return ToolResult(call.id, call.name, "done")
+                        }
+                    }
+                )
+            )
+        )
+
+        val toolResult = executor.execute(
+            ToolCall(
+                id = "call_policy_timeout",
+                name = "slow_tool",
+                arguments = "{}"
+            ),
+            ToolLoopConfig(toolTimeoutSeconds = 20)
+        )
+
+        assertTrue(toolResult.isError)
+        assertTrue(toolResult.content.contains("tool_timeout:slow_tool"))
+    }
+
+    @Test
+    fun `provider policy result limit overrides global result limit`() = runBlocking {
+        val executor = ToolExecutor(
+            ToolRegistry(
+                listOf(
+                    object : ToolProvider {
+                        override val definition: ToolDefinition = ToolDefinition(
+                            name = "bounded_tool",
+                            description = "Returns a bounded result.",
+                            parameters = ToolDefinition.Parameters()
+                        )
+                        override val policy: ToolPolicy = ToolPolicy(maxResultChars = 4)
+
+                        override suspend fun execute(call: ToolCall, config: ToolLoopConfig): ToolResult =
+                            ToolResult(call.id, call.name, "abcdef")
+                    }
+                )
+            )
+        )
+
+        val toolResult = executor.execute(
+            ToolCall(
+                id = "call_policy_chars",
+                name = "bounded_tool",
+                arguments = "{}"
+            ),
+            ToolLoopConfig(maxToolResultChars = 100)
+        )
+
+        assertFalse(toolResult.isError)
+        assertEquals("abcd", toolResult.content)
+    }
+
+    @Test
     fun `invalid fetch url returns error result`() = runBlocking {
         val executor = builtInExecutor(FakeWebSearchRepository(emptyList()))
 
@@ -252,6 +320,23 @@ class ToolExecutorTest {
                 )
             )
         )
+    }
+
+    @Test
+    fun `built in providers expose default tool policies`() {
+        val executor = builtInExecutor(FakeWebSearchRepository(emptyList()))
+
+        val webSearchPolicy = executor.policyFor(ToolDefinition.WebSearch.name)
+        assertEquals(2, webSearchPolicy.maxCallsPerRequest)
+        assertEquals(4, webSearchPolicy.maxCallsPerChat)
+        assertEquals("max_search_queries_per_request", webSearchPolicy.maxCallsPerRequestErrorKey)
+        assertEquals("max_search_queries_per_chat", webSearchPolicy.maxCallsPerChatErrorKey)
+
+        val fetchUrlPolicy = executor.policyFor(ToolDefinition.FetchUrl.name)
+        assertEquals(2, fetchUrlPolicy.maxCallsPerRequest)
+        assertEquals(4, fetchUrlPolicy.maxCallsPerChat)
+        assertEquals("max_fetched_urls_per_request", fetchUrlPolicy.maxCallsPerRequestErrorKey)
+        assertEquals("max_fetched_urls_per_chat", fetchUrlPolicy.maxCallsPerChatErrorKey)
     }
 
     private fun builtInExecutor(searchRepository: WebSearchRepository): ToolExecutor = ToolExecutor(

@@ -215,11 +215,16 @@ class ToolLoopOrchestratorTest {
     fun `search query budget rejects extra calls as recoverable tool errors`() = runBlocking {
         val executedCalls = mutableListOf<ToolCall>()
         val orchestrator = ToolLoopOrchestrator(
-            toolExecutor = recordingExecutor(executedCalls),
+            toolExecutor = recordingExecutor(
+                executedCalls = executedCalls,
+                webSearchPolicy = ToolPolicy(
+                    maxCallsPerRequest = 1,
+                    maxCallsPerRequestErrorKey = "max_search_queries_per_request"
+                )
+            ),
             config = ToolLoopConfig(
                 maxToolRounds = 1,
-                maxToolCallsPerRound = 4,
-                maxSearchQueriesPerRequest = 1
+                maxToolCallsPerRound = 4
             )
         )
 
@@ -240,6 +245,73 @@ class ToolLoopOrchestratorTest {
         assertEquals(2, toolResults.results.size)
         assertTrue(toolResults.results.single { it.callId == "call_2" }.isError)
         assertTrue(toolResults.finalAnswerPrompt.orEmpty().contains("tool_budget_exceeded:max_search_queries_per_request"))
+    }
+
+    @Test
+    fun `custom tool policy rejects extra calls without config field`() = runBlocking {
+        val executedCalls = mutableListOf<ToolCall>()
+        val provider = recordingProvider(
+            definition = ToolDefinition(
+                name = "current_datetime",
+                description = "Returns the current date and time.",
+                parameters = ToolDefinition.Parameters()
+            ),
+            executedCalls = executedCalls,
+            policy = ToolPolicy(maxCallsPerRequest = 1)
+        )
+        val orchestrator = ToolLoopOrchestrator(
+            toolExecutor = ToolExecutor(ToolRegistry(listOf(provider))),
+            config = ToolLoopConfig(maxToolRounds = 1, maxToolCallsPerRound = 4)
+        )
+
+        val result = orchestrator.runLoop {
+            Result.success(
+                """
+                {"type":"tool_calls","tool_calls":[
+                  {"id":"call_1","name":"current_datetime","arguments":{}},
+                  {"id":"call_2","name":"current_datetime","arguments":{"timezone":"UTC"}}
+                ]}
+                """.trimIndent()
+            )
+        }
+
+        assertTrue(result is ToolLoopResult.ToolResults)
+        val toolResults = result as ToolLoopResult.ToolResults
+        assertEquals(listOf("call_1"), executedCalls.map { it.id })
+        assertTrue(toolResults.results.single { it.callId == "call_2" }.isError)
+        assertTrue(toolResults.finalAnswerPrompt.orEmpty().contains("tool_budget_exceeded:max_current_datetime_calls_per_request"))
+    }
+
+    @Test
+    fun `custom tool policy chat budget is enforced across rounds`() = runBlocking {
+        val executedCalls = mutableListOf<ToolCall>()
+        val provider = recordingProvider(
+            definition = ToolDefinition(
+                name = "current_datetime",
+                description = "Returns the current date and time.",
+                parameters = ToolDefinition.Parameters()
+            ),
+            executedCalls = executedCalls,
+            policy = ToolPolicy(maxCallsPerChat = 1)
+        )
+        val responses = mutableListOf(
+            """{"type":"tool_calls","tool_calls":[{"id":"call_1","name":"current_datetime","arguments":{}}]}""",
+            """{"type":"tool_calls","tool_calls":[{"id":"call_2","name":"current_datetime","arguments":{"timezone":"UTC"}}]}"""
+        )
+        val orchestrator = ToolLoopOrchestrator(
+            toolExecutor = ToolExecutor(ToolRegistry(listOf(provider))),
+            config = ToolLoopConfig(maxToolRounds = 2, maxToolCallsPerRound = 4)
+        )
+
+        val result = orchestrator.runLoop {
+            Result.success(responses.removeAt(0))
+        }
+
+        assertTrue(result is ToolLoopResult.ToolResults)
+        val toolResults = result as ToolLoopResult.ToolResults
+        assertEquals(listOf("call_1"), executedCalls.map { it.id })
+        assertTrue(toolResults.results.single { it.callId == "call_2" }.isError)
+        assertTrue(toolResults.finalAnswerPrompt.orEmpty().contains("tool_budget_exceeded:max_current_datetime_calls_per_chat"))
     }
 
     @Test
@@ -298,27 +370,34 @@ class ToolLoopOrchestratorTest {
         assertTrue(prompt.contains("https://example.com/source"))
     }
 
-    private fun recordingExecutor(executedCalls: MutableList<ToolCall>): ToolExecutor = ToolExecutor(
+    private fun recordingExecutor(
+        executedCalls: MutableList<ToolCall>,
+        webSearchPolicy: ToolPolicy = ToolPolicy.default(),
+        fetchUrlPolicy: ToolPolicy = ToolPolicy.default()
+    ): ToolExecutor = ToolExecutor(
         ToolRegistry(
-            definitions = ToolDefinition.BuiltIns,
-            handlers = mapOf(
-                ToolDefinition.WebSearch.name to ToolHandler { call, _ ->
-                    executedCalls += call
-                    ToolResult(
-                        callId = call.id,
-                        name = call.name,
-                        content = "Result for ${call.name}"
-                    )
-                },
-                ToolDefinition.FetchUrl.name to ToolHandler { call, _ ->
-                    executedCalls += call
-                    ToolResult(
-                        callId = call.id,
-                        name = call.name,
-                        content = "Result for ${call.name}"
-                    )
-                }
+            listOf(
+                recordingProvider(ToolDefinition.WebSearch, executedCalls, webSearchPolicy),
+                recordingProvider(ToolDefinition.FetchUrl, executedCalls, fetchUrlPolicy)
             )
         )
     )
+
+    private fun recordingProvider(
+        definition: ToolDefinition,
+        executedCalls: MutableList<ToolCall>,
+        policy: ToolPolicy = ToolPolicy.default()
+    ): ToolProvider = object : ToolProvider {
+        override val definition: ToolDefinition = definition
+        override val policy: ToolPolicy = policy
+
+        override suspend fun execute(call: ToolCall, config: ToolLoopConfig): ToolResult {
+            executedCalls += call
+            return ToolResult(
+                callId = call.id,
+                name = call.name,
+                content = "Result for ${call.name}"
+            )
+        }
+    }
 }

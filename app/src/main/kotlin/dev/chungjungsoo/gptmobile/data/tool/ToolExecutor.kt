@@ -19,15 +19,16 @@ class ToolExecutor(
     ): ToolResult {
         val handler = toolRegistry.handlerFor(call.name)
             ?: return call.errorResult("unknown_tool:${call.name}")
+        val policy = toolRegistry.policyFor(call.name)
 
         return try {
             withContext(dispatcher) {
-                withTimeout(config.timeoutMillis()) {
+                withTimeout(config.timeoutMillis(policy)) {
                     runCatching {
                         handler.execute(call, config)
                     }.getOrElse { throwable ->
                         call.errorResult("tool_failed:${throwable.message ?: throwable::class.simpleName.orEmpty()}")
-                    }
+                    }.clipContent(policy.maxResultChars ?: config.maxToolResultChars)
                 }
             }
         } catch (throwable: TimeoutCancellationException) {
@@ -44,7 +45,12 @@ class ToolExecutor(
 
     fun progressLabel(call: ToolCall): String = toolRegistry.progressLabel(call)
 
-    private fun ToolLoopConfig.timeoutMillis(): Long = toolTimeoutSeconds.coerceAtLeast(0) * 1_000L
+    fun policyFor(toolName: String): ToolPolicy = toolRegistry.policyFor(toolName)
+
+    private fun ToolLoopConfig.timeoutMillis(policy: ToolPolicy): Long =
+        (policy.timeoutSeconds ?: toolTimeoutSeconds).coerceAtLeast(0) * 1_000L
+
+    private fun ToolResult.clipContent(maxChars: Int): ToolResult = copy(content = content.clip(maxChars))
 }
 
 internal fun ToolCall.errorResult(message: String): ToolResult = ToolResult(

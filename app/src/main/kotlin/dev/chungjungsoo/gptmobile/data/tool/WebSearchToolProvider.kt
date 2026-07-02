@@ -8,6 +8,12 @@ class WebSearchToolProvider(
     private val webSearchRepository: WebSearchRepository
 ) : ToolProvider {
     override val definition: ToolDefinition = ToolDefinition.WebSearch
+    override val policy: ToolPolicy = ToolPolicy(
+        maxCallsPerRequest = 2,
+        maxCallsPerChat = 4,
+        maxCallsPerRequestErrorKey = "max_search_queries_per_request",
+        maxCallsPerChatErrorKey = "max_search_queries_per_chat"
+    )
 
     override fun progressLabel(call: ToolCall): String = call.stringArgument("query")
         .getOrNull()
@@ -38,7 +44,7 @@ class WebSearchToolProvider(
         return ToolResult(
             callId = call.id,
             name = call.name,
-            content = formatSearchResults(query, boundedResults).clip(config.maxToolResultChars),
+            content = formatSearchResults(query, boundedResults),
             metadata = buildMap {
                 put("result_count", boundedResults.size.toString())
                 boundedResults.forEachIndexed { index, result ->

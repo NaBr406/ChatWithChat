@@ -11,6 +11,12 @@ class FetchUrlToolProvider(
     private val webPageExtractor: WebPageExtractor
 ) : ToolProvider {
     override val definition: ToolDefinition = ToolDefinition.FetchUrl
+    override val policy: ToolPolicy = ToolPolicy(
+        maxCallsPerRequest = 2,
+        maxCallsPerChat = 4,
+        maxCallsPerRequestErrorKey = "max_fetched_urls_per_request",
+        maxCallsPerChatErrorKey = "max_fetched_urls_per_chat"
+    )
 
     override fun progressLabel(call: ToolCall): String = call.stringArgument("url")
         .getOrNull()
@@ -33,7 +39,7 @@ class FetchUrlToolProvider(
         return ToolResult(
             callId = call.id,
             name = call.name,
-            content = formatFetchedPage(page, config.maxFetchedPageChars).clip(config.maxToolResultChars),
+            content = formatFetchedPage(page, config.maxFetchedPageChars),
             metadata = buildMap {
                 put("url", page.url)
                 put("source_tool", call.name)
