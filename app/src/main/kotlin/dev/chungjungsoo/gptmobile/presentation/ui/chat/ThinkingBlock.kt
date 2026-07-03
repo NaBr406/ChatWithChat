@@ -102,6 +102,8 @@ fun ThinkingBlock(
             ChatMarkdown(
                 content = displayText,
                 contentIdentity = contentIdentity,
+                renderMath = true,
+                useMathJax = !isLoading,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(start = 12.dp, end = 12.dp, bottom = 10.dp)

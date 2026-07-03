@@ -2,6 +2,8 @@ package dev.chungjungsoo.gptmobile.presentation.ui.chat
 
 import android.content.ClipData
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -9,12 +11,15 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material3.ButtonDefaults
@@ -40,6 +45,7 @@ import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import com.mikepenz.markdown.annotator.annotatorSettings
@@ -70,17 +76,30 @@ private const val CLIPBOARD_LABEL_CODE = "code"
 private const val DISPLAY_MATH_PLACEHOLDER_PREFIX = "CHAT_MATH_DISPLAY_"
 private const val DISPLAY_MATH_PLACEHOLDER_SUFFIX = "_TOKEN"
 private const val DISPLAY_MATH_PLACEHOLDER_TEST_NONCE = "test"
+private const val TABLE_MAX_VISIBLE_TEXT_LENGTH = 34
 
 @Composable
 fun ChatMarkdown(
     content: String,
     contentIdentity: Any = content,
+    renderMath: Boolean = true,
+    useMathJax: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val isDarkTheme = isSystemInDarkTheme()
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
-    val parsed = remember(content) { parseChatMarkdown(content) }
+
+    val parsed = remember(content, renderMath) {
+        if (renderMath) {
+            parseChatMarkdown(content)
+        } else {
+            ParsedChatMarkdown(
+                blocks = listOf(ChatMarkdownBlock.Markdown(content)),
+                inlineMath = emptyList()
+            )
+        }
+    }
     val displayMathNonce = remember(contentIdentity) { stableDisplayMathNonce(contentIdentity) }
     val highlightsBuilder = remember(isDarkTheme) {
         Highlights.Builder().theme(SyntaxThemes.atom(isDarkTheme))
@@ -110,16 +129,19 @@ fun ChatMarkdown(
             }
         }
     }
-    val inlineContent = remember(parsed.inlineMath) {
+    val inlineMathContent = remember(parsed.inlineMath, useMathJax) {
         parsed.inlineMath.associate { token ->
             token.placeholder to InlineTextContent(
                 placeholder = Placeholder(
                     width = inlineMathWidth(token.tex),
                     height = inlineMathHeight(token.tex),
-                    placeholderVerticalAlign = PlaceholderVerticalAlign.Center
+                    placeholderVerticalAlign = PlaceholderVerticalAlign.TextCenter
                 )
             ) {
-                InlineMathView(token.tex)
+                InlineMathView(
+                    tex = token.tex,
+                    useMathJax = useMathJax
+                )
             }
         }
     }
@@ -130,7 +152,7 @@ fun ChatMarkdown(
             }
         }
     }
-    val components = remember(highlightsBuilder, copyCodeToClipboard, displayMathByPlaceholder, annotator) {
+    val components = remember(highlightsBuilder, copyCodeToClipboard, displayMathByPlaceholder, inlineMathByPlaceholder, inlineMathContent, annotator, useMathJax) {
         markdownComponents(
             codeBlock = {
                 MarkdownCodeBlock(it.content, it.node, it.typography.code) { code, language, style ->
@@ -179,6 +201,7 @@ fun ChatMarkdown(
                         displayMathBlocks.forEach { displayMath ->
                             DisplayMathView(
                                 tex = displayMath.tex,
+                                useMathJax = useMathJax,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .wrapContentHeight()
@@ -188,6 +211,14 @@ fun ChatMarkdown(
                 } else {
                     DefaultParagraph(model.content, model.node, model.typography.paragraph, annotator)
                 }
+            },
+            table = { model ->
+                ChatMarkdownTable(
+                    rawTable = extractNodeText(model.content, model.node),
+                    style = model.typography.paragraph,
+                    inlineContent = inlineMathContent,
+                    inlineMathByPlaceholder = inlineMathByPlaceholder
+                )
             }
         )
     }
@@ -200,7 +231,7 @@ fun ChatMarkdown(
 
         Markdown(
             markdownState = markdownState,
-            inlineContent = markdownInlineContent(inlineContent),
+            inlineContent = markdownInlineContent(inlineMathContent),
             annotator = annotator,
             components = components,
             typography = chatMarkdownTypography(),
@@ -350,13 +381,65 @@ private fun appendTextWithInlineMath(
     }
 }
 
-private fun inlineMathWidth(tex: String) = (tex.length.coerceIn(2, 24) * 0.55f).em
+private fun inlineMathWidth(tex: String) = tex.estimateInlineMathWidthEm().em
 
 private fun inlineMathHeight(tex: String) = when {
-    tex.containsDisplaySizedMath() -> 3.2.em
-    tex.containsSuperscriptOrSubscriptMath() -> 2.1.em
-    else -> 1.6.em
+    tex.containsDisplaySizedMath() -> 2.4.em
+    tex.containsSuperscriptOrSubscriptMath() -> 1.55.em
+    else -> 1.28.em
 }
+
+private fun String.estimateInlineMathWidthEm(): Float {
+    val normalized = trim()
+    if (normalized.isEmpty()) return 0.6f
+
+    val compact = normalized.replace("""\s+""".toRegex(), "")
+    estimateSimpleInlineMathWidthEm(compact)?.let { return it }
+
+    val visibleLength = normalized.visibleMathLength().coerceAtLeast(1)
+    val perCharacterWidth = when {
+        visibleLength <= 3 -> 0.48f
+        visibleLength <= 10 -> 0.54f
+        else -> 0.58f
+    }
+    val padding = when {
+        visibleLength <= 3 -> 0.2f
+        visibleLength <= 10 -> 0.45f
+        else -> 0.8f
+    }
+    val tallOperatorBonus = if (containsDisplaySizedMath()) 0.85f else 0f
+
+    return (visibleLength * perCharacterWidth + padding + tallOperatorBonus).coerceIn(0.72f, 42f)
+}
+
+private fun estimateSimpleInlineMathWidthEm(compactTex: String): Float? {
+    if (compactTex.length == 1 && compactTex[0].isLetterOrDigit()) {
+        return 0.78f
+    }
+
+    val scriptMarkerIndex = compactTex.indexOfFirst { it == '_' || it == '^' }
+    if (scriptMarkerIndex <= 0) return null
+
+    val base = compactTex.substring(0, scriptMarkerIndex)
+    if (!base.isSimpleMathAtom()) return null
+
+    val scriptText = compactTex.substring(scriptMarkerIndex + 1)
+        .removeSurrounding("{", "}")
+    if (scriptText.isBlank()) return null
+
+    val baseWidth = if (base.startsWith("\\")) 1.05f else 0.78f
+    val scriptWidth = scriptText.visibleMathLength().coerceAtLeast(1) * 0.34f
+    return (baseWidth + scriptWidth + 0.22f).coerceAtMost(2.4f)
+}
+
+private fun String.isSimpleMathAtom(): Boolean = matches("""[A-Za-z0-9]""".toRegex()) ||
+    matches("""\\[a-zA-Z]+""".toRegex())
+
+private fun String.visibleMathLength(): Int = replace("""\\[a-zA-Z]+""".toRegex(), "m")
+    .replace("""\\[,;:!]""".toRegex(), "")
+    .replace("""[{}_^]""".toRegex(), "")
+    .replace("""\s+""".toRegex(), "")
+    .length
 
 private fun resolveDisplayMathParagraph(
     paragraphText: String,
@@ -448,6 +531,194 @@ private fun stableDisplayMathNonce(contentIdentity: Any): String {
     val identity = contentIdentity.toString()
     return "${identity.length}_${identity.hashCode()}"
 }
+
+private data class ParsedMarkdownTable(
+    val header: List<String>,
+    val rows: List<List<String>>
+)
+
+@Composable
+private fun ChatMarkdownTable(
+    rawTable: String,
+    style: TextStyle,
+    inlineContent: Map<String, InlineTextContent>,
+    inlineMathByPlaceholder: Map<String, InlineMathToken>
+) {
+    val table = remember(rawTable) { parseMarkdownTable(rawTable) }
+    if (table == null) {
+        Text(
+            text = rawTable,
+            style = style,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        return
+    }
+
+    val columnWidths = remember(table) { table.columnWidths() }
+    val borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.62f)
+    val headerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+    val rowColor = MaterialTheme.colorScheme.surface
+    val alternateRowColor = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.54f)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(vertical = 8.dp)
+    ) {
+        Column(
+            modifier = Modifier.border(
+                width = 1.dp,
+                color = borderColor,
+                shape = RoundedCornerShape(8.dp)
+            )
+        ) {
+            ChatMarkdownTableRow(
+                cells = table.header,
+                columnWidths = columnWidths,
+                style = style,
+                inlineContent = inlineContent,
+                inlineMathByPlaceholder = inlineMathByPlaceholder,
+                backgroundColor = headerColor,
+                isHeader = true
+            )
+            table.rows.forEachIndexed { index, row ->
+                ChatMarkdownTableRow(
+                    cells = row,
+                    columnWidths = columnWidths,
+                    style = style,
+                    inlineContent = inlineContent,
+                    inlineMathByPlaceholder = inlineMathByPlaceholder,
+                    backgroundColor = if (index % 2 == 0) rowColor else alternateRowColor,
+                    isHeader = false
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChatMarkdownTableRow(
+    cells: List<String>,
+    columnWidths: List<Dp>,
+    style: TextStyle,
+    inlineContent: Map<String, InlineTextContent>,
+    inlineMathByPlaceholder: Map<String, InlineMathToken>,
+    backgroundColor: androidx.compose.ui.graphics.Color,
+    isHeader: Boolean
+) {
+    Row {
+        columnWidths.forEachIndexed { index, width ->
+            val cellText = cells.getOrElse(index) { "" }
+            val annotatedCell = remember(cellText, inlineMathByPlaceholder) {
+                buildInlineMathAnnotatedString(cellText, inlineMathByPlaceholder)
+            }
+            BasicText(
+                text = annotatedCell,
+                modifier = Modifier
+                    .width(width)
+                    .defaultMinSize(minHeight = 44.dp)
+                    .background(backgroundColor)
+                    .border(
+                        width = 0.5.dp,
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.62f)
+                    )
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                style = style.copy(
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = if (isHeader) FontWeight.SemiBold else style.fontWeight
+                ),
+                inlineContent = inlineContent
+            )
+        }
+    }
+}
+
+private fun buildInlineMathAnnotatedString(
+    text: String,
+    inlineMathByPlaceholder: Map<String, InlineMathToken>
+): AnnotatedString = AnnotatedString.Builder().apply {
+    appendTextWithInlineMath(this, text, inlineMathByPlaceholder)
+}.toAnnotatedString()
+
+private fun parseMarkdownTable(rawTable: String): ParsedMarkdownTable? {
+    val lines = rawTable
+        .lineSequence()
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .toList()
+    if (lines.size < 2) return null
+
+    val header = splitMarkdownTableRow(lines[0])
+    val delimiter = splitMarkdownTableRow(lines[1])
+    if (header.isEmpty() || delimiter.size < header.size || !delimiter.take(header.size).all(::isMarkdownTableDelimiterCell)) {
+        return null
+    }
+
+    val rows = lines.drop(2)
+        .map { splitMarkdownTableRow(it).normalizeTableCellCount(header.size) }
+    return ParsedMarkdownTable(header = header, rows = rows)
+}
+
+private fun splitMarkdownTableRow(line: String): List<String> {
+    val trimmedLine = line.trim()
+        .removePrefix("|")
+        .removeSuffix("|")
+    val cells = mutableListOf<String>()
+    val cell = StringBuilder()
+    var isEscaped = false
+
+    trimmedLine.forEach { character ->
+        when {
+            isEscaped -> {
+                cell.append(character)
+                isEscaped = false
+            }
+
+            character == '\\' -> isEscaped = true
+            character == '|' -> {
+                cells += cell.toString().trim()
+                cell.clear()
+            }
+
+            else -> cell.append(character)
+        }
+    }
+    if (isEscaped) {
+        cell.append('\\')
+    }
+    cells += cell.toString().trim()
+    return cells
+}
+
+private fun isMarkdownTableDelimiterCell(cell: String): Boolean {
+    val normalized = cell.trim()
+    return normalized.length >= 3 &&
+        normalized.all { it == '-' || it == ':' } &&
+        normalized.count { it == '-' } >= 3
+}
+
+private fun List<String>.normalizeTableCellCount(columnCount: Int): List<String> = when {
+    size == columnCount -> this
+    size < columnCount -> this + List(columnCount - size) { "" }
+    else -> take(columnCount - 1) + drop(columnCount - 1).joinToString(" | ")
+}
+
+private fun ParsedMarkdownTable.columnWidths(): List<Dp> {
+    val allRows = listOf(header) + rows
+    return header.indices.map { columnIndex ->
+        val maxLength = allRows.maxOfOrNull { row ->
+            row.getOrNull(columnIndex)
+                ?.visibleTableTextLength()
+                ?: 0
+        } ?: 0
+        (maxLength.coerceIn(10, TABLE_MAX_VISIBLE_TEXT_LENGTH) * 8).dp
+    }
+}
+
+private fun String.visibleTableTextLength(): Int = replace("""\s+""".toRegex(), " ")
+    .replace("""CHAT_MATH_INLINE_\d+_TOKEN""".toRegex(), "formula")
+    .length
 
 @Composable
 private fun chatMarkdownTypography() = markdownTypography(

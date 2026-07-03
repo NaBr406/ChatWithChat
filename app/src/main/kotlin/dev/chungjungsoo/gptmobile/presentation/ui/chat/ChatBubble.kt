@@ -147,6 +147,8 @@ fun OpponentChatBubble(
                 ChatMarkdown(
                     content = displayText,
                     contentIdentity = contentIdentity,
+                    renderMath = true,
+                    useMathJax = !isLoading,
                     modifier = Modifier.padding(vertical = 6.dp)
                 )
             }

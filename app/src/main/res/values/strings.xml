@@ -317,6 +317,9 @@
     <string name="no_search_results">未找到会话</string>
     <string name="clear">清除</string>
     <string name="attach_file">附加文件</string>
+    <string name="choose_image">选择图片</string>
+    <string name="take_photo">拍照</string>
+    <string name="failed_to_start_camera">无法打开相机。</string>
     <string name="add_platform">添加平台</string>
     <string name="add_platform_description">配置新的 API 平台</string>
     <string name="platform_name">平台名称</string>

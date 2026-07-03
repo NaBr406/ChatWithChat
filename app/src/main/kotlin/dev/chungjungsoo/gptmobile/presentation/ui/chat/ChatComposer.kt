@@ -2,7 +2,9 @@ package dev.chungjungsoo.gptmobile.presentation.ui.chat
 
 import android.content.Context
 import android.net.Uri
+import android.os.Environment
 import android.provider.OpenableColumns
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -26,6 +28,8 @@ import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -35,7 +39,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -50,6 +58,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider.getUriForFile
 import dev.chungjungsoo.gptmobile.R
 import dev.chungjungsoo.gptmobile.presentation.theme.GPTMobileTheme
 import java.io.File
@@ -78,6 +87,8 @@ fun ChatComposer(
         it.status == ChatAttachmentDraft.Status.Ready || it.status == ChatAttachmentDraft.Status.Preparing
     }
     val canSend = chatEnabled && sendButtonEnabled && (hasQuestionText || hasSendableAttachment)
+    var isAttachmentMenuExpanded by remember { mutableStateOf(false) }
+    var pendingCameraPhotoPath by remember { mutableStateOf<String?>(null) }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -89,6 +100,39 @@ fun ChatComposer(
                 }
                 filePath?.let { path -> onFileSelected(path) }
             }
+        }
+    }
+
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture()
+    ) { isSaved ->
+        val photoPath = pendingCameraPhotoPath
+        pendingCameraPhotoPath = null
+        if (photoPath == null) return@rememberLauncherForActivityResult
+
+        val photoFile = File(photoPath)
+        if (isSaved && photoFile.exists() && photoFile.length() > 0L) {
+            onFileSelected(photoPath)
+        } else {
+            photoFile.delete()
+        }
+    }
+
+    fun launchCameraCapture() {
+        val photoFile = createCameraPhotoFile(context)
+        if (photoFile == null) {
+            Toast.makeText(context, context.getString(R.string.failed_to_start_camera), Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        runCatching {
+            val photoUri = getUriForFile(context, "${context.packageName}.fileprovider", photoFile)
+            pendingCameraPhotoPath = photoFile.absolutePath
+            cameraLauncher.launch(photoUri)
+        }.onFailure {
+            pendingCameraPhotoPath = null
+            photoFile.delete()
+            Toast.makeText(context, context.getString(R.string.failed_to_start_camera), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -132,18 +176,51 @@ fun ChatComposer(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         if (showAttachmentButton) {
-                            IconButton(
-                                enabled = chatEnabled,
-                                onClick = { filePickerLauncher.launch("image/*") },
-                                colors = IconButtonDefaults.iconButtonColors(
-                                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
-                                )
-                            ) {
-                                Icon(
-                                    imageVector = ImageVector.vectorResource(R.drawable.ic_attach_file),
-                                    contentDescription = stringResource(R.string.attach_file)
-                                )
+                            Box {
+                                IconButton(
+                                    enabled = chatEnabled,
+                                    onClick = { isAttachmentMenuExpanded = true },
+                                    colors = IconButtonDefaults.iconButtonColors(
+                                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                                    )
+                                ) {
+                                    Icon(
+                                        imageVector = ImageVector.vectorResource(R.drawable.ic_attach_file),
+                                        contentDescription = stringResource(R.string.attach_file)
+                                    )
+                                }
+                                DropdownMenu(
+                                    expanded = isAttachmentMenuExpanded,
+                                    onDismissRequest = { isAttachmentMenuExpanded = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text(text = stringResource(R.string.choose_image)) },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = ImageVector.vectorResource(R.drawable.ic_image),
+                                                contentDescription = null
+                                            )
+                                        },
+                                        onClick = {
+                                            isAttachmentMenuExpanded = false
+                                            filePickerLauncher.launch("image/*")
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text(text = stringResource(R.string.take_photo)) },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = ImageVector.vectorResource(R.drawable.ic_photo_camera),
+                                                contentDescription = null
+                                            )
+                                        },
+                                        onClick = {
+                                            isAttachmentMenuExpanded = false
+                                            launchCameraCapture()
+                                        }
+                                    )
+                                }
                             }
                         }
                         Box(
@@ -314,6 +391,16 @@ internal fun FileThumbnail(
             )
         }
     }
+}
+
+internal fun createCameraPhotoFile(context: Context): File? {
+    val picturesDir = context.getExternalFilesDir(Environment.DIRECTORY_PICTURES) ?: return null
+    val attachmentsDir = File(picturesDir, "attachments")
+    if (!attachmentsDir.exists() && !attachmentsDir.mkdirs()) return null
+
+    return runCatching {
+        File.createTempFile("camera_photo_", ".jpg", attachmentsDir)
+    }.getOrNull()
 }
 
 internal fun copyFileToAppDirectory(context: Context, uri: Uri): String? {
