@@ -176,6 +176,27 @@ window.renderMath = function(expression, displayMode, textColor, fontSizePx) {
   };
 };
 
+window.renderMathFallback = function(expression, displayMode, textColor, fontSizePx) {
+  const root = document.getElementById('root');
+  document.body.className = displayMode ? 'display' : 'inline';
+  document.body.style.color = textColor;
+  document.body.style.fontSize = fontSizePx + 'px';
+  root.className = displayMode ? 'display' : 'inline';
+
+  const fallback = document.createElement(displayMode ? 'pre' : 'span');
+  fallback.textContent = displayMode ? '\\[' + expression + '\\]' : '\\(' + expression + '\\)';
+  root.replaceChildren(fallback);
+
+  const rect = fallback.getBoundingClientRect();
+  const width = Math.max(Math.ceil(rect.width), Math.ceil(root.scrollWidth), 1);
+  const height = Math.max(Math.ceil(rect.height), Math.ceil(root.scrollHeight), 1);
+  return {
+    width,
+    height,
+    html: root.innerHTML
+  };
+};
+
 window.applyCachedMath = function(html, displayMode, textColor, fontSizePx) {
   const root = document.getElementById('root');
   document.body.className = displayMode ? 'display' : 'inline';
@@ -381,7 +402,10 @@ private class MathJaxWebView(context: Context) : WebView(context) {
         if (applyCachedResult(request)) {
             return
         }
-        clearRenderedContent()
+        if (request == pendingRequest) {
+            return
+        }
+
         pendingRequest = request
         renderRetryCount = 0
         renderPendingRequest()
@@ -409,6 +433,10 @@ private class MathJaxWebView(context: Context) : WebView(context) {
         }
 
         evaluateJavascript(buildRenderScript(request)) { rawResult ->
+            if (pendingRequest != request) {
+                return@evaluateJavascript
+            }
+
             if (rawResult == "\"loading\"") {
                 scheduleRenderRetry()
                 return@evaluateJavascript
@@ -416,15 +444,6 @@ private class MathJaxWebView(context: Context) : WebView(context) {
 
             val renderResult = parseRenderResult(rawResult)
             if (renderResult == null) {
-                scheduleRenderRetry()
-                return@evaluateJavascript
-            }
-
-            if (
-                request.displayMode &&
-                renderResult.heightPx <= request.minimumHeightPx &&
-                renderRetryCount < MAX_MATH_JAX_RENDER_RETRIES
-            ) {
                 scheduleRenderRetry()
                 return@evaluateJavascript
             }
@@ -439,11 +458,35 @@ private class MathJaxWebView(context: Context) : WebView(context) {
     }
 
     private fun scheduleRenderRetry() {
-        if (renderRetryCount >= MAX_MATH_JAX_RENDER_RETRIES) return
+        if (renderRetryCount >= MAX_MATH_JAX_RENDER_RETRIES) {
+            renderFallbackRequest()
+            return
+        }
 
         renderRetryCount += 1
         removeCallbacks(renderRetryRunnable)
         postDelayed(renderRetryRunnable, MATH_JAX_RENDER_RETRY_DELAY_MILLIS)
+    }
+
+    private fun renderFallbackRequest() {
+        val request = pendingRequest ?: return
+        evaluateJavascript(buildFallbackRenderScript(request)) { rawResult ->
+            if (pendingRequest != request) {
+                return@evaluateJavascript
+            }
+
+            val renderResult = parseRenderResult(rawResult) ?: MathRenderResult(
+                widthPx = 1,
+                heightPx = request.minimumHeightPx,
+                html = ""
+            )
+
+            renderedRequest = request
+            pendingRequest = null
+            renderRetryCount = 0
+
+            onMeasured?.invoke(max(renderResult.heightPx, request.minimumHeightPx))
+        }
     }
 
     private fun clearRenderedContent() {
@@ -517,16 +560,33 @@ private fun buildApplyCachedScript(
     })();
 """.trimIndent()
 
+private fun buildFallbackRenderScript(request: MathRenderRequest): String = """
+    (function() {
+      if (typeof window.renderMathFallback !== 'function') {
+        return null;
+      }
+      return window.renderMathFallback(
+        "${escapeJavaScriptString(request.tex)}",
+        ${request.displayMode},
+        "${request.textColorCss}",
+        ${request.fontSizePx}
+      );
+    })();
+""".trimIndent()
+
 private fun parseRenderResult(rawResult: String?): MathRenderResult? {
     val result = rawResult
         ?.takeIf { it.isNotBlank() && it != "null" }
         ?: return null
-    val json = JSONObject(result)
-    return MathRenderResult(
-        widthPx = json.getInt("width"),
-        heightPx = json.getInt("height"),
-        html = json.getString("html")
-    )
+
+    return runCatching {
+        val json = JSONObject(result)
+        MathRenderResult(
+            widthPx = json.getInt("width"),
+            heightPx = json.getInt("height"),
+            html = json.getString("html")
+        )
+    }.getOrNull()
 }
 
 private fun formatCssColor(color: Color): String {

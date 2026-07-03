@@ -62,7 +62,6 @@ import dev.snipme.highlights.model.BoldHighlight
 import dev.snipme.highlights.model.ColorHighlight
 import dev.snipme.highlights.model.SyntaxLanguage
 import dev.snipme.highlights.model.SyntaxThemes
-import java.util.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -82,7 +81,7 @@ fun ChatMarkdown(
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
     val parsed = remember(content) { parseChatMarkdown(content) }
-    val displayMathNonce = remember(content) { UUID.randomUUID().toString().replace("-", "") }
+    val displayMathNonce = remember(contentIdentity) { stableDisplayMathNonce(contentIdentity) }
     val highlightsBuilder = remember(isDarkTheme) {
         Highlights.Builder().theme(SyntaxThemes.atom(isDarkTheme))
     }
@@ -444,6 +443,11 @@ private fun createDisplayMathPlaceholder(
     index: Int,
     nonce: String
 ): String = "\uE000$DISPLAY_MATH_PLACEHOLDER_PREFIX${nonce}_$index$DISPLAY_MATH_PLACEHOLDER_SUFFIX\uE001"
+
+private fun stableDisplayMathNonce(contentIdentity: Any): String {
+    val identity = contentIdentity.toString()
+    return "${identity.length}_${identity.hashCode()}"
+}
 
 @Composable
 private fun chatMarkdownTypography() = markdownTypography(
