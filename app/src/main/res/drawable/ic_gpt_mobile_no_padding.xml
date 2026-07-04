@@ -3,4 +3,4 @@
     android:antialias="true"
     android:filter="true"
     android:gravity="fill"
-    android:src="@drawable/chatwithchat_logo" />
+    android:src="@drawable/chatwithchat_icon_safe" />
