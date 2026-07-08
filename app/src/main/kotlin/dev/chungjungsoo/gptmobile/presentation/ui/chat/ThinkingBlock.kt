@@ -19,6 +19,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,10 +40,21 @@ fun ThinkingBlock(
     modifier: Modifier = Modifier,
     thoughts: String,
     contentIdentity: Any = thoughts,
-    isLoading: Boolean = false
+    isLoading: Boolean = false,
+    onStreamingTextDisplayed: () -> Unit = {}
 ) {
     if (thoughts.isBlank()) return
 
+    val visibleThoughts = rememberSmoothedStreamingText(
+        targetText = thoughts,
+        isStreaming = isLoading,
+        contentIdentity = contentIdentity
+    )
+    LaunchedEffect(isLoading, visibleThoughts) {
+        if (isLoading && visibleThoughts.isNotBlank()) {
+            onStreamingTextDisplayed()
+        }
+    }
     var isExpanded by remember { mutableStateOf(false) }
     val rotationAngle by animateFloatAsState(
         targetValue = if (isExpanded) 180f else 0f,
@@ -97,10 +109,10 @@ fun ThinkingBlock(
             enter = expandVertically(),
             exit = shrinkVertically()
         ) {
-            val displayText = if (isLoading) thoughts + "●" else thoughts
+            val displayText = visibleThoughts
 
             ChatMarkdown(
-                content = displayText,
+                content = appendStreamingTextTail(displayText, isLoading),
                 contentIdentity = contentIdentity,
                 renderMath = true,
                 useMathJax = !isLoading,
@@ -112,7 +124,7 @@ fun ThinkingBlock(
 
         if (!isExpanded && thoughts.isNotBlank()) {
             Text(
-                text = thoughts.take(100).replace("\n", " ") + if (thoughts.length > 100) "..." else "",
+                text = visibleThoughts.take(100).replace("\n", " ") + if (visibleThoughts.length > 100) "..." else "",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                 maxLines = 2,

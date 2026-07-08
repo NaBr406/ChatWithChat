@@ -36,6 +36,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -110,9 +111,20 @@ fun OpponentChatBubble(
     onRetryClick: () -> Unit = {},
     onEditClick: () -> Unit = {},
     onShowPreviousRevision: () -> Unit = {},
-    onShowNextRevision: () -> Unit = {}
+    onShowNextRevision: () -> Unit = {},
+    onStreamingTextDisplayed: () -> Unit = {}
 ) {
     val isThinking = isLoading && thoughts.isNotBlank() && text.isBlank()
+    val visibleText = rememberSmoothedStreamingText(
+        targetText = text,
+        isStreaming = isLoading,
+        contentIdentity = contentIdentity
+    )
+    LaunchedEffect(isLoading, visibleText) {
+        if (isLoading && visibleText.isNotBlank()) {
+            onStreamingTextDisplayed()
+        }
+    }
 
     Column(modifier = modifier) {
         if (thoughts.isNotBlank()) {
@@ -120,12 +132,13 @@ fun OpponentChatBubble(
                 modifier = Modifier.padding(top = 8.dp, bottom = 6.dp),
                 thoughts = thoughts,
                 contentIdentity = contentIdentity,
-                isLoading = isThinking
+                isLoading = isThinking,
+                onStreamingTextDisplayed = onStreamingTextDisplayed
             )
         }
 
         Column {
-            val displayText = if (isLoading && text.isNotBlank()) text + "●" else text
+            val displayText = visibleText
 
             if (isLoading && displayText.isBlank()) {
                 Row(
@@ -145,7 +158,7 @@ fun OpponentChatBubble(
                 }
             } else {
                 ChatMarkdown(
-                    content = displayText,
+                    content = appendStreamingTextTail(displayText, isLoading),
                     contentIdentity = contentIdentity,
                     renderMath = true,
                     useMathJax = !isLoading,

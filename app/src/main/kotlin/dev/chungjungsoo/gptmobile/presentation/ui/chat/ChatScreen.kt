@@ -65,6 +65,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -337,8 +338,13 @@ private fun ChatContent(
     var autoFollowToBottom by remember { mutableStateOf(true) }
     var programmaticScrollInProgress by remember { mutableStateOf(false) }
     var previousBottomItemIndex by remember { mutableStateOf(bottomItemIndex) }
+    var previousIsIdle by remember { mutableStateOf(isIdle) }
+    var latestManualStreamingAnchor by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var pendingPostStreamAnchor by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var pendingPostStreamBottomRestore by remember { mutableStateOf(false) }
     var hasHandledInitialLoad by remember { mutableStateOf(false) }
     var isRoundNavigatorOpen by remember { mutableStateOf(false) }
+    val currentBottomItemIndex by rememberUpdatedState(bottomItemIndex)
     val showScrollToBottomButton by remember {
         derivedStateOf {
             listState.canScrollForward &&
@@ -351,9 +357,9 @@ private fun ChatContent(
         programmaticScrollInProgress = true
         try {
             if (animated) {
-                listState.animateScrollToItem(bottomItemIndex)
+                listState.animateScrollToItem(currentBottomItemIndex)
             } else {
-                listState.scrollToItem(bottomItemIndex)
+                listState.scrollToItem(currentBottomItemIndex)
             }
             autoFollowToBottom = true
         } finally {
@@ -388,9 +394,63 @@ private fun ChatContent(
     }
 
     LaunchedEffect(latestStreamingContentVersion) {
-        if (autoFollowToBottom) {
+        if (!isIdle && autoFollowToBottom) {
             scrollToLatestMessage(animated = false)
         }
+    }
+
+    LaunchedEffect(isIdle, autoFollowToBottom) {
+        if (!isIdle && !autoFollowToBottom) {
+            snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
+                .collect { anchor -> latestManualStreamingAnchor = anchor }
+        } else if (!isIdle) {
+            latestManualStreamingAnchor = null
+        }
+    }
+
+    LaunchedEffect(isIdle) {
+        val wasStreaming = !previousIsIdle
+        previousIsIdle = isIdle
+        if (wasStreaming && isIdle) {
+            if (autoFollowToBottom) {
+                pendingPostStreamAnchor = null
+                pendingPostStreamBottomRestore = true
+            } else {
+                pendingPostStreamAnchor =
+                    latestManualStreamingAnchor ?: (listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset)
+                pendingPostStreamBottomRestore = false
+            }
+            latestManualStreamingAnchor = null
+        } else if (!isIdle) {
+            pendingPostStreamAnchor = null
+            pendingPostStreamBottomRestore = false
+        }
+    }
+
+    LaunchedEffect(pendingPostStreamAnchor, pendingPostStreamBottomRestore) {
+        val anchor = pendingPostStreamAnchor
+        if (anchor == null && !pendingPostStreamBottomRestore) return@LaunchedEffect
+        val firstVisibleIndex = anchor?.first ?: currentBottomItemIndex
+        val firstVisibleOffset = anchor?.second ?: 0
+        repeat(POST_STREAM_ANCHOR_RESTORE_ATTEMPTS) {
+            delay(POST_STREAM_ANCHOR_RESTORE_INTERVAL_MILLIS)
+            val jumpedBeforeAnchor =
+                listState.firstVisibleItemIndex < firstVisibleIndex ||
+                    (listState.firstVisibleItemIndex == firstVisibleIndex &&
+                        listState.firstVisibleItemScrollOffset < firstVisibleOffset)
+            if (jumpedBeforeAnchor && (firstVisibleIndex > 0 || firstVisibleOffset > 0)) {
+                if (pendingPostStreamBottomRestore) {
+                    scrollToLatestMessage(animated = false)
+                } else {
+                    listState.scrollToItem(firstVisibleIndex, firstVisibleOffset)
+                }
+                pendingPostStreamAnchor = null
+                pendingPostStreamBottomRestore = false
+                return@LaunchedEffect
+            }
+        }
+        pendingPostStreamAnchor = null
+        pendingPostStreamBottomRestore = false
     }
 
     val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
@@ -473,7 +533,14 @@ private fun ChatContent(
                             onSelectText = onSelectText,
                             onRetry = onRetry,
                             onShowPreviousRevision = onShowPreviousRevision,
-                            onShowNextRevision = onShowNextRevision
+                            onShowNextRevision = onShowNextRevision,
+                            onStreamingTextDisplayed = {
+                                if (autoFollowToBottom) {
+                                    scope.launch {
+                                        scrollToLatestMessage(animated = false)
+                                    }
+                                }
+                            }
                         )
                     }
 
@@ -500,7 +567,14 @@ private fun ChatContent(
                                 onSelectText = onSelectText,
                                 onRetry = onRetry,
                                 onShowPreviousRevision = onShowPreviousRevision,
-                                onShowNextRevision = onShowNextRevision
+                                onShowNextRevision = onShowNextRevision,
+                                onStreamingTextDisplayed = {
+                                    if (autoFollowToBottom) {
+                                        scope.launch {
+                                            scrollToLatestMessage(animated = false)
+                                        }
+                                    }
+                                }
                             )
                         }
                     }
@@ -597,7 +671,8 @@ private fun ChatMessagePair(
     onSelectText: (String) -> Unit,
     onRetry: (Int, Int) -> Unit,
     onShowPreviousRevision: (Int, Int) -> Unit,
-    onShowNextRevision: (Int, Int) -> Unit
+    onShowNextRevision: (Int, Int) -> Unit,
+    onStreamingTextDisplayed: () -> Unit
 ) {
     val selectedAssistantMessage = assistantMessages.getOrNull(platformIndexState)
     val assistantContent = selectedAssistantMessage?.effectiveContent() ?: ""
@@ -714,7 +789,8 @@ private fun ChatMessagePair(
                 onRetryClick = { onRetry(messageIndex, platformIndexState) },
                 onEditClick = { onEditAssistant(messageIndex, platformIndexState) },
                 onShowPreviousRevision = { onShowPreviousRevision(messageIndex, platformIndexState) },
-                onShowNextRevision = { onShowNextRevision(messageIndex, platformIndexState) }
+                onShowNextRevision = { onShowNextRevision(messageIndex, platformIndexState) },
+                onStreamingTextDisplayed = onStreamingTextDisplayed
             )
             TokenUsageRow(
                 usage = selectedTokenUsage,
@@ -728,12 +804,16 @@ private fun ChatMessagePair(
 }
 
 private fun chatMessagePairKey(message: MessageV2, index: Int): String {
-    // New chats sync Room ids after streaming, so the list key must not depend on id.
+    // New chats sync Room ids and can refresh message fields after streaming,
+    // so the list key must not depend on persistence-managed values.
     val attachmentSignature = message.attachments.fold(0) { signature, attachment ->
         31 * signature + attachment.filePathForDisplay.hashCode()
     }
-    return "message-${message.createdAt}-$index-${message.content.hashCode()}-$attachmentSignature"
+    return "message-$index-$attachmentSignature"
 }
+
+private const val POST_STREAM_ANCHOR_RESTORE_ATTEMPTS = 40
+private const val POST_STREAM_ANCHOR_RESTORE_INTERVAL_MILLIS = 50L
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
