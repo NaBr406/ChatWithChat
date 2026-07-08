@@ -1,12 +1,24 @@
 package dev.chungjungsoo.gptmobile.data.repository
 
+import dev.chungjungsoo.gptmobile.data.database.dao.MemoryMaintenanceJobDao
+import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMaintenanceJob
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatRoomV2
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
 import dev.chungjungsoo.gptmobile.data.memory.FakeMemoryIntelligence
 import dev.chungjungsoo.gptmobile.data.memory.InMemoryChatClassificationDao
 import dev.chungjungsoo.gptmobile.data.memory.InMemoryPersonalMemoryDao
+import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryCodec
+import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryLearningNote
+import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryLearningProposal
+import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryLearningService
 import dev.chungjungsoo.gptmobile.data.memory.MemoryAction
+import dev.chungjungsoo.gptmobile.data.memory.MemoryFilePaths
+import dev.chungjungsoo.gptmobile.data.memory.MemoryFileStore
+import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexRebuildResult
+import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexRebuilder
 import dev.chungjungsoo.gptmobile.data.memory.MemoryLearningResult
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceJobStatus
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceScheduler
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMarkdownCodec
 import dev.chungjungsoo.gptmobile.data.memory.MemoryCandidate
 import dev.chungjungsoo.gptmobile.data.memory.MemoryPromptBuilder
@@ -18,6 +30,11 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryUpdatePlan
 import dev.chungjungsoo.gptmobile.data.memory.testCandidate
 import dev.chungjungsoo.gptmobile.data.memory.testClassification
 import dev.chungjungsoo.gptmobile.data.memory.testMemory
+import java.io.File
+import java.nio.file.Files
+import java.time.Clock
+import java.time.Instant
+import java.time.ZoneOffset
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -334,18 +351,249 @@ class MemoryLearnerTest {
         assertTrue(extractionMessages.first().content.startsWith("I prefer direct concrete answers."))
     }
 
+    @Test
+    fun `learner appends controlled markdown notes and rebuilds affected indexes`() = runBlocking {
+        val personalMemoryDao = InMemoryPersonalMemoryDao()
+        val markdown = createMarkdownHarness()
+        val intelligence = FakeMemoryIntelligence(
+            classification = testClassification(shouldLearnMemories = true),
+            candidates = listOf(testCandidate("The user prefers direct answers.", requiresConfirmation = false)),
+            updatePlan = MemoryUpdatePlan(),
+            markdownProposal = MarkdownMemoryLearningProposal(
+                dailyNotes = listOf(
+                    MarkdownMemoryLearningNote(
+                        text = "ChatWithChat should keep Markdown memory writes durable.",
+                        type = "project_context",
+                        sensitivity = MemorySensitivity.NORMAL,
+                        source = MemorySource.EXPLICIT_USER_STATEMENT
+                    )
+                ),
+                longTermUpdates = listOf(
+                    MarkdownMemoryLearningNote(
+                        text = "The user is comfortable with private local memory metadata.",
+                        type = "stable_profile",
+                        sensitivity = MemorySensitivity.PRIVATE,
+                        source = MemorySource.ASSISTANT_INFERRED
+                    )
+                )
+            )
+        )
+        val repository = createRepository(
+            personalMemoryDao = personalMemoryDao,
+            intelligence = intelligence,
+            markdownMemoryLearningService = markdown.service
+        )
+
+        val result = repository.learnFromChat(
+            chatRoom(),
+            userMessages("Remember that I prefer direct answers."),
+            listOf(emptyList()),
+            memoryPlatform = null,
+            learningIdempotencyKey = "chat-1-turn-1"
+        )
+
+        val dailyMarkdown = markdown.fileStore.readDailyMemory().getOrThrow()
+        val longTermMarkdown = markdown.fileStore.readLongTermMemory().getOrThrow()
+        assertEquals(MemoryLearningResult.STATUS_APPLIED_DIRECT_FALLBACK, result.status)
+        assertEquals(1, personalMemoryDao.memories.size)
+        assertTrue(dailyMarkdown.contains("ChatWithChat should keep Markdown memory writes durable."))
+        assertTrue(dailyMarkdown.contains("type=project_context sensitivity=normal source=explicit_user_statement"))
+        assertTrue(longTermMarkdown.contains("The user is comfortable with private local memory metadata."))
+        assertTrue(longTermMarkdown.contains("type=stable_profile sensitivity=private source=assistant_inferred"))
+        assertEquals(MemoryMaintenanceJobStatus.SUCCEEDED, markdown.jobDao.jobs.single().status)
+        assertEquals(setOf("2026-07-09.md", "MEMORY.md"), markdown.indexRebuilder.rebuiltFiles.map { it.name }.toSet())
+    }
+
+    @Test
+    fun `learner does not append duplicate markdown notes for the same learning key`() = runBlocking {
+        val markdown = createMarkdownHarness()
+        val intelligence = FakeMemoryIntelligence(
+            classification = testClassification(shouldLearnMemories = true),
+            candidates = listOf(testCandidate("The user prefers concise replies.", requiresConfirmation = false)),
+            updatePlan = MemoryUpdatePlan(),
+            markdownProposal = MarkdownMemoryLearningProposal(
+                dailyNotes = listOf(
+                    MarkdownMemoryLearningNote(
+                        text = "The user wants concise replies saved as Markdown.",
+                        type = "communication_style",
+                        sensitivity = MemorySensitivity.NORMAL,
+                        source = MemorySource.EXPLICIT_USER_STATEMENT
+                    )
+                )
+            )
+        )
+        val repository = createRepository(
+            personalMemoryDao = InMemoryPersonalMemoryDao(),
+            intelligence = intelligence,
+            markdownMemoryLearningService = markdown.service
+        )
+
+        repository.learnFromChat(
+            chatRoom(),
+            userMessages("Keep replies concise."),
+            listOf(emptyList()),
+            memoryPlatform = null,
+            learningIdempotencyKey = "same-turn"
+        )
+        repository.learnFromChat(
+            chatRoom(),
+            userMessages("Keep replies concise."),
+            listOf(emptyList()),
+            memoryPlatform = null,
+            learningIdempotencyKey = "same-turn"
+        )
+
+        val dailyMarkdown = markdown.fileStore.readDailyMemory().getOrThrow()
+        assertEquals(1, dailyMarkdown.countOccurrences("The user wants concise replies saved as Markdown."))
+        assertEquals(1, intelligence.markdownProposalCalls)
+        assertEquals(MemoryMaintenanceJobStatus.SUCCEEDED, markdown.jobDao.jobs.single().status)
+    }
+
+    @Test
+    fun `markdown proposal failure keeps room learning result and records retryable job`() = runBlocking {
+        val personalMemoryDao = InMemoryPersonalMemoryDao()
+        val markdown = createMarkdownHarness()
+        val intelligence = FakeMemoryIntelligence(
+            classification = testClassification(shouldLearnMemories = true),
+            candidates = listOf(testCandidate("The user prefers concrete implementation.", requiresConfirmation = false)),
+            updatePlan = MemoryUpdatePlan(),
+            markdownProposal = null
+        )
+        val repository = createRepository(
+            personalMemoryDao = personalMemoryDao,
+            intelligence = intelligence,
+            markdownMemoryLearningService = markdown.service
+        )
+
+        val result = repository.learnFromChat(
+            chatRoom(),
+            userMessages("I prefer concrete implementation."),
+            listOf(emptyList()),
+            memoryPlatform = null,
+            learningIdempotencyKey = "markdown-fails"
+        )
+
+        val dailyMarkdown = markdown.fileStore.readDailyMemory().getOrThrow()
+        assertEquals(MemoryLearningResult.STATUS_APPLIED_DIRECT_FALLBACK, result.status)
+        assertEquals(1, personalMemoryDao.memories.size)
+        assertTrue(!dailyMarkdown.contains("concrete implementation saved as Markdown"))
+        assertEquals(MemoryMaintenanceJobStatus.FAILED_RETRYABLE, markdown.jobDao.jobs.single().status)
+        assertEquals(1, intelligence.markdownProposalCalls)
+    }
+
     private fun createRepository(
         personalMemoryDao: InMemoryPersonalMemoryDao,
-        intelligence: FakeMemoryIntelligence
+        intelligence: FakeMemoryIntelligence,
+        markdownMemoryLearningService: MarkdownMemoryLearningService? = null
     ): MemoryRepositoryImpl = MemoryRepositoryImpl(
         personalMemoryDao = personalMemoryDao,
         chatClassificationDao = InMemoryChatClassificationDao(),
         memoryIntelligence = intelligence,
         memoryPromptBuilder = MemoryPromptBuilder(),
-        memoryMarkdownCodec = MemoryMarkdownCodec()
+        memoryMarkdownCodec = MemoryMarkdownCodec(),
+        markdownMemoryLearningService = markdownMemoryLearningService
     )
 
     private fun chatRoom() = ChatRoomV2(id = 1, title = "Chat", enabledPlatform = listOf("platform"))
 
     private fun userMessages(content: String) = listOf(MessageV2(chatId = 1, content = content, platformType = null))
+
+    private fun createMarkdownHarness(): MarkdownHarness {
+        val clock = Clock.fixed(Instant.parse("2026-07-09T10:20:30Z"), ZoneOffset.UTC)
+        val fileStore = MemoryFileStore(
+            paths = MemoryFilePaths(Files.createTempDirectory("memory-learner-markdown-test").toFile()),
+            clock = clock
+        )
+        val jobDao = TestMemoryMaintenanceJobDao()
+        val indexRebuilder = RecordingMemoryIndexRebuilder()
+        val service = MarkdownMemoryLearningService(
+            memoryFileStore = fileStore,
+            markdownMemoryCodec = MarkdownMemoryCodec(),
+            maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, clock),
+            memoryIndexRebuilder = indexRebuilder,
+            clock = clock
+        )
+        return MarkdownHarness(
+            service = service,
+            fileStore = fileStore,
+            jobDao = jobDao,
+            indexRebuilder = indexRebuilder
+        )
+    }
+
+    private fun String.countOccurrences(value: String): Int =
+        Regex(Regex.escape(value)).findAll(this).count()
+}
+
+private data class MarkdownHarness(
+    val service: MarkdownMemoryLearningService,
+    val fileStore: MemoryFileStore,
+    val jobDao: TestMemoryMaintenanceJobDao,
+    val indexRebuilder: RecordingMemoryIndexRebuilder
+)
+
+private class RecordingMemoryIndexRebuilder : MemoryIndexRebuilder {
+    val rebuiltFiles = mutableListOf<File>()
+
+    override suspend fun rebuildFile(file: File): Result<MemoryIndexRebuildResult> {
+        rebuiltFiles += file
+        return Result.success(MemoryIndexRebuildResult(indexedDocuments = 1, indexedChunks = 1))
+    }
+}
+
+private class TestMemoryMaintenanceJobDao : MemoryMaintenanceJobDao {
+    val jobs = mutableListOf<MemoryMaintenanceJob>()
+
+    override suspend fun getById(jobId: String): MemoryMaintenanceJob? =
+        jobs.firstOrNull { it.jobId == jobId }
+
+    override suspend fun getByIdempotencyKey(idempotencyKey: String): MemoryMaintenanceJob? =
+        jobs.firstOrNull { it.idempotencyKey == idempotencyKey }
+
+    override suspend fun getRunnableJobs(
+        statuses: List<String>,
+        now: Long,
+        limit: Int
+    ): List<MemoryMaintenanceJob> = jobs
+        .filter { job -> job.status in statuses && now >= (job.nextRunAt ?: 0L) }
+        .sortedBy { it.createdAt }
+        .take(limit)
+
+    override suspend fun insertIgnore(job: MemoryMaintenanceJob): Long {
+        if (jobs.any { it.idempotencyKey == job.idempotencyKey }) return -1L
+        jobs += job
+        return jobs.size.toLong()
+    }
+
+    override suspend fun update(job: MemoryMaintenanceJob) {
+        val index = jobs.indexOfFirst { it.jobId == job.jobId }
+        if (index != -1) {
+            jobs[index] = job
+        }
+    }
+
+    override suspend fun moveStaleJobs(
+        fromStatus: String,
+        status: String,
+        before: Long,
+        lastError: String?,
+        updatedAt: Long,
+        nextRunAt: Long?
+    ): Int {
+        var changedCount = 0
+        jobs.replaceAll { job ->
+            if (job.status == fromStatus && job.updatedAt < before) {
+                changedCount += 1
+                job.copy(
+                    status = status,
+                    lastError = lastError,
+                    updatedAt = updatedAt,
+                    nextRunAt = nextRunAt
+                )
+            } else {
+                job
+            }
+        }
+        return changedCount
+    }
 }

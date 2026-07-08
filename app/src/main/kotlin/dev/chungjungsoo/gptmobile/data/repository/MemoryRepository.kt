@@ -19,7 +19,8 @@ interface MemoryRepository {
         chatRoom: ChatRoomV2,
         userMessages: List<MessageV2>,
         assistantMessages: List<List<MessageV2>>,
-        memoryPlatform: PlatformV2? = null
+        memoryPlatform: PlatformV2? = null,
+        learningIdempotencyKey: String? = null
     ): MemoryLearningResult
 
     suspend fun getMemories(): List<PersonalMemory>

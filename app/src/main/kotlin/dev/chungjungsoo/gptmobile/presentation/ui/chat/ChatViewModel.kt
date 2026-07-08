@@ -739,7 +739,8 @@ class ChatViewModel @Inject constructor(
                         chatRoom = savedChatRoom,
                         userMessages = groupedMessages.userMessages,
                         assistantMessages = groupedMessages.assistantMessages,
-                        memoryPlatform = memoryPlatform
+                        memoryPlatform = memoryPlatform,
+                        learningIdempotencyKey = signature
                     )
                 }.getOrElse { throwable ->
                     MemoryLearningResult.failedException(throwable)

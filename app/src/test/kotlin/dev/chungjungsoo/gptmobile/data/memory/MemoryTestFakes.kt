@@ -63,15 +63,18 @@ class FakeMemoryIntelligence(
     var classification: ConversationClassificationResult? = null,
     var selection: MemorySelectionResult? = null,
     var candidates: List<MemoryCandidate> = emptyList(),
-    var updatePlan: MemoryUpdatePlan? = null
+    var updatePlan: MemoryUpdatePlan? = null,
+    var markdownProposal: MarkdownMemoryLearningProposal? = null
 ) : MemoryIntelligence {
     var lastSelectionRequest: MemorySelectionRequest? = null
     var lastExtractionRequest: MemoryExtractionRequest? = null
+    var lastMarkdownLearningRequest: MarkdownMemoryLearningRequest? = null
     var lastPreferredPlatform: PlatformV2? = null
     var classifyCalls = 0
     var selectCalls = 0
     var extractCalls = 0
     var planCalls = 0
+    var markdownProposalCalls = 0
 
     override suspend fun classifyConversation(
         request: ConversationClassificationRequest,
@@ -109,6 +112,16 @@ class FakeMemoryIntelligence(
         planCalls += 1
         lastPreferredPlatform = preferredPlatform
         return updatePlan
+    }
+
+    override suspend fun proposeMarkdownMemoryWrites(
+        request: MarkdownMemoryLearningRequest,
+        preferredPlatform: PlatformV2?
+    ): MarkdownMemoryLearningProposal? {
+        markdownProposalCalls += 1
+        lastMarkdownLearningRequest = request
+        lastPreferredPlatform = preferredPlatform
+        return markdownProposal
     }
 }
 

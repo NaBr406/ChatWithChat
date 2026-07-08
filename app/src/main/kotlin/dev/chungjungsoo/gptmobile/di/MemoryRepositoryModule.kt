@@ -11,6 +11,8 @@ import dev.chungjungsoo.gptmobile.data.database.dao.MemoryIndexDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryMaintenanceJobDao
 import dev.chungjungsoo.gptmobile.data.database.dao.PersonalMemoryDao
 import dev.chungjungsoo.gptmobile.data.memory.LlmMemoryIntelligence
+import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryCodec
+import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryLearningService
 import dev.chungjungsoo.gptmobile.data.memory.MemoryChunker
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFilePaths
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFileStore
@@ -38,6 +40,10 @@ object MemoryRepositoryModule {
     @Provides
     @Singleton
     fun provideMemoryMarkdownCodec(): MemoryMarkdownCodec = MemoryMarkdownCodec()
+
+    @Provides
+    @Singleton
+    fun provideMarkdownMemoryCodec(): MarkdownMemoryCodec = MarkdownMemoryCodec()
 
     @Provides
     @Singleton
@@ -74,6 +80,20 @@ object MemoryRepositoryModule {
 
     @Provides
     @Singleton
+    fun provideMarkdownMemoryLearningService(
+        memoryFileStore: MemoryFileStore,
+        markdownMemoryCodec: MarkdownMemoryCodec,
+        memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
+        memoryIndexRepository: MemoryIndexRepository
+    ): MarkdownMemoryLearningService = MarkdownMemoryLearningService(
+        memoryFileStore = memoryFileStore,
+        markdownMemoryCodec = markdownMemoryCodec,
+        maintenanceScheduler = memoryMaintenanceScheduler,
+        memoryIndexRebuilder = memoryIndexRepository
+    )
+
+    @Provides
+    @Singleton
     fun provideMemoryIntelligence(
         settingRepository: SettingRepository,
         openAIAPI: OpenAIAPI,
@@ -89,13 +109,15 @@ object MemoryRepositoryModule {
         memoryIntelligence: MemoryIntelligence,
         memoryPromptBuilder: MemoryPromptBuilder,
         memoryMarkdownCodec: MemoryMarkdownCodec,
-        memoryIndexRepository: MemoryIndexRepository
+        memoryIndexRepository: MemoryIndexRepository,
+        markdownMemoryLearningService: MarkdownMemoryLearningService
     ): MemoryRepository = MemoryRepositoryImpl(
-        personalMemoryDao,
-        chatClassificationDao,
-        memoryIntelligence,
-        memoryPromptBuilder,
-        memoryMarkdownCodec,
-        memoryIndexRepository
+        personalMemoryDao = personalMemoryDao,
+        chatClassificationDao = chatClassificationDao,
+        memoryIntelligence = memoryIntelligence,
+        memoryPromptBuilder = memoryPromptBuilder,
+        memoryMarkdownCodec = memoryMarkdownCodec,
+        memoryIndexSearcher = memoryIndexRepository,
+        markdownMemoryLearningService = markdownMemoryLearningService
     )
 }

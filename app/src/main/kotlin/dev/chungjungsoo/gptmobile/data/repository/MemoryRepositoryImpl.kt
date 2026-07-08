@@ -19,6 +19,7 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexSearchResult
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexSearcher
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIntelligence
 import dev.chungjungsoo.gptmobile.data.memory.MemoryLearningResult
+import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryLearningService
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMarkdownCodec
 import dev.chungjungsoo.gptmobile.data.memory.MemoryPromptBuilder
 import dev.chungjungsoo.gptmobile.data.memory.MemorySelectionCandidate
@@ -39,7 +40,8 @@ class MemoryRepositoryImpl(
     private val memoryIntelligence: MemoryIntelligence,
     private val memoryPromptBuilder: MemoryPromptBuilder,
     private val memoryMarkdownCodec: MemoryMarkdownCodec,
-    private val memoryIndexSearcher: MemoryIndexSearcher? = null
+    private val memoryIndexSearcher: MemoryIndexSearcher? = null,
+    private val markdownMemoryLearningService: MarkdownMemoryLearningService? = null
 ) : MemoryRepository {
 
     override suspend fun prepareMemoryContext(
@@ -117,7 +119,8 @@ class MemoryRepositoryImpl(
         chatRoom: ChatRoomV2,
         userMessages: List<MessageV2>,
         assistantMessages: List<List<MessageV2>>,
-        memoryPlatform: PlatformV2?
+        memoryPlatform: PlatformV2?,
+        learningIdempotencyKey: String?
     ): MemoryLearningResult {
         return runCatching {
             val recentMessages = buildMemoryMessages(chatRoom, userMessages, assistantMessages)
@@ -168,7 +171,7 @@ class MemoryRepositoryImpl(
                     existingMemories = existingMemories
                 )
                 if (fallbackCreatedCount > 0) {
-                    return@runCatching logLearningResult(
+                    return@runCatching finishLearningResult(
                         MemoryLearningResult.applied(
                             createdCount = fallbackCreatedCount,
                             updatedCount = 0,
@@ -176,15 +179,23 @@ class MemoryRepositoryImpl(
                             candidateCount = fallbackCreatedCount,
                             operationCount = 0,
                             directFallback = true
-                        )
+                        ),
+                        chatRoom = chatRoom,
+                        recentMessages = recentMessages,
+                        memoryPlatform = memoryPlatform,
+                        learningIdempotencyKey = learningIdempotencyKey
                     )
                 }
 
-                return@runCatching logLearningResult(
+                return@runCatching finishLearningResult(
                     MemoryLearningResult.failed(
                         status = MemoryLearningResult.STATUS_FAILED_EXTRACTION_UNAVAILABLE,
                         reason = "classification requested learning but extraction returned no valid candidates"
-                    )
+                    ),
+                    chatRoom = chatRoom,
+                    recentMessages = recentMessages,
+                    memoryPlatform = memoryPlatform,
+                    learningIdempotencyKey = learningIdempotencyKey
                 )
             }
 
@@ -200,7 +211,7 @@ class MemoryRepositoryImpl(
                 preferredPlatform = memoryPlatform
             ) ?: run {
                 val createdCount = createDirectMemories(candidates, existingMemories)
-                return@runCatching logLearningResult(
+                return@runCatching finishLearningResult(
                     if (createdCount > 0) {
                         MemoryLearningResult.applied(
                             createdCount = createdCount,
@@ -215,13 +226,17 @@ class MemoryRepositoryImpl(
                             status = MemoryLearningResult.STATUS_FAILED_PLAN_UNAVAILABLE,
                             candidateCount = candidates.size
                         )
-                    }
+                    },
+                    chatRoom = chatRoom,
+                    recentMessages = recentMessages,
+                    memoryPlatform = memoryPlatform,
+                    learningIdempotencyKey = learningIdempotencyKey
                 )
             }
 
             if (plan.operations.isEmpty()) {
                 val createdCount = createDirectMemories(candidates, existingMemories)
-                return@runCatching logLearningResult(
+                return@runCatching finishLearningResult(
                     if (createdCount > 0) {
                         MemoryLearningResult.applied(
                             createdCount = createdCount,
@@ -237,7 +252,11 @@ class MemoryRepositoryImpl(
                             candidateCount = candidates.size,
                             reason = "planner returned no operations"
                         )
-                    }
+                    },
+                    chatRoom = chatRoom,
+                    recentMessages = recentMessages,
+                    memoryPlatform = memoryPlatform,
+                    learningIdempotencyKey = learningIdempotencyKey
                 )
             }
 
@@ -275,7 +294,7 @@ class MemoryRepositoryImpl(
             if (changedCount == 0) {
                 val fallbackCreatedCount = createDirectMemories(candidates, existingMemories)
                 if (fallbackCreatedCount > 0) {
-                    return@runCatching logLearningResult(
+                    return@runCatching finishLearningResult(
                         MemoryLearningResult.applied(
                             createdCount = fallbackCreatedCount,
                             updatedCount = 0,
@@ -283,12 +302,16 @@ class MemoryRepositoryImpl(
                             candidateCount = candidates.size,
                             operationCount = plan.operations.size,
                             directFallback = true
-                        )
+                        ),
+                        chatRoom = chatRoom,
+                        recentMessages = recentMessages,
+                        memoryPlatform = memoryPlatform,
+                        learningIdempotencyKey = learningIdempotencyKey
                     )
                 }
             }
 
-            logLearningResult(
+            finishLearningResult(
                 if (changedCount > 0) {
                     MemoryLearningResult.applied(
                         createdCount = createdCount,
@@ -304,7 +327,11 @@ class MemoryRepositoryImpl(
                         operationCount = plan.operations.size,
                         reason = "planner produced no memory changes"
                     )
-                }
+                },
+                chatRoom = chatRoom,
+                recentMessages = recentMessages,
+                memoryPlatform = memoryPlatform,
+                learningIdempotencyKey = learningIdempotencyKey
             )
         }.getOrElse { throwable ->
             val result = MemoryLearningResult.failedException(throwable)
@@ -312,6 +339,19 @@ class MemoryRepositoryImpl(
             result
         }
     }
+
+    suspend fun learnFromChat(
+        chatRoom: ChatRoomV2,
+        userMessages: List<MessageV2>,
+        assistantMessages: List<List<MessageV2>>,
+        memoryPlatform: PlatformV2? = null
+    ): MemoryLearningResult = learnFromChat(
+        chatRoom = chatRoom,
+        userMessages = userMessages,
+        assistantMessages = assistantMessages,
+        memoryPlatform = memoryPlatform,
+        learningIdempotencyKey = null
+    )
 
     override suspend fun getMemories(): List<PersonalMemory> = personalMemoryDao.getAll()
 
@@ -699,6 +739,50 @@ class MemoryRepositoryImpl(
                 "candidates=${result.candidateCount}, operations=${result.operationCount}, reason=${result.reason.orEmpty()}"
         )
         return result
+    }
+
+    private suspend fun finishLearningResult(
+        result: MemoryLearningResult,
+        chatRoom: ChatRoomV2,
+        recentMessages: List<MemoryConversationMessage>,
+        memoryPlatform: PlatformV2?,
+        learningIdempotencyKey: String?
+    ): MemoryLearningResult {
+        val loggedResult = logLearningResult(result)
+        runMarkdownMemoryLearning(
+            chatRoom = chatRoom,
+            recentMessages = recentMessages,
+            memoryPlatform = memoryPlatform,
+            learningIdempotencyKey = learningIdempotencyKey
+        )
+        return loggedResult
+    }
+
+    private suspend fun runMarkdownMemoryLearning(
+        chatRoom: ChatRoomV2,
+        recentMessages: List<MemoryConversationMessage>,
+        memoryPlatform: PlatformV2?,
+        learningIdempotencyKey: String?
+    ) {
+        val learningService = markdownMemoryLearningService ?: return
+        runCatching {
+            learningService.learnFromTurn(
+                chatRoom = chatRoom,
+                recentMessages = recentMessages,
+                existingRoomMemories = personalMemoryDao.getRecallCandidates().take(MAX_CANDIDATE_MEMORIES),
+                memoryIntelligence = memoryIntelligence,
+                preferredPlatform = memoryPlatform,
+                learningIdempotencyKey = learningIdempotencyKey
+            )
+        }.onSuccess { result ->
+            logInfo(
+                "Markdown memory learning result=${result.status}, changed=${result.changedCount}, " +
+                    "daily=${result.dailyNotesWritten}, longTerm=${result.longTermUpdatesWritten}, " +
+                    "duplicates=${result.duplicateCount}, job=${result.jobId.orEmpty()}, reason=${result.reason.orEmpty()}"
+            )
+        }.onFailure { throwable ->
+            logWarning("Markdown memory learning failed before job completion: ${throwable.message}", throwable)
+        }
     }
 
     private fun logInfo(message: String) {

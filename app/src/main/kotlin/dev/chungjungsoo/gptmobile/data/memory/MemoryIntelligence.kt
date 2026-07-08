@@ -22,4 +22,9 @@ interface MemoryIntelligence {
         request: MemoryUpdatePlanningRequest,
         preferredPlatform: PlatformV2? = null
     ): MemoryUpdatePlan?
+
+    suspend fun proposeMarkdownMemoryWrites(
+        request: MarkdownMemoryLearningRequest,
+        preferredPlatform: PlatformV2? = null
+    ): MarkdownMemoryLearningProposal?
 }

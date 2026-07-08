@@ -11,12 +11,16 @@ interface MemoryIndexSearcher {
     suspend fun search(request: MemoryIndexSearchRequest): Result<List<MemoryIndexSearchResult>>
 }
 
+interface MemoryIndexRebuilder {
+    suspend fun rebuildFile(file: File): Result<MemoryIndexRebuildResult>
+}
+
 class MemoryIndexRepository(
     private val memoryFileStore: MemoryFileStore,
     private val memoryIndexDao: MemoryIndexDao,
     private val memoryChunker: MemoryChunker,
     private val clock: Clock = Clock.systemDefaultZone()
-) : MemoryIndexSearcher {
+) : MemoryIndexSearcher, MemoryIndexRebuilder {
 
     suspend fun rebuildAll(): Result<MemoryIndexRebuildResult> = runCatching {
         val indexedFiles = memoryFileStore.listMemoryFiles().getOrThrow()
@@ -33,7 +37,7 @@ class MemoryIndexRepository(
         )
     }
 
-    suspend fun rebuildFile(file: File): Result<MemoryIndexRebuildResult> = runCatching {
+    override suspend fun rebuildFile(file: File): Result<MemoryIndexRebuildResult> = runCatching {
         val sourcePath = memoryFileStore.relativePath(file).getOrThrow()
         if (!file.exists()) {
             memoryIndexDao.removeDocument(sourcePath)

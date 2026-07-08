@@ -69,6 +69,13 @@ class MemoryFileStore(
         dailyFile
     }
 
+    fun appendLongTermMemory(text: String): Result<File> = runCatching {
+        ensureDirectories()
+        val longTermFile = ensureLongTermMemoryFile()
+        longTermFile.appendText(normalizeAppendedBlock(text), StandardCharsets.UTF_8)
+        longTermFile
+    }
+
     fun replaceLongTermMemory(content: String): Result<MemoryFileReplacement> = runCatching {
         ensureDirectories()
         val target = ensureLongTermMemoryFile()

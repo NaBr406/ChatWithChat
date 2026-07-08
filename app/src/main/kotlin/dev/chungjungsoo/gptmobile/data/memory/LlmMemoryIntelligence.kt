@@ -95,6 +95,16 @@ class LlmMemoryIntelligence @Inject constructor(
         preferredPlatform = preferredPlatform
     )
 
+    override suspend fun proposeMarkdownMemoryWrites(
+        request: MarkdownMemoryLearningRequest,
+        preferredPlatform: PlatformV2?
+    ): MarkdownMemoryLearningProposal? = decodeOrNull(
+        operation = "markdown_write",
+        prompt = MARKDOWN_LEARNING_PROMPT,
+        userJson = json.encodeToString(request),
+        preferredPlatform = preferredPlatform
+    )
+
     private suspend inline fun <reified T> decodeOrNull(
         operation: String,
         prompt: String,
@@ -105,10 +115,10 @@ class LlmMemoryIntelligence @Inject constructor(
         return try {
             json.decodeFromString<T>(extractJsonObject(response))
         } catch (e: SerializationException) {
-            Log.w(TAG, "Memory $operation returned invalid JSON: ${response.take(LOG_RESPONSE_LIMIT)}", e)
+            runCatching { Log.w(TAG, "Memory $operation returned invalid JSON: ${response.take(LOG_RESPONSE_LIMIT)}", e) }
             null
         } catch (e: IllegalArgumentException) {
-            Log.w(TAG, "Memory $operation returned invalid JSON: ${response.take(LOG_RESPONSE_LIMIT)}", e)
+            runCatching { Log.w(TAG, "Memory $operation returned invalid JSON: ${response.take(LOG_RESPONSE_LIMIT)}", e) }
             null
         }
     }
@@ -421,7 +431,7 @@ class LlmMemoryIntelligence @Inject constructor(
         if (timeout == 0) return 0
         val minimumSeconds = when (operation) {
             "classify", "select" -> MEMORY_FAST_OPERATION_TIMEOUT_SECONDS
-            "extract", "plan" -> MEMORY_DEEP_OPERATION_TIMEOUT_SECONDS
+            "extract", "plan", "markdown_write" -> MEMORY_DEEP_OPERATION_TIMEOUT_SECONDS
             else -> MEMORY_DEFAULT_OPERATION_TIMEOUT_SECONDS
         }
         return maxOf(timeout, minimumSeconds)
@@ -429,7 +439,7 @@ class LlmMemoryIntelligence @Inject constructor(
 
     private fun memoryMaxOutputTokens(operation: String): Int = when (operation) {
         "classify", "select" -> MEMORY_FAST_OPERATION_MAX_OUTPUT_TOKENS
-        "extract", "plan" -> MEMORY_DEEP_OPERATION_MAX_OUTPUT_TOKENS
+        "extract", "plan", "markdown_write" -> MEMORY_DEEP_OPERATION_MAX_OUTPUT_TOKENS
         else -> MEMORY_DEFAULT_OPERATION_MAX_OUTPUT_TOKENS
     }
 
@@ -520,6 +530,16 @@ Plan safe updates for long-term personal memories.
 Return only valid JSON matching this schema:
 {"operations":[{"action":"create|update|merge|mark_resolved|archive|ignore","targetMemoryIds":[1],"candidateIndex":0,"result":{"summary":"short stable memory summary","details":"optional details","recallText":"short prompt-ready memory text","type":"stable_profile|communication_style|interest|important_event|important_person|emotional_pattern|boundary|life_context|recurring_theme|light_productivity_preference","scope":"global|personal|domain|chat","domains":["string"],"entities":["string"],"tags":["string"],"applicableModes":["string"],"avoidModes":["string"],"importance":0.0,"confidence":0.0,"source":"explicit_user_statement|assistant_inferred|user_confirmed","sensitivity":"normal|private|sensitive","suggestedStatus":"active|pending_confirmation|resolved|archived","evidence":"short explanation, not full transcript","requiresConfirmation":true,"reason":"why this should or should not be remembered"},"reason":"short reason"}]}
 Prefer ignore over unsafe or weak inferred memories. Do not create memories without enough evidence.
+"""
+
+        private const val MARKDOWN_LEARNING_PROMPT = """
+Propose controlled Markdown memory writes for the completed chat turn.
+Return only valid JSON matching this schema:
+{"daily_notes":[{"text":"short memory note","type":"stable_profile|communication_style|project_context|interest|important_event|important_person|emotional_pattern|boundary|life_context|recurring_theme|light_productivity_preference","sensitivity":"normal|private|sensitive","source":"explicit_user_statement|assistant_inferred|user_confirmed","reason":"why this should be remembered"}],"long_term_updates":[{"text":"candidate for MEMORY.md","type":"stable_profile|communication_style|project_context|interest|important_event|important_person|emotional_pattern|boundary|life_context|recurring_theme|light_productivity_preference","sensitivity":"normal|private|sensitive","source":"explicit_user_statement|assistant_inferred|user_confirmed","reason":"why this may be long-term"}]}
+Only include durable preferences, boundaries, important people/events, interests, life context, project context, and recurring themes.
+Do not repeat existing Markdown memories or existing Room memories listed in the request.
+Daily notes may capture useful newly learned facts from this turn. Long-term updates should be concise and stable enough for MEMORY.md.
+If nothing should be remembered, return empty arrays.
 """
     }
 }

@@ -258,6 +258,73 @@ class LlmMemoryIntelligenceTest {
     }
 
     @Test
+    fun `markdown memory proposal parses controlled write shape`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatChunks = flowOf(
+                ChatCompletionChunk(
+                    choices = listOf(
+                        Choice(
+                            index = 0,
+                            delta = Delta(content = markdownProposalJson)
+                        )
+                    )
+                )
+            )
+        )
+        val intelligence = LlmMemoryIntelligence(
+            settingRepository = FakeSettingRepository(
+                listOf(
+                    platform(
+                        compatibleType = ClientType.OPENROUTER,
+                        model = "openai/gpt-4o",
+                        timeout = 30
+                    )
+                )
+            ),
+            openAIAPI = openAIAPI,
+            anthropicAPI = RecordingAnthropicAPI(),
+            googleAPI = RecordingGoogleAPI()
+        )
+
+        val result = intelligence.proposeMarkdownMemoryWrites(markdownLearningRequest(), preferredPlatform = null)
+
+        assertEquals(1, result?.dailyNotes?.size)
+        assertEquals(1, result?.longTermUpdates?.size)
+        assertEquals("project_context", result?.dailyNotes?.single()?.type)
+        assertEquals(MemorySensitivity.PRIVATE, result?.longTermUpdates?.single()?.sensitivity)
+        assertEquals(120, openAIAPI.lastChatTimeoutSeconds)
+        assertEquals(1200, openAIAPI.lastChatRequest?.maxTokens)
+    }
+
+    @Test
+    fun `markdown memory proposal returns null for invalid json`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatChunks = flowOf(
+                ChatCompletionChunk(
+                    choices = listOf(
+                        Choice(
+                            index = 0,
+                            delta = Delta(content = "not json")
+                        )
+                    )
+                )
+            )
+        )
+        val intelligence = LlmMemoryIntelligence(
+            settingRepository = FakeSettingRepository(
+                listOf(platform(compatibleType = ClientType.OPENROUTER, model = "openai/gpt-4o"))
+            ),
+            openAIAPI = openAIAPI,
+            anthropicAPI = RecordingAnthropicAPI(),
+            googleAPI = RecordingGoogleAPI()
+        )
+
+        val result = intelligence.proposeMarkdownMemoryWrites(markdownLearningRequest(), preferredPlatform = null)
+
+        assertNull(result)
+    }
+
+    @Test
     fun `memory timeout preserves disabled timeout setting`() = runBlocking {
         val openAIAPI = RecordingOpenAIAPI(
             chatChunks = flowOf(
@@ -333,6 +400,12 @@ class LlmMemoryIntelligenceTest {
         )
     )
 
+    private fun markdownLearningRequest() = MarkdownMemoryLearningRequest(
+        chatId = 1,
+        chatTitle = "Chat",
+        recentMessages = classificationRequest().recentMessages
+    )
+
     private fun platform(
         compatibleType: ClientType,
         model: String,
@@ -354,6 +427,8 @@ class LlmMemoryIntelligenceTest {
             """{"mode":"personal_update","intent":"sharing","shouldUseMemories":true,"shouldLearnMemories":true,"sensitivity":"normal","confidence":0.9}"""
         private const val extractionJson =
             """{"candidates":[{"summary":"The user prefers concise answers.","recallText":"The user prefers concise answers.","type":"communication_style","scope":"personal","importance":0.8,"confidence":0.9,"source":"user_confirmed","sensitivity":"normal","suggestedStatus":"active","requiresConfirmation":false,"reason":"The user explicitly asked for this preference to be remembered."}]}"""
+        private const val markdownProposalJson =
+            """{"daily_notes":[{"text":"ChatWithChat should keep memory writes durable.","type":"project_context","sensitivity":"normal","source":"explicit_user_statement","reason":"The user asked for durable writes."}],"long_term_updates":[{"text":"The user prefers private local memory metadata.","type":"stable_profile","sensitivity":"private","source":"assistant_inferred","reason":"Useful long-term preference."}]}"""
     }
 }
 

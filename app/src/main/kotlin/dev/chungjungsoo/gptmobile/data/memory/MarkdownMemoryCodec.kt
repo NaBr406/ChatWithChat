@@ -21,6 +21,12 @@ class MarkdownMemoryCodec {
         defaultSection = DAILY_CONVERSATION_SECTION
     )
 
+    fun renderDailyAppend(entries: List<MarkdownMemoryEntry>): String =
+        renderEntryBlocks(entries, defaultSection = DAILY_CONVERSATION_SECTION)
+
+    fun renderLongTermAppend(entries: List<MarkdownMemoryEntry>): String =
+        renderEntryBlocks(entries, defaultSection = null)
+
     fun parse(markdown: String): MarkdownMemoryParseResult {
         val entries = mutableListOf<MarkdownMemoryEntry>()
         val skippedEntries = mutableListOf<SkippedMarkdownMemoryEntry>()
@@ -100,6 +106,29 @@ class MarkdownMemoryCodec {
             appendLine("# $title")
             grouped.forEach { (section, sectionEntries) ->
                 appendLine()
+                appendLine("## $section")
+                appendLine()
+                sectionEntries.forEach { entry ->
+                    appendLine(metadataComment(entry))
+                    appendLine(renderBullet(entry.text))
+                    appendLine()
+                }
+            }
+        }.trimEnd() + "\n"
+    }
+
+    private fun renderEntryBlocks(
+        entries: List<MarkdownMemoryEntry>,
+        defaultSection: String?
+    ): String {
+        val grouped = entries
+            .filter { it.text.isNotBlank() && it.id.isNotBlank() }
+            .groupBy { sectionFor(it, defaultSection) }
+
+        if (grouped.isEmpty()) return ""
+
+        return buildString {
+            grouped.forEach { (section, sectionEntries) ->
                 appendLine("## $section")
                 appendLine()
                 sectionEntries.forEach { entry ->
