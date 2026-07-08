@@ -8,13 +8,15 @@ import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import dev.chungjungsoo.gptmobile.data.database.dao.ChatClassificationDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryIndexDao
+import dev.chungjungsoo.gptmobile.data.database.dao.MemoryMaintenanceJobDao
 import dev.chungjungsoo.gptmobile.data.database.dao.PersonalMemoryDao
+import dev.chungjungsoo.gptmobile.data.memory.LlmMemoryIntelligence
 import dev.chungjungsoo.gptmobile.data.memory.MemoryChunker
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFilePaths
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFileStore
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexRepository
-import dev.chungjungsoo.gptmobile.data.memory.LlmMemoryIntelligence
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIntelligence
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceScheduler
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMarkdownCodec
 import dev.chungjungsoo.gptmobile.data.memory.MemoryPromptBuilder
 import dev.chungjungsoo.gptmobile.data.network.AnthropicAPI
@@ -63,6 +65,12 @@ object MemoryRepositoryModule {
         memoryIndexDao = memoryIndexDao,
         memoryChunker = memoryChunker
     )
+
+    @Provides
+    @Singleton
+    fun provideMemoryMaintenanceScheduler(
+        memoryMaintenanceJobDao: MemoryMaintenanceJobDao
+    ): MemoryMaintenanceScheduler = MemoryMaintenanceScheduler(memoryMaintenanceJobDao)
 
     @Provides
     @Singleton

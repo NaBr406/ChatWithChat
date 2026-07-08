@@ -293,6 +293,12 @@ object ChatDatabaseV2Migrations {
         }
     }
 
+    val MIGRATION_11_12 = object : Migration(11, 12) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            ensureMemoryMaintenanceJobTable(db)
+        }
+    }
+
     internal fun legacyFilesToAttachmentsJson(filesValue: String): String {
         val attachments = filesValue
             .split(",")
@@ -459,5 +465,30 @@ object ChatDatabaseV2Migrations {
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_chunk_type` ON `memory_chunk` (`type`)")
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_chunk_sensitivity` ON `memory_chunk` (`sensitivity`)")
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_chunk_indexed_at` ON `memory_chunk` (`indexed_at`)")
+    }
+
+    private fun ensureMemoryMaintenanceJobTable(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `memory_maintenance_job` (
+                `job_id` TEXT NOT NULL,
+                `type` TEXT NOT NULL,
+                `status` TEXT NOT NULL,
+                `idempotency_key` TEXT NOT NULL,
+                `payload_json` TEXT NOT NULL,
+                `attempts` INTEGER NOT NULL,
+                `last_error` TEXT,
+                `created_at` INTEGER NOT NULL,
+                `started_at` INTEGER,
+                `updated_at` INTEGER NOT NULL,
+                `next_run_at` INTEGER,
+                PRIMARY KEY(`job_id`)
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_memory_maintenance_job_idempotency_key` ON `memory_maintenance_job` (`idempotency_key`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_maintenance_job_status` ON `memory_maintenance_job` (`status`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_maintenance_job_type` ON `memory_maintenance_job` (`type`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_maintenance_job_next_run_at` ON `memory_maintenance_job` (`next_run_at`)")
     }
 }

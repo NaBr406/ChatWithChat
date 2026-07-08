@@ -148,6 +148,21 @@ class ChatDatabaseV2MigrationsTest {
         assertTrue(executedSql.any { it == "CREATE INDEX IF NOT EXISTS `index_memory_chunk_sensitivity` ON `memory_chunk` (`sensitivity`)" })
     }
 
+    @Test
+    fun `migration 11 to 12 creates memory maintenance job table`() {
+        val executedSql = mutableListOf<String>()
+        val db = recordingDatabase(executedSql)
+
+        ChatDatabaseV2Migrations.MIGRATION_11_12.migrate(db)
+
+        val migrationSql = executedSql.joinToString(separator = "\n")
+        assertTrue(migrationSql.contains("CREATE TABLE IF NOT EXISTS `memory_maintenance_job`"))
+        assertTrue(migrationSql.contains("`idempotency_key` TEXT NOT NULL"))
+        assertTrue(executedSql.any { it == "CREATE UNIQUE INDEX IF NOT EXISTS `index_memory_maintenance_job_idempotency_key` ON `memory_maintenance_job` (`idempotency_key`)" })
+        assertTrue(executedSql.any { it == "CREATE INDEX IF NOT EXISTS `index_memory_maintenance_job_status` ON `memory_maintenance_job` (`status`)" })
+        assertTrue(executedSql.any { it == "CREATE INDEX IF NOT EXISTS `index_memory_maintenance_job_next_run_at` ON `memory_maintenance_job` (`next_run_at`)" })
+    }
+
     private fun recordingDatabase(executedSql: MutableList<String>): SupportSQLiteDatabase = Proxy.newProxyInstance(
         SupportSQLiteDatabase::class.java.classLoader,
         arrayOf(SupportSQLiteDatabase::class.java),
