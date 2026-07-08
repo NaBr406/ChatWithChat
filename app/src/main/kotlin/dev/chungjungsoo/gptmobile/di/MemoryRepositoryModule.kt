@@ -1,11 +1,15 @@
 package dev.chungjungsoo.gptmobile.di
 
+import android.content.Context
 import dagger.Module
 import dagger.Provides
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import dev.chungjungsoo.gptmobile.data.database.dao.ChatClassificationDao
 import dev.chungjungsoo.gptmobile.data.database.dao.PersonalMemoryDao
+import dev.chungjungsoo.gptmobile.data.memory.MemoryFilePaths
+import dev.chungjungsoo.gptmobile.data.memory.MemoryFileStore
 import dev.chungjungsoo.gptmobile.data.memory.LlmMemoryIntelligence
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIntelligence
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMarkdownCodec
@@ -29,6 +33,17 @@ object MemoryRepositoryModule {
     @Provides
     @Singleton
     fun provideMemoryMarkdownCodec(): MemoryMarkdownCodec = MemoryMarkdownCodec()
+
+    @Provides
+    @Singleton
+    fun provideMemoryFilePaths(
+        @ApplicationContext context: Context
+    ): MemoryFilePaths = MemoryFilePaths.fromContext(context)
+
+    @Provides
+    @Singleton
+    fun provideMemoryFileStore(memoryFilePaths: MemoryFilePaths): MemoryFileStore =
+        MemoryFileStore(memoryFilePaths)
 
     @Provides
     @Singleton
