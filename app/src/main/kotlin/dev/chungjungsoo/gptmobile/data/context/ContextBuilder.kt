@@ -73,7 +73,8 @@ class ContextBuilder @Inject constructor() {
         return ConversationContext(
             turns = applyAttachmentWindow(selectedTurns, policy),
             summary = summary,
-            estimatedTokens = estimatedTokens
+            estimatedTokens = estimatedTokens,
+            omittedTurns = omittedTurns.toConversationTurnsWithoutAttachments()
         )
     }
 
@@ -173,6 +174,15 @@ class ContextBuilder @Inject constructor() {
             )
         }
     }
+
+    private fun List<RawConversationTurn>.toConversationTurnsWithoutAttachments(): List<ConversationTurn> =
+        map { turn ->
+            ConversationTurn(
+                userMessage = turn.userMessage.copy(attachments = emptyList()),
+                assistantMessage = turn.assistantMessage?.copy(attachments = emptyList()),
+                isCurrentTurn = false
+            )
+        }
 
     private fun sanitizeAssistantMessageForContext(message: MessageV2): MessageV2 {
         val sanitizedContent = stripAssistantErrorNote(message.effectiveContent()).trimEnd()

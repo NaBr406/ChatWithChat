@@ -33,6 +33,8 @@ class ContextBuilderTest {
         assertNotNull(context.summary)
         assertTrue(context.summary!!.contains("Earlier conversation summary"))
         assertTrue(context.estimatedTokens <= 180)
+        assertTrue(context.omittedTurns.isNotEmpty())
+        assertTrue(context.omittedTurns.none { it.isCurrentTurn })
     }
 
     @Test

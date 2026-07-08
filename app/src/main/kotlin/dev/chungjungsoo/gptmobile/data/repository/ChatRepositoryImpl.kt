@@ -79,6 +79,10 @@ import dev.chungjungsoo.gptmobile.data.model.ClientType
 import dev.chungjungsoo.gptmobile.data.model.ReasoningMode
 import dev.chungjungsoo.gptmobile.data.model.defaultReasoningMode
 import dev.chungjungsoo.gptmobile.data.model.isGptOssModel
+import dev.chungjungsoo.gptmobile.data.memory.MemoryCompactionFlushJobPayload
+import dev.chungjungsoo.gptmobile.data.memory.MemoryConversationMessage
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceJobType
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceScheduler
 import dev.chungjungsoo.gptmobile.data.network.AnthropicAPI
 import dev.chungjungsoo.gptmobile.data.network.GoogleAPI
 import dev.chungjungsoo.gptmobile.data.network.GroqAPI
@@ -125,6 +129,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 
@@ -152,8 +157,14 @@ class ChatRepositoryImpl @Inject constructor(
     private val googleNativeToolAdapter: GoogleNativeToolAdapter = GoogleNativeToolAdapter(),
     private val openAICompatibleJsonToolAdapter: ToolCallingAdapter = OpenAICompatibleJsonToolAdapter(),
     private val anthropicToolAdapter: ToolCallingAdapter = AnthropicToolAdapter(),
-    private val googleToolAdapter: ToolCallingAdapter = GoogleToolAdapter()
+    private val googleToolAdapter: ToolCallingAdapter = GoogleToolAdapter(),
+    private val memoryMaintenanceScheduler: MemoryMaintenanceScheduler? = null
 ) : ChatRepository {
+
+    private val maintenanceJson = Json {
+        encodeDefaults = true
+        explicitNulls = false
+    }
 
     private fun isImageFile(extension: String): Boolean = extension in setOf("jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff", "svg")
 
@@ -1589,12 +1600,61 @@ class ChatRepositoryImpl @Inject constructor(
     ): ConversationContext {
         val policy = ProviderContextPolicy.forClientType(platform.compatibleType)
         val conversationContext = contextBuilder.buildContext(userMessages, assistantMessages, platform, policy)
+        scheduleCompactionFlushIfNeeded(conversationContext, platform)
         if (!policy.preferProviderFileRefs || conversationContext.turns.isEmpty()) {
             return conversationContext
         }
 
         return conversationContext.copy(
             turns = ensureProviderReferencesForTurns(conversationContext.turns, platform)
+        )
+    }
+
+    private suspend fun scheduleCompactionFlushIfNeeded(
+        conversationContext: ConversationContext,
+        platform: PlatformV2
+    ) {
+        val scheduler = memoryMaintenanceScheduler ?: return
+        if (conversationContext.omittedTurns.isEmpty()) return
+        val memoryEnabled = runCatching { settingRepository.fetchMemoryEnabled() }.getOrDefault(false)
+        if (!memoryEnabled) return
+
+        val messages = conversationContext.omittedTurns
+            .takeLast(MAX_COMPACTION_FLUSH_TURNS)
+            .flatMap { turn ->
+                buildList {
+                    add(MemoryConversationMessage(role = "user", content = turn.userMessage.content.trim().take(MAX_COMPACTION_MESSAGE_CHARS)))
+                    turn.assistantMessage?.effectiveContent()?.trim()?.take(MAX_COMPACTION_MESSAGE_CHARS)?.takeIf { it.isNotBlank() }?.let { content ->
+                        add(MemoryConversationMessage(role = "assistant", content = content))
+                    }
+                }
+            }
+            .filter { message -> message.content.isNotBlank() }
+        if (messages.isEmpty()) return
+
+        val lastOmittedTurn = conversationContext.omittedTurns.last()
+        val chatId = lastOmittedTurn.userMessage.chatId
+        val idempotencyKey = buildString {
+            append("compaction_flush:")
+            append(chatId)
+            append(':')
+            append(platform.uid)
+            append(':')
+            append(conversationContext.omittedTurns.size)
+            append(':')
+            append(lastOmittedTurn.userMessage.createdAt)
+        }
+        val payload = MemoryCompactionFlushJobPayload(
+            chatId = chatId,
+            platformUid = platform.uid,
+            omittedTurnCount = conversationContext.omittedTurns.size,
+            messages = messages,
+            createdAt = System.currentTimeMillis() / 1000
+        )
+        scheduler.enqueue(
+            type = MemoryMaintenanceJobType.COMPACTION_FLUSH,
+            idempotencyKey = idempotencyKey,
+            payloadJson = maintenanceJson.encodeToString(payload)
         )
     }
 
@@ -2357,6 +2417,8 @@ internal fun isGroqGptOssModel(model: String): Boolean = isGptOssModel(model)
 private const val WEB_SEARCH_RESULT_LIMIT = 5
 private const val MAX_SEARCH_QUERY_COUNT = 2
 private const val MAX_SOURCE_SNIPPET_CHARS = 240
+private const val MAX_COMPACTION_FLUSH_TURNS = 8
+private const val MAX_COMPACTION_MESSAGE_CHARS = 1200
 private const val OPENAI_NATIVE_TOOL_INSTRUCTION =
     "Use the available tools only when the latest user request needs current web information or source inspection. " +
         "When calling web_search, rewrite the user's request into a concise search-engine query with the likely entity, topic, timeframe, geography/source scope, and official or primary-source terms when useful; do not merely copy the user's wording. " +

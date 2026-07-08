@@ -48,6 +48,15 @@ data class MarkdownMemoryLearningJobPayload(
     val createdAt: Long
 )
 
+@Serializable
+data class MemoryCompactionFlushJobPayload(
+    val chatId: Int,
+    val platformUid: String,
+    val omittedTurnCount: Int,
+    val messages: List<MemoryConversationMessage>,
+    val createdAt: Long
+)
+
 data class MarkdownMemoryLearningResult(
     val status: String,
     val dailyNotesWritten: Int = 0,
