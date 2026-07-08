@@ -7,9 +7,12 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import dev.chungjungsoo.gptmobile.data.database.dao.ChatClassificationDao
+import dev.chungjungsoo.gptmobile.data.database.dao.MemoryIndexDao
 import dev.chungjungsoo.gptmobile.data.database.dao.PersonalMemoryDao
+import dev.chungjungsoo.gptmobile.data.memory.MemoryChunker
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFilePaths
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFileStore
+import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexRepository
 import dev.chungjungsoo.gptmobile.data.memory.LlmMemoryIntelligence
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIntelligence
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMarkdownCodec
@@ -44,6 +47,22 @@ object MemoryRepositoryModule {
     @Singleton
     fun provideMemoryFileStore(memoryFilePaths: MemoryFilePaths): MemoryFileStore =
         MemoryFileStore(memoryFilePaths)
+
+    @Provides
+    @Singleton
+    fun provideMemoryChunker(): MemoryChunker = MemoryChunker()
+
+    @Provides
+    @Singleton
+    fun provideMemoryIndexRepository(
+        memoryFileStore: MemoryFileStore,
+        memoryIndexDao: MemoryIndexDao,
+        memoryChunker: MemoryChunker
+    ): MemoryIndexRepository = MemoryIndexRepository(
+        memoryFileStore = memoryFileStore,
+        memoryIndexDao = memoryIndexDao,
+        memoryChunker = memoryChunker
+    )
 
     @Provides
     @Singleton

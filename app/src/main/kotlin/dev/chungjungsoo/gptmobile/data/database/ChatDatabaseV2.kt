@@ -7,6 +7,7 @@ import dev.chungjungsoo.gptmobile.data.database.dao.ChatClassificationDao
 import dev.chungjungsoo.gptmobile.data.database.dao.ChatPlatformModelV2Dao
 import dev.chungjungsoo.gptmobile.data.database.dao.ChatRoomV2Dao
 import dev.chungjungsoo.gptmobile.data.database.dao.MessageV2Dao
+import dev.chungjungsoo.gptmobile.data.database.dao.MemoryIndexDao
 import dev.chungjungsoo.gptmobile.data.database.dao.PersonalMemoryDao
 import dev.chungjungsoo.gptmobile.data.database.dao.PlatformModelV2Dao
 import dev.chungjungsoo.gptmobile.data.database.dao.PlatformV2Dao
@@ -15,6 +16,8 @@ import dev.chungjungsoo.gptmobile.data.database.entity.ChatAttachmentListConvert
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatClassification
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatPlatformModelV2
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatRoomV2
+import dev.chungjungsoo.gptmobile.data.database.entity.MemoryChunk
+import dev.chungjungsoo.gptmobile.data.database.entity.MemoryDocument
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageSourceMetadataListConverter
 import dev.chungjungsoo.gptmobile.data.database.entity.PersonalMemory
@@ -31,9 +34,11 @@ import dev.chungjungsoo.gptmobile.data.database.entity.TokenUsageRecordConverter
         PlatformModelV2::class,
         ChatPlatformModelV2::class,
         PersonalMemory::class,
-        ChatClassification::class
+        ChatClassification::class,
+        MemoryDocument::class,
+        MemoryChunk::class
     ],
-    version = 10,
+    version = 11,
     exportSchema = true
 )
 @TypeConverters(
@@ -52,4 +57,5 @@ abstract class ChatDatabaseV2 : RoomDatabase() {
     abstract fun personalMemoryDao(): PersonalMemoryDao
     abstract fun chatClassificationDao(): ChatClassificationDao
     abstract fun platformModelDao(): PlatformModelV2Dao
+    abstract fun memoryIndexDao(): MemoryIndexDao
 }

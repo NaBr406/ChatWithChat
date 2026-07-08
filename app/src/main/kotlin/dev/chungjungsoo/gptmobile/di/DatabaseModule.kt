@@ -16,6 +16,7 @@ import dev.chungjungsoo.gptmobile.data.database.dao.ChatRoomDao
 import dev.chungjungsoo.gptmobile.data.database.dao.ChatRoomV2Dao
 import dev.chungjungsoo.gptmobile.data.database.dao.MessageDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MessageV2Dao
+import dev.chungjungsoo.gptmobile.data.database.dao.MemoryIndexDao
 import dev.chungjungsoo.gptmobile.data.database.dao.PersonalMemoryDao
 import dev.chungjungsoo.gptmobile.data.database.dao.PlatformModelV2Dao
 import dev.chungjungsoo.gptmobile.data.database.dao.PlatformV2Dao
@@ -55,6 +56,9 @@ object DatabaseModule {
     fun provideChatClassificationDao(chatDatabaseV2: ChatDatabaseV2): ChatClassificationDao = chatDatabaseV2.chatClassificationDao()
 
     @Provides
+    fun provideMemoryIndexDao(chatDatabaseV2: ChatDatabaseV2): MemoryIndexDao = chatDatabaseV2.memoryIndexDao()
+
+    @Provides
     @Singleton
     fun provideChatDatabase(@ApplicationContext appContext: Context): ChatDatabase = Room.databaseBuilder(
         appContext,
@@ -77,6 +81,7 @@ object DatabaseModule {
         ChatDatabaseV2Migrations.MIGRATION_6_7,
         ChatDatabaseV2Migrations.MIGRATION_7_8,
         ChatDatabaseV2Migrations.MIGRATION_8_9,
-        ChatDatabaseV2Migrations.MIGRATION_9_10
+        ChatDatabaseV2Migrations.MIGRATION_9_10,
+        ChatDatabaseV2Migrations.MIGRATION_10_11
     ).build()
 }

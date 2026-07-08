@@ -35,6 +35,30 @@ class MemoryFileStore(
         ensureDailyMemoryFile(date).readText(StandardCharsets.UTF_8)
     }
 
+    fun readMemoryFile(file: File): Result<String> = runCatching {
+        ensureDirectories()
+        file.readText(StandardCharsets.UTF_8)
+    }
+
+    fun listMemoryFiles(): Result<List<File>> = runCatching {
+        ensureDirectories()
+        buildList {
+            add(ensureLongTermMemoryFile())
+            if (paths.dailyMemoryDirectory.exists()) {
+                addAll(
+                    paths.dailyMemoryDirectory
+                        .listFiles { file -> file.isFile && file.extension.equals("md", ignoreCase = true) }
+                        .orEmpty()
+                        .sortedBy { it.name }
+                )
+            }
+        }
+    }
+
+    fun relativePath(file: File): Result<String> = runCatching {
+        paths.relativePath(file)
+    }
+
     fun appendDailyNote(
         text: String,
         date: LocalDate = LocalDate.now(clock)

@@ -287,6 +287,12 @@ object ChatDatabaseV2Migrations {
         }
     }
 
+    val MIGRATION_10_11 = object : Migration(10, 11) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            ensureMemoryIndexTables(db)
+        }
+    }
+
     internal fun legacyFilesToAttachmentsJson(filesValue: String): String {
         val attachments = filesValue
             .split(",")
@@ -409,5 +415,49 @@ object ChatDatabaseV2Migrations {
                 )
             }
         }
+    }
+
+    private fun ensureMemoryIndexTables(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `memory_document` (
+                `source_path` TEXT NOT NULL,
+                `title` TEXT NOT NULL,
+                `scope` TEXT NOT NULL,
+                `content_hash` TEXT NOT NULL,
+                `last_modified_at` INTEGER NOT NULL,
+                `indexed_at` INTEGER NOT NULL,
+                PRIMARY KEY(`source_path`)
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_document_scope` ON `memory_document` (`scope`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_document_indexed_at` ON `memory_document` (`indexed_at`)")
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `memory_chunk` (
+                `chunk_id` TEXT NOT NULL,
+                `source_path` TEXT NOT NULL,
+                `chunk_index` INTEGER NOT NULL,
+                `heading` TEXT,
+                `text` TEXT NOT NULL,
+                `entry_id` TEXT,
+                `type` TEXT,
+                `sensitivity` TEXT,
+                `source` TEXT,
+                `chat_id` INTEGER,
+                `created_at` INTEGER NOT NULL,
+                `updated_at` INTEGER NOT NULL,
+                `indexed_at` INTEGER NOT NULL,
+                PRIMARY KEY(`chunk_id`),
+                FOREIGN KEY(`source_path`) REFERENCES `memory_document`(`source_path`) ON UPDATE NO ACTION ON DELETE CASCADE
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_chunk_source_path` ON `memory_chunk` (`source_path`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_chunk_entry_id` ON `memory_chunk` (`entry_id`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_chunk_type` ON `memory_chunk` (`type`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_chunk_sensitivity` ON `memory_chunk` (`sensitivity`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_chunk_indexed_at` ON `memory_chunk` (`indexed_at`)")
     }
 }

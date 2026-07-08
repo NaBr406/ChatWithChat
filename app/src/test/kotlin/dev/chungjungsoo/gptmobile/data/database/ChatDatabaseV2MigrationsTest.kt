@@ -133,6 +133,21 @@ class ChatDatabaseV2MigrationsTest {
         assertTrue(executedSql.any { it == "ALTER TABLE messages_v2 ADD COLUMN token_usage TEXT" })
     }
 
+    @Test
+    fun `migration 10 to 11 creates memory index tables`() {
+        val executedSql = mutableListOf<String>()
+        val db = recordingDatabase(executedSql)
+
+        ChatDatabaseV2Migrations.MIGRATION_10_11.migrate(db)
+
+        val migrationSql = executedSql.joinToString(separator = "\n")
+        assertTrue(migrationSql.contains("CREATE TABLE IF NOT EXISTS `memory_document`"))
+        assertTrue(migrationSql.contains("CREATE TABLE IF NOT EXISTS `memory_chunk`"))
+        assertTrue(migrationSql.contains("FOREIGN KEY(`source_path`) REFERENCES `memory_document`(`source_path`)"))
+        assertTrue(executedSql.any { it == "CREATE INDEX IF NOT EXISTS `index_memory_document_scope` ON `memory_document` (`scope`)" })
+        assertTrue(executedSql.any { it == "CREATE INDEX IF NOT EXISTS `index_memory_chunk_sensitivity` ON `memory_chunk` (`sensitivity`)" })
+    }
+
     private fun recordingDatabase(executedSql: MutableList<String>): SupportSQLiteDatabase = Proxy.newProxyInstance(
         SupportSQLiteDatabase::class.java.classLoader,
         arrayOf(SupportSQLiteDatabase::class.java),
