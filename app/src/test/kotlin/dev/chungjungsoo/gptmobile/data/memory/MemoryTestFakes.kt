@@ -139,6 +139,7 @@ fun testMemory(
 
 fun testClassification(
     mode: String = "emotional_support",
+    memoryNeeds: List<String> = listOf("communication_style"),
     shouldUseMemories: Boolean = true,
     shouldLearnMemories: Boolean = true,
     sensitivity: String = MemorySensitivity.NORMAL,
@@ -146,7 +147,7 @@ fun testClassification(
 ): ConversationClassificationResult = ConversationClassificationResult(
     mode = mode,
     intent = "sharing",
-    memoryNeeds = listOf("communication_style"),
+    memoryNeeds = memoryNeeds,
     shouldUseMemories = shouldUseMemories,
     shouldLearnMemories = shouldLearnMemories,
     sensitivity = sensitivity,

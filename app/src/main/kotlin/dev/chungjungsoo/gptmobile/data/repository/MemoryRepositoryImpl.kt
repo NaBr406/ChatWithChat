@@ -14,6 +14,9 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryAction
 import dev.chungjungsoo.gptmobile.data.memory.MemoryCandidate
 import dev.chungjungsoo.gptmobile.data.memory.MemoryConversationMessage
 import dev.chungjungsoo.gptmobile.data.memory.MemoryExtractionRequest
+import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexSearchRequest
+import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexSearchResult
+import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexSearcher
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIntelligence
 import dev.chungjungsoo.gptmobile.data.memory.MemoryLearningResult
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMarkdownCodec
@@ -29,14 +32,14 @@ import dev.chungjungsoo.gptmobile.data.memory.SelectedPersonalMemory
 import dev.chungjungsoo.gptmobile.data.memory.buildMemoryMessages
 import dev.chungjungsoo.gptmobile.data.memory.toPersonalMemory
 import dev.chungjungsoo.gptmobile.data.memory.toSelectionCandidate
-import javax.inject.Inject
 
-class MemoryRepositoryImpl @Inject constructor(
+class MemoryRepositoryImpl(
     private val personalMemoryDao: PersonalMemoryDao,
     private val chatClassificationDao: ChatClassificationDao,
     private val memoryIntelligence: MemoryIntelligence,
     private val memoryPromptBuilder: MemoryPromptBuilder,
-    private val memoryMarkdownCodec: MemoryMarkdownCodec
+    private val memoryMarkdownCodec: MemoryMarkdownCodec,
+    private val memoryIndexSearcher: MemoryIndexSearcher? = null
 ) : MemoryRepository {
 
     override suspend fun prepareMemoryContext(
@@ -60,6 +63,15 @@ class MemoryRepositoryImpl @Inject constructor(
         persistClassification(chatRoom.id, classification)
         if (!classification.shouldUseMemories) {
             return PreparedMemoryContext(classification = classification)
+        }
+
+        val markdownMemories = searchMarkdownMemories(recentMessages, classification)
+        if (markdownMemories.isNotEmpty()) {
+            return PreparedMemoryContext(
+                classification = classification,
+                selectedMarkdownMemories = markdownMemories,
+                prompt = memoryPromptBuilder.buildMarkdown(markdownMemories)
+            )
         }
 
         val safeCandidates = personalMemoryDao.getRecallCandidates()
@@ -368,6 +380,43 @@ class MemoryRepositoryImpl @Inject constructor(
         return true
     }
 
+    private suspend fun searchMarkdownMemories(
+        recentMessages: List<MemoryConversationMessage>,
+        classification: ConversationClassificationResult
+    ): List<MemoryIndexSearchResult> {
+        val searcher = memoryIndexSearcher ?: return emptyList()
+        val query = buildMarkdownRecallQuery(recentMessages, classification)
+        if (query.isBlank()) return emptyList()
+
+        return searcher.search(
+            MemoryIndexSearchRequest(
+                query = query,
+                includePrivate = true,
+                limit = MAX_SELECTED_MEMORIES,
+                candidateLimit = MAX_CANDIDATE_MEMORIES
+            )
+        ).getOrElse { throwable ->
+            logWarning("Markdown memory search failed; falling back to Room memories: ${throwable.message}", throwable)
+            emptyList()
+        }
+    }
+
+    private fun buildMarkdownRecallQuery(
+        recentMessages: List<MemoryConversationMessage>,
+        classification: ConversationClassificationResult
+    ): String = buildString {
+        appendLine(recentMessages.lastOrNull { it.role == "user" }?.content.orEmpty().trimForMemoryContext())
+        appendLine(classification.intent)
+        appendLine(classification.memoryNeeds.joinToString(" "))
+        appendLine(classification.domains.joinToString(" "))
+        appendLine(classification.entities.joinToString(" "))
+        recentMessages
+            .takeLast(MARKDOWN_RECALL_RECENT_MESSAGE_COUNT)
+            .forEach { message ->
+                appendLine(message.content.trimForMemoryContext())
+            }
+    }.trim()
+
     private suspend fun touchSelectedMemories(selectedMemories: List<SelectedPersonalMemory>) {
         val timestamp = now()
         selectedMemories.forEach { selectedMemory ->
@@ -671,6 +720,7 @@ class MemoryRepositoryImpl @Inject constructor(
         private const val MAX_LIST_ITEMS = 20
         private const val MAX_EXTRACTION_MESSAGE_LENGTH = 1200
         private const val MAX_CONTEXT_MESSAGE_LENGTH = 1200
+        private const val MARKDOWN_RECALL_RECENT_MESSAGE_COUNT = 4
         private const val SENSITIVE_RECALL_CONFIDENCE = 0.8f
         private const val CLASSIFIER_FALLBACK_MIN_CONFIDENCE = 0.8f
 

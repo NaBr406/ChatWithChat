@@ -7,12 +7,16 @@ import java.io.File
 import java.security.MessageDigest
 import java.time.Clock
 
+interface MemoryIndexSearcher {
+    suspend fun search(request: MemoryIndexSearchRequest): Result<List<MemoryIndexSearchResult>>
+}
+
 class MemoryIndexRepository(
     private val memoryFileStore: MemoryFileStore,
     private val memoryIndexDao: MemoryIndexDao,
     private val memoryChunker: MemoryChunker,
     private val clock: Clock = Clock.systemDefaultZone()
-) {
+) : MemoryIndexSearcher {
 
     suspend fun rebuildAll(): Result<MemoryIndexRebuildResult> = runCatching {
         val indexedFiles = memoryFileStore.listMemoryFiles().getOrThrow()
@@ -44,7 +48,7 @@ class MemoryIndexRepository(
         )
     }
 
-    suspend fun search(request: MemoryIndexSearchRequest): Result<List<MemoryIndexSearchResult>> = runCatching {
+    override suspend fun search(request: MemoryIndexSearchRequest): Result<List<MemoryIndexSearchResult>> = runCatching {
         val tokens = tokenize(request.query)
         if (tokens.isEmpty()) return@runCatching emptyList()
 

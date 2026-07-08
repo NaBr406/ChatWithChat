@@ -80,12 +80,14 @@ object MemoryRepositoryModule {
         chatClassificationDao: ChatClassificationDao,
         memoryIntelligence: MemoryIntelligence,
         memoryPromptBuilder: MemoryPromptBuilder,
-        memoryMarkdownCodec: MemoryMarkdownCodec
+        memoryMarkdownCodec: MemoryMarkdownCodec,
+        memoryIndexRepository: MemoryIndexRepository
     ): MemoryRepository = MemoryRepositoryImpl(
         personalMemoryDao,
         chatClassificationDao,
         memoryIntelligence,
         memoryPromptBuilder,
-        memoryMarkdownCodec
+        memoryMarkdownCodec,
+        memoryIndexRepository
     )
 }
