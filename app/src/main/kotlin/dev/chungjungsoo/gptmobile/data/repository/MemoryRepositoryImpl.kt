@@ -10,10 +10,13 @@ import dev.chungjungsoo.gptmobile.data.database.entity.PersonalMemory
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
 import dev.chungjungsoo.gptmobile.data.memory.ConversationClassificationRequest
 import dev.chungjungsoo.gptmobile.data.memory.ConversationClassificationResult
+import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryCodec
 import dev.chungjungsoo.gptmobile.data.memory.MemoryAction
 import dev.chungjungsoo.gptmobile.data.memory.MemoryCandidate
 import dev.chungjungsoo.gptmobile.data.memory.MemoryConversationMessage
+import dev.chungjungsoo.gptmobile.data.memory.MemoryFileStore
 import dev.chungjungsoo.gptmobile.data.memory.MemoryExtractionRequest
+import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexRebuilder
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexSearchRequest
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexSearchResult
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexSearcher
@@ -31,6 +34,7 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryUpdatePlanningRequest
 import dev.chungjungsoo.gptmobile.data.memory.PreparedMemoryContext
 import dev.chungjungsoo.gptmobile.data.memory.SelectedPersonalMemory
 import dev.chungjungsoo.gptmobile.data.memory.buildMemoryMessages
+import dev.chungjungsoo.gptmobile.data.memory.toMarkdownMemoryEntry
 import dev.chungjungsoo.gptmobile.data.memory.toPersonalMemory
 import dev.chungjungsoo.gptmobile.data.memory.toSelectionCandidate
 
@@ -41,7 +45,10 @@ class MemoryRepositoryImpl(
     private val memoryPromptBuilder: MemoryPromptBuilder,
     private val memoryMarkdownCodec: MemoryMarkdownCodec,
     private val memoryIndexSearcher: MemoryIndexSearcher? = null,
-    private val markdownMemoryLearningService: MarkdownMemoryLearningService? = null
+    private val markdownMemoryLearningService: MarkdownMemoryLearningService? = null,
+    private val memoryFileStore: MemoryFileStore? = null,
+    private val structuredMarkdownMemoryCodec: MarkdownMemoryCodec? = null,
+    private val memoryIndexRebuilder: MemoryIndexRebuilder? = null
 ) : MemoryRepository {
 
     override suspend fun prepareMemoryContext(
@@ -386,6 +393,40 @@ class MemoryRepositoryImpl(
     }
 
     override suspend fun exportMarkdown(): String = memoryMarkdownCodec.encode(personalMemoryDao.getAll())
+
+    override suspend fun getLongTermMarkdown(): String =
+        memoryFileStore
+            ?.readLongTermMemory()
+            ?.getOrDefault("")
+            ?: memoryMarkdownCodec.encode(personalMemoryDao.getAll())
+
+    override suspend fun migrateActiveMemoriesToMarkdown(): Int {
+        val fileStore = memoryFileStore ?: return 0
+        val codec = structuredMarkdownMemoryCodec ?: return 0
+
+        return runCatching {
+            val existingEntries = codec.parse(fileStore.readLongTermMemory().getOrThrow()).entries
+            val existingIds = existingEntries.map { it.id }.toSet()
+            val existingKeys = existingEntries.map { it.text.normalizedMemoryKey() }.toSet()
+            val entriesToAppend = personalMemoryDao.getAll()
+                .filter { memory -> memory.status == MemoryStatus.ACTIVE }
+                .map { memory -> memory.toMarkdownMemoryEntry() }
+                .filterNot { entry -> entry.id in existingIds || entry.text.normalizedMemoryKey() in existingKeys }
+
+            if (entriesToAppend.isEmpty()) return@runCatching 0
+
+            val file = fileStore.appendLongTermMemory(codec.renderLongTermAppend(entriesToAppend)).getOrThrow()
+            memoryIndexRebuilder
+                ?.rebuildFile(file)
+                ?.onFailure { throwable ->
+                    logWarning("Markdown memory migration index rebuild failed: ${throwable.message}", throwable)
+                }
+            entriesToAppend.size
+        }.getOrElse { throwable ->
+            logWarning("Markdown memory migration failed: ${throwable.message}", throwable)
+            0
+        }
+    }
 
     private suspend fun persistClassification(
         chatId: Int,

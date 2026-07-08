@@ -7,6 +7,11 @@ import dev.chungjungsoo.gptmobile.data.model.ClientType
 import dev.chungjungsoo.gptmobile.data.memory.FakeMemoryIntelligence
 import dev.chungjungsoo.gptmobile.data.memory.InMemoryChatClassificationDao
 import dev.chungjungsoo.gptmobile.data.memory.InMemoryPersonalMemoryDao
+import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryCodec
+import dev.chungjungsoo.gptmobile.data.memory.MemoryFilePaths
+import dev.chungjungsoo.gptmobile.data.memory.MemoryFileStore
+import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexRebuildResult
+import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexRebuilder
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexSearchRequest
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexSearchResult
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexSearcher
@@ -20,6 +25,8 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryUsage
 import dev.chungjungsoo.gptmobile.data.memory.SelectedMemoryReference
 import dev.chungjungsoo.gptmobile.data.memory.testClassification
 import dev.chungjungsoo.gptmobile.data.memory.testMemory
+import java.io.File
+import java.nio.file.Files
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -268,6 +275,40 @@ class MemoryRepositoryTest {
         assertTrue(prepared.selectedMarkdownMemories.isEmpty())
     }
 
+    @Test
+    fun `active room memories migrate to long term markdown without deleting legacy rows`() = runBlocking {
+        val personalMemoryDao = InMemoryPersonalMemoryDao(
+            listOf(
+                testMemory(1, "The user prefers natural Chinese explanations."),
+                testMemory(2, "Resolved memory should stay legacy only.", status = MemoryStatus.RESOLVED)
+            )
+        )
+        val fileStore = MemoryFileStore(MemoryFilePaths(Files.createTempDirectory("memory-repository-migration-test").toFile()))
+        val indexRebuilder = RecordingRepositoryMemoryIndexRebuilder()
+        val repository = MemoryRepositoryImpl(
+            personalMemoryDao = personalMemoryDao,
+            chatClassificationDao = InMemoryChatClassificationDao(),
+            memoryIntelligence = FakeMemoryIntelligence(),
+            memoryPromptBuilder = MemoryPromptBuilder(),
+            memoryMarkdownCodec = MemoryMarkdownCodec(),
+            memoryFileStore = fileStore,
+            structuredMarkdownMemoryCodec = MarkdownMemoryCodec(),
+            memoryIndexRebuilder = indexRebuilder
+        )
+
+        val firstMigrationCount = repository.migrateActiveMemoriesToMarkdown()
+        val secondMigrationCount = repository.migrateActiveMemoriesToMarkdown()
+        val markdown = repository.getLongTermMarkdown()
+
+        assertEquals(1, firstMigrationCount)
+        assertEquals(0, secondMigrationCount)
+        assertTrue(markdown.contains("personal_1"))
+        assertTrue(markdown.contains("The user prefers natural Chinese explanations."))
+        assertFalse(markdown.contains("Resolved memory should stay legacy only."))
+        assertEquals(2, personalMemoryDao.memories.size)
+        assertEquals(listOf("MEMORY.md"), indexRebuilder.rebuiltFiles.map { it.name })
+    }
+
     private fun createRepository(
         memories: List<dev.chungjungsoo.gptmobile.data.database.entity.PersonalMemory>,
         intelligence: FakeMemoryIntelligence,
@@ -314,6 +355,15 @@ class MemoryRepositoryTest {
         token = "token",
         model = model
     )
+}
+
+private class RecordingRepositoryMemoryIndexRebuilder : MemoryIndexRebuilder {
+    val rebuiltFiles = mutableListOf<File>()
+
+    override suspend fun rebuildFile(file: File): Result<MemoryIndexRebuildResult> {
+        rebuiltFiles += file
+        return Result.success(MemoryIndexRebuildResult(indexedDocuments = 1, indexedChunks = 1))
+    }
 }
 
 private class FakeMemoryIndexSearcher(

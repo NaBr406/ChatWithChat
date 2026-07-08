@@ -110,7 +110,9 @@ object MemoryRepositoryModule {
         memoryPromptBuilder: MemoryPromptBuilder,
         memoryMarkdownCodec: MemoryMarkdownCodec,
         memoryIndexRepository: MemoryIndexRepository,
-        markdownMemoryLearningService: MarkdownMemoryLearningService
+        markdownMemoryLearningService: MarkdownMemoryLearningService,
+        memoryFileStore: MemoryFileStore,
+        markdownMemoryCodec: MarkdownMemoryCodec
     ): MemoryRepository = MemoryRepositoryImpl(
         personalMemoryDao = personalMemoryDao,
         chatClassificationDao = chatClassificationDao,
@@ -118,6 +120,9 @@ object MemoryRepositoryModule {
         memoryPromptBuilder = memoryPromptBuilder,
         memoryMarkdownCodec = memoryMarkdownCodec,
         memoryIndexSearcher = memoryIndexRepository,
-        markdownMemoryLearningService = markdownMemoryLearningService
+        markdownMemoryLearningService = markdownMemoryLearningService,
+        memoryFileStore = memoryFileStore,
+        structuredMarkdownMemoryCodec = markdownMemoryCodec,
+        memoryIndexRebuilder = memoryIndexRepository
     )
 }

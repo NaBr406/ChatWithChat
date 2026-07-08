@@ -31,4 +31,6 @@ interface MemoryRepository {
     suspend fun markResolved(memory: PersonalMemory)
     suspend fun archiveMemory(memory: PersonalMemory)
     suspend fun exportMarkdown(): String
+    suspend fun getLongTermMarkdown(): String
+    suspend fun migrateActiveMemoriesToMarkdown(): Int
 }
