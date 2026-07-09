@@ -49,6 +49,12 @@ class MemoryMaintenanceScheduler(
         limit = limit
     )
 
+    suspend fun nextScheduledRunAt(now: Long = now()): Long? =
+        jobDao.getEarliestFutureRunAt(now)
+
+    suspend fun nextScheduledDelaySeconds(now: Long = now()): Long? =
+        nextScheduledRunAt(now)?.let { runAt -> (runAt - now).coerceAtLeast(0) }
+
     suspend fun markRunning(job: MemoryMaintenanceJob): MemoryMaintenanceJob {
         val now = now()
         val updated = job.copy(

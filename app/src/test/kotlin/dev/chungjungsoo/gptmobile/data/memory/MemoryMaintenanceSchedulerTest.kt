@@ -108,6 +108,44 @@ class MemoryMaintenanceSchedulerTest {
         assertEquals(listOf("job-1"), runnable.map { it.jobId })
     }
 
+    @Test
+    fun `next scheduled run uses earliest future runnable job`() = runBlocking {
+        val dao = InMemoryMemoryMaintenanceJobDao(
+            initialJobs = listOf(
+                MemoryMaintenanceJob(
+                    jobId = "job-later",
+                    type = MemoryMaintenanceJobType.APPEND_DAILY_NOTE,
+                    status = MemoryMaintenanceJobStatus.FAILED_RETRYABLE,
+                    idempotencyKey = "append:later",
+                    payloadJson = "{}",
+                    attempts = 1,
+                    lastError = "temporary",
+                    createdAt = 1L,
+                    startedAt = null,
+                    updatedAt = 1L,
+                    nextRunAt = 500L
+                ),
+                MemoryMaintenanceJob(
+                    jobId = "job-earlier",
+                    type = MemoryMaintenanceJobType.REBUILD_MEMORY_INDEX,
+                    status = MemoryMaintenanceJobStatus.PENDING,
+                    idempotencyKey = "rebuild:earlier",
+                    payloadJson = "{}",
+                    attempts = 0,
+                    lastError = null,
+                    createdAt = 1L,
+                    startedAt = null,
+                    updatedAt = 1L,
+                    nextRunAt = 140L
+                )
+            )
+        )
+        val scheduler = createScheduler(dao)
+
+        assertEquals(140L, scheduler.nextScheduledRunAt())
+        assertEquals(40L, scheduler.nextScheduledDelaySeconds())
+    }
+
     private fun createScheduler(
         dao: InMemoryMemoryMaintenanceJobDao,
         eventSink: MemoryMaintenanceEventSink = MemoryMaintenanceEventSink.None
@@ -149,6 +187,13 @@ private class InMemoryMemoryMaintenanceJobDao(
         .filter { job -> now >= (job.nextRunAt ?: 0L) }
         .sortedBy { it.createdAt }
         .take(limit)
+
+    override suspend fun getEarliestFutureRunAt(now: Long): Long? =
+        jobs
+            .filter { job -> job.status in listOf(MemoryMaintenanceJobStatus.PENDING, MemoryMaintenanceJobStatus.FAILED_RETRYABLE) }
+            .mapNotNull { job -> job.nextRunAt }
+            .filter { nextRunAt -> nextRunAt > now }
+            .minOrNull()
 
     override suspend fun insertIgnore(job: MemoryMaintenanceJob): Long {
         if (jobs.any { it.idempotencyKey == job.idempotencyKey }) return -1L

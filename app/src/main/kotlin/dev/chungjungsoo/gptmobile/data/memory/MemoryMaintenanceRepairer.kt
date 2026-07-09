@@ -9,6 +9,9 @@ class MemoryMaintenanceRepairer @Inject constructor(
     suspend fun repairAndEnqueue(): MemoryMaintenanceRepairResult {
         val resetCount = maintenanceScheduler.resetStaleRunningJobs()
         workScheduler.enqueueRepairWork()
+        maintenanceScheduler.nextScheduledDelaySeconds()?.let { delaySeconds ->
+            workScheduler.enqueueRepairWork(delaySeconds)
+        }
         return MemoryMaintenanceRepairResult(resetCount = resetCount)
     }
 }

@@ -135,14 +135,39 @@ class MemoryMaintenanceProcessorTest {
 
         assertEquals(1, result.resetCount)
         assertEquals(1, enqueuer.enqueueCalls)
+        assertEquals(listOf(0L), enqueuer.delays)
         assertEquals(MemoryMaintenanceJobStatus.FAILED_RETRYABLE, jobDao.jobs.single().status)
+    }
+
+    @Test
+    fun `repairer also enqueues earliest future retry`() = runBlocking {
+        val jobDao = InMemoryMaintenanceJobDao(
+            listOf(
+                job(
+                    type = MemoryMaintenanceJobType.APPEND_DAILY_NOTE,
+                    status = MemoryMaintenanceJobStatus.FAILED_RETRYABLE,
+                    updatedAt = 1L,
+                    nextRunAt = 1_120L
+                )
+            )
+        )
+        val enqueuer = RecordingWorkEnqueuer()
+        val repairer = MemoryMaintenanceRepairer(
+            maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK),
+            workScheduler = enqueuer
+        )
+
+        repairer.repairAndEnqueue()
+
+        assertEquals(listOf(0L, 120L), enqueuer.delays)
     }
 
     private fun job(
         type: String,
         status: String = MemoryMaintenanceJobStatus.PENDING,
         updatedAt: Long = 10L,
-        payloadJson: String = "{}"
+        payloadJson: String = "{}",
+        nextRunAt: Long? = null
     ): MemoryMaintenanceJob = MemoryMaintenanceJob(
         jobId = "job_$type",
         type = type,
@@ -154,7 +179,7 @@ class MemoryMaintenanceProcessorTest {
         createdAt = 1L,
         startedAt = null,
         updatedAt = updatedAt,
-        nextRunAt = null
+        nextRunAt = nextRunAt
     )
 
     private fun createProcessor(
@@ -184,9 +209,11 @@ class MemoryMaintenanceProcessorTest {
 
 private class RecordingWorkEnqueuer : MemoryMaintenanceWorkEnqueuer {
     var enqueueCalls = 0
+    val delays = mutableListOf<Long>()
 
-    override fun enqueueRepairWork() {
+    override fun enqueueRepairWork(delaySeconds: Long) {
         enqueueCalls += 1
+        delays += delaySeconds
     }
 }
 
@@ -212,6 +239,13 @@ private class InMemoryMaintenanceJobDao(
         .filter { job -> job.status in statuses && now >= (job.nextRunAt ?: 0L) }
         .sortedBy { it.createdAt }
         .take(limit)
+
+    override suspend fun getEarliestFutureRunAt(now: Long): Long? =
+        jobs
+            .filter { job -> job.status in listOf(MemoryMaintenanceJobStatus.PENDING, MemoryMaintenanceJobStatus.FAILED_RETRYABLE) }
+            .mapNotNull { job -> job.nextRunAt }
+            .filter { nextRunAt -> nextRunAt > now }
+            .minOrNull()
 
     override suspend fun insertIgnore(job: MemoryMaintenanceJob): Long {
         if (jobs.any { it.idempotencyKey == job.idempotencyKey }) return -1L

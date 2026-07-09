@@ -639,6 +639,13 @@ private class TestMemoryMaintenanceJobDao : MemoryMaintenanceJobDao {
         .sortedBy { it.createdAt }
         .take(limit)
 
+    override suspend fun getEarliestFutureRunAt(now: Long): Long? =
+        jobs
+            .filter { job -> job.status in listOf(MemoryMaintenanceJobStatus.PENDING, MemoryMaintenanceJobStatus.FAILED_RETRYABLE) }
+            .mapNotNull { job -> job.nextRunAt }
+            .filter { nextRunAt -> nextRunAt > now }
+            .minOrNull()
+
     override suspend fun insertIgnore(job: MemoryMaintenanceJob): Long {
         if (jobs.any { it.idempotencyKey == job.idempotencyKey }) return -1L
         jobs += job
