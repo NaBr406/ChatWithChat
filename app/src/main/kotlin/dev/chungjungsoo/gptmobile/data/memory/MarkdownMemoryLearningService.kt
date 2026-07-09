@@ -2,12 +2,14 @@ package dev.chungjungsoo.gptmobile.data.memory
 
 import android.util.Log
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatRoomV2
+import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMaintenanceJob
 import dev.chungjungsoo.gptmobile.data.database.entity.PersonalMemory
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
 import java.io.File
 import java.security.MessageDigest
 import java.time.Clock
 import java.time.LocalDate
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -82,78 +84,14 @@ class MarkdownMemoryLearningService(
 
         val runningJob = maintenanceScheduler.markRunning(job)
         return runCatching {
-            val snapshot = memoryFileStore.ensureStore().getOrThrow()
-            val existingMarkdownEntries = readExistingMarkdownEntries()
-            val request = MarkdownMemoryLearningRequest(
-                chatId = chatRoom.id,
-                chatTitle = chatRoom.title,
+            executeLearningJob(
+                runningJob = runningJob,
+                chatRoom = chatRoom,
+                learningKey = learningKey,
                 recentMessages = payload.recentMessages,
-                existingMarkdownMemories = markdownEntriesToExistingMemories(existingMarkdownEntries),
-                existingRoomMemories = roomMemoriesToExistingMemories(existingRoomMemories)
-            )
-            val proposal = memoryIntelligence.proposeMarkdownMemoryWrites(
-                request = request,
+                existingRoomMemories = existingRoomMemories,
+                memoryIntelligence = memoryIntelligence,
                 preferredPlatform = preferredPlatform
-            ) ?: run {
-                maintenanceScheduler.markFailedRetryable(
-                    job = runningJob,
-                    error = "Markdown memory proposal unavailable or invalid"
-                )
-                return@runCatching MarkdownMemoryLearningResult.skipped(
-                    status = MarkdownMemoryLearningResult.STATUS_SKIPPED_NO_PROPOSAL,
-                    jobId = runningJob.jobId,
-                    reason = "Proposal unavailable or invalid"
-                )
-            }
-
-            val existingKeys = buildExistingKeys(existingMarkdownEntries, existingRoomMemories)
-            val dailyEntries = proposal.dailyNotes.normalizedEntries(
-                prefix = "day",
-                learningKey = learningKey,
-                chatId = chatRoom.id,
-                defaultSection = DAILY_SECTION,
-                existingKeys = existingKeys
-            )
-            val longTermEntries = proposal.longTermUpdates.normalizedEntries(
-                prefix = "mem",
-                learningKey = learningKey,
-                chatId = null,
-                defaultSection = null,
-                existingKeys = existingKeys
-            )
-            val duplicateCount = proposal.dailyNotes.size + proposal.longTermUpdates.size - dailyEntries.size - longTermEntries.size
-            val affectedFiles = mutableSetOf<File>()
-
-            if (dailyEntries.isNotEmpty()) {
-                val dailyFile = memoryFileStore.appendDailyNote(
-                    text = markdownMemoryCodec.renderDailyAppend(dailyEntries),
-                    date = LocalDate.now(clock)
-                ).getOrThrow()
-                affectedFiles += dailyFile
-            }
-            if (longTermEntries.isNotEmpty()) {
-                val longTermFile = memoryFileStore.appendLongTermMemory(
-                    markdownMemoryCodec.renderLongTermAppend(longTermEntries)
-                ).getOrThrow()
-                affectedFiles += longTermFile
-            }
-            if (affectedFiles.isEmpty() && duplicateCount > 0) {
-                affectedFiles += snapshot.longTermMemoryFile
-                affectedFiles += snapshot.todayMemoryFile
-            }
-            affectedFiles.forEach { file -> memoryIndexRebuilder.rebuildFile(file).getOrThrow() }
-
-            maintenanceScheduler.markSucceeded(runningJob)
-            MarkdownMemoryLearningResult(
-                status = if (dailyEntries.isNotEmpty() || longTermEntries.isNotEmpty()) {
-                    MarkdownMemoryLearningResult.STATUS_APPLIED
-                } else {
-                    MarkdownMemoryLearningResult.STATUS_SKIPPED_NO_NOTES
-                },
-                dailyNotesWritten = dailyEntries.size,
-                longTermUpdatesWritten = longTermEntries.size,
-                duplicateCount = duplicateCount.coerceAtLeast(0),
-                jobId = runningJob.jobId
             )
         }.getOrElse { throwable ->
             runCatching { Log.w(TAG, "Markdown memory learning failed", throwable) }
@@ -167,6 +105,201 @@ class MarkdownMemoryLearningService(
                 reason = throwable.message ?: throwable.javaClass.simpleName
             )
         }
+    }
+
+    suspend fun retryLearningJob(
+        job: MemoryMaintenanceJob,
+        existingRoomMemories: List<PersonalMemory>,
+        memoryIntelligence: MemoryIntelligence,
+        preferredPlatform: PlatformV2?
+    ): MarkdownMemoryLearningResult {
+        val payload = runCatching { json.decodeFromString<MarkdownMemoryLearningJobPayload>(job.payloadJson) }
+            .getOrElse { throwable ->
+                maintenanceScheduler.markFailedTerminal(job, "Invalid markdown learning payload: ${throwable.message}")
+                return MarkdownMemoryLearningResult.skipped(
+                    status = MarkdownMemoryLearningResult.STATUS_FAILED_TERMINAL,
+                    jobId = job.jobId,
+                    reason = "Invalid markdown learning payload"
+                )
+            }
+        return executeRunnableJob(
+            job = job,
+            chatRoom = ChatRoomV2(id = payload.chatId, title = payload.chatTitle, enabledPlatform = emptyList()),
+            learningKey = payload.learningKey,
+            recentMessages = payload.recentMessages,
+            existingRoomMemories = existingRoomMemories,
+            memoryIntelligence = memoryIntelligence,
+            preferredPlatform = preferredPlatform
+        )
+    }
+
+    suspend fun retryCompactionFlushJob(
+        job: MemoryMaintenanceJob,
+        existingRoomMemories: List<PersonalMemory>,
+        memoryIntelligence: MemoryIntelligence,
+        preferredPlatform: PlatformV2?
+    ): MarkdownMemoryLearningResult {
+        val payload = runCatching { json.decodeFromString<MemoryCompactionFlushJobPayload>(job.payloadJson) }
+            .getOrElse { throwable ->
+                maintenanceScheduler.markFailedTerminal(job, "Invalid compaction flush payload: ${throwable.message}")
+                return MarkdownMemoryLearningResult.skipped(
+                    status = MarkdownMemoryLearningResult.STATUS_FAILED_TERMINAL,
+                    jobId = job.jobId,
+                    reason = "Invalid compaction flush payload"
+                )
+            }
+        return executeRunnableJob(
+            job = job,
+            chatRoom = ChatRoomV2(id = payload.chatId, title = "Compaction flush", enabledPlatform = emptyList()),
+            learningKey = "compaction_${job.idempotencyKey}",
+            recentMessages = payload.messages,
+            existingRoomMemories = existingRoomMemories,
+            memoryIntelligence = memoryIntelligence,
+            preferredPlatform = preferredPlatform
+        )
+    }
+
+    private suspend fun executeRunnableJob(
+        job: MemoryMaintenanceJob,
+        chatRoom: ChatRoomV2,
+        learningKey: String,
+        recentMessages: List<MemoryConversationMessage>,
+        existingRoomMemories: List<PersonalMemory>,
+        memoryIntelligence: MemoryIntelligence,
+        preferredPlatform: PlatformV2?
+    ): MarkdownMemoryLearningResult {
+        when (job.status) {
+            MemoryMaintenanceJobStatus.SUCCEEDED -> {
+                return MarkdownMemoryLearningResult.skipped(
+                    status = MarkdownMemoryLearningResult.STATUS_SKIPPED_DUPLICATE_JOB,
+                    jobId = job.jobId,
+                    reason = "Learning job already succeeded"
+                )
+            }
+            MemoryMaintenanceJobStatus.RUNNING -> {
+                return MarkdownMemoryLearningResult.skipped(
+                    status = MarkdownMemoryLearningResult.STATUS_SKIPPED_ALREADY_RUNNING,
+                    jobId = job.jobId,
+                    reason = "Learning job is already running"
+                )
+            }
+            MemoryMaintenanceJobStatus.FAILED_TERMINAL,
+            MemoryMaintenanceJobStatus.DISMISSED -> {
+                return MarkdownMemoryLearningResult.skipped(
+                    status = MarkdownMemoryLearningResult.STATUS_FAILED_TERMINAL,
+                    jobId = job.jobId,
+                    reason = "Learning job is ${job.status}"
+                )
+            }
+        }
+
+        val runningJob = maintenanceScheduler.markRunning(job)
+        return runCatching {
+            executeLearningJob(
+                runningJob = runningJob,
+                chatRoom = chatRoom,
+                learningKey = learningKey,
+                recentMessages = recentMessages,
+                existingRoomMemories = existingRoomMemories,
+                memoryIntelligence = memoryIntelligence,
+                preferredPlatform = preferredPlatform
+            )
+        }.getOrElse { throwable ->
+            runCatching { Log.w(TAG, "Persisted markdown memory job failed", throwable) }
+            maintenanceScheduler.markFailedRetryable(
+                job = runningJob,
+                error = throwable.message ?: throwable.javaClass.simpleName
+            )
+            MarkdownMemoryLearningResult.skipped(
+                status = MarkdownMemoryLearningResult.STATUS_FAILED_RETRYABLE,
+                jobId = runningJob.jobId,
+                reason = throwable.message ?: throwable.javaClass.simpleName
+            )
+        }
+    }
+
+    private suspend fun executeLearningJob(
+        runningJob: MemoryMaintenanceJob,
+        chatRoom: ChatRoomV2,
+        learningKey: String,
+        recentMessages: List<MemoryConversationMessage>,
+        existingRoomMemories: List<PersonalMemory>,
+        memoryIntelligence: MemoryIntelligence,
+        preferredPlatform: PlatformV2?
+    ): MarkdownMemoryLearningResult {
+        val snapshot = memoryFileStore.ensureStore().getOrThrow()
+        val existingMarkdownEntries = readExistingMarkdownEntries()
+        val request = MarkdownMemoryLearningRequest(
+            chatId = chatRoom.id,
+            chatTitle = chatRoom.title,
+            recentMessages = recentMessages.forMarkdownLearning(),
+            existingMarkdownMemories = markdownEntriesToExistingMemories(existingMarkdownEntries),
+            existingRoomMemories = roomMemoriesToExistingMemories(existingRoomMemories)
+        )
+        val proposal = memoryIntelligence.proposeMarkdownMemoryWrites(
+            request = request,
+            preferredPlatform = preferredPlatform
+        ) ?: run {
+            maintenanceScheduler.markFailedRetryable(
+                job = runningJob,
+                error = "Markdown memory proposal unavailable or invalid"
+            )
+            return MarkdownMemoryLearningResult.skipped(
+                status = MarkdownMemoryLearningResult.STATUS_SKIPPED_NO_PROPOSAL,
+                jobId = runningJob.jobId,
+                reason = "Proposal unavailable or invalid"
+            )
+        }
+
+        val existingKeys = buildExistingKeys(existingMarkdownEntries, existingRoomMemories)
+        val dailyEntries = proposal.dailyNotes.normalizedEntries(
+            prefix = "day",
+            learningKey = learningKey,
+            chatId = chatRoom.id,
+            defaultSection = DAILY_SECTION,
+            existingKeys = existingKeys
+        )
+        val longTermEntries = proposal.longTermUpdates.normalizedEntries(
+            prefix = "mem",
+            learningKey = learningKey,
+            chatId = null,
+            defaultSection = null,
+            existingKeys = existingKeys
+        )
+        val duplicateCount = proposal.dailyNotes.size + proposal.longTermUpdates.size - dailyEntries.size - longTermEntries.size
+        val affectedFiles = mutableSetOf<File>()
+
+        if (dailyEntries.isNotEmpty()) {
+            val dailyFile = memoryFileStore.appendDailyNote(
+                text = markdownMemoryCodec.renderDailyAppend(dailyEntries),
+                date = LocalDate.now(clock)
+            ).getOrThrow()
+            affectedFiles += dailyFile
+        }
+        if (longTermEntries.isNotEmpty()) {
+            val longTermFile = memoryFileStore.appendLongTermMemory(
+                markdownMemoryCodec.renderLongTermAppend(longTermEntries)
+            ).getOrThrow()
+            affectedFiles += longTermFile
+        }
+        if (affectedFiles.isEmpty() && duplicateCount > 0) {
+            affectedFiles += snapshot.longTermMemoryFile
+            affectedFiles += snapshot.todayMemoryFile
+        }
+        affectedFiles.forEach { file -> memoryIndexRebuilder.rebuildFile(file).getOrThrow() }
+
+        maintenanceScheduler.markSucceeded(runningJob)
+        return MarkdownMemoryLearningResult(
+            status = if (dailyEntries.isNotEmpty() || longTermEntries.isNotEmpty()) {
+                MarkdownMemoryLearningResult.STATUS_APPLIED
+            } else {
+                MarkdownMemoryLearningResult.STATUS_SKIPPED_NO_NOTES
+            },
+            dailyNotesWritten = dailyEntries.size,
+            longTermUpdatesWritten = longTermEntries.size,
+            duplicateCount = duplicateCount.coerceAtLeast(0),
+            jobId = runningJob.jobId
+        )
     }
 
     private fun readExistingMarkdownEntries(): List<MarkdownMemoryEntry> =

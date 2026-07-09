@@ -42,10 +42,10 @@ class MemoryMaintenanceProcessorTest {
         ).getOrThrow()
         val jobDao = InMemoryMaintenanceJobDao(listOf(job(MemoryMaintenanceJobType.REBUILD_MEMORY_INDEX)))
         val indexDao = InMemoryProcessorMemoryIndexDao()
-        val processor = MemoryMaintenanceProcessor(
-            maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK),
-            memoryIndexRepository = MemoryIndexRepository(fileStore, indexDao, MemoryChunker(), FIXED_CLOCK),
-            settingRepository = FakeMaintenanceSettingRepository(memoryEnabled = true)
+        val processor = createProcessor(
+            jobDao = jobDao,
+            fileStore = fileStore,
+            indexDao = indexDao
         )
 
         val result = processor.processRunnableJobs()
@@ -57,18 +57,55 @@ class MemoryMaintenanceProcessorTest {
     }
 
     @Test
-    fun `processor keeps llm dependent compaction jobs retryable`() = runBlocking {
-        val jobDao = InMemoryMaintenanceJobDao(listOf(job(MemoryMaintenanceJobType.COMPACTION_FLUSH)))
-        val processor = MemoryMaintenanceProcessor(
-            maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK),
-            memoryIndexRepository = MemoryIndexRepository(
-                MemoryFileStore(MemoryFilePaths(Files.createTempDirectory("memory-maintenance-processor-empty").toFile())),
-                InMemoryProcessorMemoryIndexDao(),
-                MemoryChunker(),
-                FIXED_CLOCK
-            ),
-            settingRepository = FakeMaintenanceSettingRepository(memoryEnabled = true)
+    fun `processor retries persisted markdown learning jobs without duplicating notes`() = runBlocking {
+        val fileStore = MemoryFileStore(MemoryFilePaths(Files.createTempDirectory("memory-maintenance-processor-learning").toFile()), FIXED_CLOCK)
+        val jobDao = InMemoryMaintenanceJobDao(
+            listOf(
+                job(
+                    type = MemoryMaintenanceJobType.APPEND_DAILY_NOTE,
+                    payloadJson = """
+                    {
+                      "chatId": 1,
+                      "chatTitle": "Chat",
+                      "learningKey": "retry-key",
+                      "recentMessages": [{"role":"user","content":"Remember the durable markdown retry."}],
+                      "createdAt": 100
+                    }
+                    """.trimIndent()
+                )
+            )
         )
+        val intelligence = FakeMemoryIntelligence(
+            markdownProposal = MarkdownMemoryLearningProposal(
+                dailyNotes = listOf(
+                    MarkdownMemoryLearningNote(
+                        text = "The app retries persisted Markdown learning jobs.",
+                        type = "project_context",
+                        source = MemorySource.EXPLICIT_USER_STATEMENT
+                    )
+                )
+            )
+        )
+        val processor = createProcessor(
+            jobDao = jobDao,
+            fileStore = fileStore,
+            intelligence = intelligence
+        )
+
+        val result = processor.processRunnableJobs()
+        val secondResult = processor.processRunnableJobs()
+        val dailyMarkdown = fileStore.readDailyMemory().getOrThrow()
+
+        assertEquals(1, result.succeededCount)
+        assertEquals(0, secondResult.processedCount)
+        assertEquals(MemoryMaintenanceJobStatus.SUCCEEDED, jobDao.jobs.single().status)
+        assertEquals(1, dailyMarkdown.split("The app retries persisted Markdown learning jobs.").size - 1)
+    }
+
+    @Test
+    fun `processor keeps unattended distillation jobs retryable`() = runBlocking {
+        val jobDao = InMemoryMaintenanceJobDao(listOf(job(MemoryMaintenanceJobType.DISTILL_DAILY_NOTES)))
+        val processor = createProcessor(jobDao = jobDao)
 
         val result = processor.processRunnableJobs()
 
@@ -104,19 +141,40 @@ class MemoryMaintenanceProcessorTest {
     private fun job(
         type: String,
         status: String = MemoryMaintenanceJobStatus.PENDING,
-        updatedAt: Long = 10L
+        updatedAt: Long = 10L,
+        payloadJson: String = "{}"
     ): MemoryMaintenanceJob = MemoryMaintenanceJob(
         jobId = "job_$type",
         type = type,
         status = status,
         idempotencyKey = "key_$type",
-        payloadJson = "{}",
+        payloadJson = payloadJson,
         attempts = 0,
         lastError = null,
         createdAt = 1L,
         startedAt = null,
         updatedAt = updatedAt,
         nextRunAt = null
+    )
+
+    private fun createProcessor(
+        jobDao: InMemoryMaintenanceJobDao,
+        fileStore: MemoryFileStore = MemoryFileStore(MemoryFilePaths(Files.createTempDirectory("memory-maintenance-processor-default").toFile()), FIXED_CLOCK),
+        indexDao: InMemoryProcessorMemoryIndexDao = InMemoryProcessorMemoryIndexDao(),
+        intelligence: FakeMemoryIntelligence = FakeMemoryIntelligence()
+    ): MemoryMaintenanceProcessor = MemoryMaintenanceProcessor(
+        maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK),
+        memoryIndexRepository = MemoryIndexRepository(fileStore, indexDao, MemoryChunker(), FIXED_CLOCK),
+        settingRepository = FakeMaintenanceSettingRepository(memoryEnabled = true),
+        personalMemoryDao = InMemoryPersonalMemoryDao(),
+        memoryIntelligence = intelligence,
+        markdownMemoryLearningService = MarkdownMemoryLearningService(
+            memoryFileStore = fileStore,
+            markdownMemoryCodec = MarkdownMemoryCodec(),
+            maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK),
+            memoryIndexRebuilder = MemoryIndexRepository(fileStore, indexDao, MemoryChunker(), FIXED_CLOCK),
+            clock = FIXED_CLOCK
+        )
     )
 
     private companion object {
