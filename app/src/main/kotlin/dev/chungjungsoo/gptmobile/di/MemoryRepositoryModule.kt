@@ -12,6 +12,7 @@ import dev.chungjungsoo.gptmobile.data.database.dao.MemoryMaintenanceJobDao
 import dev.chungjungsoo.gptmobile.data.database.dao.PersonalMemoryDao
 import dev.chungjungsoo.gptmobile.data.memory.LlmMemoryIntelligence
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryCodec
+import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryDebugEditor
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryLearningService
 import dev.chungjungsoo.gptmobile.data.memory.MemoryChunker
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFilePaths
@@ -72,6 +73,18 @@ object MemoryRepositoryModule {
         memoryFileStore = memoryFileStore,
         memoryIndexDao = memoryIndexDao,
         memoryChunker = memoryChunker
+    )
+
+    @Provides
+    @Singleton
+    internal fun provideMarkdownMemoryDebugEditor(
+        memoryFileStore: MemoryFileStore,
+        markdownMemoryCodec: MarkdownMemoryCodec,
+        memoryIndexRepository: MemoryIndexRepository
+    ): MarkdownMemoryDebugEditor = MarkdownMemoryDebugEditor(
+        memoryFileStore = memoryFileStore,
+        markdownMemoryCodec = markdownMemoryCodec,
+        memoryIndexRebuilder = memoryIndexRepository
     )
 
     @Provides

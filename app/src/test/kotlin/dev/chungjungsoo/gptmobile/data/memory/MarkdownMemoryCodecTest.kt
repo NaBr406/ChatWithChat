@@ -121,6 +121,44 @@ class MarkdownMemoryCodecTest {
     }
 
     @Test
+    fun `remove entries by id deletes only matching memory blocks`() {
+        val markdown = """
+            # ChatWithChat Memory
+
+            Intro text should stay.
+
+            ## Stable Preferences
+
+            <!-- memory:id=mem_keep type=communication_style sensitivity=normal source=explicit_user_statement created=10 updated=20 -->
+            - Keep this memory.
+
+            <!-- memory:id=mem_delete type=communication_style sensitivity=normal source=explicit_user_statement created=11 updated=21 -->
+            - Delete this memory.
+              This continuation line should also disappear.
+
+            ## Projects
+
+            Handwritten project note should stay.
+
+            <!-- memory:id=mem_delete type=project_context sensitivity=normal source=assistant_inferred created=12 updated=22 -->
+            - Duplicate id should also be deleted.
+        """.trimIndent()
+
+        val result = codec.removeEntriesById(markdown, setOf("mem_delete"))
+        val parsed = codec.parse(result.markdown)
+
+        assertEquals(2, result.deletedCount)
+        assertTrue(result.markdown.contains("Intro text should stay."))
+        assertTrue(result.markdown.contains("Handwritten project note should stay."))
+        assertTrue(result.markdown.contains("mem_keep"))
+        assertTrue(result.markdown.contains("Keep this memory."))
+        assertTrue(result.markdown.endsWith("\n"))
+        assertEquals(listOf("mem_keep"), parsed.entries.map { it.id })
+        assertTrue(!result.markdown.contains("Delete this memory."))
+        assertTrue(!result.markdown.contains("Duplicate id should also be deleted."))
+    }
+
+    @Test
     fun `personal memory can be converted to markdown entry`() {
         val personalMemory = testMemory(
             id = 42,

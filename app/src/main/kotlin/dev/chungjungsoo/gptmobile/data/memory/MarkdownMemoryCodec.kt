@@ -27,6 +27,50 @@ class MarkdownMemoryCodec {
     fun renderLongTermAppend(entries: List<MarkdownMemoryEntry>): String =
         renderEntryBlocks(entries, defaultSection = null)
 
+    internal fun removeEntriesById(
+        markdown: String,
+        entryIds: Set<String>
+    ): MarkdownMemoryRemovalResult {
+        val targetIds = entryIds.mapNotNull { it.trim().takeIf(String::isNotBlank) }.toSet()
+        if (targetIds.isEmpty()) {
+            return MarkdownMemoryRemovalResult(markdown = normalizeEditedMarkdown(markdown))
+        }
+
+        val lines = markdown.lines()
+        val retained = BooleanArray(lines.size) { true }
+        var deletedCount = 0
+        var index = 0
+        while (index < lines.size) {
+            val trimmed = lines[index].trim()
+            if (!trimmed.startsWith(MEMORY_COMMENT_PREFIX)) {
+                index += 1
+                continue
+            }
+
+            val metadata = parseMetadata(trimmed)
+            if (metadata["id"] !in targetIds) {
+                index += 1
+                continue
+            }
+
+            val bulletIndex = nextMeaningfulLineIndex(lines, index + 1)
+            val endExclusive = entryBlockEndExclusive(lines, index, bulletIndex)
+            for (lineIndex in index until endExclusive) {
+                retained[lineIndex] = false
+            }
+            deletedCount += 1
+            index = endExclusive
+        }
+
+        val editedMarkdown = lines
+            .filterIndexed { lineIndex, _ -> retained[lineIndex] }
+            .joinToString("\n")
+        return MarkdownMemoryRemovalResult(
+            markdown = normalizeEditedMarkdown(editedMarkdown),
+            deletedCount = deletedCount
+        )
+    }
+
     fun parse(markdown: String): MarkdownMemoryParseResult {
         val entries = mutableListOf<MarkdownMemoryEntry>()
         val skippedEntries = mutableListOf<SkippedMarkdownMemoryEntry>()
@@ -210,6 +254,27 @@ class MarkdownMemoryCodec {
         return textLines.joinToString("\n").trim()
     }
 
+    private fun normalizeEditedMarkdown(markdown: String): String =
+        markdown.trimEnd() + "\n"
+
+    private fun entryBlockEndExclusive(
+        lines: List<String>,
+        commentIndex: Int,
+        bulletIndex: Int?
+    ): Int {
+        var index = commentIndex + 1
+        if (bulletIndex != null && lines[bulletIndex].trimStart().startsWith("- ")) {
+            index = bulletIndex + 1
+            while (index < lines.size && (lines[index].startsWith("  ") || lines[index].startsWith("\t"))) {
+                index += 1
+            }
+        }
+        while (index < lines.size && lines[index].isBlank()) {
+            index += 1
+        }
+        return index
+    }
+
     private fun buildEntry(
         metadata: Map<String, String>,
         text: String?,
@@ -265,3 +330,8 @@ class MarkdownMemoryCodec {
         private val REQUIRED_METADATA_KEYS = setOf("id", "type", "sensitivity", "source")
     }
 }
+
+internal data class MarkdownMemoryRemovalResult(
+    val markdown: String,
+    val deletedCount: Int = 0
+)
