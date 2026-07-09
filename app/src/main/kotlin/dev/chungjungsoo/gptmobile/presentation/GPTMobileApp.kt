@@ -4,7 +4,11 @@ import android.app.Application
 import android.content.Context
 import dagger.hilt.android.HiltAndroidApp
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceRepairer
+import dev.chungjungsoo.gptmobile.di.ApplicationScope
 import javax.inject.Inject
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 
 @HiltAndroidApp
 class GPTMobileApp : Application() {
@@ -12,4 +16,18 @@ class GPTMobileApp : Application() {
     @Inject
     @ApplicationContext
     lateinit var context: Context
+
+    @Inject
+    lateinit var memoryMaintenanceRepairer: MemoryMaintenanceRepairer
+
+    @Inject
+    @ApplicationScope
+    lateinit var applicationScope: CoroutineScope
+
+    override fun onCreate() {
+        super.onCreate()
+        applicationScope.launch {
+            memoryMaintenanceRepairer.repairAndEnqueue()
+        }
+    }
 }

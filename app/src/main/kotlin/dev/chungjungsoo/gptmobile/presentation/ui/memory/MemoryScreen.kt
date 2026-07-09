@@ -1,8 +1,10 @@
 package dev.chungjungsoo.gptmobile.presentation.ui.memory
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
@@ -29,6 +31,8 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.chungjungsoo.gptmobile.R
+import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMaintenanceJob
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceJobStatus
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -79,6 +83,25 @@ fun MemoryScreen(
                 item { MemoryDisabledNotice() }
             }
 
+            if (uiState.maintenanceJobs.isNotEmpty()) {
+                item {
+                    Text(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        text = stringResource(R.string.memory_maintenance_title),
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                }
+                uiState.maintenanceJobs.forEach { job ->
+                    item(key = job.jobId) {
+                        MemoryMaintenanceJobItem(
+                            job = job,
+                            onRetry = { memoryViewModel.retryMaintenanceJob(job.jobId) },
+                            onDismiss = { memoryViewModel.dismissMaintenanceJob(job.jobId) }
+                        )
+                    }
+                }
+            }
+
             item {
                 SelectionContainer {
                     Text(
@@ -127,3 +150,39 @@ private fun MemoryDisabledNotice() {
         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
     )
 }
+
+@Composable
+private fun MemoryMaintenanceJobItem(
+    job: MemoryMaintenanceJob,
+    onRetry: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    ListItem(
+        headlineContent = {
+            Text(stringResource(R.string.memory_maintenance_job, job.type, job.status))
+        },
+        supportingContent = {
+            job.lastError?.takeIf { it.isNotBlank() }?.let { error ->
+                Text(stringResource(R.string.memory_maintenance_error, error))
+            }
+        },
+        trailingContent = {
+            if (job.status in RETRYABLE_JOB_STATUSES) {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = onRetry) {
+                        Text(stringResource(R.string.retry))
+                    }
+                    TextButton(onClick = onDismiss) {
+                        Text(stringResource(R.string.dismiss))
+                    }
+                }
+            }
+        },
+        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+    )
+}
+
+private val RETRYABLE_JOB_STATUSES = setOf(
+    MemoryMaintenanceJobStatus.FAILED_RETRYABLE,
+    MemoryMaintenanceJobStatus.FAILED_TERMINAL
+)

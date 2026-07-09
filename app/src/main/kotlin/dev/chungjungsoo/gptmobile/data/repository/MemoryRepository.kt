@@ -2,6 +2,7 @@ package dev.chungjungsoo.gptmobile.data.repository
 
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatRoomV2
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
+import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMaintenanceJob
 import dev.chungjungsoo.gptmobile.data.database.entity.PersonalMemory
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
 import dev.chungjungsoo.gptmobile.data.memory.MemoryLearningResult
@@ -33,4 +34,7 @@ interface MemoryRepository {
     suspend fun exportMarkdown(): String
     suspend fun getLongTermMarkdown(): String
     suspend fun migrateActiveMemoriesToMarkdown(): Int
+    suspend fun getMaintenanceJobs(): List<MemoryMaintenanceJob>
+    suspend fun retryMaintenanceJob(jobId: String)
+    suspend fun dismissMaintenanceJob(jobId: String)
 }

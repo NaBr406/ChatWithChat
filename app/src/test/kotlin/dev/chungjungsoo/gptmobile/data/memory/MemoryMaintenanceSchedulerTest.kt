@@ -107,6 +107,9 @@ private class InMemoryMemoryMaintenanceJobDao(
     override suspend fun getByIdempotencyKey(idempotencyKey: String): MemoryMaintenanceJob? =
         jobs.firstOrNull { it.idempotencyKey == idempotencyKey }
 
+    override suspend fun getVisibleJobs(limit: Int): List<MemoryMaintenanceJob> =
+        jobs.sortedByDescending { it.updatedAt }.take(limit)
+
     override suspend fun getRunnableJobs(
         statuses: List<String>,
         now: Long,

@@ -2,10 +2,12 @@ package dev.chungjungsoo.gptmobile.data.repository
 
 import android.util.Log
 import dev.chungjungsoo.gptmobile.data.database.dao.ChatClassificationDao
+import dev.chungjungsoo.gptmobile.data.database.dao.MemoryMaintenanceJobDao
 import dev.chungjungsoo.gptmobile.data.database.dao.PersonalMemoryDao
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatClassification
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatRoomV2
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
+import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMaintenanceJob
 import dev.chungjungsoo.gptmobile.data.database.entity.PersonalMemory
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
 import dev.chungjungsoo.gptmobile.data.memory.ConversationClassificationRequest
@@ -22,6 +24,8 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexSearchResult
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexSearcher
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIntelligence
 import dev.chungjungsoo.gptmobile.data.memory.MemoryLearningResult
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceJobStatus
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceWorkEnqueuer
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryLearningService
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMarkdownCodec
 import dev.chungjungsoo.gptmobile.data.memory.MemoryPromptBuilder
@@ -48,7 +52,9 @@ class MemoryRepositoryImpl(
     private val markdownMemoryLearningService: MarkdownMemoryLearningService? = null,
     private val memoryFileStore: MemoryFileStore? = null,
     private val structuredMarkdownMemoryCodec: MarkdownMemoryCodec? = null,
-    private val memoryIndexRebuilder: MemoryIndexRebuilder? = null
+    private val memoryIndexRebuilder: MemoryIndexRebuilder? = null,
+    private val memoryMaintenanceJobDao: MemoryMaintenanceJobDao? = null,
+    private val memoryMaintenanceWorkScheduler: MemoryMaintenanceWorkEnqueuer? = null
 ) : MemoryRepository {
 
     override suspend fun prepareMemoryContext(
@@ -426,6 +432,35 @@ class MemoryRepositoryImpl(
             logWarning("Markdown memory migration failed: ${throwable.message}", throwable)
             0
         }
+    }
+
+    override suspend fun getMaintenanceJobs(): List<MemoryMaintenanceJob> =
+        memoryMaintenanceJobDao?.getVisibleJobs().orEmpty()
+
+    override suspend fun retryMaintenanceJob(jobId: String) {
+        val dao = memoryMaintenanceJobDao ?: return
+        val job = dao.getById(jobId) ?: return
+        dao.update(
+            job.copy(
+                status = MemoryMaintenanceJobStatus.PENDING,
+                lastError = null,
+                updatedAt = now(),
+                nextRunAt = now()
+            )
+        )
+        memoryMaintenanceWorkScheduler?.enqueueRepairWork()
+    }
+
+    override suspend fun dismissMaintenanceJob(jobId: String) {
+        val dao = memoryMaintenanceJobDao ?: return
+        val job = dao.getById(jobId) ?: return
+        dao.update(
+            job.copy(
+                status = MemoryMaintenanceJobStatus.DISMISSED,
+                updatedAt = now(),
+                nextRunAt = null
+            )
+        )
     }
 
     private suspend fun persistClassification(

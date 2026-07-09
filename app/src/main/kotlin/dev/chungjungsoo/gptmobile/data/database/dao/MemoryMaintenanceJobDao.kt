@@ -19,6 +19,16 @@ interface MemoryMaintenanceJobDao {
     @Query(
         """
         SELECT * FROM memory_maintenance_job
+        WHERE status IN ('pending', 'running', 'failed_retryable', 'failed_terminal')
+        ORDER BY updated_at DESC
+        LIMIT :limit
+        """
+    )
+    suspend fun getVisibleJobs(limit: Int = 20): List<MemoryMaintenanceJob>
+
+    @Query(
+        """
+        SELECT * FROM memory_maintenance_job
         WHERE status IN (:statuses)
             AND (:now >= COALESCE(next_run_at, 0))
         ORDER BY created_at ASC

@@ -83,7 +83,7 @@
     <string name="settings_section_tools">工具</string>
     <string name="settings_section_app">应用</string>
     <string name="memory_disabled_notice_title">记忆链路未启用</string>
-    <string name="memory_disabled_notice_description">仍可查看、编辑、导出和清理已有记忆；开启后才会参与新聊天。</string>
+    <string name="memory_disabled_notice_description">仍可查看和导出已有长期记忆；开启后才会参与新聊天。</string>
     <string name="memory_section_pending">待确认</string>
     <string name="memory_section_active">生效中</string>
     <string name="memory_section_inactive">已解决与已归档</string>
@@ -91,6 +91,10 @@
     <string name="memory_export">导出记忆</string>
     <string name="memory_export_title">记忆导出</string>
     <string name="memory_export_empty_markdown"># 用户记忆</string>
+    <string name="memory_maintenance_title">维护任务</string>
+    <string name="memory_maintenance_job">任务：%1$s · 状态：%2$s</string>
+    <string name="memory_maintenance_error">错误：%1$s</string>
+    <string name="dismiss">忽略</string>
     <string name="memory_reject">拒绝</string>
     <string name="memory_mark_resolved">标记为已解决</string>
     <string name="memory_archive">归档</string>

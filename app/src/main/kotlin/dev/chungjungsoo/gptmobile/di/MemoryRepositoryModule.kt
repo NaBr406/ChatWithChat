@@ -19,6 +19,8 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryFileStore
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexRepository
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIntelligence
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceScheduler
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceWorkEnqueuer
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceWorkScheduler
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMarkdownCodec
 import dev.chungjungsoo.gptmobile.data.memory.MemoryPromptBuilder
 import dev.chungjungsoo.gptmobile.data.network.AnthropicAPI
@@ -80,6 +82,12 @@ object MemoryRepositoryModule {
 
     @Provides
     @Singleton
+    fun provideMemoryMaintenanceWorkEnqueuer(
+        memoryMaintenanceWorkScheduler: MemoryMaintenanceWorkScheduler
+    ): MemoryMaintenanceWorkEnqueuer = memoryMaintenanceWorkScheduler
+
+    @Provides
+    @Singleton
     fun provideMarkdownMemoryLearningService(
         memoryFileStore: MemoryFileStore,
         markdownMemoryCodec: MarkdownMemoryCodec,
@@ -112,7 +120,9 @@ object MemoryRepositoryModule {
         memoryIndexRepository: MemoryIndexRepository,
         markdownMemoryLearningService: MarkdownMemoryLearningService,
         memoryFileStore: MemoryFileStore,
-        markdownMemoryCodec: MarkdownMemoryCodec
+        markdownMemoryCodec: MarkdownMemoryCodec,
+        memoryMaintenanceJobDao: MemoryMaintenanceJobDao,
+        memoryMaintenanceWorkScheduler: MemoryMaintenanceWorkEnqueuer
     ): MemoryRepository = MemoryRepositoryImpl(
         personalMemoryDao = personalMemoryDao,
         chatClassificationDao = chatClassificationDao,
@@ -123,6 +133,8 @@ object MemoryRepositoryModule {
         markdownMemoryLearningService = markdownMemoryLearningService,
         memoryFileStore = memoryFileStore,
         structuredMarkdownMemoryCodec = markdownMemoryCodec,
-        memoryIndexRebuilder = memoryIndexRepository
+        memoryIndexRebuilder = memoryIndexRepository,
+        memoryMaintenanceJobDao = memoryMaintenanceJobDao,
+        memoryMaintenanceWorkScheduler = memoryMaintenanceWorkScheduler
     )
 }
