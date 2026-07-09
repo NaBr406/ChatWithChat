@@ -59,6 +59,26 @@ class MemoryMaintenanceSchedulerTest {
     }
 
     @Test
+    fun `state transitions emit one status event after update`() = runBlocking {
+        val dao = InMemoryMemoryMaintenanceJobDao()
+        val eventSink = RecordingMemoryMaintenanceEventSink()
+        val scheduler = createScheduler(dao, eventSink)
+        val pending = scheduler.enqueue(
+            type = MemoryMaintenanceJobType.REBUILD_MEMORY_INDEX,
+            idempotencyKey = "rebuild:memory",
+            payloadJson = "{}"
+        )
+
+        val running = scheduler.markRunning(pending)
+
+        assertEquals(1, eventSink.events.size)
+        assertEquals(MemoryMaintenanceJobStatus.PENDING, eventSink.events.single().oldStatus)
+        assertEquals(MemoryMaintenanceJobStatus.RUNNING, eventSink.events.single().newStatus)
+        assertEquals(running, eventSink.events.single().newJob)
+        assertEquals(running, dao.jobs.single())
+    }
+
+    @Test
     fun `stale running jobs become retryable and runnable`() = runBlocking {
         val dao = InMemoryMemoryMaintenanceJobDao(
             initialJobs = listOf(
@@ -88,12 +108,60 @@ class MemoryMaintenanceSchedulerTest {
         assertEquals(listOf("job-1"), runnable.map { it.jobId })
     }
 
+    @Test
+    fun `next scheduled run uses earliest future runnable job`() = runBlocking {
+        val dao = InMemoryMemoryMaintenanceJobDao(
+            initialJobs = listOf(
+                MemoryMaintenanceJob(
+                    jobId = "job-later",
+                    type = MemoryMaintenanceJobType.APPEND_DAILY_NOTE,
+                    status = MemoryMaintenanceJobStatus.FAILED_RETRYABLE,
+                    idempotencyKey = "append:later",
+                    payloadJson = "{}",
+                    attempts = 1,
+                    lastError = "temporary",
+                    createdAt = 1L,
+                    startedAt = null,
+                    updatedAt = 1L,
+                    nextRunAt = 500L
+                ),
+                MemoryMaintenanceJob(
+                    jobId = "job-earlier",
+                    type = MemoryMaintenanceJobType.REBUILD_MEMORY_INDEX,
+                    status = MemoryMaintenanceJobStatus.PENDING,
+                    idempotencyKey = "rebuild:earlier",
+                    payloadJson = "{}",
+                    attempts = 0,
+                    lastError = null,
+                    createdAt = 1L,
+                    startedAt = null,
+                    updatedAt = 1L,
+                    nextRunAt = 140L
+                )
+            )
+        )
+        val scheduler = createScheduler(dao)
+
+        assertEquals(140L, scheduler.nextScheduledRunAt())
+        assertEquals(40L, scheduler.nextScheduledDelaySeconds())
+    }
+
     private fun createScheduler(
-        dao: InMemoryMemoryMaintenanceJobDao
+        dao: InMemoryMemoryMaintenanceJobDao,
+        eventSink: MemoryMaintenanceEventSink = MemoryMaintenanceEventSink.None
     ): MemoryMaintenanceScheduler = MemoryMaintenanceScheduler(
         jobDao = dao,
-        clock = Clock.fixed(Instant.ofEpochSecond(100L), ZoneOffset.UTC)
+        clock = Clock.fixed(Instant.ofEpochSecond(100L), ZoneOffset.UTC),
+        eventSink = eventSink
     )
+}
+
+private class RecordingMemoryMaintenanceEventSink : MemoryMaintenanceEventSink {
+    val events = mutableListOf<MemoryMaintenanceStatusChangedEvent>()
+
+    override suspend fun onStatusChanged(event: MemoryMaintenanceStatusChangedEvent) {
+        events += event
+    }
 }
 
 private class InMemoryMemoryMaintenanceJobDao(
@@ -119,6 +187,13 @@ private class InMemoryMemoryMaintenanceJobDao(
         .filter { job -> now >= (job.nextRunAt ?: 0L) }
         .sortedBy { it.createdAt }
         .take(limit)
+
+    override suspend fun getEarliestFutureRunAt(now: Long): Long? =
+        jobs
+            .filter { job -> job.status in listOf(MemoryMaintenanceJobStatus.PENDING, MemoryMaintenanceJobStatus.FAILED_RETRYABLE) }
+            .mapNotNull { job -> job.nextRunAt }
+            .filter { nextRunAt -> nextRunAt > now }
+            .minOrNull()
 
     override suspend fun insertIgnore(job: MemoryMaintenanceJob): Long {
         if (jobs.any { it.idempotencyKey == job.idempotencyKey }) return -1L

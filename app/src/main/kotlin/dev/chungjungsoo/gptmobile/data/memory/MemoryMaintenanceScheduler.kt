@@ -7,7 +7,8 @@ import java.util.UUID
 
 class MemoryMaintenanceScheduler(
     private val jobDao: MemoryMaintenanceJobDao,
-    private val clock: Clock = Clock.systemDefaultZone()
+    private val clock: Clock = Clock.systemDefaultZone(),
+    private val eventSink: MemoryMaintenanceEventSink = MemoryMaintenanceEventSink.None
 ) {
 
     suspend fun enqueue(
@@ -48,6 +49,12 @@ class MemoryMaintenanceScheduler(
         limit = limit
     )
 
+    suspend fun nextScheduledRunAt(now: Long = now()): Long? =
+        jobDao.getEarliestFutureRunAt(now)
+
+    suspend fun nextScheduledDelaySeconds(now: Long = now()): Long? =
+        nextScheduledRunAt(now)?.let { runAt -> (runAt - now).coerceAtLeast(0) }
+
     suspend fun markRunning(job: MemoryMaintenanceJob): MemoryMaintenanceJob {
         val now = now()
         val updated = job.copy(
@@ -59,17 +66,20 @@ class MemoryMaintenanceScheduler(
             nextRunAt = null
         )
         jobDao.update(updated)
+        emitStatusChanged(job, updated, now)
         return updated
     }
 
     suspend fun markSucceeded(job: MemoryMaintenanceJob): MemoryMaintenanceJob {
+        val now = now()
         val updated = job.copy(
             status = MemoryMaintenanceJobStatus.SUCCEEDED,
             lastError = null,
-            updatedAt = now(),
+            updatedAt = now,
             nextRunAt = null
         )
         jobDao.update(updated)
+        emitStatusChanged(job, updated, now)
         return updated
     }
 
@@ -78,13 +88,15 @@ class MemoryMaintenanceScheduler(
         error: String,
         nextRunAt: Long? = retryAt(job.attempts)
     ): MemoryMaintenanceJob {
+        val now = now()
         val updated = job.copy(
             status = MemoryMaintenanceJobStatus.FAILED_RETRYABLE,
             lastError = error.take(MAX_ERROR_LENGTH),
-            updatedAt = now(),
+            updatedAt = now,
             nextRunAt = nextRunAt
         )
         jobDao.update(updated)
+        emitStatusChanged(job, updated, now)
         return updated
     }
 
@@ -92,13 +104,27 @@ class MemoryMaintenanceScheduler(
         job: MemoryMaintenanceJob,
         error: String
     ): MemoryMaintenanceJob {
+        val now = now()
         val updated = job.copy(
             status = MemoryMaintenanceJobStatus.FAILED_TERMINAL,
             lastError = error.take(MAX_ERROR_LENGTH),
-            updatedAt = now(),
+            updatedAt = now,
             nextRunAt = null
         )
         jobDao.update(updated)
+        emitStatusChanged(job, updated, now)
+        return updated
+    }
+
+    suspend fun markDismissed(job: MemoryMaintenanceJob): MemoryMaintenanceJob {
+        val now = now()
+        val updated = job.copy(
+            status = MemoryMaintenanceJobStatus.DISMISSED,
+            updatedAt = now,
+            nextRunAt = null
+        )
+        jobDao.update(updated)
+        emitStatusChanged(job, updated, now)
         return updated
     }
 
@@ -126,6 +152,24 @@ class MemoryMaintenanceScheduler(
     }
 
     private fun now(): Long = clock.instant().epochSecond
+
+    private suspend fun emitStatusChanged(
+        oldJob: MemoryMaintenanceJob,
+        newJob: MemoryMaintenanceJob,
+        occurredAt: Long
+    ) {
+        runCatching {
+            eventSink.onStatusChanged(
+                MemoryMaintenanceStatusChangedEvent(
+                    oldJob = oldJob,
+                    newJob = newJob,
+                    oldStatus = oldJob.status,
+                    newStatus = newJob.status,
+                    occurredAt = occurredAt
+                )
+            )
+        }
+    }
 
     companion object {
         private const val DEFAULT_RUNNABLE_LIMIT = 20

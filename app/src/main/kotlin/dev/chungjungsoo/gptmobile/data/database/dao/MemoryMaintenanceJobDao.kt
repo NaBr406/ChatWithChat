@@ -41,6 +41,16 @@ interface MemoryMaintenanceJobDao {
         limit: Int
     ): List<MemoryMaintenanceJob>
 
+    @Query(
+        """
+        SELECT MIN(next_run_at) FROM memory_maintenance_job
+        WHERE status IN ('pending', 'failed_retryable')
+            AND next_run_at IS NOT NULL
+            AND next_run_at > :now
+        """
+    )
+    suspend fun getEarliestFutureRunAt(now: Long): Long?
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertIgnore(job: MemoryMaintenanceJob): Long
 

@@ -20,6 +20,9 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryFileStore
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexRepository
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIntelligence
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceScheduler
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceEventSink
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceNotificationEventSink
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceNotificationPolicy
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceWorkEnqueuer
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceWorkScheduler
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMarkdownCodec
@@ -89,9 +92,24 @@ object MemoryRepositoryModule {
 
     @Provides
     @Singleton
+    fun provideMemoryMaintenanceNotificationPolicy(): MemoryMaintenanceNotificationPolicy =
+        MemoryMaintenanceNotificationPolicy()
+
+    @Provides
+    @Singleton
+    fun provideMemoryMaintenanceEventSink(
+        notificationEventSink: MemoryMaintenanceNotificationEventSink
+    ): MemoryMaintenanceEventSink = notificationEventSink
+
+    @Provides
+    @Singleton
     fun provideMemoryMaintenanceScheduler(
-        memoryMaintenanceJobDao: MemoryMaintenanceJobDao
-    ): MemoryMaintenanceScheduler = MemoryMaintenanceScheduler(memoryMaintenanceJobDao)
+        memoryMaintenanceJobDao: MemoryMaintenanceJobDao,
+        memoryMaintenanceEventSink: MemoryMaintenanceEventSink
+    ): MemoryMaintenanceScheduler = MemoryMaintenanceScheduler(
+        jobDao = memoryMaintenanceJobDao,
+        eventSink = memoryMaintenanceEventSink
+    )
 
     @Provides
     @Singleton
@@ -135,6 +153,7 @@ object MemoryRepositoryModule {
         memoryFileStore: MemoryFileStore,
         markdownMemoryCodec: MarkdownMemoryCodec,
         memoryMaintenanceJobDao: MemoryMaintenanceJobDao,
+        memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
         memoryMaintenanceWorkScheduler: MemoryMaintenanceWorkEnqueuer
     ): MemoryRepository = MemoryRepositoryImpl(
         personalMemoryDao = personalMemoryDao,
@@ -148,6 +167,7 @@ object MemoryRepositoryModule {
         structuredMarkdownMemoryCodec = markdownMemoryCodec,
         memoryIndexRebuilder = memoryIndexRepository,
         memoryMaintenanceJobDao = memoryMaintenanceJobDao,
+        memoryMaintenanceScheduler = memoryMaintenanceScheduler,
         memoryMaintenanceWorkScheduler = memoryMaintenanceWorkScheduler
     )
 }

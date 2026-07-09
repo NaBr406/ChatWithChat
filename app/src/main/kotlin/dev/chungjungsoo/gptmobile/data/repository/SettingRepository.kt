@@ -21,6 +21,7 @@ interface SettingRepository {
     suspend fun fetchThemes(): ThemeSetting
     suspend fun fetchLastSelectedModel(): LastSelectedModel?
     suspend fun fetchMemoryEnabled(): Boolean
+    suspend fun fetchMemoryMaintenanceNotificationsEnabled(): Boolean
     suspend fun fetchToolCallingMode(): ToolCallingMode
     suspend fun fetchWebSearchMode(): WebSearchMode
     suspend fun fetchWebSearchSearxngBaseUrl(): String
@@ -29,6 +30,7 @@ interface SettingRepository {
     suspend fun updateThemes(themeSetting: ThemeSetting)
     suspend fun updateLastSelectedModel(platformUid: String, model: String, reasoningMode: ReasoningMode = ReasoningMode.AUTO)
     suspend fun updateMemoryEnabled(enabled: Boolean)
+    suspend fun updateMemoryMaintenanceNotificationsEnabled(enabled: Boolean)
     suspend fun updateToolCallingMode(mode: ToolCallingMode)
     suspend fun updateWebSearchMode(mode: WebSearchMode)
     suspend fun updateWebSearchSearxngBaseUrl(baseUrl: String)

@@ -21,6 +21,9 @@ class MemoryMaintenanceWorker(
                 MemoryMaintenanceWorkerEntryPoint::class.java
             )
             entryPoint.memoryMaintenanceProcessor().processRunnableJobs()
+            entryPoint.memoryMaintenanceScheduler().nextScheduledDelaySeconds()?.let { delaySeconds ->
+                entryPoint.memoryMaintenanceWorkEnqueuer().enqueueRepairWork(delaySeconds)
+            }
             ListenableWorker.Result.success()
         }.getOrElse {
             ListenableWorker.Result.retry()
@@ -31,4 +34,6 @@ class MemoryMaintenanceWorker(
 @InstallIn(SingletonComponent::class)
 interface MemoryMaintenanceWorkerEntryPoint {
     fun memoryMaintenanceProcessor(): MemoryMaintenanceProcessor
+    fun memoryMaintenanceScheduler(): MemoryMaintenanceScheduler
+    fun memoryMaintenanceWorkEnqueuer(): MemoryMaintenanceWorkEnqueuer
 }

@@ -77,6 +77,8 @@
     <string name="memory">记忆</string>
     <string name="memory_enabled_title">启用记忆</string>
     <string name="memory_enabled_description">开启后才会召回和学习长期个性化记忆。</string>
+    <string name="memory_maintenance_notifications_title">记忆维护通知</string>
+    <string name="memory_maintenance_notifications_description">维护失败时提醒你查看并重试；需要系统通知权限。</string>
     <string name="memory_page_description">查看、编辑和管理已保存的记忆。</string>
     <string name="settings_section_models_providers">模型与提供商</string>
     <string name="settings_section_personalization">个性化</string>
@@ -94,6 +96,15 @@
     <string name="memory_maintenance_title">维护任务</string>
     <string name="memory_maintenance_job">任务：%1$s · 状态：%2$s</string>
     <string name="memory_maintenance_error">错误：%1$s</string>
+    <string name="notification_channel_memory_maintenance">记忆维护</string>
+    <string name="notification_channel_memory_maintenance_description">记忆维护状态和失败提醒</string>
+    <string name="notification_channel_scheduled_reminders">定时提醒</string>
+    <string name="notification_channel_scheduled_reminders_description">本地定时提醒任务</string>
+    <string name="notification_memory_maintenance_started_title">记忆维护正在运行</string>
+    <string name="notification_memory_maintenance_started_text">正在处理需要较长时间的维护任务。</string>
+    <string name="notification_memory_maintenance_failed_title">记忆维护失败</string>
+    <string name="notification_memory_maintenance_failed_terminal_title">记忆维护需要处理</string>
+    <string name="notification_memory_maintenance_failed_text">点按查看并重试维护任务。</string>
     <string name="dismiss">忽略</string>
     <string name="memory_reject">拒绝</string>
     <string name="memory_mark_resolved">标记为已解决</string>

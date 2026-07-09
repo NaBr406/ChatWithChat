@@ -47,6 +47,7 @@ import dev.chungjungsoo.gptmobile.R
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
 import dev.chungjungsoo.gptmobile.data.tool.ToolCallingMode
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchMode
+import dev.chungjungsoo.gptmobile.presentation.common.LocalNotificationPermissionRequester
 import dev.chungjungsoo.gptmobile.util.getClientTypeDisplayName
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -65,6 +66,8 @@ fun SettingScreen(
     val platformState by settingViewModel.platformState.collectAsStateWithLifecycle()
     val dialogState by settingViewModel.dialogState.collectAsStateWithLifecycle()
     val memoryEnabled by settingViewModel.memoryEnabled.collectAsStateWithLifecycle()
+    val memoryMaintenanceNotificationsEnabled by settingViewModel.memoryMaintenanceNotificationsEnabled.collectAsStateWithLifecycle()
+    val notificationPermissionRequester = LocalNotificationPermissionRequester.current
     val scrollState = rememberScrollState()
     val lifecycleOwner = LocalLifecycleOwner.current
 
@@ -73,6 +76,7 @@ fun SettingScreen(
             if (event == Lifecycle.Event.ON_RESUME) {
                 settingViewModel.fetchPlatforms()
                 settingViewModel.fetchMemoryEnabled()
+                settingViewModel.fetchMemoryMaintenanceNotificationsEnabled()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -124,6 +128,15 @@ fun SettingScreen(
                 MemoryEnabledItem(
                     memoryEnabled = memoryEnabled,
                     onCheckedChange = settingViewModel::updateMemoryEnabled
+                )
+                MemoryMaintenanceNotificationsItem(
+                    enabled = memoryMaintenanceNotificationsEnabled,
+                    onCheckedChange = { enabled ->
+                        settingViewModel.updateMemoryMaintenanceNotificationsEnabled(enabled)
+                        if (enabled) {
+                            notificationPermissionRequester.requestPostNotificationsPermission()
+                        }
+                    }
                 )
                 SettingsRow(
                     title = stringResource(R.string.memory),
@@ -399,6 +412,24 @@ fun MemoryEnabledItem(
         trailingContent = {
             Switch(
                 checked = memoryEnabled,
+                onCheckedChange = onCheckedChange
+            )
+        }
+    )
+}
+
+@Composable
+fun MemoryMaintenanceNotificationsItem(
+    enabled: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    SettingsRow(
+        title = stringResource(R.string.memory_maintenance_notifications_title),
+        description = stringResource(R.string.memory_maintenance_notifications_description),
+        onClick = { onCheckedChange(!enabled) },
+        trailingContent = {
+            Switch(
+                checked = enabled,
                 onCheckedChange = onCheckedChange
             )
         }
