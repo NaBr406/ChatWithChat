@@ -159,6 +159,50 @@ class MarkdownMemoryCodecTest {
     }
 
     @Test
+    fun `replace entries by id updates matching memory blocks and keeps handwritten markdown`() {
+        val markdown = """
+            # ChatWithChat Memory
+
+            Intro text should stay.
+
+            ## Projects
+
+            Handwritten project note should stay.
+
+            <!-- memory:id=mem_progress type=project_context sensitivity=private source=assistant_inferred created=10 updated=20 -->
+            - The user is learning Kotlin coroutines and has finished Flow basics.
+
+            <!-- memory:id=mem_keep type=project_context sensitivity=normal source=assistant_inferred created=11 updated=21 -->
+            - Keep this project memory.
+        """.trimIndent()
+
+        val result = codec.replaceEntriesById(
+            markdown,
+            listOf(
+                MarkdownMemoryEntry(
+                    id = "mem_progress",
+                    text = "The user is learning Kotlin coroutines and has finished Flow basics plus cancellation handling.",
+                    type = "project_context",
+                    sensitivity = MemorySensitivity.PRIVATE,
+                    source = MemorySource.ASSISTANT_INFERRED,
+                    createdAt = 10,
+                    updatedAt = 30
+                )
+            )
+        )
+        val parsed = codec.parse(result.markdown)
+
+        assertEquals(1, result.replacedCount)
+        assertTrue(result.markdown.contains("Intro text should stay."))
+        assertTrue(result.markdown.contains("Handwritten project note should stay."))
+        assertTrue(result.markdown.contains("Flow basics plus cancellation handling."))
+        assertTrue(!result.markdown.contains("has finished Flow basics."))
+        assertEquals(listOf("mem_progress", "mem_keep"), parsed.entries.map { it.id })
+        assertEquals(10, parsed.entries.single { it.id == "mem_progress" }.createdAt)
+        assertEquals(30, parsed.entries.single { it.id == "mem_progress" }.updatedAt)
+    }
+
+    @Test
     fun `personal memory can be converted to markdown entry`() {
         val personalMemory = testMemory(
             id = 42,

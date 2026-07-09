@@ -8,6 +8,7 @@ import dev.chungjungsoo.gptmobile.data.memory.FakeMemoryIntelligence
 import dev.chungjungsoo.gptmobile.data.memory.InMemoryChatClassificationDao
 import dev.chungjungsoo.gptmobile.data.memory.InMemoryPersonalMemoryDao
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryCodec
+import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryEntry
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryLearningNote
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryLearningProposal
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryLearningService
@@ -524,6 +525,80 @@ class MemoryLearnerTest {
         assertEquals(1, dailyMarkdown.countOccurrences("The user wants concise replies saved as Markdown."))
         assertEquals(1, intelligence.markdownProposalCalls)
         assertEquals(MemoryMaintenanceJobStatus.SUCCEEDED, markdown.jobDao.jobs.single().status)
+    }
+
+    @Test
+    fun `markdown learning updates targeted long term memory instead of appending progress duplicate`() = runBlocking {
+        val markdown = createMarkdownHarness()
+        val codec = MarkdownMemoryCodec()
+        markdown.fileStore.replaceLongTermMemory(
+            codec.renderLongTerm(
+                listOf(
+                    MarkdownMemoryEntry(
+                        id = "mem_learning_progress",
+                        text = "The user is learning Kotlin coroutines and has completed Flow basics.",
+                        type = "project_context",
+                        sensitivity = MemorySensitivity.PRIVATE,
+                        source = MemorySource.ASSISTANT_INFERRED,
+                        createdAt = 100,
+                        updatedAt = 100
+                    )
+                )
+            )
+        ).getOrThrow()
+        val intelligence = FakeMemoryIntelligence(
+            classification = testClassification(
+                memoryNeeds = listOf("project_context"),
+                shouldLearnMemories = true,
+                sensitivity = MemorySensitivity.PRIVATE
+            ),
+            candidates = listOf(
+                testCandidate(
+                    "The user is learning Kotlin coroutines and has completed Flow basics plus cancellation handling.",
+                    type = "project_context",
+                    sensitivity = MemorySensitivity.PRIVATE,
+                    requiresConfirmation = true
+                )
+            ),
+            updatePlan = MemoryUpdatePlan(),
+            markdownProposal = MarkdownMemoryLearningProposal(
+                longTermUpdates = listOf(
+                    MarkdownMemoryLearningNote(
+                        text = "The user is learning Kotlin coroutines and has completed Flow basics plus cancellation handling.",
+                        type = "project_context",
+                        sensitivity = MemorySensitivity.PRIVATE,
+                        source = MemorySource.ASSISTANT_INFERRED,
+                        targetMemoryId = "mem_learning_progress"
+                    )
+                )
+            )
+        )
+        val repository = createRepository(
+            personalMemoryDao = InMemoryPersonalMemoryDao(),
+            intelligence = intelligence,
+            markdownMemoryLearningService = markdown.service
+        )
+
+        repository.learnFromChat(
+            chatRoom(),
+            userMessages("我已经同步到 cancellation handling 了"),
+            listOf(emptyList()),
+            memoryPlatform = null,
+            learningIdempotencyKey = "learning-progress-update"
+        )
+
+        val longTermMarkdown = markdown.fileStore.readLongTermMemory().getOrThrow()
+        val parsedEntries = codec.parse(longTermMarkdown).entries
+        val existingMemory = intelligence.lastMarkdownLearningRequest?.existingMarkdownMemories?.single()
+        assertEquals("mem_learning_progress", existingMemory?.id)
+        assertEquals(1, parsedEntries.size)
+        assertEquals("mem_learning_progress", parsedEntries.single().id)
+        assertEquals(100, parsedEntries.single().createdAt)
+        assertEquals(1783592430L, parsedEntries.single().updatedAt)
+        assertTrue(longTermMarkdown.contains("Flow basics plus cancellation handling."))
+        assertFalse(longTermMarkdown.contains("has completed Flow basics."))
+        assertEquals(1, longTermMarkdown.countOccurrences("memory:id=mem_learning_progress"))
+        assertEquals(setOf("MEMORY.md"), markdown.indexRebuilder.rebuiltFiles.map { it.name }.toSet())
     }
 
     @Test

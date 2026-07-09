@@ -228,12 +228,17 @@ class MarkdownMemoryLearningService(
         preferredPlatform: PlatformV2?
     ): MarkdownMemoryLearningResult {
         val snapshot = memoryFileStore.ensureStore().getOrThrow()
+        val longTermMarkdown = memoryFileStore.readLongTermMemory().getOrThrow()
+        val existingLongTermEntries = markdownMemoryCodec.parse(longTermMarkdown).entries
         val existingMarkdownEntries = readExistingMarkdownEntries()
         val request = MarkdownMemoryLearningRequest(
             chatId = chatRoom.id,
             chatTitle = chatRoom.title,
             recentMessages = recentMessages.forMarkdownLearning(),
-            existingMarkdownMemories = markdownEntriesToExistingMemories(existingMarkdownEntries),
+            existingMarkdownMemories = markdownEntriesToExistingMemories(
+                entries = existingMarkdownEntries,
+                updatableEntryIds = existingLongTermEntries.map { entry -> entry.id }.toSet()
+            ),
             existingRoomMemories = roomMemoriesToExistingMemories(existingRoomMemories)
         )
         val proposal = memoryIntelligence.proposeMarkdownMemoryWrites(
@@ -259,14 +264,15 @@ class MarkdownMemoryLearningService(
             defaultSection = DAILY_SECTION,
             existingKeys = existingKeys
         )
-        val longTermEntries = proposal.longTermUpdates.normalizedEntries(
+        val longTermChanges = proposal.longTermUpdates.normalizedLongTermChanges(
             prefix = "mem",
             learningKey = learningKey,
-            chatId = null,
-            defaultSection = null,
-            existingKeys = existingKeys
+            existingKeys = existingKeys,
+            existingLongTermEntries = existingLongTermEntries
         )
-        val duplicateCount = proposal.dailyNotes.size + proposal.longTermUpdates.size - dailyEntries.size - longTermEntries.size
+        val longTermEntries = longTermChanges.newEntries
+        val updatedLongTermEntries = longTermChanges.updatedEntries
+        val duplicateCount = proposal.dailyNotes.size + proposal.longTermUpdates.size - dailyEntries.size - longTermEntries.size - updatedLongTermEntries.size
         val affectedFiles = mutableSetOf<File>()
 
         if (dailyEntries.isNotEmpty()) {
@@ -275,6 +281,13 @@ class MarkdownMemoryLearningService(
                 date = LocalDate.now(clock)
             ).getOrThrow()
             affectedFiles += dailyFile
+        }
+        if (updatedLongTermEntries.isNotEmpty()) {
+            val replacement = markdownMemoryCodec.replaceEntriesById(longTermMarkdown, updatedLongTermEntries)
+            if (replacement.replacedCount > 0) {
+                val longTermFile = memoryFileStore.replaceLongTermMemory(replacement.markdown).getOrThrow().file
+                affectedFiles += longTermFile
+            }
         }
         if (longTermEntries.isNotEmpty()) {
             val longTermFile = memoryFileStore.appendLongTermMemory(
@@ -292,11 +305,13 @@ class MarkdownMemoryLearningService(
         return MarkdownMemoryLearningResult(
             status = if (dailyEntries.isNotEmpty() || longTermEntries.isNotEmpty()) {
                 MarkdownMemoryLearningResult.STATUS_APPLIED
+            } else if (updatedLongTermEntries.isNotEmpty()) {
+                MarkdownMemoryLearningResult.STATUS_APPLIED
             } else {
                 MarkdownMemoryLearningResult.STATUS_SKIPPED_NO_NOTES
             },
             dailyNotesWritten = dailyEntries.size,
-            longTermUpdatesWritten = longTermEntries.size,
+            longTermUpdatesWritten = longTermEntries.size + updatedLongTermEntries.size,
             duplicateCount = duplicateCount.coerceAtLeast(0),
             jobId = runningJob.jobId
         )
@@ -311,10 +326,12 @@ class MarkdownMemoryLearningService(
             }
 
     private fun markdownEntriesToExistingMemories(
-        entries: List<MarkdownMemoryEntry>
+        entries: List<MarkdownMemoryEntry>,
+        updatableEntryIds: Set<String>
     ): List<MarkdownMemoryLearningExistingMemory> =
         entries.map { entry ->
             MarkdownMemoryLearningExistingMemory(
+                id = entry.id.takeIf { it in updatableEntryIds },
                 text = entry.text,
                 type = entry.type,
                 sensitivity = entry.sensitivity,
@@ -327,6 +344,7 @@ class MarkdownMemoryLearningService(
     ): List<MarkdownMemoryLearningExistingMemory> =
         memories.map { memory ->
             MarkdownMemoryLearningExistingMemory(
+                id = null,
                 text = memory.recallText,
                 type = memory.type,
                 sensitivity = memory.sensitivity,
@@ -367,11 +385,75 @@ class MarkdownMemoryLearningService(
             }
     }
 
+    private fun List<MarkdownMemoryLearningNote>.normalizedLongTermChanges(
+        prefix: String,
+        learningKey: String,
+        existingKeys: MutableSet<String>,
+        existingLongTermEntries: List<MarkdownMemoryEntry>
+    ): NormalizedLongTermChanges {
+        val existingEntriesById = existingLongTermEntries.associateBy { entry -> entry.id }
+        val newEntries = mutableListOf<MarkdownMemoryEntry>()
+        val updatedEntriesById = linkedMapOf<String, MarkdownMemoryEntry>()
+
+        forEach { note ->
+            val targetId = note.targetMemoryId?.trim()?.takeIf(String::isNotBlank)
+            if (targetId == null) {
+                note.normalizedOrNull(
+                    prefix = prefix,
+                    learningKey = learningKey,
+                    chatId = null,
+                    defaultSection = null
+                )?.takeUnless { entry ->
+                    val keys = listOf(entry.memoryKey(), entry.text.normalizedTextKey())
+                    val duplicate = keys.any { it in existingKeys }
+                    if (!duplicate) {
+                        existingKeys += keys
+                        newEntries += entry
+                    }
+                    duplicate
+                }
+                return@forEach
+            }
+
+            val target = existingEntriesById[targetId] ?: return@forEach
+            val updatedEntry = note.normalizedOrNull(
+                prefix = prefix,
+                learningKey = learningKey,
+                chatId = null,
+                defaultSection = target.section,
+                idOverride = target.id,
+                createdAtOverride = target.createdAt
+            ) ?: return@forEach
+            val oldKeys = listOf(target.memoryKey(), target.text.normalizedTextKey())
+            val newKeys = listOf(updatedEntry.memoryKey(), updatedEntry.text.normalizedTextKey())
+            if (newKeys.any { key -> key in existingKeys && key !in oldKeys }) {
+                return@forEach
+            }
+            if (newKeys.toSet() == oldKeys.toSet() &&
+                updatedEntry.sensitivity == target.sensitivity &&
+                updatedEntry.source == target.source
+            ) {
+                return@forEach
+            }
+
+            existingKeys.removeAll(oldKeys)
+            existingKeys += newKeys
+            updatedEntriesById[target.id] = updatedEntry
+        }
+
+        return NormalizedLongTermChanges(
+            newEntries = newEntries,
+            updatedEntries = updatedEntriesById.values.toList()
+        )
+    }
+
     private fun MarkdownMemoryLearningNote.normalizedOrNull(
         prefix: String,
         learningKey: String,
         chatId: Int?,
-        defaultSection: String?
+        defaultSection: String?,
+        idOverride: String? = null,
+        createdAtOverride: Long? = null
     ): MarkdownMemoryEntry? {
         val normalizedText = text
             .trim()
@@ -384,13 +466,13 @@ class MarkdownMemoryLearningService(
         val normalizedSource = source.normalizedMemorySource()
         val timestamp = now()
         return MarkdownMemoryEntry(
-            id = "${prefix}_${entryHash(learningKey, normalizedType, normalizedText)}",
+            id = idOverride ?: "${prefix}_${entryHash(learningKey, normalizedType, normalizedText)}",
             text = normalizedText,
             type = normalizedType,
             sensitivity = normalizedSensitivity,
             source = normalizedSource,
             chatId = chatId,
-            createdAt = timestamp,
+            createdAt = createdAtOverride?.takeIf { it > 0L } ?: timestamp,
             updatedAt = timestamp,
             section = defaultSection
         )
@@ -472,6 +554,11 @@ class MarkdownMemoryLearningService(
     }
 
     private fun now(): Long = clock.instant().epochSecond
+
+    private data class NormalizedLongTermChanges(
+        val newEntries: List<MarkdownMemoryEntry>,
+        val updatedEntries: List<MarkdownMemoryEntry>
+    )
 
     companion object {
         private const val TAG = "MarkdownMemoryLearning"

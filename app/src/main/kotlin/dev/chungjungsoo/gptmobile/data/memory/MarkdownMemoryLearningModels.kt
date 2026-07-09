@@ -13,8 +13,10 @@ data class MarkdownMemoryLearningRequest(
     val existingRoomMemories: List<MarkdownMemoryLearningExistingMemory> = emptyList()
 )
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class MarkdownMemoryLearningExistingMemory(
+    val id: String? = null,
     val text: String,
     val type: String,
     val sensitivity: String,
@@ -30,12 +32,15 @@ data class MarkdownMemoryLearningProposal(
     val longTermUpdates: List<MarkdownMemoryLearningNote> = emptyList()
 )
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class MarkdownMemoryLearningNote(
     val text: String = "",
     val type: String = "stable_profile",
     val sensitivity: String = MemorySensitivity.NORMAL,
     val source: String = MemorySource.ASSISTANT_INFERRED,
+    @JsonNames("target_memory_id", "target_id", "memory_id")
+    val targetMemoryId: String? = null,
     val reason: String = ""
 )
 

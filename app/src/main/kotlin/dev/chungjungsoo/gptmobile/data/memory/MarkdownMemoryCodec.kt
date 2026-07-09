@@ -71,6 +71,55 @@ class MarkdownMemoryCodec {
         )
     }
 
+    internal fun replaceEntriesById(
+        markdown: String,
+        replacements: List<MarkdownMemoryEntry>
+    ): MarkdownMemoryReplacementResult {
+        val replacementsById = replacements
+            .mapNotNull { entry ->
+                val id = entry.id.trim().takeIf(String::isNotBlank) ?: return@mapNotNull null
+                id to entry.copy(id = id)
+            }
+            .toMap()
+        if (replacementsById.isEmpty()) {
+            return MarkdownMemoryReplacementResult(markdown = normalizeEditedMarkdown(markdown))
+        }
+
+        val lines = markdown.lines()
+        val edited = mutableListOf<String>()
+        var replacedCount = 0
+        var index = 0
+        while (index < lines.size) {
+            val trimmed = lines[index].trim()
+            if (!trimmed.startsWith(MEMORY_COMMENT_PREFIX)) {
+                edited += lines[index]
+                index += 1
+                continue
+            }
+
+            val metadata = parseMetadata(trimmed)
+            val replacement = metadata["id"]?.let { replacementsById[it] }
+            if (replacement == null) {
+                edited += lines[index]
+                index += 1
+                continue
+            }
+
+            val bulletIndex = nextMeaningfulLineIndex(lines, index + 1)
+            val endExclusive = entryBlockEndExclusive(lines, index, bulletIndex)
+            edited += metadataComment(replacement)
+            edited += renderBullet(replacement.text)
+            edited += ""
+            replacedCount += 1
+            index = endExclusive
+        }
+
+        return MarkdownMemoryReplacementResult(
+            markdown = normalizeEditedMarkdown(edited.joinToString("\n")),
+            replacedCount = replacedCount
+        )
+    }
+
     fun parse(markdown: String): MarkdownMemoryParseResult {
         val entries = mutableListOf<MarkdownMemoryEntry>()
         val skippedEntries = mutableListOf<SkippedMarkdownMemoryEntry>()
@@ -334,4 +383,9 @@ class MarkdownMemoryCodec {
 internal data class MarkdownMemoryRemovalResult(
     val markdown: String,
     val deletedCount: Int = 0
+)
+
+internal data class MarkdownMemoryReplacementResult(
+    val markdown: String,
+    val replacedCount: Int = 0
 )
