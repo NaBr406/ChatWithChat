@@ -26,6 +26,7 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexSearcher
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIntelligence
 import dev.chungjungsoo.gptmobile.data.memory.MemoryLearningResult
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceJobStatus
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceScheduler
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceWorkEnqueuer
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryLearningService
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMarkdownCodec
@@ -56,6 +57,7 @@ class MemoryRepositoryImpl(
     private val structuredMarkdownMemoryCodec: MarkdownMemoryCodec? = null,
     private val memoryIndexRebuilder: MemoryIndexRebuilder? = null,
     private val memoryMaintenanceJobDao: MemoryMaintenanceJobDao? = null,
+    private val memoryMaintenanceScheduler: MemoryMaintenanceScheduler? = null,
     private val memoryMaintenanceWorkScheduler: MemoryMaintenanceWorkEnqueuer? = null
 ) : MemoryRepository {
 
@@ -475,6 +477,7 @@ class MemoryRepositoryImpl(
     override suspend fun dismissMaintenanceJob(jobId: String) {
         val dao = memoryMaintenanceJobDao ?: return
         val job = dao.getById(jobId) ?: return
+        memoryMaintenanceScheduler?.markDismissed(job)?.let { return }
         dao.update(
             job.copy(
                 status = MemoryMaintenanceJobStatus.DISMISSED,

@@ -28,6 +28,9 @@ class SettingViewModelV2 @Inject constructor(
     private val _memoryEnabled = MutableStateFlow(false)
     val memoryEnabled: StateFlow<Boolean> = _memoryEnabled.asStateFlow()
 
+    private val _memoryMaintenanceNotificationsEnabled = MutableStateFlow(true)
+    val memoryMaintenanceNotificationsEnabled: StateFlow<Boolean> = _memoryMaintenanceNotificationsEnabled.asStateFlow()
+
     private val _webSearchSettings = MutableStateFlow(WebSearchSettingsState())
     val webSearchSettings: StateFlow<WebSearchSettingsState> = _webSearchSettings.asStateFlow()
 
@@ -46,6 +49,7 @@ class SettingViewModelV2 @Inject constructor(
     init {
         fetchPlatforms()
         fetchMemoryEnabled()
+        fetchMemoryMaintenanceNotificationsEnabled()
         fetchWebSearchSettings()
     }
 
@@ -79,6 +83,21 @@ class SettingViewModelV2 @Inject constructor(
         _memoryEnabled.update { enabled }
         viewModelScope.launch {
             settingRepository.updateMemoryEnabled(enabled)
+        }
+    }
+
+    fun fetchMemoryMaintenanceNotificationsEnabled() {
+        viewModelScope.launch {
+            _memoryMaintenanceNotificationsEnabled.update {
+                settingRepository.fetchMemoryMaintenanceNotificationsEnabled()
+            }
+        }
+    }
+
+    fun updateMemoryMaintenanceNotificationsEnabled(enabled: Boolean) {
+        _memoryMaintenanceNotificationsEnabled.update { enabled }
+        viewModelScope.launch {
+            settingRepository.updateMemoryMaintenanceNotificationsEnabled(enabled)
         }
     }
 

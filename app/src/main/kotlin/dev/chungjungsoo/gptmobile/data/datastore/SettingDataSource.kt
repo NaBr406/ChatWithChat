@@ -16,6 +16,7 @@ interface SettingDataSource {
     suspend fun updateSystemPrompt(apiType: ApiType, prompt: String)
     suspend fun updateLastSelectedModel(platformUid: String, model: String, reasoningMode: String)
     suspend fun updateMemoryEnabled(enabled: Boolean)
+    suspend fun updateMemoryMaintenanceNotificationsEnabled(enabled: Boolean)
     suspend fun updateToolCallingMode(mode: String)
     suspend fun updateWebSearchMode(mode: String)
     suspend fun updateWebSearchSearxngBaseUrl(baseUrl: String)
@@ -32,6 +33,7 @@ interface SettingDataSource {
     suspend fun getLastSelectedModel(): String?
     suspend fun getLastSelectedReasoningMode(): String?
     suspend fun getMemoryEnabled(): Boolean?
+    suspend fun getMemoryMaintenanceNotificationsEnabled(): Boolean?
     suspend fun getToolCallingMode(): String?
     suspend fun getWebSearchMode(): String?
     suspend fun getWebSearchSearxngBaseUrl(): String?

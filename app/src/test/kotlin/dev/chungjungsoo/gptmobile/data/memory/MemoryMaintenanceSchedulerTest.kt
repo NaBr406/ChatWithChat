@@ -59,6 +59,26 @@ class MemoryMaintenanceSchedulerTest {
     }
 
     @Test
+    fun `state transitions emit one status event after update`() = runBlocking {
+        val dao = InMemoryMemoryMaintenanceJobDao()
+        val eventSink = RecordingMemoryMaintenanceEventSink()
+        val scheduler = createScheduler(dao, eventSink)
+        val pending = scheduler.enqueue(
+            type = MemoryMaintenanceJobType.REBUILD_MEMORY_INDEX,
+            idempotencyKey = "rebuild:memory",
+            payloadJson = "{}"
+        )
+
+        val running = scheduler.markRunning(pending)
+
+        assertEquals(1, eventSink.events.size)
+        assertEquals(MemoryMaintenanceJobStatus.PENDING, eventSink.events.single().oldStatus)
+        assertEquals(MemoryMaintenanceJobStatus.RUNNING, eventSink.events.single().newStatus)
+        assertEquals(running, eventSink.events.single().newJob)
+        assertEquals(running, dao.jobs.single())
+    }
+
+    @Test
     fun `stale running jobs become retryable and runnable`() = runBlocking {
         val dao = InMemoryMemoryMaintenanceJobDao(
             initialJobs = listOf(
@@ -89,11 +109,21 @@ class MemoryMaintenanceSchedulerTest {
     }
 
     private fun createScheduler(
-        dao: InMemoryMemoryMaintenanceJobDao
+        dao: InMemoryMemoryMaintenanceJobDao,
+        eventSink: MemoryMaintenanceEventSink = MemoryMaintenanceEventSink.None
     ): MemoryMaintenanceScheduler = MemoryMaintenanceScheduler(
         jobDao = dao,
-        clock = Clock.fixed(Instant.ofEpochSecond(100L), ZoneOffset.UTC)
+        clock = Clock.fixed(Instant.ofEpochSecond(100L), ZoneOffset.UTC),
+        eventSink = eventSink
     )
+}
+
+private class RecordingMemoryMaintenanceEventSink : MemoryMaintenanceEventSink {
+    val events = mutableListOf<MemoryMaintenanceStatusChangedEvent>()
+
+    override suspend fun onStatusChanged(event: MemoryMaintenanceStatusChangedEvent) {
+        events += event
+    }
 }
 
 private class InMemoryMemoryMaintenanceJobDao(
