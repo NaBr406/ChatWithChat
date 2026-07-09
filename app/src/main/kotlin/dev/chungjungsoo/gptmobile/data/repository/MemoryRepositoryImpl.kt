@@ -13,6 +13,7 @@ import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
 import dev.chungjungsoo.gptmobile.data.memory.ConversationClassificationRequest
 import dev.chungjungsoo.gptmobile.data.memory.ConversationClassificationResult
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryCodec
+import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryEntry
 import dev.chungjungsoo.gptmobile.data.memory.MemoryAction
 import dev.chungjungsoo.gptmobile.data.memory.MemoryCandidate
 import dev.chungjungsoo.gptmobile.data.memory.MemoryConversationMessage
@@ -41,6 +42,7 @@ import dev.chungjungsoo.gptmobile.data.memory.buildMemoryMessages
 import dev.chungjungsoo.gptmobile.data.memory.toMarkdownMemoryEntry
 import dev.chungjungsoo.gptmobile.data.memory.toPersonalMemory
 import dev.chungjungsoo.gptmobile.data.memory.toSelectionCandidate
+import java.io.File
 
 class MemoryRepositoryImpl(
     private val personalMemoryDao: PersonalMemoryDao,
@@ -411,22 +413,41 @@ class MemoryRepositoryImpl(
         val codec = structuredMarkdownMemoryCodec ?: return 0
 
         return runCatching {
-            val existingEntries = codec.parse(fileStore.readLongTermMemory().getOrThrow()).entries
-            val existingIds = existingEntries.map { it.id }.toSet()
-            val existingKeys = existingEntries.map { it.text.normalizedMemoryKey() }.toSet()
-            val entriesToAppend = personalMemoryDao.getAll()
+            val activeMemories = personalMemoryDao.getAll()
                 .filter { memory -> memory.status == MemoryStatus.ACTIVE }
-                .map { memory -> memory.toMarkdownMemoryEntry() }
-                .filterNot { entry -> entry.id in existingIds || entry.text.normalizedMemoryKey() in existingKeys }
+            val classifierFallbackMarkdownIds = activeMemories
+                .filter { memory -> memory.isClassifierFallbackMemory() }
+                .map { memory -> "personal_${memory.id}" }
+                .toSet()
+            val existingEntries = codec.parse(fileStore.readLongTermMemory().getOrThrow()).entries
+            val repairedExistingEntries = existingEntries
+                .mapNotNull { entry -> entry.repairedLongTermEntryOrNull(classifierFallbackMarkdownIds) }
+                .deduplicatedMarkdownEntries()
+            val filesToRebuild = mutableSetOf<File>()
+            if (repairedExistingEntries != existingEntries) {
+                val replacement = fileStore.replaceLongTermMemory(codec.renderLongTerm(repairedExistingEntries)).getOrThrow()
+                filesToRebuild += replacement.file
+            }
 
-            if (entriesToAppend.isEmpty()) return@runCatching 0
+            val existingIds = repairedExistingEntries.map { it.id }.toSet()
+            val existingKeys = repairedExistingEntries.map { it.memoryDuplicateKey() }.toSet()
+            val entriesToAppend = activeMemories
+                .mapNotNull { memory -> memory.toMigratedMarkdownMemoryEntryOrNull() }
+                .deduplicatedMarkdownEntries()
+                .filterNot { entry -> entry.id in existingIds || entry.memoryDuplicateKey() in existingKeys }
 
-            val file = fileStore.appendLongTermMemory(codec.renderLongTermAppend(entriesToAppend)).getOrThrow()
-            memoryIndexRebuilder
-                ?.rebuildFile(file)
-                ?.onFailure { throwable ->
-                    logWarning("Markdown memory migration index rebuild failed: ${throwable.message}", throwable)
-                }
+            if (entriesToAppend.isNotEmpty()) {
+                val file = fileStore.appendLongTermMemory(codec.renderLongTermAppend(entriesToAppend)).getOrThrow()
+                filesToRebuild += file
+            }
+
+            filesToRebuild.forEach { file ->
+                memoryIndexRebuilder
+                    ?.rebuildFile(file)
+                    ?.onFailure { throwable ->
+                        logWarning("Markdown memory migration index rebuild failed: ${throwable.message}", throwable)
+                    }
+            }
             entriesToAppend.size
         }.getOrElse { throwable ->
             logWarning("Markdown memory migration failed: ${throwable.message}", throwable)
@@ -620,9 +641,14 @@ class MemoryRepositoryImpl(
         } else {
             MemorySource.USER_CONFIRMED
         }
+        val fallbackText = latestUserStatement.toClassifierFallbackMemoryTextOrNull() ?: run {
+            logInfo("Memory learning skipped classifier fallback because latest user statement is too raw or long")
+            return 0
+        }
+
         val candidate = MemoryCandidate(
-            summary = latestUserStatement.toFallbackMemorySummary(),
-            recallText = latestUserStatement.toFallbackRecallText(),
+            summary = fallbackText,
+            recallText = fallbackText,
             type = classification.memoryNeeds.firstOrNull { it.isNotBlank() } ?: "stable_profile",
             scope = "personal",
             domains = classification.domains,
@@ -666,6 +692,49 @@ class MemoryRepositoryImpl(
                 memory.recallText.normalizedMemoryKey() == recallKey
         }
     }
+
+    private fun PersonalMemory.toMigratedMarkdownMemoryEntryOrNull(): MarkdownMemoryEntry? {
+        if (isClassifierFallbackMemory()) return null
+        val text = markdownMigrationTextOrNull() ?: return null
+        return toMarkdownMemoryEntry(text = text)
+    }
+
+    private fun PersonalMemory.markdownMigrationTextOrNull(): String? {
+        val candidates = listOf(summary, recallText)
+        return candidates
+            .mapNotNull { text -> text.cleanMarkdownMemoryTextOrNull() }
+            .firstOrNull { text -> !text.hasRawUserStatementPrefix() && text.length <= MAX_MIGRATED_MARKDOWN_TEXT_LENGTH }
+            ?: candidates
+                .mapNotNull { text -> text.cleanMarkdownMemoryTextOrNull() }
+                .firstOrNull { text -> text.length <= MAX_MIGRATED_MARKDOWN_TEXT_LENGTH }
+    }
+
+    private fun PersonalMemory.isClassifierFallbackMemory(): Boolean =
+        tags.any { tag -> tag.equals("classifier_fallback", ignoreCase = true) }
+
+    private fun MarkdownMemoryEntry.repairedLongTermEntryOrNull(classifierFallbackMarkdownIds: Set<String>): MarkdownMemoryEntry? {
+        if (id in classifierFallbackMarkdownIds) return null
+        val cleanedText = text.cleanMarkdownMemoryTextOrNull() ?: return null
+        if (text.hasRawUserStatementPrefix() && cleanedText.length > MAX_MIGRATED_MARKDOWN_TEXT_LENGTH) return null
+        return if (cleanedText == text) this else copy(text = cleanedText, updatedAt = now())
+    }
+
+    private fun List<MarkdownMemoryEntry>.deduplicatedMarkdownEntries(): List<MarkdownMemoryEntry> {
+        val usedIds = mutableSetOf<String>()
+        val usedKeys = mutableSetOf<String>()
+        return filter { entry ->
+            val key = entry.memoryDuplicateKey()
+            val duplicate = entry.id in usedIds || key in usedKeys
+            if (!duplicate) {
+                usedIds += entry.id
+                usedKeys += key
+            }
+            !duplicate
+        }
+    }
+
+    private fun MarkdownMemoryEntry.memoryDuplicateKey(): String =
+        "${type.normalizedMemoryType()}|${text.normalizedMemoryKey()}"
 
     private fun MemoryCandidate.normalizedOrNull(): MemoryCandidate? {
         val normalizedSummary = summary.trim()
@@ -801,12 +870,22 @@ class MemoryRepositoryImpl(
     private fun String.trimForMemoryContext(): String = trim()
         .take(MAX_CONTEXT_MESSAGE_LENGTH)
 
-    private fun String.toFallbackMemorySummary(): String = trim()
-        .replace(Regex("\\s+"), " ")
-        .take(MAX_FIELD_LENGTH)
+    private fun String.toClassifierFallbackMemoryTextOrNull(): String? =
+        cleanMarkdownMemoryTextOrNull()
+            ?.takeIf { text -> text.length <= MAX_CLASSIFIER_FALLBACK_STATEMENT_LENGTH }
 
-    private fun String.toFallbackRecallText(): String = "The user said: ${trim().replace(Regex("\\s+"), " ")}"
-        .take(MAX_FIELD_LENGTH)
+    private fun String.cleanMarkdownMemoryTextOrNull(): String? {
+        val cleaned = removeRawUserStatementPrefix()
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        return cleaned.takeIf { it.isNotBlank() }
+    }
+
+    private fun String.hasRawUserStatementPrefix(): Boolean =
+        trimStart().startsWith(RAW_USER_STATEMENT_PREFIX, ignoreCase = true)
+
+    private fun String.removeRawUserStatementPrefix(): String =
+        trim().replace(Regex("^${Regex.escape(RAW_USER_STATEMENT_PREFIX)}\\s*", RegexOption.IGNORE_CASE), "")
 
     private fun logLearningResult(result: MemoryLearningResult): MemoryLearningResult {
         logInfo(
@@ -880,9 +959,12 @@ class MemoryRepositoryImpl(
         private const val MAX_LIST_ITEMS = 20
         private const val MAX_EXTRACTION_MESSAGE_LENGTH = 1200
         private const val MAX_CONTEXT_MESSAGE_LENGTH = 1200
+        private const val MAX_CLASSIFIER_FALLBACK_STATEMENT_LENGTH = 220
+        private const val MAX_MIGRATED_MARKDOWN_TEXT_LENGTH = 360
         private const val MARKDOWN_RECALL_RECENT_MESSAGE_COUNT = 4
         private const val SENSITIVE_RECALL_CONFIDENCE = 0.8f
         private const val CLASSIFIER_FALLBACK_MIN_CONFIDENCE = 0.8f
+        private const val RAW_USER_STATEMENT_PREFIX = "The user said:"
 
         private val ALLOWED_TYPES = setOf(
             "stable_profile",

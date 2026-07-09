@@ -538,6 +538,7 @@ Return only valid JSON matching this schema:
 {"daily_notes":[{"text":"short memory note","type":"stable_profile|communication_style|project_context|interest|important_event|important_person|emotional_pattern|boundary|life_context|recurring_theme|light_productivity_preference","sensitivity":"normal|private|sensitive","source":"explicit_user_statement|assistant_inferred|user_confirmed","reason":"why this should be remembered"}],"long_term_updates":[{"text":"candidate for MEMORY.md","type":"stable_profile|communication_style|project_context|interest|important_event|important_person|emotional_pattern|boundary|life_context|recurring_theme|light_productivity_preference","sensitivity":"normal|private|sensitive","source":"explicit_user_statement|assistant_inferred|user_confirmed","reason":"why this may be long-term"}]}
 Only include durable preferences, boundaries, important people/events, interests, life context, project context, and recurring themes.
 Do not repeat existing Markdown memories or existing Room memories listed in the request.
+Write semantic, condensed memory notes. Do not transcribe full user messages, and do not prefix notes with "The user said:".
 Daily notes may capture useful newly learned facts from this turn. Long-term updates should be concise and stable enough for MEMORY.md.
 If nothing should be remembered, return empty arrays.
 """

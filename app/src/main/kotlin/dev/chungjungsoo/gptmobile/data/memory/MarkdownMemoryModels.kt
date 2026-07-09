@@ -26,9 +26,11 @@ data class SkippedMarkdownMemoryEntry(
     val metadata: Map<String, String> = emptyMap()
 )
 
-fun PersonalMemory.toMarkdownMemoryEntry(): MarkdownMemoryEntry = MarkdownMemoryEntry(
+fun PersonalMemory.toMarkdownMemoryEntry(
+    text: String = recallText.trim()
+): MarkdownMemoryEntry = MarkdownMemoryEntry(
     id = "personal_$id",
-    text = recallText.trim(),
+    text = text.trim(),
     type = type,
     sensitivity = sensitivity,
     source = source,

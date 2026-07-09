@@ -309,6 +309,65 @@ class MemoryRepositoryTest {
         assertEquals(listOf("MEMORY.md"), indexRebuilder.rebuiltFiles.map { it.name })
     }
 
+    @Test
+    fun `migration repairs duplicated raw classifier fallback markdown entries`() = runBlocking {
+        val rawStatement = "我是一个偏效率主义的人，做事目标明确，不喜欢冗余流程。"
+        val personalMemoryDao = InMemoryPersonalMemoryDao(
+            listOf(
+                testMemory(
+                    id = 1,
+                    recallText = "The user said: $rawStatement",
+                    type = "stable_profile"
+                ).copy(
+                    summary = rawStatement,
+                    tags = listOf("classifier_fallback")
+                ),
+                testMemory(
+                    id = 2,
+                    recallText = "The user prefers concise implementation notes.",
+                    type = "communication_style"
+                )
+            )
+        )
+        val fileStore = MemoryFileStore(MemoryFilePaths(Files.createTempDirectory("memory-repository-repair-test").toFile()))
+        fileStore.replaceLongTermMemory(
+            """
+            # ChatWithChat Memory
+
+            ## Stable Profile
+
+            <!-- memory:id=personal_1 type=stable_profile sensitivity=normal source=user_confirmed created=10 updated=10 -->
+            - The user said: $rawStatement
+
+            ## Stable Profile
+
+            <!-- memory:id=personal_1 type=stable_profile sensitivity=normal source=user_confirmed created=10 updated=10 -->
+            - The user said: $rawStatement
+            """.trimIndent()
+        ).getOrThrow()
+        val indexRebuilder = RecordingRepositoryMemoryIndexRebuilder()
+        val repository = MemoryRepositoryImpl(
+            personalMemoryDao = personalMemoryDao,
+            chatClassificationDao = InMemoryChatClassificationDao(),
+            memoryIntelligence = FakeMemoryIntelligence(),
+            memoryPromptBuilder = MemoryPromptBuilder(),
+            memoryMarkdownCodec = MemoryMarkdownCodec(),
+            memoryFileStore = fileStore,
+            structuredMarkdownMemoryCodec = MarkdownMemoryCodec(),
+            memoryIndexRebuilder = indexRebuilder
+        )
+
+        val migrationCount = repository.migrateActiveMemoriesToMarkdown()
+        val markdown = repository.getLongTermMarkdown()
+
+        assertEquals(1, migrationCount)
+        assertFalse(markdown.contains("The user said:"))
+        assertFalse(markdown.contains("personal_1"))
+        assertTrue(markdown.contains("personal_2"))
+        assertEquals(1, markdown.countOccurrences("## Stable Preferences"))
+        assertEquals(listOf("MEMORY.md"), indexRebuilder.rebuiltFiles.map { it.name })
+    }
+
     private fun createRepository(
         memories: List<dev.chungjungsoo.gptmobile.data.database.entity.PersonalMemory>,
         intelligence: FakeMemoryIntelligence,
@@ -355,6 +414,9 @@ class MemoryRepositoryTest {
         token = "token",
         model = model
     )
+
+    private fun String.countOccurrences(value: String): Int =
+        Regex(Regex.escape(value)).findAll(this).count()
 }
 
 private class RecordingRepositoryMemoryIndexRebuilder : MemoryIndexRebuilder {

@@ -373,7 +373,11 @@ class MarkdownMemoryLearningService(
         chatId: Int?,
         defaultSection: String?
     ): MarkdownMemoryEntry? {
-        val normalizedText = text.trim().replace(Regex("\\s+"), " ").take(MAX_NOTE_LENGTH)
+        val normalizedText = text
+            .trim()
+            .removeRawUserStatementPrefix()
+            .replace(Regex("\\s+"), " ")
+            .take(MAX_NOTE_LENGTH)
         if (normalizedText.isBlank()) return null
         val normalizedType = type.normalizedMemoryType()
         val normalizedSensitivity = sensitivity.normalizedMemorySensitivity()
@@ -444,6 +448,9 @@ class MarkdownMemoryLearningService(
         .replace('-', '_')
         .replace(' ', '_')
 
+    private fun String.removeRawUserStatementPrefix(): String =
+        replace(Regex("^${Regex.escape(RAW_USER_STATEMENT_PREFIX)}\\s*", RegexOption.IGNORE_CASE), "")
+
     private fun List<MemoryConversationMessage>.forMarkdownLearning(): List<MemoryConversationMessage> =
         takeLast(MAX_MARKDOWN_MESSAGES).map { message ->
             message.copy(content = message.content.trim().take(MAX_MESSAGE_LENGTH))
@@ -474,6 +481,7 @@ class MarkdownMemoryLearningService(
         private const val MAX_MESSAGE_LENGTH = 1200
         private const val MAX_NOTE_LENGTH = 500
         private const val MAX_EXISTING_MEMORIES = 60
+        private const val RAW_USER_STATEMENT_PREFIX = "The user said:"
 
         private val ALLOWED_TYPES = setOf(
             "stable_profile",

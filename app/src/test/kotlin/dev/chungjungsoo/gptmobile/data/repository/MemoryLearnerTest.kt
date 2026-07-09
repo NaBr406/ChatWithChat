@@ -37,6 +37,7 @@ import java.time.Instant
 import java.time.ZoneOffset
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -310,7 +311,34 @@ class MemoryLearnerTest {
         assertEquals(MemorySensitivity.PRIVATE, memory.sensitivity)
         assertEquals(MemoryStatus.ACTIVE, memory.status)
         assertTrue(memory.summary.contains("偏效率主义"))
+        assertFalse(memory.recallText.contains("The user said:"))
         assertEquals(MemoryLearningResult.STATUS_APPLIED_DIRECT_FALLBACK, result.status)
+    }
+
+    @Test
+    fun `classifier fallback skips long raw user statements when extraction is unavailable`() = runBlocking {
+        val personalMemoryDao = InMemoryPersonalMemoryDao()
+        val repository = createRepository(
+            personalMemoryDao = personalMemoryDao,
+            intelligence = FakeMemoryIntelligence(
+                classification = testClassification(
+                    shouldLearnMemories = true,
+                    sensitivity = MemorySensitivity.PRIVATE,
+                    confidence = 0.98f
+                ),
+                candidates = emptyList(),
+                updatePlan = null
+            )
+        )
+
+        val result = repository.learnFromChat(
+            chatRoom(),
+            userMessages("我是一个偏效率主义的人，做事目标明确，不喜欢冗余流程，也不喜欢 AI 那种客套、机械、空泛的表达。".repeat(8)),
+            listOf(emptyList())
+        )
+
+        assertEquals(0, personalMemoryDao.memories.size)
+        assertEquals(MemoryLearningResult.STATUS_FAILED_EXTRACTION_UNAVAILABLE, result.status)
     }
 
     @Test
@@ -402,6 +430,55 @@ class MemoryLearnerTest {
         assertTrue(longTermMarkdown.contains("type=stable_profile sensitivity=private source=assistant_inferred"))
         assertEquals(MemoryMaintenanceJobStatus.SUCCEEDED, markdown.jobDao.jobs.single().status)
         assertEquals(setOf("2026-07-09.md", "MEMORY.md"), markdown.indexRebuilder.rebuiltFiles.map { it.name }.toSet())
+    }
+
+    @Test
+    fun `markdown learning strips raw user statement prefix before writing notes`() = runBlocking {
+        val personalMemoryDao = InMemoryPersonalMemoryDao()
+        val markdown = createMarkdownHarness()
+        val intelligence = FakeMemoryIntelligence(
+            classification = testClassification(shouldLearnMemories = true),
+            candidates = listOf(testCandidate("The user prefers semantic memory notes.", requiresConfirmation = false)),
+            updatePlan = MemoryUpdatePlan(),
+            markdownProposal = MarkdownMemoryLearningProposal(
+                dailyNotes = listOf(
+                    MarkdownMemoryLearningNote(
+                        text = "The user said: The user asked memory notes to be semantic rather than copied.",
+                        type = "communication_style",
+                        sensitivity = MemorySensitivity.NORMAL,
+                        source = MemorySource.EXPLICIT_USER_STATEMENT
+                    )
+                ),
+                longTermUpdates = listOf(
+                    MarkdownMemoryLearningNote(
+                        text = "The user said: The user wants MEMORY.md to contain concise semantic memories.",
+                        type = "communication_style",
+                        sensitivity = MemorySensitivity.NORMAL,
+                        source = MemorySource.EXPLICIT_USER_STATEMENT
+                    )
+                )
+            )
+        )
+        val repository = createRepository(
+            personalMemoryDao = personalMemoryDao,
+            intelligence = intelligence,
+            markdownMemoryLearningService = markdown.service
+        )
+
+        repository.learnFromChat(
+            chatRoom(),
+            userMessages("整理的记忆只是单纯的复制用户的话吗？"),
+            listOf(emptyList()),
+            memoryPlatform = null,
+            learningIdempotencyKey = "strip-raw-prefix"
+        )
+
+        val dailyMarkdown = markdown.fileStore.readDailyMemory().getOrThrow()
+        val longTermMarkdown = markdown.fileStore.readLongTermMemory().getOrThrow()
+        assertFalse(dailyMarkdown.contains("The user said:"))
+        assertFalse(longTermMarkdown.contains("The user said:"))
+        assertTrue(dailyMarkdown.contains("The user asked memory notes to be semantic rather than copied."))
+        assertTrue(longTermMarkdown.contains("The user wants MEMORY.md to contain concise semantic memories."))
     }
 
     @Test
