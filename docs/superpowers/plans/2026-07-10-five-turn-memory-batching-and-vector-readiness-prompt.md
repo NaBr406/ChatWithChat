@@ -447,18 +447,24 @@ Likely files:
 - `di/DatabaseModule.kt`
 - new tests under `app/src/test/kotlin/dev/chungjungsoo/gptmobile/data/database/`
 
-- [ ] Add durable checkpoint/pending-turn storage with stable keys and foreign-key behavior.
-- [ ] Add DAO operations for upsert, count, oldest-unclaimed selection, atomic claim, success cleanup, release, and due-idle queries.
-- [ ] Add the next valid Room migration without destructive fallback.
-- [ ] Preserve all existing message, token usage, memory, and maintenance data.
-- [ ] Add migration tests for both empty and populated databases.
+- [x] Add durable checkpoint/pending-turn storage with stable keys and foreign-key behavior.
+- [x] Add DAO operations for upsert, count, oldest-unclaimed selection, atomic claim, success cleanup, release, and due-idle queries.
+- [x] Add the next valid Room migration without destructive fallback.
+- [x] Preserve all existing message, token usage, memory, and maintenance data.
+- [x] Add migration tests for both empty and populated databases.
 
 Acceptance:
 
-- [ ] Process death does not lose pending turns.
-- [ ] The same user message cannot increment the count twice.
-- [ ] Different chats have independent counters and idle deadlines.
-- [ ] Chat deletion cleans related pending state safely.
+- [x] Process death does not lose pending turns.
+- [x] The same user message cannot increment the count twice.
+- [x] Different chats have independent counters and idle deadlines.
+- [x] Chat deletion cleans related pending state safely.
+
+Task 1 implementation record (2026-07-10):
+
+- Added Room-backed `memory_chat_checkpoint` and `memory_pending_turn` tables, unique `(chat_id, user_message_id)` enforcement, chat cascade cleanup, and exported schema 13.
+- Added transactional claim/completion behavior in `MemoryTurnBatchDao`; a chat with claimed rows cannot create a second active batch, and successful completion deletes claimed rows while advancing the checkpoint.
+- Added non-destructive `MIGRATION_12_13`, registered it in `DatabaseModule`, and covered empty/populated migration SQL plus durable DAO behavior in focused JVM tests.
 
 ### Task 2: Record Completed Turns Without Calling The LLM
 

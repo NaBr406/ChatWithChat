@@ -299,6 +299,12 @@ object ChatDatabaseV2Migrations {
         }
     }
 
+    val MIGRATION_12_13 = object : Migration(12, 13) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            ensureMemoryTurnBatchTables(db)
+        }
+    }
+
     internal fun legacyFilesToAttachmentsJson(filesValue: String): String {
         val attachments = filesValue
             .split(",")
@@ -490,5 +496,45 @@ object ChatDatabaseV2Migrations {
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_maintenance_job_status` ON `memory_maintenance_job` (`status`)")
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_maintenance_job_type` ON `memory_maintenance_job` (`type`)")
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_maintenance_job_next_run_at` ON `memory_maintenance_job` (`next_run_at`)")
+    }
+
+    private fun ensureMemoryTurnBatchTables(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `memory_chat_checkpoint` (
+                `chat_id` INTEGER NOT NULL,
+                `last_processed_user_message_id` INTEGER NOT NULL,
+                `last_observed_user_message_id` INTEGER NOT NULL,
+                `pending_since` INTEGER,
+                `last_user_activity_at` INTEGER,
+                `idle_due_at` INTEGER,
+                `updated_at` INTEGER NOT NULL,
+                PRIMARY KEY(`chat_id`),
+                FOREIGN KEY(`chat_id`) REFERENCES `chats_v2`(`chat_id`) ON UPDATE NO ACTION ON DELETE CASCADE
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_chat_checkpoint_idle_due_at` ON `memory_chat_checkpoint` (`idle_due_at`)")
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `memory_pending_turn` (
+                `turn_key` TEXT NOT NULL,
+                `chat_id` INTEGER NOT NULL,
+                `user_message_id` INTEGER NOT NULL,
+                `payload_json` TEXT NOT NULL,
+                `content_hash` TEXT NOT NULL,
+                `completed_at` INTEGER NOT NULL,
+                `claimed_job_id` TEXT,
+                `created_at` INTEGER NOT NULL,
+                `updated_at` INTEGER NOT NULL,
+                PRIMARY KEY(`turn_key`),
+                FOREIGN KEY(`chat_id`) REFERENCES `chats_v2`(`chat_id`) ON UPDATE NO ACTION ON DELETE CASCADE
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_memory_pending_turn_chat_id_user_message_id` ON `memory_pending_turn` (`chat_id`, `user_message_id`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_pending_turn_chat_id_claimed_job_id` ON `memory_pending_turn` (`chat_id`, `claimed_job_id`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_pending_turn_claimed_job_id` ON `memory_pending_turn` (`claimed_job_id`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_pending_turn_completed_at` ON `memory_pending_turn` (`completed_at`)")
     }
 }
