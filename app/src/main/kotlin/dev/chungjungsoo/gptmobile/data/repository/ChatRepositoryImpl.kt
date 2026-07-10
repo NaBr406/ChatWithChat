@@ -1591,7 +1591,7 @@ class ChatRepositoryImpl @Inject constructor(
     ): ConversationContext {
         val policy = ProviderContextPolicy.forClientType(platform.compatibleType)
         val conversationContext = contextBuilder.buildContext(userMessages, assistantMessages, platform, policy)
-        scheduleCompactionFlushIfNeeded(conversationContext)
+        scheduleMemoryConsolidationForCompactionIfNeeded(conversationContext)
         if (!policy.preferProviderFileRefs || conversationContext.turns.isEmpty()) {
             return conversationContext
         }
@@ -1601,7 +1601,7 @@ class ChatRepositoryImpl @Inject constructor(
         )
     }
 
-    private suspend fun scheduleCompactionFlushIfNeeded(
+    private suspend fun scheduleMemoryConsolidationForCompactionIfNeeded(
         conversationContext: ConversationContext
     ) {
         val scheduler = memoryTurnBatchScheduler ?: return

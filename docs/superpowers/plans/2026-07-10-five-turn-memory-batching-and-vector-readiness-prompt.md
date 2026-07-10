@@ -48,14 +48,14 @@ The LLM owns semantic decisions. Code owns scheduling, storage, validation, idem
 
 There is no user confirmation queue. Valid local memory writes are autonomous. The user-facing Memory screen remains a read-only view of `MEMORY.md`; do not add per-entry confirmation, archive, resolve, or delete workflows.
 
-## Current State That Must Be Re-Audited
+## Pre-Implementation Snapshot (Task 0 Audit)
 
-The following statements are true on `main` at the time this prompt was written, but line numbers and schema versions may move. Confirm them with `rg` before editing:
+The following statements were true on `main` when this prompt was written. They are retained as historical audit evidence and do not describe the current branch after the implementation records below:
 
 - `ChatViewModel.prepareMemoryPrompt(...)` calls `MemoryRepository.prepareMemoryContext(...)` before the provider request.
-- `ChatViewModel.observeStateChanges()` saves a completed chat and calls `learnFromSavedChat(...)` after provider loading states become idle.
-- `MemoryRepositoryImpl.prepareMemoryContext(...)` currently calls `classifyConversation(...)` and may call `selectMemories(...)` before local recall.
-- `MemoryRepositoryImpl.learnFromChat(...)` currently calls `classifyConversation(...)`, `extractMemoryCandidates(...)`, and conditionally `planMemoryUpdates(...)`.
+- `ChatViewModel.observeStateChanges()` saved a completed chat and called `learnFromSavedChat(...)` after provider loading states became idle.
+- `MemoryRepositoryImpl.prepareMemoryContext(...)` called `classifyConversation(...)` and could call `selectMemories(...)` before local recall.
+- `MemoryRepositoryImpl.learnFromChat(...)` called `classifyConversation(...)`, `extractMemoryCandidates(...)`, and conditionally `planMemoryUpdates(...)`.
 - `finishLearningResult(...)` then invokes `MarkdownMemoryLearningService`, which calls `proposeMarkdownMemoryWrites(...)`.
 - `ChatRepositoryImpl.scheduleCompactionFlushIfNeeded(...)` can enqueue a separate `COMPACTION_FLUSH` job.
 - `MemoryFileStore`, `MarkdownMemoryCodec`, `MemoryIndexRepository`, `MemoryMaintenanceScheduler`, `MemoryMaintenanceWorker`, `MemoryMaintenanceRepairer`, delayed WorkManager scheduling, boot repair, and maintenance notifications already exist.
@@ -578,7 +578,7 @@ Task 4 implementation record (2026-07-10):
 - Added a strict `MemoryBatchConsolidationRequest`/proposal contract and one provider-routed `consolidateMemoryBatch(...)` call with deep-operation timeout/output caps.
 - `MemoryBatchConsolidationService` verifies immutable job/claim hashes, retrieves a bounded set of existing Markdown entries, validates every controlled operation, and fails closed on unknown JSON fields, invented IDs, invalid evidence, or unsupported metadata.
 - Multi-file Markdown edits use per-file backups; write or index failures restore changed files and leave the checkpoint/claim untouched. Successful empty proposals still clear the claimed batch and advance the checkpoint.
-- Focused tests cover exact call counts, replay, strict JSON failure, create/replace behavior, rollback, empty operations, idle batches, and ten-turn sequential batches. Legacy production call-site removal remains intentionally unchecked until Tasks 5 and 6 remove recall and migration-only paths.
+- Focused tests cover exact call counts, replay, strict JSON failure, create/replace behavior, rollback, empty operations, idle batches, and ten-turn sequential batches. Tasks 5 and 6 subsequently removed every legacy production call site and automatic fallback path.
 
 ### Task 5: Make Recall Entirely Local
 
@@ -612,7 +612,7 @@ Task 5 implementation record (2026-07-10):
 
 - `prepareMemoryContext(...)` now builds a bounded local query/recent-context request and calls only `MemoryRetriever`; it never classifies, selects with an LLM, or falls back to legacy Room rows.
 - The lexical implementation uses normalized Latin tokens, Chinese 2/3-character grams, exact phrase and long-term bonuses, stable ID/hash deduplication, result limits, and an existing tokenizer-backed token budget.
-- Retrieval failures return no memory without failing chat completion. `ChatViewModel` tests prove the disabled gate performs zero retrieval calls, and repository recall tests assert all six intelligence counters remain zero.
+- Retrieval failures return no memory without failing chat completion. `ChatViewModel` tests prove the disabled gate performs zero retrieval calls, and the repository recall boundary no longer has a `MemoryIntelligence` dependency.
 
 ### Task 6: Migrate Away From Legacy Room Semantics
 
@@ -663,13 +663,13 @@ Task 7 implementation record (2026-07-10):
 
 ### Task 8: End-To-End Verification And Cleanup
 
-- [ ] Run focused tests after each phase and then the full memory/repository suite.
-- [ ] Run Kotlin compilation and debug assembly.
-- [ ] Inspect the final production call graph with `rg` to prove legacy methods have no call sites.
-- [ ] Inspect `git diff --check` and `git status`.
-- [ ] If an emulator is available, validate four turns, fifth-turn consolidation, idle scheduling state, memory-off behavior, and one multi-provider turn.
-- [ ] Capture logcat evidence using batch IDs and call counts, not memory content.
-- [ ] Update relevant existing plan/docs so they no longer claim learning runs after every completed turn or that recall optionally uses an LLM selector.
+- [x] Run focused tests after each phase and then the full memory/repository suite.
+- [x] Run Kotlin compilation and debug assembly.
+- [x] Inspect the final production call graph with `rg` to prove legacy methods have no call sites.
+- [x] Inspect `git diff --check` and `git status`.
+- [x] If an emulator is available, validate four turns, fifth-turn consolidation, idle scheduling state, memory-off behavior, and one multi-provider turn.
+- [x] Capture logcat evidence using batch IDs and call counts, not memory content.
+- [x] Update relevant existing plan/docs so they no longer claim learning runs after every completed turn or that recall optionally uses an LLM selector.
 
 Verification commands:
 
@@ -748,3 +748,36 @@ The final handoff must include:
 - any remaining vector-backend decision explicitly deferred.
 
 Do not report the task complete while the legacy production call chain still runs, while recall still calls a selector LLM, or while a failed job can retry forever.
+
+## Completion Report (2026-07-10)
+
+### Changed Files By Responsibility
+
+- Persistence: `ChatDatabaseV2.kt`, `ChatDatabaseV2Migrations.kt`, schema 13, `MemoryChatCheckpoint.kt`, `MemoryPendingTurn.kt`, `MemoryTurnBatchDao.kt`, and their migration/DAO tests add durable per-chat checkpoints, pending snapshots, claims, and non-destructive cleanup.
+- Scheduling: `MemoryTurnBatchCoordinator.kt`, `MemoryTurnBatchScheduler.kt`, `MemoryMaintenanceScheduler.kt`, `MemoryMaintenanceProcessor.kt`, `MemoryMaintenanceWorker.kt`, `MemoryMaintenanceWorkScheduler.kt`, `MemoryMaintenanceRepairer.kt`, and `ChatRepositoryImpl.kt` unify threshold, idle, compaction, startup/boot repair, connected-network work, bounded retries, and manual notification retry.
+- LLM consolidation: `MemoryBatchConsolidationModels.kt`, `MemoryBatchConsolidationService.kt`, `MemoryIntelligence.kt`, and `LlmMemoryIntelligence.kt` provide one strict request/response contract, controlled Markdown operations, rollback, deterministic replay IDs, and provider routing. `MarkdownMemoryLearningService.kt` was removed.
+- Recall: `MemoryRetrieval.kt`, `MemoryIndexRepository.kt`, `MemoryPromptBuilder.kt`, `MemoryRepositoryImpl.kt`, and `ChatViewModel.kt` make foreground recall local, bounded, Chinese-token aware, deduplicated, and independent of `MemoryIntelligence`.
+- Legacy migration and UI: `PersonalMemory.kt`, `ChatClassification.kt`, `MemoryRepository.kt`, `MemoryRepositoryImpl.kt`, `GPTMobileApp.kt`, `MemoryViewModel.kt`, and `MemoryScreen.kt` retain upgrade data, run idempotent active-memory migration, remove legacy writes/fallbacks, and expose only `MEMORY.md`, export, and the disabled notice. Legacy `APPEND_DAILY_NOTE`/`COMPACTION_FLUSH` payloads drain through the batch contract.
+- Vector readiness: `MemoryRetrieval.kt`, `MemoryIndexRepository.kt`, and `docs/architecture/on-device-vector-memory-readiness.md` add strategy/config, stable hashes, score provenance, and `changedChunkIds` without adding an embedding or vector dependency.
+
+### Call Budget And Turn Semantics
+
+- Before: foreground recall used one classify call plus an optional selector call; post-save learning used classify, extract, optional plan, and a second Markdown proposal pass, for up to six dedicated memory calls around one answer. Context compaction could enqueue another semantic path.
+- After: foreground recall is 0 calls; turns 1-4 before idle are 0 calls; turn 5 is exactly 1 `consolidateMemoryBatch` call; a 1-4 turn partial batch idle for 30 minutes is 1 call; compaction reuses that same batch/idempotency key; index rebuild is 0 calls.
+- A completed turn is one persisted user message plus at least one non-error successful assistant result after all selected providers become idle. Preferred provider wins when successful, then stable chat provider order, then stable UID order. One user-message ID is one turn, so multi-provider results, retries, and revisions cannot add extra pending turns.
+
+### Timing, Retry, And Safety
+
+- Idle timeout is persisted as `lastUserActivityAt + 1800` seconds and is pushed forward by new user activity. Five oldest unclaimed turns become immediately eligible; chats and global memory LLM execution remain serialized.
+- Automatic attempts are capped at 3 with connected-network WorkManager constraints. The third failure is terminal and not automatically scheduled again. Its notification exposes a manual Retry action that resets the same durable job and re-enqueues work without exposing maintenance internals on the Memory page.
+- Memory-off dismisses unstarted/retryable consolidation jobs, clears pending turns while advancing baselines, performs no recall search, and prevents retroactive learning when re-enabled.
+
+### Proof And Verification
+
+- Static call graph: `MemoryIntelligence` exposes only `consolidateMemoryBatch`, with one production invocation in `MemoryBatchConsolidationService`. Searches for `classifyConversation`, `selectMemories`, `extractMemoryCandidates`, `planMemoryUpdates`, `proposeMarkdownMemoryWrites`, `learnFromChat`, `learnFromSavedChat`, and the old compaction method return no production matches. Searches for legacy DAO writes also return no production matches.
+- Exact-call tests cover four turns with zero calls, fifth turn with one call, successful replay with zero additional calls, ten turns with two sequential calls, invalid output, empty operations, process-death replay, and both legacy payload adapters.
+- Database upgrade uses Room schema 13 and preserves existing message, token, memory, index, and maintenance rows. App startup/viewer migrate active `PersonalMemory` rows into `MEMORY.md`; a second migration adds zero entries, and legacy tables remain migration-only.
+- Final automated command passed: `./gradlew.bat :app:testDebugUnitTest --tests "*Memory*" --tests "dev.chungjungsoo.gptmobile.data.repository.ChatRepositoryImplTest" --tests "dev.chungjungsoo.gptmobile.data.context.*" --tests "dev.chungjungsoo.gptmobile.presentation.ui.chat.ChatViewModelRetryTest" :app:compileDebugKotlin :app:assembleDebug`.
+- `git diff --check` passed. The debug APK was produced at `app/build/outputs/apk/debug/app-debug.apk`.
+- Emulator `emulator-5554`: content-free logs showed pending counts 1, 2, 3, and 4, followed by one five-turn threshold batch entering consolidation. Persisted state showed an 1800-second idle delta. Memory-off logged `recorded=0`, left no pending turns, and dismissed prior work. A two-provider turn produced one pending row and selected the preferred canonical provider. The Memory route rendered `MEMORY.md` with the export control and no maintenance console. The emulator process later disconnected after these checks; no ChatWithChat crash was present in the crash buffer.
+- Vector backend selection remains explicitly deferred. Small-corpus brute force is the lowest-risk first candidate; `sqlite-vec` or embedded ANN still require separate ABI, app-size, model lifecycle, and benchmark decisions. No cloud embedding fallback exists.

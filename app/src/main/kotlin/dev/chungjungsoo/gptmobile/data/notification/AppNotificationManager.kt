@@ -16,6 +16,7 @@ import dev.chungjungsoo.gptmobile.R
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMaintenanceJob
 import dev.chungjungsoo.gptmobile.presentation.common.Route
 import dev.chungjungsoo.gptmobile.presentation.ui.main.MainActivity
+import dev.chungjungsoo.gptmobile.receiver.MemoryMaintenanceRetryReceiver
 import javax.inject.Inject
 
 class AppNotificationManager @Inject constructor(
@@ -70,7 +71,8 @@ class AppNotificationManager @Inject constructor(
             job = job,
             title = title,
             text = context.getString(R.string.notification_memory_maintenance_failed_text),
-            ongoing = false
+            ongoing = false,
+            allowRetry = terminal
         )
     }
 
@@ -103,7 +105,8 @@ class AppNotificationManager @Inject constructor(
         job: MemoryMaintenanceJob,
         title: String,
         text: String,
-        ongoing: Boolean
+        ongoing: Boolean,
+        allowRetry: Boolean = false
     ) {
         if (!canPostNotifications()) return
 
@@ -117,14 +120,32 @@ class AppNotificationManager @Inject constructor(
             .setAutoCancel(!ongoing)
             .setOngoing(ongoing)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .build()
+        if (allowRetry) {
+            notification.addAction(
+                0,
+                context.getString(R.string.retry),
+                retryMemoryPendingIntent(job)
+            )
+        }
         runCatching {
-            NotificationManagerCompat.from(context).notify(memoryMaintenanceNotificationId(job), notification)
+            NotificationManagerCompat.from(context).notify(memoryMaintenanceNotificationId(job), notification.build())
         }
     }
 
     private fun openMemoryPendingIntent(): PendingIntent =
         openAppPendingIntent(Route.MEMORY)
+
+    private fun retryMemoryPendingIntent(job: MemoryMaintenanceJob): PendingIntent {
+        val intent = Intent(context, MemoryMaintenanceRetryReceiver::class.java).apply {
+            putExtra(MemoryMaintenanceRetryReceiver.EXTRA_JOB_ID, job.jobId)
+        }
+        return PendingIntent.getBroadcast(
+            context,
+            job.jobId.hashCode(),
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
 
     private fun openAppPendingIntent(route: String? = null): PendingIntent {
         val intent = Intent(context, MainActivity::class.java).apply {

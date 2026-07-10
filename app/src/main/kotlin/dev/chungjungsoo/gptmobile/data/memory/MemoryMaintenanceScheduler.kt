@@ -62,6 +62,23 @@ class MemoryMaintenanceScheduler(
     suspend fun nextScheduledDelaySeconds(now: Long = now()): Long? =
         nextScheduledRunAt(now)?.let { runAt -> (runAt - now).coerceAtLeast(0) }
 
+    suspend fun retryManually(jobId: String): MemoryMaintenanceJob? {
+        val job = jobDao.getById(jobId) ?: return null
+        if (job.status !in MANUALLY_RETRYABLE_STATUSES) return null
+        val now = now()
+        val updated = job.copy(
+            status = MemoryMaintenanceJobStatus.PENDING,
+            attempts = 0,
+            lastError = null,
+            startedAt = null,
+            updatedAt = now,
+            nextRunAt = now
+        )
+        jobDao.update(updated)
+        emitStatusChanged(job, updated, now)
+        return updated
+    }
+
     suspend fun markRunning(job: MemoryMaintenanceJob): MemoryMaintenanceJob {
         val now = now()
         val updated = job.copy(
@@ -191,6 +208,10 @@ class MemoryMaintenanceScheduler(
         private const val RUNNABLE_SCAN_MULTIPLIER = 4
         private const val MAX_ERROR_LENGTH = 500
         private const val STALE_RUNNING_SECONDS = 15 * 60L
+        private val MANUALLY_RETRYABLE_STATUSES = setOf(
+            MemoryMaintenanceJobStatus.FAILED_RETRYABLE,
+            MemoryMaintenanceJobStatus.FAILED_TERMINAL
+        )
     }
 }
 

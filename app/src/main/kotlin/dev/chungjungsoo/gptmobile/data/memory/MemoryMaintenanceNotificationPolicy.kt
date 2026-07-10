@@ -9,7 +9,14 @@ class MemoryMaintenanceNotificationPolicy {
         val job = event.newJob
         val notificationKey = notificationKey(jobId = job.jobId, idempotencyKey = job.idempotencyKey)
 
-        if (event.newStatus == MemoryMaintenanceJobStatus.SUCCEEDED || event.newStatus == MemoryMaintenanceJobStatus.DISMISSED) {
+        if (
+            event.newStatus == MemoryMaintenanceJobStatus.SUCCEEDED ||
+            event.newStatus == MemoryMaintenanceJobStatus.DISMISSED ||
+            (
+                event.newStatus == MemoryMaintenanceJobStatus.PENDING &&
+                    event.oldStatus in RETRYABLE_NOTIFICATION_STATUSES
+                )
+        ) {
             return MemoryMaintenanceNotificationDecision.Cancel(notificationKey)
         }
 
@@ -45,6 +52,10 @@ class MemoryMaintenanceNotificationPolicy {
             MemoryMaintenanceJobType.REPAIR_MARKDOWN_METADATA,
             MemoryMaintenanceJobType.COMPACTION_FLUSH,
             MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH
+        )
+        val RETRYABLE_NOTIFICATION_STATUSES = setOf(
+            MemoryMaintenanceJobStatus.FAILED_RETRYABLE,
+            MemoryMaintenanceJobStatus.FAILED_TERMINAL
         )
     }
 }

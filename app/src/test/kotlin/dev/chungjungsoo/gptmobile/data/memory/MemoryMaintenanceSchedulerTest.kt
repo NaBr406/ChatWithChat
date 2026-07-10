@@ -146,6 +146,37 @@ class MemoryMaintenanceSchedulerTest {
         assertEquals(40L, scheduler.nextScheduledDelaySeconds())
     }
 
+    @Test
+    fun `manual retry resets terminal job attempts and makes it immediately runnable`() = runBlocking {
+        val terminal = MemoryMaintenanceJob(
+            jobId = "job-terminal",
+            type = MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH,
+            status = MemoryMaintenanceJobStatus.FAILED_TERMINAL,
+            idempotencyKey = "batch:terminal",
+            payloadJson = "{}",
+            attempts = 3,
+            lastError = "provider unavailable",
+            createdAt = 1L,
+            startedAt = 90L,
+            updatedAt = 99L,
+            nextRunAt = null
+        )
+        val dao = InMemoryMemoryMaintenanceJobDao(listOf(terminal))
+        val eventSink = RecordingMemoryMaintenanceEventSink()
+        val scheduler = createScheduler(dao, eventSink)
+
+        val retried = scheduler.retryManually(terminal.jobId)
+
+        assertEquals(MemoryMaintenanceJobStatus.PENDING, retried?.status)
+        assertEquals(0, retried?.attempts)
+        assertNull(retried?.lastError)
+        assertNull(retried?.startedAt)
+        assertEquals(100L, retried?.nextRunAt)
+        assertEquals(listOf(terminal.jobId), scheduler.runnableJobs().map { it.jobId })
+        assertEquals(MemoryMaintenanceJobStatus.FAILED_TERMINAL, eventSink.events.single().oldStatus)
+        assertEquals(MemoryMaintenanceJobStatus.PENDING, eventSink.events.single().newStatus)
+    }
+
     private fun createScheduler(
         dao: InMemoryMemoryMaintenanceJobDao,
         eventSink: MemoryMaintenanceEventSink = MemoryMaintenanceEventSink.None

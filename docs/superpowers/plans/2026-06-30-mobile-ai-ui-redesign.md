@@ -2,6 +2,8 @@
 
 > **For agentic workers:** This is an implementation planning document. Track work with checkbox (`- [ ]`) items. Do not treat the visual direction as permission to copy ChatGPT or Gemini branding, icons, names, or proprietary layouts exactly. The goal is to match familiar mobile AI chat habits while keeping this app's own product identity and existing capabilities.
 
+> **Memory status (2026-07-10):** Later memory work supersedes this plan's `prepareMemoryPrompt`/`learnFromSavedChat` assumptions. The memory toggle now gates local recall and local completed-turn recording; recall uses no LLM selector, and consolidation uses one background request per five turns or after 30 minutes idle.
+
 ## Goal
 
 彻底重构 ChatWithChat 的移动端 UI，使第一屏、聊天页、历史会话、模型选择、设置入口更接近 ChatGPT / Gemini 手机端的使用习惯：打开即能对话，历史会话随手可达，模型切换轻量，输入框始终是核心操作区。
