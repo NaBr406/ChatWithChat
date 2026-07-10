@@ -99,7 +99,7 @@ class MemoryTurnBatchDaoTest {
     )
 }
 
-private class InMemoryMemoryTurnBatchDao : MemoryTurnBatchDao {
+internal class InMemoryMemoryTurnBatchDao : MemoryTurnBatchDao {
     private val checkpoints = mutableMapOf<Int, MemoryChatCheckpoint>()
     private val turns = linkedMapOf<String, MemoryPendingTurn>()
 
@@ -115,6 +115,9 @@ private class InMemoryMemoryTurnBatchDao : MemoryTurnBatchDao {
             ?.let { turns.remove(it.turnKey) }
         turns[turn.turnKey] = turn
     }
+
+    override suspend fun getPendingTurn(chatId: Int, userMessageId: Int): MemoryPendingTurn? = turns.values
+        .firstOrNull { it.chatId == chatId && it.userMessageId == userMessageId }
 
     override suspend fun getPendingTurnsForChat(chatId: Int): List<MemoryPendingTurn> = sortedTurns()
         .filter { it.chatId == chatId }

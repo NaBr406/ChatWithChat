@@ -16,6 +16,7 @@ import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryCodec
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryEntry
 import dev.chungjungsoo.gptmobile.data.memory.MemoryAction
 import dev.chungjungsoo.gptmobile.data.memory.MemoryCandidate
+import dev.chungjungsoo.gptmobile.data.memory.MemoryCompletedTurnInput
 import dev.chungjungsoo.gptmobile.data.memory.MemoryConversationMessage
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFileStore
 import dev.chungjungsoo.gptmobile.data.memory.MemoryExtractionRequest
@@ -36,6 +37,8 @@ import dev.chungjungsoo.gptmobile.data.memory.MemorySelectionRequest
 import dev.chungjungsoo.gptmobile.data.memory.MemorySensitivity
 import dev.chungjungsoo.gptmobile.data.memory.MemorySource
 import dev.chungjungsoo.gptmobile.data.memory.MemoryStatus
+import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnBatchCoordinator
+import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnRecordingResult
 import dev.chungjungsoo.gptmobile.data.memory.MemoryUpdatePlanningRequest
 import dev.chungjungsoo.gptmobile.data.memory.PreparedMemoryContext
 import dev.chungjungsoo.gptmobile.data.memory.SelectedPersonalMemory
@@ -58,8 +61,17 @@ class MemoryRepositoryImpl(
     private val memoryIndexRebuilder: MemoryIndexRebuilder? = null,
     private val memoryMaintenanceJobDao: MemoryMaintenanceJobDao? = null,
     private val memoryMaintenanceScheduler: MemoryMaintenanceScheduler? = null,
-    private val memoryMaintenanceWorkScheduler: MemoryMaintenanceWorkEnqueuer? = null
+    private val memoryMaintenanceWorkScheduler: MemoryMaintenanceWorkEnqueuer? = null,
+    private val memoryTurnBatchCoordinator: MemoryTurnBatchCoordinator? = null
 ) : MemoryRepository {
+
+    override suspend fun recordUserActivity(chatId: Int, activityAt: Long) {
+        memoryTurnBatchCoordinator?.recordUserActivity(chatId, activityAt)
+    }
+
+    override suspend fun recordCompletedTurn(input: MemoryCompletedTurnInput): MemoryTurnRecordingResult =
+        memoryTurnBatchCoordinator?.recordCompletedTurn(input)
+            ?: MemoryTurnRecordingResult.skipped("turn_batch_storage_unavailable")
 
     override suspend fun prepareMemoryContext(
         chatRoom: ChatRoomV2,

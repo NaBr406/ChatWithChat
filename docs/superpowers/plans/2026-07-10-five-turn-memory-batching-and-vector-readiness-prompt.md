@@ -475,21 +475,28 @@ Likely files:
 - `data/repository/MemoryRepositoryImpl.kt`
 - new batch coordinator/service under `data/memory/`
 
-- [ ] Replace the direct `learnFromSavedChat(...) -> learnFromChat(...)` network path with a local `recordCompletedTurn(...)`/enqueue operation.
-- [ ] Reuse the existing post-save completion boundary so partial streaming content is not recorded.
-- [ ] Implement completed-turn and canonical-assistant rules.
-- [ ] Keep multi-provider deduplication.
-- [ ] Update user activity as soon as a real new user prompt is accepted.
-- [ ] Ensure the chat UI never waits for consolidation.
+- [x] Replace the direct `learnFromSavedChat(...) -> learnFromChat(...)` network path with a local `recordCompletedTurn(...)`/enqueue operation.
+- [x] Reuse the existing post-save completion boundary so partial streaming content is not recorded.
+- [x] Implement completed-turn and canonical-assistant rules.
+- [x] Keep multi-provider deduplication.
+- [x] Update user activity as soon as a real new user prompt is accepted.
+- [x] Ensure the chat UI never waits for consolidation.
 
 Acceptance tests must cover:
 
-- [ ] Four completed turns produce zero memory LLM calls.
+- [x] Four completed turns produce zero memory LLM calls.
 - [ ] The fifth completed turn produces one queued batch, not five jobs.
-- [ ] One successful and one failed provider still count as one turn.
-- [ ] All providers failing count as zero turns.
-- [ ] Retry/revision does not add a turn.
-- [ ] Navigating away does not lose the local pending snapshot.
+- [x] One successful and one failed provider still count as one turn.
+- [x] All providers failing count as zero turns.
+- [x] Retry/revision does not add a turn.
+- [x] Navigating away does not lose the local pending snapshot.
+
+Task 2 implementation record (2026-07-10):
+
+- `ChatViewModel` now marks only newly accepted user prompts, reuses the all-provider-idle save boundary, reloads persisted message IDs, and records one canonical completed-turn snapshot asynchronously.
+- Retry and revision paths do not set the new-turn marker. Reprocessing the same user ID updates one unclaimed row; a claimed row remains immutable.
+- `MemoryTurnBatchCoordinator` stores bounded user/assistant text plus safe attachment metadata, prefers the configured memory platform when successful, and emits local pending state without depending on `MemoryIntelligence`.
+- Focused coordinator/DAO/ViewModel tests pass. The unchecked fifth-turn job assertion is completed by Task 3, where the observer is connected to the durable maintenance queue.
 
 ### Task 3: Implement Threshold, Idle, And Compaction Scheduling
 

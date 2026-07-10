@@ -9,6 +9,7 @@ import dagger.hilt.components.SingletonComponent
 import dev.chungjungsoo.gptmobile.data.database.dao.ChatClassificationDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryIndexDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryMaintenanceJobDao
+import dev.chungjungsoo.gptmobile.data.database.dao.MemoryTurnBatchDao
 import dev.chungjungsoo.gptmobile.data.database.dao.PersonalMemoryDao
 import dev.chungjungsoo.gptmobile.data.memory.LlmMemoryIntelligence
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryCodec
@@ -27,6 +28,7 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceWorkEnqueuer
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceWorkScheduler
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMarkdownCodec
 import dev.chungjungsoo.gptmobile.data.memory.MemoryPromptBuilder
+import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnBatchCoordinator
 import dev.chungjungsoo.gptmobile.data.network.AnthropicAPI
 import dev.chungjungsoo.gptmobile.data.network.GoogleAPI
 import dev.chungjungsoo.gptmobile.data.network.OpenAIAPI
@@ -119,6 +121,12 @@ object MemoryRepositoryModule {
 
     @Provides
     @Singleton
+    fun provideMemoryTurnBatchCoordinator(
+        memoryTurnBatchDao: MemoryTurnBatchDao
+    ): MemoryTurnBatchCoordinator = MemoryTurnBatchCoordinator(memoryTurnBatchDao)
+
+    @Provides
+    @Singleton
     fun provideMarkdownMemoryLearningService(
         memoryFileStore: MemoryFileStore,
         markdownMemoryCodec: MarkdownMemoryCodec,
@@ -154,7 +162,8 @@ object MemoryRepositoryModule {
         markdownMemoryCodec: MarkdownMemoryCodec,
         memoryMaintenanceJobDao: MemoryMaintenanceJobDao,
         memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
-        memoryMaintenanceWorkScheduler: MemoryMaintenanceWorkEnqueuer
+        memoryMaintenanceWorkScheduler: MemoryMaintenanceWorkEnqueuer,
+        memoryTurnBatchCoordinator: MemoryTurnBatchCoordinator
     ): MemoryRepository = MemoryRepositoryImpl(
         personalMemoryDao = personalMemoryDao,
         chatClassificationDao = chatClassificationDao,
@@ -168,6 +177,7 @@ object MemoryRepositoryModule {
         memoryIndexRebuilder = memoryIndexRepository,
         memoryMaintenanceJobDao = memoryMaintenanceJobDao,
         memoryMaintenanceScheduler = memoryMaintenanceScheduler,
-        memoryMaintenanceWorkScheduler = memoryMaintenanceWorkScheduler
+        memoryMaintenanceWorkScheduler = memoryMaintenanceWorkScheduler,
+        memoryTurnBatchCoordinator = memoryTurnBatchCoordinator
     )
 }

@@ -23,6 +23,15 @@ interface MemoryTurnBatchDao {
     @Query(
         """
         SELECT * FROM memory_pending_turn
+        WHERE chat_id = :chatId AND user_message_id = :userMessageId
+        LIMIT 1
+        """
+    )
+    suspend fun getPendingTurn(chatId: Int, userMessageId: Int): MemoryPendingTurn?
+
+    @Query(
+        """
+        SELECT * FROM memory_pending_turn
         WHERE chat_id = :chatId
         ORDER BY completed_at ASC, user_message_id ASC
         """
