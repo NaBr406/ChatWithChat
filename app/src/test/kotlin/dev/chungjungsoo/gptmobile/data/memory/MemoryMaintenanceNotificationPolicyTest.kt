@@ -86,6 +86,29 @@ class MemoryMaintenanceNotificationPolicyTest {
     }
 
     @Test
+    fun `manual retry cancels the terminal failure notification`() {
+        val terminal = job(status = MemoryMaintenanceJobStatus.FAILED_TERMINAL)
+        val pending = terminal.copy(
+            status = MemoryMaintenanceJobStatus.PENDING,
+            attempts = 0,
+            lastError = null
+        )
+        val decision = policy.decide(
+            event = MemoryMaintenanceStatusChangedEvent(
+                oldJob = terminal,
+                newJob = pending,
+                oldStatus = terminal.status,
+                newStatus = pending.status,
+                occurredAt = 101L
+            ),
+            preferenceEnabled = false,
+            systemPermissionGranted = false
+        )
+
+        assertEquals(MemoryMaintenanceNotificationDecision.Cancel("key-1"), decision)
+    }
+
+    @Test
     fun `duplicate attempts keep same notification identity`() {
         val first = policy.decide(
             event = event(job(jobId = "job-1", attempts = 1, status = MemoryMaintenanceJobStatus.FAILED_RETRYABLE)),

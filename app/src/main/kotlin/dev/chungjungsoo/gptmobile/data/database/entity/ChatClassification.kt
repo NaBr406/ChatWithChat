@@ -4,6 +4,7 @@ import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
+/** Legacy classification data retained for non-destructive database upgrades only. */
 @Entity(tableName = "chat_classification")
 data class ChatClassification(
     @PrimaryKey

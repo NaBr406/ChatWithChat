@@ -147,6 +147,84 @@ class MemoryIndexRepositoryTest {
         assertTrue(results.isEmpty())
     }
 
+    @Test
+    fun `chinese partial query recalls memory through two and three character grams`() = runBlocking {
+        val fileStore = createFileStore(createTempRoot())
+        val repository = createRepository(fileStore, InMemoryMemoryIndexDao())
+        fileStore.replaceLongTermMemory(
+            """
+            # ChatWithChat Memory
+
+            ## Stable Preferences
+
+            <!-- memory:id=mem_zh type=communication_style sensitivity=normal source=explicit_user_statement -->
+            - 用户喜欢直接、具体的回答方式，不需要冗长铺垫。
+            """.trimIndent()
+        ).getOrThrow()
+        repository.rebuildAll().getOrThrow()
+
+        val results = repository.retrieve(
+            MemoryRetrievalRequest(query = "请直接回答就好", tokenBudget = 200)
+        ).getOrThrow()
+
+        assertEquals("mem_zh", results.single().entryId)
+        assertTrue(results.single().lexicalScore!! > 0f)
+        assertEquals(results.single().lexicalScore, results.single().fusedScore)
+        assertEquals(64, results.single().contentHash.length)
+    }
+
+    @Test
+    fun `retrieval deduplicates entries and respects token budget`() = runBlocking {
+        val fileStore = createFileStore(createTempRoot())
+        val repository = createRepository(fileStore, InMemoryMemoryIndexDao())
+        val entries = (1..8).map { index ->
+            MarkdownMemoryEntry(
+                id = "mem_$index",
+                text = "The user prefers a concrete answer for topic $index.",
+                type = "communication_style",
+                sensitivity = MemorySensitivity.NORMAL,
+                source = MemorySource.EXPLICIT_USER_STATEMENT
+            )
+        }
+        fileStore.replaceLongTermMemory(MarkdownMemoryCodec().renderLongTerm(entries)).getOrThrow()
+        repository.rebuildAll().getOrThrow()
+
+        val results = repository.retrieve(
+            MemoryRetrievalRequest(
+                query = "concrete answer",
+                limit = 8,
+                candidateLimit = 20,
+                tokenBudget = 70
+            )
+        ).getOrThrow()
+
+        assertTrue(results.size in 1..2)
+        assertEquals(results.size, results.mapNotNull { it.entryId }.distinct().size)
+    }
+
+    @Test
+    fun `rebuild reports stable changed chunk identities`() = runBlocking {
+        val fileStore = createFileStore(createTempRoot())
+        val repository = createRepository(fileStore, InMemoryMemoryIndexDao())
+        fileStore.replaceLongTermMemory(
+            MarkdownMemoryCodec().renderLongTerm(
+                listOf(
+                    MarkdownMemoryEntry(
+                        id = "mem_changed",
+                        text = "A changed memory chunk.",
+                        type = "project_context",
+                        sensitivity = MemorySensitivity.NORMAL,
+                        source = MemorySource.EXPLICIT_USER_STATEMENT
+                    )
+                )
+            )
+        ).getOrThrow()
+
+        val result = repository.rebuildAll().getOrThrow()
+
+        assertEquals(setOf("MEMORY.md#mem_changed#0"), result.changedChunkIds)
+    }
+
     private fun createRepository(
         fileStore: MemoryFileStore,
         dao: InMemoryMemoryIndexDao

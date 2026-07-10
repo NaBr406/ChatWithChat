@@ -3,7 +3,6 @@ package dev.chungjungsoo.gptmobile.presentation.ui.memory
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMaintenanceJob
 import dev.chungjungsoo.gptmobile.data.repository.MemoryRepository
 import dev.chungjungsoo.gptmobile.data.repository.SettingRepository
 import javax.inject.Inject
@@ -21,9 +20,7 @@ class MemoryViewModel @Inject constructor(
     data class UiState(
         val markdown: String = "",
         val exportMarkdown: String? = null,
-        val memoryEnabled: Boolean = false,
-        val migratedMemoryCount: Int = 0,
-        val maintenanceJobs: List<MemoryMaintenanceJob> = emptyList()
+        val memoryEnabled: Boolean = false
     )
 
     private val _uiState = MutableStateFlow(UiState())
@@ -35,13 +32,11 @@ class MemoryViewModel @Inject constructor(
 
     fun loadMemories() {
         viewModelScope.launch {
-            val migratedCount = memoryRepository.migrateActiveMemoriesToMarkdown()
+            memoryRepository.migrateActiveMemoriesToMarkdown()
             _uiState.update {
                 it.copy(
                     markdown = memoryRepository.getLongTermMarkdown(),
-                    memoryEnabled = settingRepository.fetchMemoryEnabled(),
-                    migratedMemoryCount = migratedCount,
-                    maintenanceJobs = memoryRepository.getMaintenanceJobs()
+                    memoryEnabled = settingRepository.fetchMemoryEnabled()
                 )
             }
         }
@@ -56,19 +51,5 @@ class MemoryViewModel @Inject constructor(
 
     fun closeExport() {
         _uiState.update { it.copy(exportMarkdown = null) }
-    }
-
-    fun retryMaintenanceJob(jobId: String) {
-        viewModelScope.launch {
-            memoryRepository.retryMaintenanceJob(jobId)
-            loadMemories()
-        }
-    }
-
-    fun dismissMaintenanceJob(jobId: String) {
-        viewModelScope.launch {
-            memoryRepository.dismissMaintenanceJob(jobId)
-            loadMemories()
-        }
     }
 }

@@ -9,6 +9,7 @@ import dev.chungjungsoo.gptmobile.data.database.dao.ChatRoomV2Dao
 import dev.chungjungsoo.gptmobile.data.database.dao.MessageV2Dao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryIndexDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryMaintenanceJobDao
+import dev.chungjungsoo.gptmobile.data.database.dao.MemoryTurnBatchDao
 import dev.chungjungsoo.gptmobile.data.database.dao.PersonalMemoryDao
 import dev.chungjungsoo.gptmobile.data.database.dao.PlatformModelV2Dao
 import dev.chungjungsoo.gptmobile.data.database.dao.PlatformV2Dao
@@ -17,9 +18,11 @@ import dev.chungjungsoo.gptmobile.data.database.entity.ChatAttachmentListConvert
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatClassification
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatPlatformModelV2
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatRoomV2
+import dev.chungjungsoo.gptmobile.data.database.entity.MemoryChatCheckpoint
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryChunk
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryDocument
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMaintenanceJob
+import dev.chungjungsoo.gptmobile.data.database.entity.MemoryPendingTurn
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageSourceMetadataListConverter
 import dev.chungjungsoo.gptmobile.data.database.entity.PersonalMemory
@@ -39,9 +42,11 @@ import dev.chungjungsoo.gptmobile.data.database.entity.TokenUsageRecordConverter
         ChatClassification::class,
         MemoryDocument::class,
         MemoryChunk::class,
-        MemoryMaintenanceJob::class
+        MemoryMaintenanceJob::class,
+        MemoryChatCheckpoint::class,
+        MemoryPendingTurn::class
     ],
-    version = 12,
+    version = 13,
     exportSchema = true
 )
 @TypeConverters(
@@ -62,4 +67,5 @@ abstract class ChatDatabaseV2 : RoomDatabase() {
     abstract fun platformModelDao(): PlatformModelV2Dao
     abstract fun memoryIndexDao(): MemoryIndexDao
     abstract fun memoryMaintenanceJobDao(): MemoryMaintenanceJobDao
+    abstract fun memoryTurnBatchDao(): MemoryTurnBatchDao
 }

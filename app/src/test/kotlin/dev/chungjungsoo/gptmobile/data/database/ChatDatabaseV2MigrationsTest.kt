@@ -163,6 +163,39 @@ class ChatDatabaseV2MigrationsTest {
         assertTrue(executedSql.any { it == "CREATE INDEX IF NOT EXISTS `index_memory_maintenance_job_next_run_at` ON `memory_maintenance_job` (`next_run_at`)" })
     }
 
+    @Test
+    fun `migration 12 to 13 creates pending turn tables for an empty database`() {
+        val executedSql = mutableListOf<String>()
+        val db = recordingDatabase(executedSql)
+
+        ChatDatabaseV2Migrations.MIGRATION_12_13.migrate(db)
+
+        val migrationSql = executedSql.joinToString(separator = "\n")
+        assertTrue(migrationSql.contains("CREATE TABLE IF NOT EXISTS `memory_chat_checkpoint`"))
+        assertTrue(migrationSql.contains("CREATE TABLE IF NOT EXISTS `memory_pending_turn`"))
+        assertTrue(migrationSql.contains("FOREIGN KEY(`chat_id`) REFERENCES `chats_v2`(`chat_id`) ON UPDATE NO ACTION ON DELETE CASCADE"))
+        assertTrue(executedSql.any { it == "CREATE UNIQUE INDEX IF NOT EXISTS `index_memory_pending_turn_chat_id_user_message_id` ON `memory_pending_turn` (`chat_id`, `user_message_id`)" })
+        assertTrue(executedSql.any { it == "CREATE INDEX IF NOT EXISTS `index_memory_chat_checkpoint_idle_due_at` ON `memory_chat_checkpoint` (`idle_due_at`)" })
+    }
+
+    @Test
+    fun `migration 12 to 13 preserves populated database tables and rows`() {
+        val executedSql = mutableListOf<String>()
+        val db = recordingDatabase(executedSql)
+
+        ChatDatabaseV2Migrations.MIGRATION_12_13.migrate(db)
+
+        assertTrue(executedSql.none { sql ->
+            val normalized = sql.trimStart().uppercase()
+            normalized.startsWith("DROP ") ||
+                normalized.startsWith("DELETE ") ||
+                normalized.startsWith("UPDATE ") ||
+                normalized.startsWith("INSERT ") ||
+                normalized.startsWith("ALTER ")
+        })
+        assertTrue(executedSql.all { it.contains("IF NOT EXISTS") })
+    }
+
     private fun recordingDatabase(executedSql: MutableList<String>): SupportSQLiteDatabase = Proxy.newProxyInstance(
         SupportSQLiteDatabase::class.java.classLoader,
         arrayOf(SupportSQLiteDatabase::class.java),

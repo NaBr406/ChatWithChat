@@ -1,7 +1,9 @@
 package dev.chungjungsoo.gptmobile.data.memory
 
 import android.content.Context
+import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -26,6 +28,11 @@ class MemoryMaintenanceWorkScheduler @Inject constructor(
         fun enqueueRepairWork(context: Context, delaySeconds: Long = 0) {
             val normalizedDelaySeconds = delaySeconds.coerceAtLeast(0)
             val requestBuilder = OneTimeWorkRequestBuilder<MemoryMaintenanceWorker>()
+                .setConstraints(
+                    Constraints.Builder()
+                        .setRequiredNetworkType(NetworkType.CONNECTED)
+                        .build()
+                )
             if (normalizedDelaySeconds > 0) {
                 requestBuilder.setInitialDelay(normalizedDelaySeconds, TimeUnit.SECONDS)
             }

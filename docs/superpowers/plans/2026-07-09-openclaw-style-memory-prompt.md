@@ -2,6 +2,8 @@
 
 > **For agentic workers:** This is an implementation planning document and handoff prompt. Track work with checkbox (`- [ ]`) items. Start with read-only audit, then implement one task at a time. Do not replace the existing Room-backed memory system until the Markdown-backed path is proven, tested, and explicitly selected as the source of truth.
 
+> **Status (2026-07-10):** This is a historical migration plan. The current implementation is superseded by `2026-07-10-five-turn-memory-batching-and-vector-readiness-prompt.md`: recall is local and performs no memory LLM call; completed turns are stored locally and consolidated once per five turns or after 30 minutes idle; `PersonalMemory` and `ChatClassification` are migration-only; the Memory page shows only `MEMORY.md` and export. References below to per-turn `learnFromSavedChat`, Room recall fallback, optional LLM selection, and a maintenance console describe the pre-batching design and must not be reintroduced.
+
 ## Goal
 
 将 ChatWithChat 当前的跨会话记忆系统，渐进改造成类似 OpenClaw 的 **Markdown-first** 记忆架构：

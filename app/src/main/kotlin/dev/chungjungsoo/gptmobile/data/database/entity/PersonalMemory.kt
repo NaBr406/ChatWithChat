@@ -4,6 +4,10 @@ import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
+/**
+ * Legacy semantic storage retained only so installed databases can migrate active rows to MEMORY.md.
+ * New learning and recall code must not write or search this table.
+ */
 @Entity(tableName = "personal_memory")
 data class PersonalMemory(
     @PrimaryKey(autoGenerate = true)

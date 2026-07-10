@@ -18,6 +18,7 @@ import dev.chungjungsoo.gptmobile.data.database.dao.MessageDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MessageV2Dao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryIndexDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryMaintenanceJobDao
+import dev.chungjungsoo.gptmobile.data.database.dao.MemoryTurnBatchDao
 import dev.chungjungsoo.gptmobile.data.database.dao.PersonalMemoryDao
 import dev.chungjungsoo.gptmobile.data.database.dao.PlatformModelV2Dao
 import dev.chungjungsoo.gptmobile.data.database.dao.PlatformV2Dao
@@ -63,6 +64,9 @@ object DatabaseModule {
     fun provideMemoryMaintenanceJobDao(chatDatabaseV2: ChatDatabaseV2): MemoryMaintenanceJobDao = chatDatabaseV2.memoryMaintenanceJobDao()
 
     @Provides
+    fun provideMemoryTurnBatchDao(chatDatabaseV2: ChatDatabaseV2): MemoryTurnBatchDao = chatDatabaseV2.memoryTurnBatchDao()
+
+    @Provides
     @Singleton
     fun provideChatDatabase(@ApplicationContext appContext: Context): ChatDatabase = Room.databaseBuilder(
         appContext,
@@ -87,6 +91,7 @@ object DatabaseModule {
         ChatDatabaseV2Migrations.MIGRATION_8_9,
         ChatDatabaseV2Migrations.MIGRATION_9_10,
         ChatDatabaseV2Migrations.MIGRATION_10_11,
-        ChatDatabaseV2Migrations.MIGRATION_11_12
+        ChatDatabaseV2Migrations.MIGRATION_11_12,
+        ChatDatabaseV2Migrations.MIGRATION_12_13
     ).build()
 }

@@ -41,369 +41,199 @@ import org.junit.Test
 class LlmMemoryIntelligenceTest {
 
     @Test
-    fun `openai memory platform uses responses api and omits sampling for reasoning`() = runBlocking {
+    fun `openai memory platform uses responses api for batch consolidation`() = runBlocking {
         val openAIAPI = RecordingOpenAIAPI(
             responseEvents = flowOf(
                 OutputTextDeltaEvent(
                     itemId = "item",
                     outputIndex = 0,
                     contentIndex = 0,
-                    delta = classificationJson
+                    delta = EMPTY_PROPOSAL_JSON
                 )
             )
         )
-        val intelligence = LlmMemoryIntelligence(
-            settingRepository = FakeSettingRepository(
-                listOf(
-                    platform(
-                        compatibleType = ClientType.OPENAI,
-                        reasoning = true,
-                        model = "gpt-5"
-                    )
-                )
-            ),
-            openAIAPI = openAIAPI,
-            anthropicAPI = RecordingAnthropicAPI(),
-            googleAPI = RecordingGoogleAPI()
+        val intelligence = intelligence(
+            platforms = listOf(platform(ClientType.OPENAI, "gpt-5", reasoning = true)),
+            openAIAPI = openAIAPI
         )
 
-        val result = intelligence.classifyConversation(classificationRequest(), preferredPlatform = null)
+        val result = intelligence.consolidateMemoryBatch(batchRequest())
 
-        assertEquals(true, result?.shouldLearnMemories)
+        assertEquals(0, result?.operations?.size)
         assertEquals(1, openAIAPI.streamResponsesCalls)
         assertEquals(0, openAIAPI.streamChatCompletionCalls)
         assertNull(openAIAPI.lastResponsesRequest?.temperature)
         assertNull(openAIAPI.lastResponsesRequest?.topP)
         assertEquals("low", openAIAPI.lastResponsesRequest?.reasoning?.effort)
-        assertEquals(512, openAIAPI.lastResponsesRequest?.maxOutputTokens)
-        assertEquals(60, openAIAPI.lastResponsesTimeoutSeconds)
+        assertEquals(1200, openAIAPI.lastResponsesRequest?.maxOutputTokens)
+        assertEquals(120, openAIAPI.lastResponsesTimeoutSeconds)
     }
 
     @Test
-    fun `openai compatible memory platform uses chat completions with deterministic sampling`() = runBlocking {
-        val openAIAPI = RecordingOpenAIAPI(
-            chatChunks = flowOf(
-                ChatCompletionChunk(
-                    choices = listOf(
-                        Choice(
-                            index = 0,
-                            delta = Delta(content = classificationJson)
-                        )
-                    )
-                )
-            )
-        )
-        val intelligence = LlmMemoryIntelligence(
-            settingRepository = FakeSettingRepository(
-                listOf(platform(compatibleType = ClientType.OPENROUTER, model = "openai/gpt-4o"))
-            ),
-            openAIAPI = openAIAPI,
-            anthropicAPI = RecordingAnthropicAPI(),
-            googleAPI = RecordingGoogleAPI()
+    fun `openai compatible platform uses deterministic batch sampling`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(chatChunks = chatChunks(EMPTY_PROPOSAL_JSON))
+        val intelligence = intelligence(
+            platforms = listOf(platform(ClientType.OPENROUTER, "openai/gpt-4o")),
+            openAIAPI = openAIAPI
         )
 
-        val result = intelligence.classifyConversation(classificationRequest(), preferredPlatform = null)
+        intelligence.consolidateMemoryBatch(batchRequest())
 
-        assertEquals(true, result?.shouldLearnMemories)
-        assertEquals(0, openAIAPI.streamResponsesCalls)
         assertEquals(1, openAIAPI.streamChatCompletionCalls)
         assertEquals(0f, openAIAPI.lastChatRequest?.temperature)
         assertEquals(1f, openAIAPI.lastChatRequest?.topP)
-        assertEquals(512, openAIAPI.lastChatRequest?.maxTokens)
-        assertEquals(60, openAIAPI.lastChatTimeoutSeconds)
+        assertEquals(1200, openAIAPI.lastChatRequest?.maxTokens)
+        assertEquals(120, openAIAPI.lastChatTimeoutSeconds)
     }
 
     @Test
-    fun `preferred openai compatible platform overrides fallback platform`() = runBlocking {
-        val openAIAPI = RecordingOpenAIAPI(
-            chatChunks = flowOf(
-                ChatCompletionChunk(
-                    choices = listOf(
-                        Choice(
-                            index = 0,
-                            delta = Delta(content = classificationJson)
-                        )
-                    )
-                )
-            )
-        )
-        val intelligence = LlmMemoryIntelligence(
-            settingRepository = FakeSettingRepository(
-                listOf(platform(compatibleType = ClientType.OPENROUTER, model = "fallback-model"))
-            ),
-            openAIAPI = openAIAPI,
-            anthropicAPI = RecordingAnthropicAPI(),
-            googleAPI = RecordingGoogleAPI()
+    fun `preferred batch platform overrides fallback platform`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(chatChunks = chatChunks(EMPTY_PROPOSAL_JSON))
+        val intelligence = intelligence(
+            platforms = listOf(platform(ClientType.OPENROUTER, "fallback-model")),
+            openAIAPI = openAIAPI
         )
 
-        intelligence.classifyConversation(
-            classificationRequest(),
-            preferredPlatform = platform(compatibleType = ClientType.CUSTOM, model = "current-chat-model")
+        intelligence.consolidateMemoryBatch(
+            batchRequest(),
+            preferredPlatform = platform(ClientType.CUSTOM, "current-chat-model")
         )
 
         assertEquals("current-chat-model", openAIAPI.lastChatRequest?.model)
     }
 
     @Test
-    fun `preferred anthropic platform uses anthropic api`() = runBlocking {
+    fun `preferred anthropic platform executes the same batch contract`() = runBlocking {
         val anthropicAPI = RecordingAnthropicAPI(
             chunks = flowOf(
                 ContentDeltaResponseChunk(
                     index = 0,
-                    delta = ContentBlock(type = ContentBlockType.DELTA, text = classificationJson)
+                    delta = ContentBlock(type = ContentBlockType.DELTA, text = EMPTY_PROPOSAL_JSON)
                 )
             )
         )
-        val openAIAPI = RecordingOpenAIAPI()
-        val intelligence = LlmMemoryIntelligence(
-            settingRepository = FakeSettingRepository(
-                listOf(platform(compatibleType = ClientType.OPENROUTER, model = "fallback-model"))
-            ),
-            openAIAPI = openAIAPI,
-            anthropicAPI = anthropicAPI,
-            googleAPI = RecordingGoogleAPI()
+        val intelligence = intelligence(
+            platforms = listOf(platform(ClientType.OPENROUTER, "fallback-model")),
+            anthropicAPI = anthropicAPI
         )
 
-        val result = intelligence.classifyConversation(
-            classificationRequest(),
-            preferredPlatform = platform(compatibleType = ClientType.ANTHROPIC, model = "claude-current")
+        val result = intelligence.consolidateMemoryBatch(
+            batchRequest(),
+            preferredPlatform = platform(ClientType.ANTHROPIC, "claude-current")
         )
 
-        assertEquals(true, result?.shouldLearnMemories)
+        assertEquals(0, result?.operations?.size)
         assertEquals(1, anthropicAPI.streamCalls)
         assertEquals("claude-current", anthropicAPI.lastRequest?.model)
-        assertEquals(512, anthropicAPI.lastRequest?.maxTokens)
-        assertNull(anthropicAPI.lastRequest?.thinking)
-        assertEquals(60, anthropicAPI.lastTimeoutSeconds)
-        assertEquals(0, openAIAPI.streamChatCompletionCalls)
+        assertEquals(1200, anthropicAPI.lastRequest?.maxTokens)
+        assertEquals(120, anthropicAPI.lastTimeoutSeconds)
     }
 
     @Test
-    fun `preferred google platform uses google api`() = runBlocking {
+    fun `preferred google platform executes the same batch contract`() = runBlocking {
         val googleAPI = RecordingGoogleAPI(
             responses = flowOf(
                 GenerateContentResponse(
-                    candidates = listOf(
-                        Candidate(
-                            content = Content(parts = listOf(Part.text(classificationJson)))
-                        )
-                    )
+                    candidates = listOf(Candidate(content = Content(parts = listOf(Part.text(EMPTY_PROPOSAL_JSON)))))
                 )
             )
         )
-        val openAIAPI = RecordingOpenAIAPI()
-        val intelligence = LlmMemoryIntelligence(
-            settingRepository = FakeSettingRepository(
-                listOf(platform(compatibleType = ClientType.OPENROUTER, model = "fallback-model"))
-            ),
-            openAIAPI = openAIAPI,
-            anthropicAPI = RecordingAnthropicAPI(),
+        val intelligence = intelligence(
+            platforms = listOf(platform(ClientType.OPENROUTER, "fallback-model")),
             googleAPI = googleAPI
         )
 
-        val result = intelligence.classifyConversation(
-            classificationRequest(),
-            preferredPlatform = platform(compatibleType = ClientType.GOOGLE, model = "gemini-current")
+        val result = intelligence.consolidateMemoryBatch(
+            batchRequest(),
+            preferredPlatform = platform(ClientType.GOOGLE, "gemini-current")
         )
 
-        assertEquals(true, result?.shouldLearnMemories)
+        assertEquals(0, result?.operations?.size)
         assertEquals(1, googleAPI.streamCalls)
         assertEquals("gemini-current", googleAPI.lastModel)
-        assertEquals(512, googleAPI.lastRequest?.generationConfig?.maxOutputTokens)
-        assertNull(googleAPI.lastRequest?.generationConfig?.thinkingConfig)
-        assertEquals(60, googleAPI.lastTimeoutSeconds)
-        assertEquals(0, openAIAPI.streamChatCompletionCalls)
+        assertEquals(1200, googleAPI.lastRequest?.generationConfig?.maxOutputTokens)
+        assertEquals(120, googleAPI.lastTimeoutSeconds)
     }
 
     @Test
-    fun `memory extraction uses longer timeout floor`() = runBlocking {
-        val openAIAPI = RecordingOpenAIAPI(
-            chatChunks = flowOf(
-                ChatCompletionChunk(
-                    choices = listOf(
-                        Choice(
-                            index = 0,
-                            delta = Delta(content = extractionJson)
-                        )
-                    )
-                )
-            )
-        )
-        val intelligence = LlmMemoryIntelligence(
-            settingRepository = FakeSettingRepository(
-                listOf(
-                    platform(
-                        compatibleType = ClientType.OPENROUTER,
-                        model = "openai/gpt-4o",
-                        timeout = 30
-                    )
-                )
-            ),
-            openAIAPI = openAIAPI,
-            anthropicAPI = RecordingAnthropicAPI(),
-            googleAPI = RecordingGoogleAPI()
+    fun `batch timeout preserves disabled timeout setting`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(chatChunks = chatChunks(EMPTY_PROPOSAL_JSON))
+        val intelligence = intelligence(
+            platforms = listOf(platform(ClientType.OPENROUTER, "model", timeout = 0)),
+            openAIAPI = openAIAPI
         )
 
-        val result = intelligence.extractMemoryCandidates(
-            MemoryExtractionRequest(
-                chatTitle = "Chat",
-                recentMessages = classificationRequest().recentMessages
-            ),
-            preferredPlatform = null
-        )
-
-        assertEquals(1, result.size)
-        assertEquals(120, openAIAPI.lastChatTimeoutSeconds)
-        assertEquals(1200, openAIAPI.lastChatRequest?.maxTokens)
-    }
-
-    @Test
-    fun `markdown memory proposal parses controlled write shape`() = runBlocking {
-        val openAIAPI = RecordingOpenAIAPI(
-            chatChunks = flowOf(
-                ChatCompletionChunk(
-                    choices = listOf(
-                        Choice(
-                            index = 0,
-                            delta = Delta(content = markdownProposalJson)
-                        )
-                    )
-                )
-            )
-        )
-        val intelligence = LlmMemoryIntelligence(
-            settingRepository = FakeSettingRepository(
-                listOf(
-                    platform(
-                        compatibleType = ClientType.OPENROUTER,
-                        model = "openai/gpt-4o",
-                        timeout = 30
-                    )
-                )
-            ),
-            openAIAPI = openAIAPI,
-            anthropicAPI = RecordingAnthropicAPI(),
-            googleAPI = RecordingGoogleAPI()
-        )
-
-        val result = intelligence.proposeMarkdownMemoryWrites(markdownLearningRequest(), preferredPlatform = null)
-
-        assertEquals(1, result?.dailyNotes?.size)
-        assertEquals(1, result?.longTermUpdates?.size)
-        assertEquals("project_context", result?.dailyNotes?.single()?.type)
-        assertEquals(MemorySensitivity.PRIVATE, result?.longTermUpdates?.single()?.sensitivity)
-        assertEquals(120, openAIAPI.lastChatTimeoutSeconds)
-        assertEquals(1200, openAIAPI.lastChatRequest?.maxTokens)
-    }
-
-    @Test
-    fun `markdown memory proposal returns null for invalid json`() = runBlocking {
-        val openAIAPI = RecordingOpenAIAPI(
-            chatChunks = flowOf(
-                ChatCompletionChunk(
-                    choices = listOf(
-                        Choice(
-                            index = 0,
-                            delta = Delta(content = "not json")
-                        )
-                    )
-                )
-            )
-        )
-        val intelligence = LlmMemoryIntelligence(
-            settingRepository = FakeSettingRepository(
-                listOf(platform(compatibleType = ClientType.OPENROUTER, model = "openai/gpt-4o"))
-            ),
-            openAIAPI = openAIAPI,
-            anthropicAPI = RecordingAnthropicAPI(),
-            googleAPI = RecordingGoogleAPI()
-        )
-
-        val result = intelligence.proposeMarkdownMemoryWrites(markdownLearningRequest(), preferredPlatform = null)
-
-        assertNull(result)
-    }
-
-    @Test
-    fun `memory timeout preserves disabled timeout setting`() = runBlocking {
-        val openAIAPI = RecordingOpenAIAPI(
-            chatChunks = flowOf(
-                ChatCompletionChunk(
-                    choices = listOf(
-                        Choice(
-                            index = 0,
-                            delta = Delta(content = classificationJson)
-                        )
-                    )
-                )
-            )
-        )
-        val intelligence = LlmMemoryIntelligence(
-            settingRepository = FakeSettingRepository(
-                listOf(
-                    platform(
-                        compatibleType = ClientType.OPENROUTER,
-                        model = "openai/gpt-4o",
-                        timeout = 0
-                    )
-                )
-            ),
-            openAIAPI = openAIAPI,
-            anthropicAPI = RecordingAnthropicAPI(),
-            googleAPI = RecordingGoogleAPI()
-        )
-
-        intelligence.classifyConversation(classificationRequest(), preferredPlatform = null)
+        intelligence.consolidateMemoryBatch(batchRequest())
 
         assertEquals(0, openAIAPI.lastChatTimeoutSeconds)
     }
 
     @Test
-    fun `memory timeout preserves larger user timeout`() = runBlocking {
-        val openAIAPI = RecordingOpenAIAPI(
-            responseEvents = flowOf(
-                OutputTextDeltaEvent(
-                    itemId = "item",
-                    outputIndex = 0,
-                    contentIndex = 0,
-                    delta = classificationJson
-                )
-            )
-        )
-        val intelligence = LlmMemoryIntelligence(
-            settingRepository = FakeSettingRepository(
-                listOf(
-                    platform(
-                        compatibleType = ClientType.OPENAI,
-                        model = "gpt-5",
-                        timeout = 180
-                    )
-                )
-            ),
-            openAIAPI = openAIAPI,
-            anthropicAPI = RecordingAnthropicAPI(),
-            googleAPI = RecordingGoogleAPI()
+    fun `batch timeout preserves larger user timeout`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(chatChunks = chatChunks(EMPTY_PROPOSAL_JSON))
+        val intelligence = intelligence(
+            platforms = listOf(platform(ClientType.OPENROUTER, "model", timeout = 180)),
+            openAIAPI = openAIAPI
         )
 
-        intelligence.classifyConversation(classificationRequest(), preferredPlatform = null)
+        intelligence.consolidateMemoryBatch(batchRequest())
 
-        assertEquals(180, openAIAPI.lastResponsesTimeoutSeconds)
+        assertEquals(180, openAIAPI.lastChatTimeoutSeconds)
     }
 
-    private fun classificationRequest() = ConversationClassificationRequest(
-        chatTitle = "Chat",
-        recentMessages = listOf(
-            MemoryConversationMessage(
-                role = "user",
-                content = "Remember that I prefer concise answers."
-            )
+    @Test
+    fun `batch consolidation rejects non strict json with one provider call`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatChunks = chatChunks("""{"operations":[],"unexpected":true}""")
+        )
+        val intelligence = intelligence(
+            platforms = listOf(platform(ClientType.OPENROUTER, "model")),
+            openAIAPI = openAIAPI
+        )
+
+        val result = intelligence.consolidateMemoryBatch(batchRequest())
+
+        assertNull(result)
+        assertEquals(1, openAIAPI.streamChatCompletionCalls)
+    }
+
+    private fun intelligence(
+        platforms: List<PlatformV2>,
+        openAIAPI: RecordingOpenAIAPI = RecordingOpenAIAPI(),
+        anthropicAPI: RecordingAnthropicAPI = RecordingAnthropicAPI(),
+        googleAPI: RecordingGoogleAPI = RecordingGoogleAPI()
+    ) = LlmMemoryIntelligence(
+        settingRepository = FakeSettingRepository(platforms),
+        openAIAPI = openAIAPI,
+        anthropicAPI = anthropicAPI,
+        googleAPI = googleAPI
+    )
+
+    private fun chatChunks(content: String): Flow<ChatCompletionChunk> = flowOf(
+        ChatCompletionChunk(
+            choices = listOf(Choice(index = 0, delta = Delta(content = content)))
         )
     )
 
-    private fun markdownLearningRequest() = MarkdownMemoryLearningRequest(
+    private fun batchRequest() = MemoryBatchConsolidationRequest(
+        batchId = "memory_batch:1:first:last:hash",
         chatId = 1,
         chatTitle = "Chat",
-        recentMessages = classificationRequest().recentMessages
+        triggerReason = MemoryTurnBatchTriggerReason.THRESHOLD,
+        turns = listOf(
+            MemoryCompletedTurnSnapshot(
+                turnKey = "chat:1:user:1",
+                chatId = 1,
+                chatTitle = "Chat",
+                userMessageId = 1,
+                userContent = "Remember that I prefer concise answers.",
+                userAttachments = emptyList(),
+                assistantPlatformUid = "platform",
+                assistantContent = "Understood.",
+                completedAt = 100L
+            )
+        ),
+        existingMemories = emptyList()
     )
 
     private fun platform(
@@ -423,12 +253,7 @@ class LlmMemoryIntelligenceTest {
     )
 
     private companion object {
-        private const val classificationJson =
-            """{"mode":"personal_update","intent":"sharing","shouldUseMemories":true,"shouldLearnMemories":true,"sensitivity":"normal","confidence":0.9}"""
-        private const val extractionJson =
-            """{"candidates":[{"summary":"The user prefers concise answers.","recallText":"The user prefers concise answers.","type":"communication_style","scope":"personal","importance":0.8,"confidence":0.9,"source":"user_confirmed","sensitivity":"normal","suggestedStatus":"active","requiresConfirmation":false,"reason":"The user explicitly asked for this preference to be remembered."}]}"""
-        private const val markdownProposalJson =
-            """{"daily_notes":[{"text":"ChatWithChat should keep memory writes durable.","type":"project_context","sensitivity":"normal","source":"explicit_user_statement","reason":"The user asked for durable writes."}],"long_term_updates":[{"text":"The user prefers private local memory metadata.","type":"stable_profile","sensitivity":"private","source":"assistant_inferred","reason":"Useful long-term preference."}]}"""
+        const val EMPTY_PROPOSAL_JSON = """{"operations":[]}"""
     }
 }
 
@@ -478,35 +303,24 @@ private class RecordingOpenAIAPI(
     var lastResponsesTimeoutSeconds: Int? = null
 
     override fun setToken(token: String?) = Unit
-
     override fun setAPIUrl(url: String) = Unit
 
-    override fun streamChatCompletion(
-        request: ChatCompletionRequest,
-        timeoutSeconds: Int
-    ): Flow<ChatCompletionChunk> {
+    override fun streamChatCompletion(request: ChatCompletionRequest, timeoutSeconds: Int): Flow<ChatCompletionChunk> {
         streamChatCompletionCalls += 1
         lastChatRequest = request
         lastChatTimeoutSeconds = timeoutSeconds
         return chatChunks
     }
 
-    override fun streamResponses(
-        request: ResponsesRequest,
-        timeoutSeconds: Int
-    ): Flow<ResponsesStreamEvent> {
+    override fun streamResponses(request: ResponsesRequest, timeoutSeconds: Int): Flow<ResponsesStreamEvent> {
         streamResponsesCalls += 1
         lastResponsesRequest = request
         lastResponsesTimeoutSeconds = timeoutSeconds
         return responseEvents
     }
 
-    override suspend fun uploadFile(
-        filePath: String,
-        fileName: String,
-        mimeType: String
-    ): UploadedProviderFile = error("Not used")
-
+    override suspend fun uploadFile(filePath: String, fileName: String, mimeType: String): UploadedProviderFile =
+        error("Not used")
     override suspend fun isFileAvailable(fileId: String): Boolean = error("Not used")
 }
 
@@ -518,7 +332,6 @@ private class RecordingAnthropicAPI(
     var lastTimeoutSeconds: Int? = null
 
     override fun setToken(token: String?) = Unit
-
     override fun setAPIUrl(url: String) = Unit
 
     override fun streamChatMessage(
@@ -531,12 +344,8 @@ private class RecordingAnthropicAPI(
         return chunks
     }
 
-    override suspend fun uploadFile(
-        filePath: String,
-        fileName: String,
-        mimeType: String
-    ): UploadedProviderFile = error("Not used")
-
+    override suspend fun uploadFile(filePath: String, fileName: String, mimeType: String): UploadedProviderFile =
+        error("Not used")
     override suspend fun isFileAvailable(fileId: String): Boolean = error("Not used")
 }
 
@@ -549,7 +358,6 @@ private class RecordingGoogleAPI(
     var lastTimeoutSeconds: Int? = null
 
     override fun setToken(token: String?) = Unit
-
     override fun setAPIUrl(url: String) = Unit
 
     override fun streamGenerateContent(
@@ -564,11 +372,7 @@ private class RecordingGoogleAPI(
         return responses
     }
 
-    override suspend fun uploadFile(
-        filePath: String,
-        fileName: String,
-        mimeType: String
-    ): UploadedProviderFile = error("Not used")
-
+    override suspend fun uploadFile(filePath: String, fileName: String, mimeType: String): UploadedProviderFile =
+        error("Not used")
     override suspend fun isFileAvailable(fileName: String): Boolean = error("Not used")
 }

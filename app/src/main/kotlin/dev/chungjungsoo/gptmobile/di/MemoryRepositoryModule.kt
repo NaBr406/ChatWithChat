@@ -6,14 +6,14 @@ import dagger.Provides
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
-import dev.chungjungsoo.gptmobile.data.database.dao.ChatClassificationDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryIndexDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryMaintenanceJobDao
+import dev.chungjungsoo.gptmobile.data.database.dao.MemoryTurnBatchDao
 import dev.chungjungsoo.gptmobile.data.database.dao.PersonalMemoryDao
 import dev.chungjungsoo.gptmobile.data.memory.LlmMemoryIntelligence
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryCodec
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryDebugEditor
-import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryLearningService
+import dev.chungjungsoo.gptmobile.data.memory.MemoryBatchConsolidationService
 import dev.chungjungsoo.gptmobile.data.memory.MemoryChunker
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFilePaths
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFileStore
@@ -27,6 +27,8 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceWorkEnqueuer
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceWorkScheduler
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMarkdownCodec
 import dev.chungjungsoo.gptmobile.data.memory.MemoryPromptBuilder
+import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnBatchCoordinator
+import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnBatchScheduler
 import dev.chungjungsoo.gptmobile.data.network.AnthropicAPI
 import dev.chungjungsoo.gptmobile.data.network.GoogleAPI
 import dev.chungjungsoo.gptmobile.data.network.OpenAIAPI
@@ -119,15 +121,50 @@ object MemoryRepositoryModule {
 
     @Provides
     @Singleton
-    fun provideMarkdownMemoryLearningService(
+    fun provideMemoryTurnBatchCoordinator(
+        memoryTurnBatchDao: MemoryTurnBatchDao,
+        memoryTurnBatchScheduler: MemoryTurnBatchScheduler
+    ): MemoryTurnBatchCoordinator = MemoryTurnBatchCoordinator(
+        turnBatchDao = memoryTurnBatchDao,
+        pendingTurnObserver = memoryTurnBatchScheduler
+    )
+
+    @Provides
+    @Singleton
+    fun provideMemoryTurnBatchScheduler(
+        memoryTurnBatchDao: MemoryTurnBatchDao,
+        memoryMaintenanceJobDao: MemoryMaintenanceJobDao,
+        memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
+        memoryMaintenanceWorkScheduler: MemoryMaintenanceWorkEnqueuer,
+        settingRepository: SettingRepository
+    ): MemoryTurnBatchScheduler = MemoryTurnBatchScheduler(
+        turnBatchDao = memoryTurnBatchDao,
+        maintenanceJobDao = memoryMaintenanceJobDao,
+        maintenanceScheduler = memoryMaintenanceScheduler,
+        workEnqueuer = memoryMaintenanceWorkScheduler,
+        settingRepository = settingRepository
+    )
+
+    @Provides
+    @Singleton
+    fun provideMemoryBatchConsolidationService(
+        memoryTurnBatchDao: MemoryTurnBatchDao,
+        memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
+        memoryTurnBatchScheduler: MemoryTurnBatchScheduler,
+        settingRepository: SettingRepository,
+        memoryIntelligence: MemoryIntelligence,
         memoryFileStore: MemoryFileStore,
         markdownMemoryCodec: MarkdownMemoryCodec,
-        memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
         memoryIndexRepository: MemoryIndexRepository
-    ): MarkdownMemoryLearningService = MarkdownMemoryLearningService(
+    ): MemoryBatchConsolidationService = MemoryBatchConsolidationService(
+        turnBatchDao = memoryTurnBatchDao,
+        maintenanceScheduler = memoryMaintenanceScheduler,
+        turnBatchScheduler = memoryTurnBatchScheduler,
+        settingRepository = settingRepository,
+        memoryIntelligence = memoryIntelligence,
         memoryFileStore = memoryFileStore,
         markdownMemoryCodec = markdownMemoryCodec,
-        maintenanceScheduler = memoryMaintenanceScheduler,
+        memoryRetriever = memoryIndexRepository,
         memoryIndexRebuilder = memoryIndexRepository
     )
 
@@ -144,30 +181,20 @@ object MemoryRepositoryModule {
     @Singleton
     fun provideMemoryRepository(
         personalMemoryDao: PersonalMemoryDao,
-        chatClassificationDao: ChatClassificationDao,
-        memoryIntelligence: MemoryIntelligence,
         memoryPromptBuilder: MemoryPromptBuilder,
-        memoryMarkdownCodec: MemoryMarkdownCodec,
         memoryIndexRepository: MemoryIndexRepository,
-        markdownMemoryLearningService: MarkdownMemoryLearningService,
         memoryFileStore: MemoryFileStore,
         markdownMemoryCodec: MarkdownMemoryCodec,
-        memoryMaintenanceJobDao: MemoryMaintenanceJobDao,
-        memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
-        memoryMaintenanceWorkScheduler: MemoryMaintenanceWorkEnqueuer
+        memoryTurnBatchCoordinator: MemoryTurnBatchCoordinator,
+        memoryTurnBatchScheduler: MemoryTurnBatchScheduler
     ): MemoryRepository = MemoryRepositoryImpl(
         personalMemoryDao = personalMemoryDao,
-        chatClassificationDao = chatClassificationDao,
-        memoryIntelligence = memoryIntelligence,
         memoryPromptBuilder = memoryPromptBuilder,
-        memoryMarkdownCodec = memoryMarkdownCodec,
-        memoryIndexSearcher = memoryIndexRepository,
-        markdownMemoryLearningService = markdownMemoryLearningService,
+        memoryRetriever = memoryIndexRepository,
         memoryFileStore = memoryFileStore,
-        structuredMarkdownMemoryCodec = markdownMemoryCodec,
+        markdownMemoryCodec = markdownMemoryCodec,
         memoryIndexRebuilder = memoryIndexRepository,
-        memoryMaintenanceJobDao = memoryMaintenanceJobDao,
-        memoryMaintenanceScheduler = memoryMaintenanceScheduler,
-        memoryMaintenanceWorkScheduler = memoryMaintenanceWorkScheduler
+        memoryTurnBatchCoordinator = memoryTurnBatchCoordinator,
+        memoryTurnBatchScheduler = memoryTurnBatchScheduler
     )
 }

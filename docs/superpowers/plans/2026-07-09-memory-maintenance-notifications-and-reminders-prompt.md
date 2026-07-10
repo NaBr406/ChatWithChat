@@ -2,6 +2,8 @@
 
 > **For agentic workers:** This is an implementation handoff prompt for adding local push notifications around memory maintenance and preparing a reusable scheduler foundation for future cron/reminder tasks. Start with a read-only audit, implement one task at a time, and keep the change scoped to notification/scheduling behavior. Do not redesign the whole memory system.
 
+> **Status (2026-07-10):** The notification/scheduler foundation remains relevant, but its memory call graph and Memory-screen diagnostics are historical. Current recall is local, learning is five-turn/idle batch consolidation through `CONSOLIDATE_TURN_BATCH`, and the normal Memory page is a read-only `MEMORY.md` viewer. Do not restore per-saved-chat learning or maintenance retry/dismiss controls to that page.
+
 ## Goal
 
 为 ChatWithChat 当前 OpenClaw-style Markdown-first 记忆系统补上用户可感知的维护提醒：
@@ -428,4 +430,3 @@ Use this exact prompt in another Codex conversation:
 
 等我确认后，再按文档 Task 1 开始实现。每完成一个 task，运行对应 verification 命令，并报告 changed files、行为变化、验证结果、下一步建议。
 ```
-

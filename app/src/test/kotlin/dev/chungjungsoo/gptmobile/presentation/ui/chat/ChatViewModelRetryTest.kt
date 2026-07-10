@@ -9,11 +9,26 @@ import dev.chungjungsoo.gptmobile.data.database.entity.resetActiveRevision
 import dev.chungjungsoo.gptmobile.data.database.entity.selectRevision
 import dev.chungjungsoo.gptmobile.data.model.ChatAttachment
 import dev.chungjungsoo.gptmobile.data.repository.hasSendableAssistantPayload
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ChatViewModelRetryTest {
+
+    @Test
+    fun `memory disabled skips retrieval and prompt injection`() = runBlocking {
+        var retrievalCalls = 0
+
+        val prompt = prepareMemoryPromptWhenEnabled(memoryEnabled = false) {
+            retrievalCalls += 1
+            "Should not be injected"
+        }
+
+        assertNull(prompt)
+        assertEquals(0, retrievalCalls)
+    }
 
     @Test
     fun `normalizeAssistantRow pads sparse rows and preserves overflow messages`() {

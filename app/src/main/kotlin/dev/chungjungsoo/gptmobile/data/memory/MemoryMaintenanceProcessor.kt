@@ -1,19 +1,20 @@
 package dev.chungjungsoo.gptmobile.data.memory
 
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMaintenanceJob
-import dev.chungjungsoo.gptmobile.data.database.dao.PersonalMemoryDao
 import dev.chungjungsoo.gptmobile.data.repository.SettingRepository
 import javax.inject.Inject
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class MemoryMaintenanceProcessor @Inject constructor(
     private val maintenanceScheduler: MemoryMaintenanceScheduler,
     private val memoryIndexRepository: MemoryIndexRepository,
     private val settingRepository: SettingRepository,
-    private val personalMemoryDao: PersonalMemoryDao,
-    private val memoryIntelligence: MemoryIntelligence,
-    private val markdownMemoryLearningService: MarkdownMemoryLearningService
+    private val memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null,
+    private val memoryBatchConsolidationService: MemoryBatchConsolidationService? = null
 ) {
-    suspend fun processRunnableJobs(limit: Int = DEFAULT_LIMIT): MemoryMaintenanceProcessResult {
+    suspend fun processRunnableJobs(limit: Int = DEFAULT_LIMIT): MemoryMaintenanceProcessResult = PROCESS_MUTEX.withLock {
+        memoryTurnBatchScheduler?.promoteDueIdleBatches()
         maintenanceScheduler.resetStaleRunningJobs()
         val jobs = maintenanceScheduler.runnableJobs(limit = limit)
         var succeededCount = 0
@@ -24,10 +25,9 @@ class MemoryMaintenanceProcessor @Inject constructor(
             if (job.type in LLM_JOB_TYPES) {
                 val result = processLlmJob(job)
                 when (result.status) {
-                    MarkdownMemoryLearningResult.STATUS_APPLIED,
-                    MarkdownMemoryLearningResult.STATUS_SKIPPED_NO_NOTES,
-                    MarkdownMemoryLearningResult.STATUS_SKIPPED_DUPLICATE_JOB -> succeededCount += 1
-                    MarkdownMemoryLearningResult.STATUS_FAILED_TERMINAL -> terminalCount += 1
+                    MemoryBatchProcessResult.STATUS_SUCCEEDED,
+                    MemoryBatchProcessResult.STATUS_DUPLICATE -> succeededCount += 1
+                    MemoryBatchProcessResult.STATUS_TERMINAL -> terminalCount += 1
                     else -> retryableCount += 1
                 }
                 return@forEach
@@ -49,7 +49,7 @@ class MemoryMaintenanceProcessor @Inject constructor(
             }
         }
 
-        return MemoryMaintenanceProcessResult(
+        MemoryMaintenanceProcessResult(
             processedCount = jobs.size,
             succeededCount = succeededCount,
             retryableCount = retryableCount,
@@ -57,40 +57,41 @@ class MemoryMaintenanceProcessor @Inject constructor(
         )
     }
 
-    private suspend fun processLlmJob(job: MemoryMaintenanceJob): MarkdownMemoryLearningResult {
+    private suspend fun processLlmJob(job: MemoryMaintenanceJob): MemoryBatchProcessResult {
         if (!settingRepository.fetchMemoryEnabled()) {
-            maintenanceScheduler.markFailedRetryable(job, "memory_disabled")
-            return MarkdownMemoryLearningResult.skipped(
-                status = MarkdownMemoryLearningResult.STATUS_FAILED_RETRYABLE,
+            maintenanceScheduler.markDismissed(job)
+            memoryTurnBatchScheduler?.onMemoryEnabledChanged(false)
+            return MemoryBatchProcessResult(
+                status = MemoryBatchProcessResult.STATUS_TERMINAL,
                 jobId = job.jobId,
                 reason = "memory_disabled"
             )
         }
-        val platform = settingRepository.fetchPlatformV2s()
-            .firstOrNull { platform -> platform.enabled && platform.model.isNotBlank() }
-        val existingRoomMemories = personalMemoryDao.getRecallCandidates().take(MAX_ROOM_MEMORY_CANDIDATES)
         return when (job.type) {
-            MemoryMaintenanceJobType.APPEND_DAILY_NOTE -> markdownMemoryLearningService.retryLearningJob(
-                job = job,
-                existingRoomMemories = existingRoomMemories,
-                memoryIntelligence = memoryIntelligence,
-                preferredPlatform = platform
-            )
-            MemoryMaintenanceJobType.COMPACTION_FLUSH -> markdownMemoryLearningService.retryCompactionFlushJob(
-                job = job,
-                existingRoomMemories = existingRoomMemories,
-                memoryIntelligence = memoryIntelligence,
-                preferredPlatform = platform
-            )
-            else -> {
-                maintenanceScheduler.markFailedRetryable(job, "llm_memory_worker_pending")
-                MarkdownMemoryLearningResult.skipped(
-                    status = MarkdownMemoryLearningResult.STATUS_FAILED_RETRYABLE,
-                    jobId = job.jobId,
-                    reason = "llm_memory_worker_pending"
-                )
-            }
+            MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH ->
+                memoryBatchConsolidationService?.process(job) ?: unavailableConsolidation(job)
+            MemoryMaintenanceJobType.APPEND_DAILY_NOTE,
+            MemoryMaintenanceJobType.COMPACTION_FLUSH ->
+                memoryBatchConsolidationService?.processLegacy(job) ?: unavailableConsolidation(job)
+            else -> unavailableConsolidation(job, "unsupported_memory_job_type:${job.type}")
         }
+    }
+
+    private suspend fun unavailableConsolidation(
+        job: MemoryMaintenanceJob,
+        reason: String = "batch_consolidation_pending"
+    ): MemoryBatchProcessResult {
+        val runningJob = maintenanceScheduler.markRunning(job)
+        val failedJob = maintenanceScheduler.markFailedRetryable(runningJob, reason)
+        return MemoryBatchProcessResult(
+            status = if (failedJob.status == MemoryMaintenanceJobStatus.FAILED_TERMINAL) {
+                MemoryBatchProcessResult.STATUS_TERMINAL
+            } else {
+                MemoryBatchProcessResult.STATUS_RETRYABLE
+            },
+            jobId = job.jobId,
+            reason = reason
+        )
     }
 
     private suspend fun processJob(job: MemoryMaintenanceJob) {
@@ -112,13 +113,14 @@ class MemoryMaintenanceProcessor @Inject constructor(
 
     companion object {
         private const val DEFAULT_LIMIT = 10
-        private const val MAX_ROOM_MEMORY_CANDIDATES = 24
         private val LLM_JOB_TYPES = setOf(
+            MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH,
             MemoryMaintenanceJobType.APPEND_DAILY_NOTE,
             MemoryMaintenanceJobType.COMPACTION_FLUSH,
             MemoryMaintenanceJobType.DISTILL_DAILY_NOTES,
             MemoryMaintenanceJobType.PROMOTE_LONG_TERM_CANDIDATE
         )
+        private val PROCESS_MUTEX = Mutex()
     }
 }
 

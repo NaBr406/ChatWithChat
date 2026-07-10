@@ -12,6 +12,7 @@ import dev.chungjungsoo.gptmobile.data.database.dao.ChatRoomDao
 import dev.chungjungsoo.gptmobile.data.database.dao.ChatRoomV2Dao
 import dev.chungjungsoo.gptmobile.data.database.dao.MessageDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MessageV2Dao
+import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnBatchScheduler
 import dev.chungjungsoo.gptmobile.data.network.AnthropicAPI
 import dev.chungjungsoo.gptmobile.data.network.GoogleAPI
 import dev.chungjungsoo.gptmobile.data.network.GroqAPI
@@ -46,7 +47,8 @@ object ChatRepositoryModule {
         contextBuilder: ContextBuilder,
         webSearchRepository: WebSearchRepository,
         toolLoopOrchestrator: ToolLoopOrchestrator,
-        searchDecisionService: SearchDecisionService
+        searchDecisionService: SearchDecisionService,
+        memoryTurnBatchScheduler: MemoryTurnBatchScheduler
     ): ChatRepository = ChatRepositoryImpl(
         context,
         chatRoomDao,
@@ -63,6 +65,7 @@ object ChatRepositoryModule {
         contextBuilder,
         webSearchRepository,
         toolLoopOrchestrator,
-        searchDecisionService
+        searchDecisionService = searchDecisionService,
+        memoryTurnBatchScheduler = memoryTurnBatchScheduler
     )
 }

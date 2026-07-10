@@ -2,7 +2,6 @@ package dev.chungjungsoo.gptmobile.presentation.ui.chat
 
 import android.content.Context
 import android.net.Uri
-import android.util.Log
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.text.input.clearText
 import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
@@ -22,7 +21,7 @@ import dev.chungjungsoo.gptmobile.data.database.entity.resetActiveRevision
 import dev.chungjungsoo.gptmobile.data.database.entity.selectRevision
 import dev.chungjungsoo.gptmobile.data.database.entity.snapshotLatestAssistantRevision
 import dev.chungjungsoo.gptmobile.data.dto.ApiState
-import dev.chungjungsoo.gptmobile.data.memory.MemoryLearningResult
+import dev.chungjungsoo.gptmobile.data.memory.MemoryCompletedTurnInput
 import dev.chungjungsoo.gptmobile.data.model.AvailableChatModel
 import dev.chungjungsoo.gptmobile.data.model.ChatPlatformConfig
 import dev.chungjungsoo.gptmobile.data.model.LastSelectedModel
@@ -186,8 +185,7 @@ class ChatViewModel @Inject constructor(
     private var pendingQuestionText: String? = null
     private var initialQuestionConsumed = false
     private var initialAttachmentsConsumed = false
-    private var lastLearnedMessageSignature: String? = null
-    private val memoryLearningSignaturesInFlight = mutableSetOf<String>()
+    private var pendingMemoryTurnActivityAt: Long? = null
 
     init {
         fetchChatRoom()
@@ -714,44 +712,21 @@ class ChatViewModel @Inject constructor(
         groupedMessages: GroupedMessages,
         memoryPlatform: PlatformV2?
     ): String? = withContext(Dispatchers.IO) {
-        if (!refreshMemoryEnabled()) return@withContext null
-
-        runCatching {
+        prepareMemoryPromptWhenEnabled(refreshMemoryEnabled()) {
             memoryRepository.prepareMemoryContext(
                 chatRoom = _chatRoom.value,
                 userMessages = groupedMessages.userMessages,
                 assistantMessages = groupedMessages.assistantMessages,
                 memoryPlatform = memoryPlatform
             ).prompt
-        }.getOrNull()
+        }
     }
 
-    private fun learnFromSavedChat(
-        savedChatRoom: ChatRoomV2,
-        groupedMessages: GroupedMessages,
-        memoryPlatform: PlatformV2?,
-        signature: String
-    ) {
-        applicationScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    memoryRepository.learnFromChat(
-                        chatRoom = savedChatRoom,
-                        userMessages = groupedMessages.userMessages,
-                        assistantMessages = groupedMessages.assistantMessages,
-                        memoryPlatform = memoryPlatform,
-                        learningIdempotencyKey = signature
-                    )
-                }.getOrElse { throwable ->
-                    MemoryLearningResult.failedException(throwable)
-                }
-            }
-            withContext(Dispatchers.Main.immediate) {
-                memoryLearningSignaturesInFlight -= signature
-                if (result.shouldRememberSignature) {
-                    lastLearnedMessageSignature = signature
-                }
-                logMemoryLearningResult(result)
+    private fun recordUserActivityIfEnabled(chatId: Int, activityAt: Long) {
+        if (chatId <= 0) return
+        applicationScope.launch(Dispatchers.IO) {
+            if (settingRepository.fetchMemoryEnabled()) {
+                memoryRepository.recordUserActivity(chatId, activityAt)
             }
         }
     }
@@ -760,16 +735,6 @@ class ChatViewModel @Inject constructor(
         val enabled = settingRepository.fetchMemoryEnabled()
         _memoryEnabled.update { enabled }
         return enabled
-    }
-
-    private fun logMemoryLearningResult(result: MemoryLearningResult) {
-        runCatching {
-            Log.i(
-                TAG,
-                "Memory learning completed status=${result.status}, changed=${result.changedCount}, " +
-                    "completed=${result.completed}, candidates=${result.candidateCount}, operations=${result.operationCount}, reason=${result.reason.orEmpty()}"
-            )
-        }
     }
 
     private fun updateMessageEditAttachments(attachments: List<ChatAttachmentDraft>) {
@@ -936,13 +901,16 @@ class ChatViewModel @Inject constructor(
     }
 
     private fun sendQuestion(questionText: String, attachments: List<ChatAttachmentDraft>) {
+        val activityAt = currentTimeStamp
         MessageV2(
             chatId = chatRoomId,
             content = questionText,
             attachments = attachments.mapNotNull { it.attachment },
             platformType = null,
-            createdAt = currentTimeStamp
+            createdAt = activityAt
         ).let { addMessage(it) }
+        pendingMemoryTurnActivityAt = activityAt
+        recordUserActivityIfEnabled(_chatRoom.value.id, activityAt)
         question.clearText()
         clearSelectedFiles()
         completeChat()
@@ -1201,14 +1169,16 @@ class ChatViewModel @Inject constructor(
                     val chatRoom = _chatRoom.value
                     val groupedMessages = _groupedMessages.value
                     val chatPlatformModels = _chatPlatformModels.value
-                    val memoryPlatform = preferredMemoryPlatform()
+                    val activityAt = pendingMemoryTurnActivityAt
+                    val preferredMemoryPlatformUid = preferredMemoryPlatform()?.uid
 
-                    val savedChatRoom = withContext(Dispatchers.IO) {
-                        chatRepository.saveChat(
+                    val (savedChatRoom, persistedGroupedMessages) = withContext(Dispatchers.IO) {
+                        val saved = chatRepository.saveChat(
                             chatRoom = chatRoom,
                             messages = persistableMessages(groupedMessages),
                             chatPlatformModels = chatPlatformModels
                         )
+                        saved to fetchGroupedMessages(saved.id)
                     }
                     _chatRoom.update { currentChatRoom ->
                         if (currentChatRoom.id == chatRoom.id && chatRoom.id == 0) {
@@ -1217,10 +1187,25 @@ class ChatViewModel @Inject constructor(
                             currentChatRoom
                         }
                     }
-                    val signature = groupedMessages.memoryLearningSignature(savedChatRoom.id)
-                    if (refreshMemoryEnabled() && signature != lastLearnedMessageSignature && signature !in memoryLearningSignaturesInFlight) {
-                        memoryLearningSignaturesInFlight += signature
-                        learnFromSavedChat(savedChatRoom, groupedMessages, memoryPlatform, signature)
+                    if (activityAt != null) {
+                        pendingMemoryTurnActivityAt = null
+                        val userMessage = persistedGroupedMessages.userMessages.lastOrNull()
+                        val assistantMessages = persistedGroupedMessages.assistantMessages.lastOrNull().orEmpty()
+                        if (refreshMemoryEnabled() && userMessage != null) {
+                            applicationScope.launch(Dispatchers.IO) {
+                                memoryRepository.recordUserActivity(savedChatRoom.id, activityAt)
+                                memoryRepository.recordCompletedTurn(
+                                    MemoryCompletedTurnInput(
+                                        chatRoom = savedChatRoom,
+                                        userMessage = userMessage,
+                                        assistantMessages = assistantMessages,
+                                        preferredPlatformUid = preferredMemoryPlatformUid,
+                                        stablePlatformOrder = savedChatRoom.enabledPlatform,
+                                        completedAt = currentTimeStamp
+                                    )
+                                )
+                            }
+                        }
                     }
 
                     // Sync message ids
@@ -1283,6 +1268,11 @@ class ChatViewModel @Inject constructor(
     }
 }
 
+internal suspend fun prepareMemoryPromptWhenEnabled(
+    memoryEnabled: Boolean,
+    prepare: suspend () -> String?
+): String? = if (memoryEnabled) runCatching { prepare() }.getOrNull() else null
+
 internal fun List<ChatViewModel.ToolProgressState>.appendToolProgress(progress: ApiState): List<ChatViewModel.ToolProgressState> {
     val progressState = when (progress) {
         is ApiState.ToolStarted -> ChatViewModel.ToolProgressState(
@@ -1343,16 +1333,6 @@ internal fun persistableMessages(groupedMessages: ChatViewModel.GroupedMessages)
                 it.attachments.isNotEmpty()
         }
         .sortedBy { it.createdAt }
-}
-
-internal fun ChatViewModel.GroupedMessages.memoryLearningSignature(chatId: Int): String = buildString {
-    append(chatId)
-    append('|')
-    append(userMessages.size)
-    append('|')
-    append(assistantMessages.sumOf { row -> row.count { it.effectiveContent().isNotBlank() || it.effectiveThoughts().isNotBlank() } })
-    append('|')
-    append(userMessages.lastOrNull()?.createdAt ?: 0L)
 }
 
 internal fun createEmptyAssistantMessage(chatId: Int, platformUid: String): MessageV2 = MessageV2(
