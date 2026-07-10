@@ -255,9 +255,9 @@ class MemoryBatchConsolidationServiceTest {
         val indexDao = InMemoryProcessorMemoryIndexDao()
         val indexRepository = MemoryIndexRepository(fileStore, indexDao, MemoryChunker(), FIXED_CLOCK)
         val intelligence = FakeMemoryIntelligence(batchProposal = proposal)
-        val searcher = object : MemoryIndexSearcher {
-            override suspend fun search(request: MemoryIndexSearchRequest): Result<List<MemoryIndexSearchResult>> =
-                Result.success(searchResults)
+        val retriever = object : MemoryRetriever {
+            override suspend fun retrieve(request: MemoryRetrievalRequest): Result<List<MemoryRetrievalResult>> =
+                Result.success(searchResults.map { it.toRetrievalResult() })
         }
         val rebuilder = if (failIndexRebuild) {
             FailingMemoryIndexRebuilder()
@@ -280,7 +280,7 @@ class MemoryBatchConsolidationServiceTest {
                 memoryIntelligence = intelligence,
                 memoryFileStore = fileStore,
                 markdownMemoryCodec = MarkdownMemoryCodec(),
-                memoryIndexSearcher = searcher,
+                memoryRetriever = retriever,
                 memoryIndexRebuilder = rebuilder,
                 clock = FIXED_CLOCK
             )
@@ -303,6 +303,20 @@ class MemoryBatchConsolidationServiceTest {
         source = MemorySource.EXPLICIT_USER_STATEMENT,
         evidenceTurnKeys = listOf("chat:$CHAT_ID:user:1"),
         reason = "Test operation"
+    )
+
+    private fun MemoryIndexSearchResult.toRetrievalResult(): MemoryRetrievalResult = MemoryRetrievalResult(
+        chunkId = chunkId,
+        entryId = entryId,
+        sourcePath = sourcePath,
+        text = text,
+        type = type,
+        sensitivity = sensitivity,
+        source = source,
+        contentHash = "hash-$chunkId",
+        lexicalScore = score,
+        fusedScore = score,
+        updatedAt = updatedAt
     )
 
     private data class Fixture(

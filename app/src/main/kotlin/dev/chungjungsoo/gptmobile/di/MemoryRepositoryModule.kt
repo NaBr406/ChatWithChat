@@ -166,7 +166,7 @@ object MemoryRepositoryModule {
         memoryIntelligence = memoryIntelligence,
         memoryFileStore = memoryFileStore,
         markdownMemoryCodec = markdownMemoryCodec,
-        memoryIndexSearcher = memoryIndexRepository,
+        memoryRetriever = memoryIndexRepository,
         memoryIndexRebuilder = memoryIndexRepository
     )
 
@@ -216,7 +216,7 @@ object MemoryRepositoryModule {
         memoryIntelligence = memoryIntelligence,
         memoryPromptBuilder = memoryPromptBuilder,
         memoryMarkdownCodec = memoryMarkdownCodec,
-        memoryIndexSearcher = memoryIndexRepository,
+        memoryRetriever = memoryIndexRepository,
         markdownMemoryLearningService = markdownMemoryLearningService,
         memoryFileStore = memoryFileStore,
         structuredMarkdownMemoryCodec = markdownMemoryCodec,

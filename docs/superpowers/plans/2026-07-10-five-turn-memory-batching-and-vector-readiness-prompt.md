@@ -590,23 +590,29 @@ Likely files:
 - new retrieval facade/interfaces under `data/memory/`
 - `ChatRepositoryImplTest.kt`
 
-- [ ] Remove pre-answer classify/select LLM calls.
-- [ ] Build a local query from current user text and bounded recent context.
-- [ ] Improve Chinese lexical tokenization with character n-grams.
-- [ ] Deduplicate by stable entry ID/content hash.
-- [ ] Apply result-count and token budgets before prompt injection.
-- [ ] Preserve `mergePromptSections(...)` and every provider path.
-- [ ] Degrade to no memory on local search failure.
+- [x] Remove pre-answer classify/select LLM calls.
+- [x] Build a local query from current user text and bounded recent context.
+- [x] Improve Chinese lexical tokenization with character n-grams.
+- [x] Deduplicate by stable entry ID/content hash.
+- [x] Apply result-count and token budgets before prompt injection.
+- [x] Preserve `mergePromptSections(...)` and every provider path.
+- [x] Degrade to no memory on local search failure.
 
 Acceptance tests:
 
-- [ ] Every recall test asserts zero `MemoryIntelligence` calls.
-- [ ] Relevant Markdown memory is injected.
-- [ ] Irrelevant/no-match memory is omitted.
-- [ ] Chinese queries can recall a partially matching Chinese memory without exact full-sentence equality.
-- [ ] Memory disabled performs no search and no injection.
-- [ ] Token budget cannot be exceeded by many matching memories.
-- [ ] Tool/search/system/context-summary prompt sections remain intact.
+- [x] Every recall test asserts zero `MemoryIntelligence` calls.
+- [x] Relevant Markdown memory is injected.
+- [x] Irrelevant/no-match memory is omitted.
+- [x] Chinese queries can recall a partially matching Chinese memory without exact full-sentence equality.
+- [x] Memory disabled performs no search and no injection.
+- [x] Token budget cannot be exceeded by many matching memories.
+- [x] Tool/search/system/context-summary prompt sections remain intact.
+
+Task 5 implementation record (2026-07-10):
+
+- `prepareMemoryContext(...)` now builds a bounded local query/recent-context request and calls only `MemoryRetriever`; it never classifies, selects with an LLM, or falls back to legacy Room rows.
+- The lexical implementation uses normalized Latin tokens, Chinese 2/3-character grams, exact phrase and long-term bonuses, stable ID/hash deduplication, result limits, and an existing tokenizer-backed token budget.
+- Retrieval failures return no memory without failing chat completion. `ChatViewModel` tests prove the disabled gate performs zero retrieval calls, and repository recall tests assert all six intelligence counters remain zero.
 
 ### Task 6: Migrate Away From Legacy Room Semantics
 
@@ -626,21 +632,27 @@ Acceptance:
 
 ### Task 7: Establish Vector-Ready Retrieval Boundaries
 
-- [ ] Introduce or evolve a provider-neutral `MemoryRetriever` facade.
-- [ ] Adapt the lexical index as the default implementation.
-- [ ] Add stable content hashes and score provenance to retrieval results.
-- [ ] Keep caller code independent of lexical/vector/hybrid strategy.
-- [ ] Add strategy/config types with lexical as the only enabled production strategy.
-- [ ] Ensure index rebuild output can identify changed chunks for future embedding updates.
-- [ ] Add a short architecture note comparing small-corpus brute force, `sqlite-vec`, and an embedded ANN library on Android, including ABI, app-size, model lifecycle, and rebuild implications.
-- [ ] Do not add a vector dependency or embedding model merely to satisfy the interface.
+- [x] Introduce or evolve a provider-neutral `MemoryRetriever` facade.
+- [x] Adapt the lexical index as the default implementation.
+- [x] Add stable content hashes and score provenance to retrieval results.
+- [x] Keep caller code independent of lexical/vector/hybrid strategy.
+- [x] Add strategy/config types with lexical as the only enabled production strategy.
+- [x] Ensure index rebuild output can identify changed chunks for future embedding updates.
+- [x] Add a short architecture note comparing small-corpus brute force, `sqlite-vec`, and an embedded ANN library on Android, including ABI, app-size, model lifecycle, and rebuild implications.
+- [x] Do not add a vector dependency or embedding model merely to satisfy the interface.
 
 Acceptance:
 
-- [ ] A fake vector retriever can be substituted in unit tests without changing repository or ViewModel APIs.
-- [ ] Retrieval results carry stable chunk identity and content hash.
-- [ ] Replacing the retrieval strategy does not change Markdown ownership.
-- [ ] No cloud embedding request exists.
+- [x] A fake vector retriever can be substituted in unit tests without changing repository or ViewModel APIs.
+- [x] Retrieval results carry stable chunk identity and content hash.
+- [x] Replacing the retrieval strategy does not change Markdown ownership.
+- [x] No cloud embedding request exists.
+
+Task 7 implementation record (2026-07-10):
+
+- Added `MemoryRetriever`, request/result/config/strategy contracts. Production accepts only `LEXICAL`; callers receive lexical/vector/fused provenance without knowing the backend.
+- `MemoryIndexRebuildResult.changedChunkIds` exposes stable work units for a future embedding updater, while Markdown and derived Room chunks remain authoritative/rebuildable in the same direction as before.
+- Added `docs/architecture/on-device-vector-memory-readiness.md`; no vector library, model download, embedding SDK, or cloud embedding endpoint was added.
 
 ### Task 8: End-To-End Verification And Cleanup
 

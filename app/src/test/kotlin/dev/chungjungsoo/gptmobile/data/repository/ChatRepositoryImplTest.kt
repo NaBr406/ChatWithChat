@@ -1218,6 +1218,22 @@ class ChatRepositoryImplTest {
         assertNull(mergeSystemPrompt(" ", " "))
     }
 
+    @Test
+    fun `prompt section merge preserves memory search tool and context summary sections`() {
+        val merged = mergePromptSections(
+            "System instructions",
+            "Local memory context",
+            "Web search evidence",
+            "Tool protocol",
+            "Context summary"
+        )
+
+        assertEquals(
+            "System instructions\n\nLocal memory context\n\nWeb search evidence\n\nTool protocol\n\nContext summary",
+            merged
+        )
+    }
+
     private fun createRepository(
         groqAPI: GroqAPI = FakeGroqAPI(emptyFlow()),
         openAIAPI: OpenAIAPI = RecordingOpenAIAPI(),

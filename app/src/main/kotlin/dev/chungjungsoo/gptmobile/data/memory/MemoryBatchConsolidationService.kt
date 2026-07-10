@@ -18,7 +18,7 @@ class MemoryBatchConsolidationService(
     private val memoryIntelligence: MemoryIntelligence,
     private val memoryFileStore: MemoryFileStore,
     private val markdownMemoryCodec: MarkdownMemoryCodec,
-    private val memoryIndexSearcher: MemoryIndexSearcher,
+    private val memoryRetriever: MemoryRetriever,
     private val memoryIndexRebuilder: MemoryIndexRebuilder,
     private val clock: Clock = Clock.systemDefaultZone(),
     private val json: Json = Json {
@@ -157,12 +157,13 @@ class MemoryBatchConsolidationService(
             .joinToString(separator = "\n")
             .take(MAX_RETRIEVAL_QUERY_CHARS)
         if (query.isBlank()) return emptyList()
-        val results = memoryIndexSearcher.search(
-            MemoryIndexSearchRequest(
+        val results = memoryRetriever.retrieve(
+            MemoryRetrievalRequest(
                 query = query,
                 includePrivate = true,
                 limit = MAX_EXISTING_MEMORIES,
-                candidateLimit = MAX_EXISTING_CANDIDATES
+                candidateLimit = MAX_EXISTING_CANDIDATES,
+                tokenBudget = MAX_EXISTING_MEMORY_TOKEN_BUDGET
             )
         ).getOrDefault(emptyList())
         return results
@@ -175,7 +176,7 @@ class MemoryBatchConsolidationService(
             .groupBy { it.entryId!! }
             .filterValues { sameIdResults -> sameIdResults.map { it.sourcePath }.distinct().size == 1 }
             .map { (entryId, sameIdResults) ->
-                val result = sameIdResults.maxBy { it.score }
+                val result = sameIdResults.maxBy { it.fusedScore }
                 MemoryBatchExistingMemory(
                     id = entryId,
                     sourcePath = result.sourcePath,
@@ -467,6 +468,7 @@ class MemoryBatchConsolidationService(
         private const val MAX_RETRIEVAL_QUERY_CHARS = 8_000
         private const val MAX_EXISTING_MEMORIES = 24
         private const val MAX_EXISTING_CANDIDATES = 200
+        private const val MAX_EXISTING_MEMORY_TOKEN_BUDGET = 2_400
         private const val MAX_OPERATIONS = 32
         private const val MAX_MEMORY_TEXT_CHARS = 4_000
         private val VALID_TRIGGER_REASONS = setOf(

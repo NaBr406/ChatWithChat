@@ -21,9 +21,6 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryConversationMessage
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFileStore
 import dev.chungjungsoo.gptmobile.data.memory.MemoryExtractionRequest
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexRebuilder
-import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexSearchRequest
-import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexSearchResult
-import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexSearcher
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIntelligence
 import dev.chungjungsoo.gptmobile.data.memory.MemoryLearningResult
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceJobStatus
@@ -33,8 +30,9 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceWorkEnqueuer
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryLearningService
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMarkdownCodec
 import dev.chungjungsoo.gptmobile.data.memory.MemoryPromptBuilder
+import dev.chungjungsoo.gptmobile.data.memory.MemoryRetrievalRequest
+import dev.chungjungsoo.gptmobile.data.memory.MemoryRetriever
 import dev.chungjungsoo.gptmobile.data.memory.MemorySelectionCandidate
-import dev.chungjungsoo.gptmobile.data.memory.MemorySelectionRequest
 import dev.chungjungsoo.gptmobile.data.memory.MemorySensitivity
 import dev.chungjungsoo.gptmobile.data.memory.MemorySource
 import dev.chungjungsoo.gptmobile.data.memory.MemoryStatus
@@ -43,7 +41,6 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnBatchScheduler
 import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnRecordingResult
 import dev.chungjungsoo.gptmobile.data.memory.MemoryUpdatePlanningRequest
 import dev.chungjungsoo.gptmobile.data.memory.PreparedMemoryContext
-import dev.chungjungsoo.gptmobile.data.memory.SelectedPersonalMemory
 import dev.chungjungsoo.gptmobile.data.memory.buildMemoryMessages
 import dev.chungjungsoo.gptmobile.data.memory.toMarkdownMemoryEntry
 import dev.chungjungsoo.gptmobile.data.memory.toPersonalMemory
@@ -56,7 +53,7 @@ class MemoryRepositoryImpl(
     private val memoryIntelligence: MemoryIntelligence,
     private val memoryPromptBuilder: MemoryPromptBuilder,
     private val memoryMarkdownCodec: MemoryMarkdownCodec,
-    private val memoryIndexSearcher: MemoryIndexSearcher? = null,
+    private val memoryRetriever: MemoryRetriever? = null,
     private val markdownMemoryLearningService: MarkdownMemoryLearningService? = null,
     private val memoryFileStore: MemoryFileStore? = null,
     private val structuredMarkdownMemoryCodec: MarkdownMemoryCodec? = null,
@@ -86,68 +83,26 @@ class MemoryRepositoryImpl(
         assistantMessages: List<List<MessageV2>>,
         memoryPlatform: PlatformV2?
     ): PreparedMemoryContext {
-        val recentMessages = buildMemoryMessages(chatRoom, userMessages, assistantMessages)
-        if (recentMessages.isEmpty()) return PreparedMemoryContext()
-        val classificationMessages = recentMessages.forMemoryClassification()
-
-        val classification = memoryIntelligence.classifyConversation(
-            ConversationClassificationRequest(
-                chatTitle = chatRoom.title,
-                recentMessages = classificationMessages
-            ),
-            preferredPlatform = memoryPlatform
-        ) ?: return PreparedMemoryContext()
-
-        persistClassification(chatRoom.id, classification)
-        if (!classification.shouldUseMemories) {
-            return PreparedMemoryContext(classification = classification)
-        }
-
-        val markdownMemories = searchMarkdownMemories(recentMessages, classification)
-        if (markdownMemories.isNotEmpty()) {
-            return PreparedMemoryContext(
-                classification = classification,
-                selectedMarkdownMemories = markdownMemories,
-                prompt = memoryPromptBuilder.buildMarkdown(markdownMemories)
+        val retriever = memoryRetriever ?: return PreparedMemoryContext()
+        val query = buildLocalRecallQuery(userMessages.lastOrNull())
+        if (query.isBlank()) return PreparedMemoryContext()
+        val recentContext = buildLocalRecentContext(chatRoom, userMessages, assistantMessages)
+        val retrievedMemories = retriever.retrieve(
+            MemoryRetrievalRequest(
+                query = query,
+                recentContext = recentContext,
+                limit = MAX_SELECTED_MEMORIES,
+                candidateLimit = MAX_CANDIDATE_MEMORIES,
+                tokenBudget = MEMORY_RECALL_TOKEN_BUDGET,
+                includePrivate = true
             )
+        ).getOrElse { throwable ->
+            logWarning("Local memory retrieval failed; continuing without memory: ${throwable.message}", throwable)
+            emptyList()
         }
-
-        val safeCandidates = personalMemoryDao.getRecallCandidates()
-            .filter { memory -> memory.isSafeCandidateFor(classification) }
-            .take(MAX_CANDIDATE_MEMORIES)
-
-        if (safeCandidates.isEmpty()) {
-            return PreparedMemoryContext(classification = classification)
-        }
-
-        val selection = memoryIntelligence.selectMemories(
-            MemorySelectionRequest(
-                classification = classification,
-                currentUserMessage = userMessages.lastOrNull()?.content.orEmpty().trimForMemoryContext(),
-                candidateMemories = safeCandidates.map { it.toSelectionCandidate() }
-            ),
-            preferredPlatform = memoryPlatform
-        ) ?: return PreparedMemoryContext(classification = classification)
-
-        val candidatesById = safeCandidates.associateBy { it.id }
-        val selectedMemories = selection.selected
-            .mapNotNull { selected ->
-                val memory = candidatesById[selected.memoryId] ?: return@mapNotNull null
-                SelectedPersonalMemory(
-                    memory = memory,
-                    usage = selected.usage,
-                    relevance = selected.relevance.coerceIn(0f, 1f),
-                    reason = selected.reason
-                )
-            }
-            .take(MAX_SELECTED_MEMORIES)
-
-        touchSelectedMemories(selectedMemories)
-
         return PreparedMemoryContext(
-            classification = classification,
-            selectedMemories = selectedMemories,
-            prompt = memoryPromptBuilder.build(selectedMemories)
+            retrievedMemories = retrievedMemories,
+            prompt = memoryPromptBuilder.buildRetrieved(retrievedMemories)
         )
     }
 
@@ -533,64 +488,25 @@ class MemoryRepositoryImpl(
         )
     }
 
-    private fun PersonalMemory.isSafeCandidateFor(
-        classification: ConversationClassificationResult
-    ): Boolean {
-        if (status in setOf(MemoryStatus.ARCHIVED, MemoryStatus.SUPERSEDED, MemoryStatus.RESOLVED, MemoryStatus.PENDING_CONFIRMATION)) return false
-        if (sensitivity == MemorySensitivity.SENSITIVE) {
-            return source == MemorySource.USER_CONFIRMED && classification.confidence >= SENSITIVE_RECALL_CONFIDENCE
+    private fun buildLocalRecallQuery(latestUserMessage: MessageV2?): String = buildString {
+        appendLine(latestUserMessage?.content.orEmpty().trimForMemoryContext())
+        latestUserMessage?.attachments.orEmpty().forEach { attachment ->
+            appendLine("${attachment.resolvedDisplayName} ${attachment.mimeType}".trim())
         }
-        return true
-    }
+    }.trim().take(MAX_LOCAL_RECALL_QUERY_LENGTH)
 
-    private suspend fun searchMarkdownMemories(
-        recentMessages: List<MemoryConversationMessage>,
-        classification: ConversationClassificationResult
-    ): List<MemoryIndexSearchResult> {
-        val searcher = memoryIndexSearcher ?: return emptyList()
-        val query = buildMarkdownRecallQuery(recentMessages, classification)
-        if (query.isBlank()) return emptyList()
-
-        return searcher.search(
-            MemoryIndexSearchRequest(
-                query = query,
-                includePrivate = true,
-                limit = MAX_SELECTED_MEMORIES,
-                candidateLimit = MAX_CANDIDATE_MEMORIES
-            )
-        ).getOrElse { throwable ->
-            logWarning("Markdown memory search failed; falling back to Room memories: ${throwable.message}", throwable)
-            emptyList()
+    private fun buildLocalRecentContext(
+        chatRoom: ChatRoomV2,
+        userMessages: List<MessageV2>,
+        assistantMessages: List<List<MessageV2>>
+    ): String? = buildMemoryMessages(chatRoom, userMessages, assistantMessages)
+        .dropLast(1)
+        .takeLast(LOCAL_RECALL_RECENT_MESSAGE_COUNT)
+        .joinToString(separator = "\n") { message ->
+            "${message.role}: ${message.content.trimForMemoryContext().take(MAX_LOCAL_RECENT_MESSAGE_LENGTH)}"
         }
-    }
-
-    private fun buildMarkdownRecallQuery(
-        recentMessages: List<MemoryConversationMessage>,
-        classification: ConversationClassificationResult
-    ): String = buildString {
-        appendLine(recentMessages.lastOrNull { it.role == "user" }?.content.orEmpty().trimForMemoryContext())
-        appendLine(classification.intent)
-        appendLine(classification.memoryNeeds.joinToString(" "))
-        appendLine(classification.domains.joinToString(" "))
-        appendLine(classification.entities.joinToString(" "))
-        recentMessages
-            .takeLast(MARKDOWN_RECALL_RECENT_MESSAGE_COUNT)
-            .forEach { message ->
-                appendLine(message.content.trimForMemoryContext())
-            }
-    }.trim()
-
-    private suspend fun touchSelectedMemories(selectedMemories: List<SelectedPersonalMemory>) {
-        val timestamp = now()
-        selectedMemories.forEach { selectedMemory ->
-            personalMemoryDao.update(
-                selectedMemory.memory.copy(
-                    lastAccessedAt = timestamp,
-                    updatedAt = selectedMemory.memory.updatedAt
-                )
-            )
-        }
-    }
+        .trim()
+        .takeIf { it.isNotBlank() }
 
     private suspend fun createMemory(candidate: MemoryCandidate): Boolean {
         personalMemoryDao.insert(candidate.toPersonalMemory(now = now(), status = candidate.safeInitialStatus()))
@@ -980,6 +896,7 @@ class MemoryRepositoryImpl(
         private const val TAG = "MemoryRepository"
         private const val MAX_CANDIDATE_MEMORIES = 24
         private const val MAX_SELECTED_MEMORIES = 8
+        private const val MEMORY_RECALL_TOKEN_BUDGET = 900
         private const val MAX_FIELD_LENGTH = 500
         private const val MAX_DETAILS_LENGTH = 2000
         private const val MAX_LIST_ITEMS = 20
@@ -987,8 +904,9 @@ class MemoryRepositoryImpl(
         private const val MAX_CONTEXT_MESSAGE_LENGTH = 1200
         private const val MAX_CLASSIFIER_FALLBACK_STATEMENT_LENGTH = 220
         private const val MAX_MIGRATED_MARKDOWN_TEXT_LENGTH = 360
-        private const val MARKDOWN_RECALL_RECENT_MESSAGE_COUNT = 4
-        private const val SENSITIVE_RECALL_CONFIDENCE = 0.8f
+        private const val LOCAL_RECALL_RECENT_MESSAGE_COUNT = 6
+        private const val MAX_LOCAL_RECALL_QUERY_LENGTH = 2_000
+        private const val MAX_LOCAL_RECENT_MESSAGE_LENGTH = 600
         private const val CLASSIFIER_FALLBACK_MIN_CONFIDENCE = 0.8f
         private const val RAW_USER_STATEMENT_PREFIX = "The user said:"
 

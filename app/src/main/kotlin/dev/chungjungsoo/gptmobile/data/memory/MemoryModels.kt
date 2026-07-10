@@ -131,6 +131,7 @@ data class PreparedMemoryContext(
     val classification: ConversationClassificationResult? = null,
     val selectedMemories: List<SelectedPersonalMemory> = emptyList(),
     val selectedMarkdownMemories: List<MemoryIndexSearchResult> = emptyList(),
+    val retrievedMemories: List<MemoryRetrievalResult> = emptyList(),
     val prompt: String? = null
 )
 

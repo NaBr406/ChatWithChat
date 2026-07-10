@@ -712,16 +712,14 @@ class ChatViewModel @Inject constructor(
         groupedMessages: GroupedMessages,
         memoryPlatform: PlatformV2?
     ): String? = withContext(Dispatchers.IO) {
-        if (!refreshMemoryEnabled()) return@withContext null
-
-        runCatching {
+        prepareMemoryPromptWhenEnabled(refreshMemoryEnabled()) {
             memoryRepository.prepareMemoryContext(
                 chatRoom = _chatRoom.value,
                 userMessages = groupedMessages.userMessages,
                 assistantMessages = groupedMessages.assistantMessages,
                 memoryPlatform = memoryPlatform
             ).prompt
-        }.getOrNull()
+        }
     }
 
     private fun recordUserActivityIfEnabled(chatId: Int, activityAt: Long) {
@@ -1269,6 +1267,11 @@ class ChatViewModel @Inject constructor(
         fun toolProgressKey(turnIndex: Int, platformIndex: Int): String = "$turnIndex:$platformIndex"
     }
 }
+
+internal suspend fun prepareMemoryPromptWhenEnabled(
+    memoryEnabled: Boolean,
+    prepare: suspend () -> String?
+): String? = if (memoryEnabled) runCatching { prepare() }.getOrNull() else null
 
 internal fun List<ChatViewModel.ToolProgressState>.appendToolProgress(progress: ApiState): List<ChatViewModel.ToolProgressState> {
     val progressState = when (progress) {
