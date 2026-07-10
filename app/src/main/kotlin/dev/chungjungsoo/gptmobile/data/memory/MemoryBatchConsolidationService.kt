@@ -29,45 +29,54 @@ class MemoryBatchConsolidationService(
     }
 ) {
     suspend fun process(job: MemoryMaintenanceJob): MemoryBatchProcessResult {
-        if (job.status == MemoryMaintenanceJobStatus.SUCCEEDED) {
-            return MemoryBatchProcessResult(MemoryBatchProcessResult.STATUS_DUPLICATE, job.jobId)
-        }
-        if (job.status == MemoryMaintenanceJobStatus.FAILED_TERMINAL || job.status == MemoryMaintenanceJobStatus.DISMISSED) {
-            return MemoryBatchProcessResult(
-                status = MemoryBatchProcessResult.STATUS_TERMINAL,
-                jobId = job.jobId,
-                reason = "job_${job.status}"
-            )
-        }
+        terminalResultOrNull(job)?.let { return it }
         val payload = decodeAndValidatePayload(job) ?: return terminal(job, "invalid_batch_payload")
+        val turns = payload.turns.map { turn -> json.decodeFromString<MemoryCompletedTurnSnapshot>(turn.payloadJson) }
+        val existingMemories = retrieveExistingMemories(turns)
+        val request = MemoryBatchConsolidationRequest(
+            batchId = payload.batchId,
+            chatId = payload.chatId,
+            chatTitle = turns.firstNotNullOfOrNull { turn -> turn.chatTitle.takeIf(String::isNotBlank) }.orEmpty(),
+            triggerReason = payload.triggerReason,
+            turns = turns,
+            existingMemories = existingMemories
+        )
+        return execute(job, request) {
+            turnBatchDao.completeClaimedBatch(job.jobId, now())
+        }
+    }
+
+    suspend fun processLegacy(job: MemoryMaintenanceJob): MemoryBatchProcessResult {
+        terminalResultOrNull(job)?.let { return it }
+        val requestWithoutMemories = decodeLegacyRequest(job) ?: return terminal(job, "invalid_legacy_memory_payload")
+        val request = requestWithoutMemories.copy(
+            existingMemories = retrieveExistingMemories(requestWithoutMemories.turns)
+        )
+        return execute(job, request) { true }
+    }
+
+    private suspend fun execute(
+        job: MemoryMaintenanceJob,
+        request: MemoryBatchConsolidationRequest,
+        complete: suspend () -> Boolean
+    ): MemoryBatchProcessResult {
         if (!settingRepository.fetchMemoryEnabled()) {
             turnBatchScheduler.onMemoryEnabledChanged(false)
             return terminal(job, "memory_disabled", dismiss = true)
         }
 
-        val existingMemories = retrieveExistingMemories(payload)
-        val request = MemoryBatchConsolidationRequest(
-            batchId = payload.batchId,
-            chatId = payload.chatId,
-            chatTitle = payload.turns.firstNotNullOfOrNull { turn ->
-                runCatching { json.decodeFromString<MemoryCompletedTurnSnapshot>(turn.payloadJson).chatTitle }.getOrNull()
-            }.orEmpty(),
-            triggerReason = payload.triggerReason,
-            turns = payload.turns.map { turn -> json.decodeFromString(turn.payloadJson) },
-            existingMemories = existingMemories
-        )
         val preferredPlatform = preferredMemoryPlatform()
         val runningJob = maintenanceScheduler.markRunning(job)
         val startedAt = System.currentTimeMillis()
-        logBatch(runningJob, payload, "started", proposalCount = null, elapsedMs = null)
+        logBatch(runningJob, request, "started", proposalCount = null, elapsedMs = null)
 
         val proposal = memoryIntelligence.consolidateMemoryBatch(request, preferredPlatform)
-            ?: return retryable(runningJob, payload, "consolidation_unavailable_or_invalid", startedAt, null)
+            ?: return retryable(runningJob, request, "consolidation_unavailable_or_invalid", startedAt, null)
         val validatedOperations = runCatching { validateOperations(request, proposal.operations) }
             .getOrElse { throwable ->
                 return retryable(
                     runningJob,
-                    payload,
+                    request,
                     "invalid_consolidation_operations:${throwable.message}",
                     startedAt,
                     proposal.operations.size
@@ -76,25 +85,26 @@ class MemoryBatchConsolidationService(
 
         val applyResult = runCatching {
             applyOperations(
-                payload = payload,
-                existingMemories = existingMemories,
+                batchId = request.batchId,
+                chatId = request.chatId,
+                existingMemories = request.existingMemories,
                 operations = validatedOperations
             )
         }.getOrElse { throwable ->
             return retryable(
                 runningJob,
-                payload,
+                request,
                 "memory_write_failed:${throwable.message}",
                 startedAt,
                 proposal.operations.size
             )
         }
 
-        if (!turnBatchDao.completeClaimedBatch(job.jobId, now())) {
+        if (!complete()) {
             applyResult.rollback()
             return retryable(
                 runningJob,
-                payload,
+                request,
                 "claimed_batch_completion_failed",
                 startedAt,
                 proposal.operations.size
@@ -104,7 +114,7 @@ class MemoryBatchConsolidationService(
         turnBatchScheduler.repairAndSchedule()
         logBatch(
             runningJob,
-            payload,
+            request,
             "succeeded",
             proposalCount = proposal.operations.size,
             elapsedMs = System.currentTimeMillis() - startedAt
@@ -116,6 +126,18 @@ class MemoryBatchConsolidationService(
             dailyWriteCount = applyResult.dailyWriteCount,
             longTermWriteCount = applyResult.longTermWriteCount
         )
+    }
+
+    private fun terminalResultOrNull(job: MemoryMaintenanceJob): MemoryBatchProcessResult? = when (job.status) {
+        MemoryMaintenanceJobStatus.SUCCEEDED ->
+            MemoryBatchProcessResult(MemoryBatchProcessResult.STATUS_DUPLICATE, job.jobId)
+        MemoryMaintenanceJobStatus.FAILED_TERMINAL,
+        MemoryMaintenanceJobStatus.DISMISSED -> MemoryBatchProcessResult(
+            status = MemoryBatchProcessResult.STATUS_TERMINAL,
+            jobId = job.jobId,
+            reason = "job_${job.status}"
+        )
+        else -> null
     }
 
     private suspend fun decodeAndValidatePayload(job: MemoryMaintenanceJob): MemoryTurnBatchJobPayload? = runCatching {
@@ -149,11 +171,74 @@ class MemoryBatchConsolidationService(
         null
     }
 
-    private suspend fun retrieveExistingMemories(payload: MemoryTurnBatchJobPayload): List<MemoryBatchExistingMemory> {
-        val query = payload.turns
-            .mapNotNull { turn ->
-                runCatching { json.decodeFromString<MemoryCompletedTurnSnapshot>(turn.payloadJson).userContent }.getOrNull()
+    private fun decodeLegacyRequest(job: MemoryMaintenanceJob): MemoryBatchConsolidationRequest? = runCatching {
+        val decoded = when (job.type) {
+            MemoryMaintenanceJobType.APPEND_DAILY_NOTE -> {
+                val payload = json.decodeFromString<MarkdownMemoryLearningJobPayload>(job.payloadJson)
+                LegacyMemoryJobContent(
+                    chatId = payload.chatId,
+                    chatTitle = payload.chatTitle,
+                    platformUid = LEGACY_PLATFORM_UID,
+                    messages = payload.recentMessages,
+                    createdAt = payload.createdAt,
+                    triggerReason = MemoryTurnBatchTriggerReason.LEGACY_APPEND_DAILY_NOTE
+                )
             }
+            MemoryMaintenanceJobType.COMPACTION_FLUSH -> {
+                val payload = json.decodeFromString<MemoryCompactionFlushJobPayload>(job.payloadJson)
+                LegacyMemoryJobContent(
+                    chatId = payload.chatId,
+                    chatTitle = "Legacy context compaction",
+                    platformUid = payload.platformUid,
+                    messages = payload.messages,
+                    createdAt = payload.createdAt,
+                    triggerReason = MemoryTurnBatchTriggerReason.LEGACY_COMPACTION_FLUSH
+                )
+            }
+            else -> error("unsupported_legacy_memory_job_type:${job.type}")
+        }
+        check(decoded.chatId > 0)
+        val userContent = decoded.messages
+            .filterNot { message -> message.role == "assistant" }
+            .joinToString(separator = "\n") { message -> "${message.role}: ${message.content.trim()}" }
+            .trim()
+            .take(MAX_LEGACY_MESSAGE_CHARS)
+        val assistantContent = decoded.messages
+            .filter { message -> message.role == "assistant" }
+            .joinToString(separator = "\n") { message -> message.content.trim() }
+            .trim()
+            .take(MAX_LEGACY_MESSAGE_CHARS)
+        check(userContent.isNotBlank() || assistantContent.isNotBlank())
+        val turnKey = "legacy:${sha256(job.idempotencyKey).take(24)}"
+        val turn = MemoryCompletedTurnSnapshot(
+            turnKey = turnKey,
+            chatId = decoded.chatId,
+            chatTitle = decoded.chatTitle.trim().take(MAX_LEGACY_TITLE_CHARS),
+            userMessageId = 1,
+            userContent = userContent,
+            userAttachments = emptyList(),
+            assistantPlatformUid = decoded.platformUid.ifBlank { LEGACY_PLATFORM_UID },
+            assistantContent = assistantContent,
+            completedAt = decoded.createdAt
+        )
+        MemoryBatchConsolidationRequest(
+            batchId = "legacy_memory_job:${job.idempotencyKey}",
+            chatId = decoded.chatId,
+            chatTitle = turn.chatTitle,
+            triggerReason = decoded.triggerReason,
+            turns = listOf(turn),
+            existingMemories = emptyList()
+        )
+    }.getOrElse { throwable ->
+        runCatching { Log.w(TAG, "Legacy memory job ${job.jobId} has invalid local payload: ${throwable.message}") }
+        null
+    }
+
+    private suspend fun retrieveExistingMemories(
+        turns: List<MemoryCompletedTurnSnapshot>
+    ): List<MemoryBatchExistingMemory> {
+        val query = turns
+            .flatMap { turn -> listOf(turn.userContent, turn.assistantContent) }
             .joinToString(separator = "\n")
             .take(MAX_RETRIEVAL_QUERY_CHARS)
         if (query.isBlank()) return emptyList()
@@ -255,7 +340,8 @@ class MemoryBatchConsolidationService(
     }
 
     private suspend fun applyOperations(
-        payload: MemoryTurnBatchJobPayload,
+        batchId: String,
+        chatId: Int,
         existingMemories: List<MemoryBatchExistingMemory>,
         operations: List<MemoryBatchOperation>
     ): AppliedMemoryBatch {
@@ -294,9 +380,11 @@ class MemoryBatchConsolidationService(
             val currentEntries = markdownMemoryCodec.parse(currentMarkdown).entries.associateBy { it.id }
             val updatedMarkdown = when (operation.action) {
                 MemoryBatchAction.CREATE -> {
+                    val generatedId = generatedEntryId(batchId, operationIndex, operation.destination)
+                    if (generatedId in currentEntries) return@forEachIndexed
                     val entry = operation.toEntry(
-                        id = generatedEntryId(payload.batchId, operationIndex, operation.destination),
-                        chatId = payload.chatId,
+                        id = generatedId,
+                        chatId = chatId,
                         createdAt = now()
                     )
                     val append = if (operation.destination == MemoryBatchDestination.LONG_TERM) {
@@ -399,7 +487,7 @@ class MemoryBatchConsolidationService(
 
     private suspend fun retryable(
         job: MemoryMaintenanceJob,
-        payload: MemoryTurnBatchJobPayload,
+        request: MemoryBatchConsolidationRequest,
         reason: String,
         startedAt: Long,
         proposalCount: Int?
@@ -410,7 +498,7 @@ class MemoryBatchConsolidationService(
         } else {
             MemoryBatchProcessResult.STATUS_RETRYABLE
         }
-        logBatch(job, payload, status, proposalCount, System.currentTimeMillis() - startedAt)
+        logBatch(job, request, status, proposalCount, System.currentTimeMillis() - startedAt)
         turnBatchScheduler.scheduleNextWake()
         return MemoryBatchProcessResult(status, job.jobId, reason = reason)
     }
@@ -430,7 +518,7 @@ class MemoryBatchConsolidationService(
 
     private fun logBatch(
         job: MemoryMaintenanceJob,
-        payload: MemoryTurnBatchJobPayload,
+        request: MemoryBatchConsolidationRequest,
         status: String,
         proposalCount: Int?,
         elapsedMs: Long?
@@ -438,8 +526,8 @@ class MemoryBatchConsolidationService(
         runCatching {
             Log.i(
                 TAG,
-                "Memory batch id=${payload.batchId}, jobId=${job.jobId}, trigger=${payload.triggerReason}, " +
-                    "turns=${payload.turns.size}, attempt=${job.attempts}, proposals=${proposalCount ?: -1}, " +
+                "Memory batch id=${request.batchId}, jobId=${job.jobId}, trigger=${request.triggerReason}, " +
+                    "turns=${request.turns.size}, attempt=${job.attempts}, proposals=${proposalCount ?: -1}, " +
                     "status=$status, elapsedMs=${elapsedMs ?: -1}"
             )
         }
@@ -466,6 +554,9 @@ class MemoryBatchConsolidationService(
     companion object {
         private const val TAG = "MemoryBatch"
         private const val MAX_RETRIEVAL_QUERY_CHARS = 8_000
+        private const val MAX_LEGACY_MESSAGE_CHARS = 12_000
+        private const val MAX_LEGACY_TITLE_CHARS = 200
+        private const val LEGACY_PLATFORM_UID = "legacy-memory-job"
         private const val MAX_EXISTING_MEMORIES = 24
         private const val MAX_EXISTING_CANDIDATES = 200
         private const val MAX_EXISTING_MEMORY_TOKEN_BUDGET = 2_400
@@ -509,6 +600,15 @@ class MemoryBatchConsolidationService(
         )
     }
 }
+
+private data class LegacyMemoryJobContent(
+    val chatId: Int,
+    val chatTitle: String,
+    val platformUid: String,
+    val messages: List<MemoryConversationMessage>,
+    val createdAt: Long,
+    val triggerReason: String
+)
 
 private data class AppliedMemoryBatch(
     val replacements: List<MemoryFileReplacement>,

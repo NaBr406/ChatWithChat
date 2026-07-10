@@ -6,7 +6,6 @@ import dagger.Provides
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
-import dev.chungjungsoo.gptmobile.data.database.dao.ChatClassificationDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryIndexDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryMaintenanceJobDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryTurnBatchDao
@@ -14,7 +13,6 @@ import dev.chungjungsoo.gptmobile.data.database.dao.PersonalMemoryDao
 import dev.chungjungsoo.gptmobile.data.memory.LlmMemoryIntelligence
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryCodec
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryDebugEditor
-import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryLearningService
 import dev.chungjungsoo.gptmobile.data.memory.MemoryBatchConsolidationService
 import dev.chungjungsoo.gptmobile.data.memory.MemoryChunker
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFilePaths
@@ -172,20 +170,6 @@ object MemoryRepositoryModule {
 
     @Provides
     @Singleton
-    fun provideMarkdownMemoryLearningService(
-        memoryFileStore: MemoryFileStore,
-        markdownMemoryCodec: MarkdownMemoryCodec,
-        memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
-        memoryIndexRepository: MemoryIndexRepository
-    ): MarkdownMemoryLearningService = MarkdownMemoryLearningService(
-        memoryFileStore = memoryFileStore,
-        markdownMemoryCodec = markdownMemoryCodec,
-        maintenanceScheduler = memoryMaintenanceScheduler,
-        memoryIndexRebuilder = memoryIndexRepository
-    )
-
-    @Provides
-    @Singleton
     fun provideMemoryIntelligence(
         settingRepository: SettingRepository,
         openAIAPI: OpenAIAPI,
@@ -197,33 +181,19 @@ object MemoryRepositoryModule {
     @Singleton
     fun provideMemoryRepository(
         personalMemoryDao: PersonalMemoryDao,
-        chatClassificationDao: ChatClassificationDao,
-        memoryIntelligence: MemoryIntelligence,
         memoryPromptBuilder: MemoryPromptBuilder,
-        memoryMarkdownCodec: MemoryMarkdownCodec,
         memoryIndexRepository: MemoryIndexRepository,
-        markdownMemoryLearningService: MarkdownMemoryLearningService,
         memoryFileStore: MemoryFileStore,
         markdownMemoryCodec: MarkdownMemoryCodec,
-        memoryMaintenanceJobDao: MemoryMaintenanceJobDao,
-        memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
-        memoryMaintenanceWorkScheduler: MemoryMaintenanceWorkEnqueuer,
         memoryTurnBatchCoordinator: MemoryTurnBatchCoordinator,
         memoryTurnBatchScheduler: MemoryTurnBatchScheduler
     ): MemoryRepository = MemoryRepositoryImpl(
         personalMemoryDao = personalMemoryDao,
-        chatClassificationDao = chatClassificationDao,
-        memoryIntelligence = memoryIntelligence,
         memoryPromptBuilder = memoryPromptBuilder,
-        memoryMarkdownCodec = memoryMarkdownCodec,
         memoryRetriever = memoryIndexRepository,
-        markdownMemoryLearningService = markdownMemoryLearningService,
         memoryFileStore = memoryFileStore,
-        structuredMarkdownMemoryCodec = markdownMemoryCodec,
+        markdownMemoryCodec = markdownMemoryCodec,
         memoryIndexRebuilder = memoryIndexRepository,
-        memoryMaintenanceJobDao = memoryMaintenanceJobDao,
-        memoryMaintenanceScheduler = memoryMaintenanceScheduler,
-        memoryMaintenanceWorkScheduler = memoryMaintenanceWorkScheduler,
         memoryTurnBatchCoordinator = memoryTurnBatchCoordinator,
         memoryTurnBatchScheduler = memoryTurnBatchScheduler
     )

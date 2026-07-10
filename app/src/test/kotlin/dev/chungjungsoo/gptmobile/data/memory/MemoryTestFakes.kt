@@ -60,23 +60,10 @@ class InMemoryChatClassificationDao : ChatClassificationDao {
 }
 
 class FakeMemoryIntelligence(
-    var batchProposal: MemoryBatchConsolidationProposal? = null,
-    var classification: ConversationClassificationResult? = null,
-    var selection: MemorySelectionResult? = null,
-    var candidates: List<MemoryCandidate> = emptyList(),
-    var updatePlan: MemoryUpdatePlan? = null,
-    var markdownProposal: MarkdownMemoryLearningProposal? = null
+    var batchProposal: MemoryBatchConsolidationProposal? = null
 ) : MemoryIntelligence {
     var lastBatchRequest: MemoryBatchConsolidationRequest? = null
-    var lastSelectionRequest: MemorySelectionRequest? = null
-    var lastExtractionRequest: MemoryExtractionRequest? = null
-    var lastMarkdownLearningRequest: MarkdownMemoryLearningRequest? = null
     var lastPreferredPlatform: PlatformV2? = null
-    var classifyCalls = 0
-    var selectCalls = 0
-    var extractCalls = 0
-    var planCalls = 0
-    var markdownProposalCalls = 0
     var consolidateCalls = 0
 
     override suspend fun consolidateMemoryBatch(
@@ -87,54 +74,6 @@ class FakeMemoryIntelligence(
         lastBatchRequest = request
         lastPreferredPlatform = preferredPlatform
         return batchProposal
-    }
-
-    override suspend fun classifyConversation(
-        request: ConversationClassificationRequest,
-        preferredPlatform: PlatformV2?
-    ): ConversationClassificationResult? {
-        classifyCalls += 1
-        lastPreferredPlatform = preferredPlatform
-        return classification
-    }
-
-    override suspend fun selectMemories(
-        request: MemorySelectionRequest,
-        preferredPlatform: PlatformV2?
-    ): MemorySelectionResult? {
-        selectCalls += 1
-        lastSelectionRequest = request
-        lastPreferredPlatform = preferredPlatform
-        return selection
-    }
-
-    override suspend fun extractMemoryCandidates(
-        request: MemoryExtractionRequest,
-        preferredPlatform: PlatformV2?
-    ): List<MemoryCandidate> {
-        extractCalls += 1
-        lastExtractionRequest = request
-        lastPreferredPlatform = preferredPlatform
-        return candidates
-    }
-
-    override suspend fun planMemoryUpdates(
-        request: MemoryUpdatePlanningRequest,
-        preferredPlatform: PlatformV2?
-    ): MemoryUpdatePlan? {
-        planCalls += 1
-        lastPreferredPlatform = preferredPlatform
-        return updatePlan
-    }
-
-    override suspend fun proposeMarkdownMemoryWrites(
-        request: MarkdownMemoryLearningRequest,
-        preferredPlatform: PlatformV2?
-    ): MarkdownMemoryLearningProposal? {
-        markdownProposalCalls += 1
-        lastMarkdownLearningRequest = request
-        lastPreferredPlatform = preferredPlatform
-        return markdownProposal
     }
 }
 
@@ -161,43 +100,4 @@ fun testMemory(
     status = status,
     createdAt = updatedAt,
     updatedAt = updatedAt
-)
-
-fun testClassification(
-    mode: String = "emotional_support",
-    memoryNeeds: List<String> = listOf("communication_style"),
-    shouldUseMemories: Boolean = true,
-    shouldLearnMemories: Boolean = true,
-    sensitivity: String = MemorySensitivity.NORMAL,
-    confidence: Float = 0.9f
-): ConversationClassificationResult = ConversationClassificationResult(
-    mode = mode,
-    intent = "sharing",
-    memoryNeeds = memoryNeeds,
-    shouldUseMemories = shouldUseMemories,
-    shouldLearnMemories = shouldLearnMemories,
-    sensitivity = sensitivity,
-    confidence = confidence
-)
-
-fun testCandidate(
-    summary: String,
-    recallText: String = summary,
-    type: String = "communication_style",
-    source: String = MemorySource.EXPLICIT_USER_STATEMENT,
-    sensitivity: String = MemorySensitivity.NORMAL,
-    suggestedStatus: String = MemoryStatus.ACTIVE,
-    requiresConfirmation: Boolean = false
-): MemoryCandidate = MemoryCandidate(
-    summary = summary,
-    recallText = recallText,
-    type = type,
-    scope = "personal",
-    importance = 0.8f,
-    confidence = 0.9f,
-    source = source,
-    sensitivity = sensitivity,
-    suggestedStatus = suggestedStatus,
-    requiresConfirmation = requiresConfirmation,
-    reason = "Stable preference"
 )

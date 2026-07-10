@@ -3,8 +3,10 @@ package dev.chungjungsoo.gptmobile.data.memory
 import dev.chungjungsoo.gptmobile.data.database.InMemoryMemoryTurnBatchDao
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatRoomV2
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
+import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMaintenanceJob
 import java.io.File
 import java.nio.file.Files
+import java.security.MessageDigest
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
@@ -36,11 +38,6 @@ class MemoryBatchConsolidationServiceTest {
 
         assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
         assertEquals(1, fixture.intelligence.consolidateCalls)
-        assertEquals(0, fixture.intelligence.classifyCalls)
-        assertEquals(0, fixture.intelligence.selectCalls)
-        assertEquals(0, fixture.intelligence.extractCalls)
-        assertEquals(0, fixture.intelligence.planCalls)
-        assertEquals(0, fixture.intelligence.markdownProposalCalls)
         assertTrue(fixture.fileStore.readDailyMemory().getOrThrow().contains("testing daily batch consolidation"))
         assertTrue(fixture.fileStore.readLongTermMemory().getOrThrow().contains("durable batch-based memory updates"))
         assertTrue(fixture.turnDao.getPendingTurnsForChat(CHAT_ID).isEmpty())
@@ -90,6 +87,46 @@ class MemoryBatchConsolidationServiceTest {
 
         assertEquals(MemoryBatchProcessResult.STATUS_DUPLICATE, replay.status)
         assertEquals(1, fixture.intelligence.consolidateCalls)
+    }
+
+    @Test
+    fun `recovery after markdown commit does not append the deterministic entry twice`() = runBlocking {
+        val memoryText = "The user prefers crash-safe deterministic memory writes."
+        val fixture = fixture(
+            MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.DAILY,
+                        text = memoryText
+                    )
+                )
+            )
+        )
+        val job = fixture.createFiveTurnBatch()
+        val committedEntryId = "day_${sha256("${job.idempotencyKey}|0|${MemoryBatchDestination.DAILY}").take(24)}"
+        fixture.fileStore.appendDailyNote(
+            MarkdownMemoryCodec().renderDailyAppend(
+                listOf(
+                    MarkdownMemoryEntry(
+                        id = committedEntryId,
+                        text = memoryText,
+                        type = "stable_profile",
+                        sensitivity = MemorySensitivity.NORMAL,
+                        source = MemorySource.EXPLICIT_USER_STATEMENT,
+                        chatId = CHAT_ID,
+                        createdAt = 1_000L,
+                        updatedAt = 1_000L
+                    )
+                )
+            )
+        ).getOrThrow()
+
+        val result = fixture.service.process(job)
+        val markdown = fixture.fileStore.readDailyMemory().getOrThrow()
+
+        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(1, markdown.split(memoryText).size - 1)
+        assertEquals(5, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
     }
 
     @Test
@@ -229,6 +266,71 @@ class MemoryBatchConsolidationServiceTest {
         assertEquals(5, fixture.turnDao.getTurnsClaimedByJob(job.jobId).size)
     }
 
+    @Test
+    fun `legacy learning and compaction jobs drain through the batch consolidation contract`() = runBlocking {
+        val fixture = fixture(MemoryBatchConsolidationProposal())
+        val jobs = listOf(
+            legacyJob(
+                type = MemoryMaintenanceJobType.APPEND_DAILY_NOTE,
+                suffix = "append",
+                payloadJson = """
+                    {
+                      "chatId": 1,
+                      "chatTitle": "Legacy chat",
+                      "learningKey": "legacy-learning",
+                      "recentMessages": [
+                        {"role":"user","content":"Remember the durable legacy append."},
+                        {"role":"assistant","content":"Acknowledged."}
+                      ],
+                      "createdAt": 100
+                    }
+                """.trimIndent()
+            ),
+            legacyJob(
+                type = MemoryMaintenanceJobType.COMPACTION_FLUSH,
+                suffix = "compaction",
+                payloadJson = """
+                    {
+                      "chatId": 1,
+                      "platformUid": "platform-1",
+                      "omittedTurnCount": 1,
+                      "messages": [{"role":"user","content":"Remember the durable legacy compaction."}],
+                      "createdAt": 101
+                    }
+                """.trimIndent()
+            )
+        )
+
+        jobs.forEach { job ->
+            fixture.jobDao.insertIgnore(job)
+            val turnKey = "legacy:${sha256(job.idempotencyKey).take(24)}"
+            fixture.intelligence.batchProposal = MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.DAILY,
+                        text = "Recovered ${job.type} through batching.",
+                        evidenceTurnKeys = listOf(turnKey)
+                    )
+                )
+            )
+
+            val result = fixture.service.processLegacy(job)
+
+            assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+            assertEquals(MemoryMaintenanceJobStatus.SUCCEEDED, fixture.jobDao.getById(job.jobId)?.status)
+            assertTrue(fixture.intelligence.lastBatchRequest!!.turns.single().userContent.contains("durable legacy"))
+        }
+
+        val callsAfterDrain = fixture.intelligence.consolidateCalls
+        val replay = fixture.service.processLegacy(fixture.jobDao.getById(jobs.first().jobId)!!)
+        val dailyMarkdown = fixture.fileStore.readDailyMemory().getOrThrow()
+
+        assertEquals(MemoryBatchProcessResult.STATUS_DUPLICATE, replay.status)
+        assertEquals(callsAfterDrain, fixture.intelligence.consolidateCalls)
+        assertEquals(1, dailyMarkdown.split("Recovered append_daily_note through batching.").size - 1)
+        assertEquals(1, dailyMarkdown.split("Recovered compaction_flush through batching.").size - 1)
+    }
+
     private fun fixture(
         proposal: MemoryBatchConsolidationProposal?,
         searchResults: List<MemoryIndexSearchResult> = emptyList(),
@@ -292,7 +394,8 @@ class MemoryBatchConsolidationServiceTest {
         action: String = MemoryBatchAction.CREATE,
         targetMemoryId: String? = null,
         text: String,
-        type: String = "stable_profile"
+        type: String = "stable_profile",
+        evidenceTurnKeys: List<String> = listOf("chat:$CHAT_ID:user:1")
     ): MemoryBatchOperation = MemoryBatchOperation(
         destination = destination,
         action = action,
@@ -301,9 +404,27 @@ class MemoryBatchConsolidationServiceTest {
         type = type,
         sensitivity = MemorySensitivity.NORMAL,
         source = MemorySource.EXPLICIT_USER_STATEMENT,
-        evidenceTurnKeys = listOf("chat:$CHAT_ID:user:1"),
+        evidenceTurnKeys = evidenceTurnKeys,
         reason = "Test operation"
     )
+
+    private fun legacyJob(type: String, suffix: String, payloadJson: String) = MemoryMaintenanceJob(
+        jobId = "legacy-job-$suffix",
+        type = type,
+        status = MemoryMaintenanceJobStatus.PENDING,
+        idempotencyKey = "legacy-key-$suffix",
+        payloadJson = payloadJson,
+        attempts = 0,
+        lastError = null,
+        createdAt = 100L,
+        startedAt = null,
+        updatedAt = 100L,
+        nextRunAt = null
+    )
+
+    private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
+        .digest(value.toByteArray(Charsets.UTF_8))
+        .joinToString(separator = "") { byte -> "%02x".format(byte) }
 
     private fun MemoryIndexSearchResult.toRetrievalResult(): MemoryRetrievalResult = MemoryRetrievalResult(
         chunkId = chunkId,

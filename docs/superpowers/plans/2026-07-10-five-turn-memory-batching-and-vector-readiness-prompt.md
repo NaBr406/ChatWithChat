@@ -560,8 +560,8 @@ Likely files:
 - [x] Apply controlled create/replace/remove/ignore operations atomically.
 - [x] Rebuild affected Markdown index data after successful writes.
 - [x] Treat empty operations as successful processing.
-- [ ] Remove production calls to classify, select, extract, plan, and the second Markdown proposal pass.
-- [ ] Remove automatic legacy fallback behavior.
+- [x] Remove production calls to classify, select, extract, plan, and the second Markdown proposal pass.
+- [x] Remove automatic legacy fallback behavior.
 - [x] Keep logs that identify batch ID, trigger, turn count, attempt, elapsed time, proposal count, and final status without logging sensitive memory text.
 
 Acceptance tests must assert exact call counts:
@@ -616,19 +616,26 @@ Task 5 implementation record (2026-07-10):
 
 ### Task 6: Migrate Away From Legacy Room Semantics
 
-- [ ] Reuse and verify the active-memory-to-Markdown migration.
-- [ ] Stop new writes to `PersonalMemory` and `ChatClassification`.
-- [ ] Stop runtime recall from those tables after migration succeeds.
-- [ ] Keep legacy tables temporarily if required for upgrade safety, but mark them migration-only.
-- [ ] Update the Memory screen only as needed to keep showing `MEMORY.md`; do not turn it into a maintenance console.
-- [ ] Remove stale tests that enforce legacy semantic behavior and replace them with batch/Markdown tests.
+- [x] Reuse and verify the active-memory-to-Markdown migration.
+- [x] Stop new writes to `PersonalMemory` and `ChatClassification`.
+- [x] Stop runtime recall from those tables after migration succeeds.
+- [x] Keep legacy tables temporarily if required for upgrade safety, but mark them migration-only.
+- [x] Update the Memory screen only as needed to keep showing `MEMORY.md`; do not turn it into a maintenance console.
+- [x] Remove stale tests that enforce legacy semantic behavior and replace them with batch/Markdown tests.
 
 Acceptance:
 
-- [ ] Existing users retain active memories after upgrade.
-- [ ] Running migration twice creates no duplicates.
-- [ ] New conversations create no new legacy semantic rows.
-- [ ] Memory export/view continues to work.
+- [x] Existing users retain active memories after upgrade.
+- [x] Running migration twice creates no duplicates.
+- [x] New conversations create no new legacy semantic rows.
+- [x] Memory export/view continues to work.
+
+Task 6 implementation record (2026-07-10):
+
+- App startup and the Memory viewer reuse the idempotent active-Room-to-`MEMORY.md` migration; active rows remain intact for upgrade safety, while runtime recall reads only the local retriever/index.
+- Removed the per-turn repository learner, legacy classifier/extractor/planner/proposal methods and prompts, direct Room mutation APIs, automatic fallback writes, and their stale semantic tests. `PersonalMemory` and `ChatClassification` remain schema-compatible migration-only entities with no production write call sites.
+- Persisted `APPEND_DAILY_NOTE` and `COMPACTION_FLUSH` payloads are translated into immutable legacy turn snapshots and drained through `consolidateMemoryBatch(...)`; deterministic entry IDs make replay safe. The normal Memory screen now exposes only the disabled notice, `MEMORY.md` content, and export dialog.
+- Focused `*Memory*` tests cover migration retention/idempotency, no new legacy personal-memory writes, both legacy job payloads, replay, local recall, and provider routing; debug compilation also passes.
 
 ### Task 7: Establish Vector-Ready Retrieval Boundaries
 

@@ -6,6 +6,7 @@ import android.content.Intent
 import dagger.hilt.android.AndroidEntryPoint
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatRoomV2
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
+import dev.chungjungsoo.gptmobile.data.memory.MemoryCompletedTurnInput
 import dev.chungjungsoo.gptmobile.data.repository.ChatRepository
 import dev.chungjungsoo.gptmobile.data.repository.MemoryRepository
 import javax.inject.Inject
@@ -27,7 +28,7 @@ class MemorySeedReceiver : BroadcastReceiver() {
         val pendingResult = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             runCatching {
-                seedChatAndLearn(intent)
+                seedCompletedTurn(intent)
             }.onFailure { throwable ->
                 android.util.Log.e(TAG, "Failed to seed memory chat", throwable)
             }
@@ -35,7 +36,7 @@ class MemorySeedReceiver : BroadcastReceiver() {
         }
     }
 
-    private suspend fun seedChatAndLearn(intent: Intent) {
+    private suspend fun seedCompletedTurn(intent: Intent) {
         val now = System.currentTimeMillis() / 1000
         val userText = intent.getStringExtra(EXTRA_USER)
             ?: "以后和我聊天别太说教，直接一点，但语气自然一点。"
@@ -64,17 +65,20 @@ class MemorySeedReceiver : BroadcastReceiver() {
             messages = listOf(userMessage, assistantMessage),
             chatPlatformModels = emptyMap()
         )
-        val groupedUserMessages = listOf(userMessage.copy(chatId = savedChatRoom.id))
-        val groupedAssistantMessages = listOf(
-            listOf(assistantMessage.copy(chatId = savedChatRoom.id))
+        val savedMessages = chatRepository.fetchMessagesV2(savedChatRoom.id)
+        val savedUserMessage = checkNotNull(savedMessages.firstOrNull { it.platformType == null })
+        val savedAssistantMessage = checkNotNull(savedMessages.firstOrNull { it.platformType == DEBUG_PLATFORM_UID })
+        memoryRepository.recordCompletedTurn(
+            MemoryCompletedTurnInput(
+                chatRoom = savedChatRoom,
+                userMessage = savedUserMessage,
+                assistantMessages = listOf(savedAssistantMessage),
+                preferredPlatformUid = DEBUG_PLATFORM_UID,
+                stablePlatformOrder = listOf(DEBUG_PLATFORM_UID),
+                completedAt = now + 1
+            )
         )
-
-        memoryRepository.learnFromChat(
-            chatRoom = savedChatRoom,
-            userMessages = groupedUserMessages,
-            assistantMessages = groupedAssistantMessages
-        )
-        android.util.Log.i(TAG, "Seeded debug chat ${savedChatRoom.id} and requested memory learning")
+        android.util.Log.i(TAG, "Seeded debug chat ${savedChatRoom.id} and recorded a completed memory turn")
     }
 
     companion object {

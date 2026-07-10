@@ -57,52 +57,6 @@ class MemoryMaintenanceProcessorTest {
     }
 
     @Test
-    fun `processor retries persisted markdown learning jobs without duplicating notes`() = runBlocking {
-        val fileStore = MemoryFileStore(MemoryFilePaths(Files.createTempDirectory("memory-maintenance-processor-learning").toFile()), FIXED_CLOCK)
-        val jobDao = InMemoryMaintenanceJobDao(
-            listOf(
-                job(
-                    type = MemoryMaintenanceJobType.APPEND_DAILY_NOTE,
-                    payloadJson = """
-                    {
-                      "chatId": 1,
-                      "chatTitle": "Chat",
-                      "learningKey": "retry-key",
-                      "recentMessages": [{"role":"user","content":"Remember the durable markdown retry."}],
-                      "createdAt": 100
-                    }
-                    """.trimIndent()
-                )
-            )
-        )
-        val intelligence = FakeMemoryIntelligence(
-            markdownProposal = MarkdownMemoryLearningProposal(
-                dailyNotes = listOf(
-                    MarkdownMemoryLearningNote(
-                        text = "The app retries persisted Markdown learning jobs.",
-                        type = "project_context",
-                        source = MemorySource.EXPLICIT_USER_STATEMENT
-                    )
-                )
-            )
-        )
-        val processor = createProcessor(
-            jobDao = jobDao,
-            fileStore = fileStore,
-            intelligence = intelligence
-        )
-
-        val result = processor.processRunnableJobs()
-        val secondResult = processor.processRunnableJobs()
-        val dailyMarkdown = fileStore.readDailyMemory().getOrThrow()
-
-        assertEquals(1, result.succeededCount)
-        assertEquals(0, secondResult.processedCount)
-        assertEquals(MemoryMaintenanceJobStatus.SUCCEEDED, jobDao.jobs.single().status)
-        assertEquals(1, dailyMarkdown.split("The app retries persisted Markdown learning jobs.").size - 1)
-    }
-
-    @Test
     fun `processor keeps unattended distillation jobs retryable`() = runBlocking {
         val jobDao = InMemoryMaintenanceJobDao(listOf(job(MemoryMaintenanceJobType.DISTILL_DAILY_NOTES)))
         val processor = createProcessor(jobDao = jobDao)
@@ -111,7 +65,10 @@ class MemoryMaintenanceProcessorTest {
 
         assertEquals(1, result.retryableCount)
         assertEquals(MemoryMaintenanceJobStatus.FAILED_RETRYABLE, jobDao.jobs.single().status)
-        assertEquals("llm_memory_worker_pending", jobDao.jobs.single().lastError)
+        assertEquals(
+            "unsupported_memory_job_type:${MemoryMaintenanceJobType.DISTILL_DAILY_NOTES}",
+            jobDao.jobs.single().lastError
+        )
     }
 
     @Test
@@ -219,21 +176,11 @@ class MemoryMaintenanceProcessorTest {
         jobDao: InMemoryMaintenanceJobDao,
         fileStore: MemoryFileStore = MemoryFileStore(MemoryFilePaths(Files.createTempDirectory("memory-maintenance-processor-default").toFile()), FIXED_CLOCK),
         indexDao: InMemoryProcessorMemoryIndexDao = InMemoryProcessorMemoryIndexDao(),
-        intelligence: FakeMemoryIntelligence = FakeMemoryIntelligence(),
         memoryEnabled: Boolean = true
     ): MemoryMaintenanceProcessor = MemoryMaintenanceProcessor(
         maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK),
         memoryIndexRepository = MemoryIndexRepository(fileStore, indexDao, MemoryChunker(), FIXED_CLOCK),
-        settingRepository = FakeMaintenanceSettingRepository(memoryEnabled = memoryEnabled),
-        personalMemoryDao = InMemoryPersonalMemoryDao(),
-        memoryIntelligence = intelligence,
-        markdownMemoryLearningService = MarkdownMemoryLearningService(
-            memoryFileStore = fileStore,
-            markdownMemoryCodec = MarkdownMemoryCodec(),
-            maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK),
-            memoryIndexRebuilder = MemoryIndexRepository(fileStore, indexDao, MemoryChunker(), FIXED_CLOCK),
-            clock = FIXED_CLOCK
-        )
+        settingRepository = FakeMaintenanceSettingRepository(memoryEnabled = memoryEnabled)
     )
 
     private companion object {

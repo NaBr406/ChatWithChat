@@ -7,32 +7,33 @@ import org.junit.Test
 class MemoryPromptBuilderTest {
 
     @Test
-    fun `prompt includes selected memories and guidance`() {
-        val prompt = MemoryPromptBuilder().build(
+    fun `prompt includes locally retrieved markdown memory and privacy guidance`() {
+        val prompt = MemoryPromptBuilder().buildRetrieved(
             listOf(
-                SelectedPersonalMemory(
-                    memory = testMemory(1, "The user prefers natural Chinese conversation."),
-                    usage = MemoryUsage.TONE_ONLY,
-                    relevance = 0.9f,
-                    reason = "Tone"
-                ),
-                SelectedPersonalMemory(
-                    memory = testMemory(2, "The user has an important exam soon.", type = "important_event"),
-                    usage = MemoryUsage.EXPLICIT_IF_NATURAL,
-                    relevance = 0.8f,
-                    reason = "Relevant"
+                MemoryRetrievalResult(
+                    chunkId = "MEMORY.md#mem_1#0",
+                    entryId = "mem_1",
+                    sourcePath = "MEMORY.md",
+                    text = "The user prefers natural Chinese conversation.",
+                    type = "communication_style",
+                    sensitivity = MemorySensitivity.PRIVATE,
+                    source = MemorySource.USER_CONFIRMED,
+                    contentHash = "hash",
+                    lexicalScore = 1f,
+                    fusedScore = 1f,
+                    updatedAt = 100L
                 )
             )
         )
 
-        assertTrue(prompt!!.contains("Relevant long-term user memories"))
-        assertTrue(prompt.contains("usage: tone_only"))
-        assertTrue(prompt.contains("Do not explicitly mention"))
-        assertTrue(prompt.contains("Only if relevant"))
+        assertTrue(prompt!!.contains("Potentially relevant user memories"))
+        assertTrue(prompt.contains("path: MEMORY.md"))
+        assertTrue(prompt.contains("Handle carefully"))
+        assertTrue(prompt.contains("Do not reveal private or sensitive context"))
     }
 
     @Test
-    fun `prompt returns null when there are no selected memories`() {
-        assertFalse(MemoryPromptBuilder().build(emptyList()).orEmpty().isNotBlank())
+    fun `prompt returns null when local retrieval returns no memories`() {
+        assertFalse(MemoryPromptBuilder().buildRetrieved(emptyList()).orEmpty().isNotBlank())
     }
 }

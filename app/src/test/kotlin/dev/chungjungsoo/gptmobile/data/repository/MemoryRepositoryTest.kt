@@ -1,13 +1,13 @@
 package dev.chungjungsoo.gptmobile.data.repository
 
+import dev.chungjungsoo.gptmobile.data.database.InMemoryMemoryTurnBatchDao
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatRoomV2
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
-import dev.chungjungsoo.gptmobile.data.memory.FakeMemoryIntelligence
-import dev.chungjungsoo.gptmobile.data.memory.InMemoryChatClassificationDao
 import dev.chungjungsoo.gptmobile.data.memory.InMemoryPersonalMemoryDao
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryCodec
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFilePaths
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFileStore
+import dev.chungjungsoo.gptmobile.data.memory.MemoryCompletedTurnInput
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexRebuildResult
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexRebuilder
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMarkdownCodec
@@ -18,6 +18,7 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryRetriever
 import dev.chungjungsoo.gptmobile.data.memory.MemorySensitivity
 import dev.chungjungsoo.gptmobile.data.memory.MemorySource
 import dev.chungjungsoo.gptmobile.data.memory.MemoryStatus
+import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnBatchCoordinator
 import dev.chungjungsoo.gptmobile.data.memory.testMemory
 import java.io.File
 import java.nio.file.Files
@@ -31,11 +32,10 @@ import org.junit.Test
 class MemoryRepositoryTest {
     @Test
     fun `local markdown retrieval builds prompt with zero intelligence calls`() = runBlocking {
-        val intelligence = FakeMemoryIntelligence()
         val retriever = FakeMemoryRetriever(
             results = listOf(retrievalResult(text = "The user prefers implementation before long explanations."))
         )
-        val repository = createRepository(intelligence, retriever)
+        val repository = createRepository(retriever)
 
         val prepared = repository.prepareMemoryContext(
             chatRoom = chatRoom(),
@@ -50,13 +50,11 @@ class MemoryRepositoryTest {
         assertEquals(1, prepared.retrievedMemories.size)
         assertTrue(prepared.prompt!!.contains("implementation before long explanations"))
         assertTrue(prepared.prompt.contains("path: MEMORY.md"))
-        assertNoIntelligenceCalls(intelligence)
     }
 
     @Test
     fun `irrelevant or absent local memory is omitted`() = runBlocking {
-        val intelligence = FakeMemoryIntelligence()
-        val repository = createRepository(intelligence, FakeMemoryRetriever())
+        val repository = createRepository(FakeMemoryRetriever())
 
         val prepared = repository.prepareMemoryContext(
             chatRoom(),
@@ -66,14 +64,11 @@ class MemoryRepositoryTest {
 
         assertTrue(prepared.retrievedMemories.isEmpty())
         assertNull(prepared.prompt)
-        assertNoIntelligenceCalls(intelligence)
     }
 
     @Test
     fun `local search failure degrades to no memory`() = runBlocking {
-        val intelligence = FakeMemoryIntelligence()
         val repository = createRepository(
-            intelligence,
             FakeMemoryRetriever(failure = IllegalStateException("index unavailable"))
         )
 
@@ -85,13 +80,12 @@ class MemoryRepositoryTest {
 
         assertTrue(prepared.retrievedMemories.isEmpty())
         assertNull(prepared.prompt)
-        assertNoIntelligenceCalls(intelligence)
     }
 
     @Test
     fun `bounded recent context is passed to local retriever`() = runBlocking {
         val retriever = FakeMemoryRetriever()
-        val repository = createRepository(FakeMemoryIntelligence(), retriever)
+        val repository = createRepository(retriever)
         val users = listOf(
             MessageV2(chatId = 1, content = "Earlier project context", platformType = null),
             MessageV2(chatId = 1, content = "Latest question", platformType = null)
@@ -111,7 +105,7 @@ class MemoryRepositoryTest {
     @Test
     fun `fake vector retriever substitutes without repository api changes`() = runBlocking {
         val vectorRetriever = FakeVectorMemoryRetriever()
-        val repository = createRepository(FakeMemoryIntelligence(), vectorRetriever)
+        val repository = createRepository(vectorRetriever)
 
         val prepared = repository.prepareMemoryContext(
             chatRoom(),
@@ -136,12 +130,9 @@ class MemoryRepositoryTest {
         val indexRebuilder = RecordingRepositoryMemoryIndexRebuilder()
         val repository = MemoryRepositoryImpl(
             personalMemoryDao = personalMemoryDao,
-            chatClassificationDao = InMemoryChatClassificationDao(),
-            memoryIntelligence = FakeMemoryIntelligence(),
             memoryPromptBuilder = MemoryPromptBuilder(),
-            memoryMarkdownCodec = MemoryMarkdownCodec(),
             memoryFileStore = fileStore,
-            structuredMarkdownMemoryCodec = MarkdownMemoryCodec(),
+            markdownMemoryCodec = MarkdownMemoryCodec(),
             memoryIndexRebuilder = indexRebuilder
         )
 
@@ -185,12 +176,9 @@ class MemoryRepositoryTest {
         ).getOrThrow()
         val repository = MemoryRepositoryImpl(
             personalMemoryDao = personalMemoryDao,
-            chatClassificationDao = InMemoryChatClassificationDao(),
-            memoryIntelligence = FakeMemoryIntelligence(),
             memoryPromptBuilder = MemoryPromptBuilder(),
-            memoryMarkdownCodec = MemoryMarkdownCodec(),
             memoryFileStore = fileStore,
-            structuredMarkdownMemoryCodec = MarkdownMemoryCodec(),
+            markdownMemoryCodec = MarkdownMemoryCodec(),
             memoryIndexRebuilder = RecordingRepositoryMemoryIndexRebuilder()
         )
 
@@ -201,15 +189,49 @@ class MemoryRepositoryTest {
         assertTrue(markdown.contains("personal_2"))
     }
 
-    private fun createRepository(
-        intelligence: FakeMemoryIntelligence,
-        retriever: MemoryRetriever
-    ): MemoryRepositoryImpl = MemoryRepositoryImpl(
+    @Test
+    fun `new completed turns write batch state without changing legacy personal rows`() = runBlocking {
+        val legacyMemory = testMemory(1, "Existing upgrade-only memory")
+        val personalMemoryDao = InMemoryPersonalMemoryDao(listOf(legacyMemory))
+        val turnDao = InMemoryMemoryTurnBatchDao()
+        val repository = MemoryRepositoryImpl(
+            personalMemoryDao = personalMemoryDao,
+            memoryPromptBuilder = MemoryPromptBuilder(),
+            memoryTurnBatchCoordinator = MemoryTurnBatchCoordinator(turnDao)
+        )
+
+        val result = repository.recordCompletedTurn(
+            MemoryCompletedTurnInput(
+                chatRoom = chatRoom(),
+                userMessage = MessageV2(
+                    id = 10,
+                    chatId = 1,
+                    content = "Remember this through the batch path.",
+                    platformType = null,
+                    createdAt = 100L
+                ),
+                assistantMessages = listOf(
+                    MessageV2(
+                        id = 11,
+                        chatId = 1,
+                        content = "Recorded locally.",
+                        platformType = "platform"
+                    )
+                ),
+                preferredPlatformUid = "platform",
+                stablePlatformOrder = listOf("platform"),
+                completedAt = 101L
+            )
+        )
+
+        assertTrue(result.recorded)
+        assertEquals(listOf(legacyMemory), personalMemoryDao.memories)
+        assertEquals(1, turnDao.getPendingTurnsForChat(1).size)
+    }
+
+    private fun createRepository(retriever: MemoryRetriever): MemoryRepositoryImpl = MemoryRepositoryImpl(
         personalMemoryDao = InMemoryPersonalMemoryDao(),
-        chatClassificationDao = InMemoryChatClassificationDao(),
-        memoryIntelligence = intelligence,
         memoryPromptBuilder = MemoryPromptBuilder(),
-        memoryMarkdownCodec = MemoryMarkdownCodec(),
         memoryRetriever = retriever
     )
 
@@ -231,14 +253,6 @@ class MemoryRepositoryTest {
         updatedAt = 20L
     )
 
-    private fun assertNoIntelligenceCalls(intelligence: FakeMemoryIntelligence) {
-        assertEquals(0, intelligence.consolidateCalls)
-        assertEquals(0, intelligence.classifyCalls)
-        assertEquals(0, intelligence.selectCalls)
-        assertEquals(0, intelligence.extractCalls)
-        assertEquals(0, intelligence.planCalls)
-        assertEquals(0, intelligence.markdownProposalCalls)
-    }
 }
 
 private class FakeMemoryRetriever(
