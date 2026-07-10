@@ -15,6 +15,7 @@ import dev.chungjungsoo.gptmobile.data.memory.LlmMemoryIntelligence
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryCodec
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryDebugEditor
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryLearningService
+import dev.chungjungsoo.gptmobile.data.memory.MemoryBatchConsolidationService
 import dev.chungjungsoo.gptmobile.data.memory.MemoryChunker
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFilePaths
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFileStore
@@ -144,6 +145,29 @@ object MemoryRepositoryModule {
         maintenanceScheduler = memoryMaintenanceScheduler,
         workEnqueuer = memoryMaintenanceWorkScheduler,
         settingRepository = settingRepository
+    )
+
+    @Provides
+    @Singleton
+    fun provideMemoryBatchConsolidationService(
+        memoryTurnBatchDao: MemoryTurnBatchDao,
+        memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
+        memoryTurnBatchScheduler: MemoryTurnBatchScheduler,
+        settingRepository: SettingRepository,
+        memoryIntelligence: MemoryIntelligence,
+        memoryFileStore: MemoryFileStore,
+        markdownMemoryCodec: MarkdownMemoryCodec,
+        memoryIndexRepository: MemoryIndexRepository
+    ): MemoryBatchConsolidationService = MemoryBatchConsolidationService(
+        turnBatchDao = memoryTurnBatchDao,
+        maintenanceScheduler = memoryMaintenanceScheduler,
+        turnBatchScheduler = memoryTurnBatchScheduler,
+        settingRepository = settingRepository,
+        memoryIntelligence = memoryIntelligence,
+        memoryFileStore = memoryFileStore,
+        markdownMemoryCodec = markdownMemoryCodec,
+        memoryIndexSearcher = memoryIndexRepository,
+        memoryIndexRebuilder = memoryIndexRepository
     )
 
     @Provides

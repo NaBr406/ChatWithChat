@@ -525,12 +525,12 @@ Use a fake clock and fake WorkManager boundary in unit tests. Do not make tests 
 
 Acceptance tests must cover:
 
-- [ ] One to four turns consolidate once after the idle deadline.
+- [x] One to four turns consolidate once after the idle deadline.
 - [x] A new prompt before the deadline causes zero calls and postpones the job.
 - [x] A worker waking early causes zero calls.
 - [x] Five turns cause immediate eligibility and invalidate the partial idle wait.
 - [x] Threshold and compaction triggers for the same range create one job.
-- [ ] Ten pending turns become two sequential calls, never concurrent calls.
+- [x] Ten pending turns become two sequential calls, never concurrent calls.
 - [x] Three failed attempts become terminal rather than retrying forever.
 - [x] Memory disabled causes zero calls and no retry loop.
 
@@ -540,7 +540,7 @@ Task 3 implementation record (2026-07-10):
 - Threshold, persisted 30-minute idle, and context-compaction triggers now converge on `MemoryTurnBatchScheduler`; delayed work always uses the earliest database deadline across jobs and chats.
 - `MemoryMaintenanceProcessor` uses a process-wide mutex, automatic failures become terminal on attempt three, disabled memory dismisses work instead of retrying, and WorkManager requires network connectivity.
 - Startup/boot repair discovers threshold, due idle, and orphan-claimed work. Existing legacy jobs remain processable, while `ChatRepositoryImpl` no longer creates new `COMPACTION_FLUSH` jobs.
-- Fake-clock scheduler and processor tests pass. The two unchecked acceptance items require the real single-call consolidation handler implemented in Task 4.
+- Fake-clock scheduler, processor, and Task 4 service tests cover both idle consolidation and two sequential five-turn calls.
 
 ### Task 4: Replace The Learning Chain With One Consolidation Call
 
@@ -553,25 +553,32 @@ Likely files:
 - `data/repository/MemoryRepositoryImpl.kt`
 - `di/MemoryRepositoryModule.kt`
 
-- [ ] Add the single batch consolidation request/response contract.
-- [ ] Build a bounded input containing one to five immutable turn snapshots and locally retrieved existing memories.
-- [ ] Implement provider routing using the current memory platform selection.
-- [ ] Parse strict JSON and fail closed.
-- [ ] Apply controlled create/replace/remove/ignore operations atomically.
-- [ ] Rebuild affected Markdown index data after successful writes.
-- [ ] Treat empty operations as successful processing.
+- [x] Add the single batch consolidation request/response contract.
+- [x] Build a bounded input containing one to five immutable turn snapshots and locally retrieved existing memories.
+- [x] Implement provider routing using the current memory platform selection.
+- [x] Parse strict JSON and fail closed.
+- [x] Apply controlled create/replace/remove/ignore operations atomically.
+- [x] Rebuild affected Markdown index data after successful writes.
+- [x] Treat empty operations as successful processing.
 - [ ] Remove production calls to classify, select, extract, plan, and the second Markdown proposal pass.
 - [ ] Remove automatic legacy fallback behavior.
-- [ ] Keep logs that identify batch ID, trigger, turn count, attempt, elapsed time, proposal count, and final status without logging sensitive memory text.
+- [x] Keep logs that identify batch ID, trigger, turn count, attempt, elapsed time, proposal count, and final status without logging sensitive memory text.
 
 Acceptance tests must assert exact call counts:
 
-- [ ] A valid five-turn batch calls `consolidateMemoryBatch` exactly once.
-- [ ] The same successful job replay calls it zero additional times.
-- [ ] Invalid JSON writes nothing and does not advance the checkpoint.
-- [ ] A replace operation updates one existing ID without creating a duplicate.
-- [ ] An empty proposal advances the checkpoint and writes nothing.
-- [ ] No legacy intelligence method is invoked.
+- [x] A valid five-turn batch calls `consolidateMemoryBatch` exactly once.
+- [x] The same successful job replay calls it zero additional times.
+- [x] Invalid JSON writes nothing and does not advance the checkpoint.
+- [x] A replace operation updates one existing ID without creating a duplicate.
+- [x] An empty proposal advances the checkpoint and writes nothing.
+- [x] No legacy intelligence method is invoked.
+
+Task 4 implementation record (2026-07-10):
+
+- Added a strict `MemoryBatchConsolidationRequest`/proposal contract and one provider-routed `consolidateMemoryBatch(...)` call with deep-operation timeout/output caps.
+- `MemoryBatchConsolidationService` verifies immutable job/claim hashes, retrieves a bounded set of existing Markdown entries, validates every controlled operation, and fails closed on unknown JSON fields, invented IDs, invalid evidence, or unsupported metadata.
+- Multi-file Markdown edits use per-file backups; write or index failures restore changed files and leave the checkpoint/claim untouched. Successful empty proposals still clear the claimed batch and advance the checkpoint.
+- Focused tests cover exact call counts, replay, strict JSON failure, create/replace behavior, rollback, empty operations, idle batches, and ten-turn sequential batches. Legacy production call-site removal remains intentionally unchecked until Tasks 5 and 6 remove recall and migration-only paths.
 
 ### Task 5: Make Recall Entirely Local
 

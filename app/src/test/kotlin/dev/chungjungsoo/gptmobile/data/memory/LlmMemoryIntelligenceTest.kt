@@ -390,6 +390,37 @@ class LlmMemoryIntelligenceTest {
         assertEquals(180, openAIAPI.lastResponsesTimeoutSeconds)
     }
 
+    @Test
+    fun `batch consolidation rejects non strict json with one provider call`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatChunks = flowOf(
+                ChatCompletionChunk(
+                    choices = listOf(
+                        Choice(
+                            index = 0,
+                            delta = Delta(content = """{"operations":[],"unexpected":true}""")
+                        )
+                    )
+                )
+            )
+        )
+        val intelligence = LlmMemoryIntelligence(
+            settingRepository = FakeSettingRepository(
+                listOf(platform(compatibleType = ClientType.OPENROUTER, model = "openai/gpt-4o"))
+            ),
+            openAIAPI = openAIAPI,
+            anthropicAPI = RecordingAnthropicAPI(),
+            googleAPI = RecordingGoogleAPI()
+        )
+
+        val result = intelligence.consolidateMemoryBatch(batchRequest(), preferredPlatform = null)
+
+        assertNull(result)
+        assertEquals(1, openAIAPI.streamChatCompletionCalls)
+        assertEquals(1200, openAIAPI.lastChatRequest?.maxTokens)
+        assertEquals(120, openAIAPI.lastChatTimeoutSeconds)
+    }
+
     private fun classificationRequest() = ConversationClassificationRequest(
         chatTitle = "Chat",
         recentMessages = listOf(
@@ -404,6 +435,27 @@ class LlmMemoryIntelligenceTest {
         chatId = 1,
         chatTitle = "Chat",
         recentMessages = classificationRequest().recentMessages
+    )
+
+    private fun batchRequest() = MemoryBatchConsolidationRequest(
+        batchId = "memory_batch:1:first:last:hash",
+        chatId = 1,
+        chatTitle = "Chat",
+        triggerReason = MemoryTurnBatchTriggerReason.THRESHOLD,
+        turns = listOf(
+            MemoryCompletedTurnSnapshot(
+                turnKey = "chat:1:user:1",
+                chatId = 1,
+                chatTitle = "Chat",
+                userMessageId = 1,
+                userContent = "Remember that I prefer concise answers.",
+                userAttachments = emptyList(),
+                assistantPlatformUid = "platform",
+                assistantContent = "Understood.",
+                completedAt = 100L
+            )
+        ),
+        existingMemories = emptyList()
     )
 
     private fun platform(

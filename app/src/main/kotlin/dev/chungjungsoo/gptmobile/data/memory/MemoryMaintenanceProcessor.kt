@@ -14,7 +14,8 @@ class MemoryMaintenanceProcessor @Inject constructor(
     private val personalMemoryDao: PersonalMemoryDao,
     private val memoryIntelligence: MemoryIntelligence,
     private val markdownMemoryLearningService: MarkdownMemoryLearningService,
-    private val memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null
+    private val memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null,
+    private val memoryBatchConsolidationService: MemoryBatchConsolidationService? = null
 ) {
     suspend fun processRunnableJobs(limit: Int = DEFAULT_LIMIT): MemoryMaintenanceProcessResult = PROCESS_MUTEX.withLock {
         memoryTurnBatchScheduler?.promoteDueIdleBatches()
@@ -72,16 +73,34 @@ class MemoryMaintenanceProcessor @Inject constructor(
             )
         }
         if (job.type == MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH) {
-            val runningJob = maintenanceScheduler.markRunning(job)
-            val failedJob = maintenanceScheduler.markFailedRetryable(runningJob, "batch_consolidation_pending")
+            val service = memoryBatchConsolidationService
+            if (service == null) {
+                val runningJob = maintenanceScheduler.markRunning(job)
+                val failedJob = maintenanceScheduler.markFailedRetryable(runningJob, "batch_consolidation_pending")
+                return MarkdownMemoryLearningResult.skipped(
+                    status = if (failedJob.status == MemoryMaintenanceJobStatus.FAILED_TERMINAL) {
+                        MarkdownMemoryLearningResult.STATUS_FAILED_TERMINAL
+                    } else {
+                        MarkdownMemoryLearningResult.STATUS_FAILED_RETRYABLE
+                    },
+                    jobId = job.jobId,
+                    reason = "batch_consolidation_pending"
+                )
+            }
+            val result = service.process(job)
             return MarkdownMemoryLearningResult.skipped(
-                status = if (failedJob.status == MemoryMaintenanceJobStatus.FAILED_TERMINAL) {
-                    MarkdownMemoryLearningResult.STATUS_FAILED_TERMINAL
-                } else {
-                    MarkdownMemoryLearningResult.STATUS_FAILED_RETRYABLE
+                status = when (result.status) {
+                    MemoryBatchProcessResult.STATUS_SUCCEEDED -> if (result.dailyWriteCount + result.longTermWriteCount > 0) {
+                        MarkdownMemoryLearningResult.STATUS_APPLIED
+                    } else {
+                        MarkdownMemoryLearningResult.STATUS_SKIPPED_NO_NOTES
+                    }
+                    MemoryBatchProcessResult.STATUS_DUPLICATE -> MarkdownMemoryLearningResult.STATUS_SKIPPED_DUPLICATE_JOB
+                    MemoryBatchProcessResult.STATUS_TERMINAL -> MarkdownMemoryLearningResult.STATUS_FAILED_TERMINAL
+                    else -> MarkdownMemoryLearningResult.STATUS_FAILED_RETRYABLE
                 },
                 jobId = job.jobId,
-                reason = "batch_consolidation_pending"
+                reason = result.reason
             )
         }
         val platform = settingRepository.fetchPlatformV2s()

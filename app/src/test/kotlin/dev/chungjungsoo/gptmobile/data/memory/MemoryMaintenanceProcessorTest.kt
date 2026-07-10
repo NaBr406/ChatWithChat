@@ -319,7 +319,7 @@ internal class InMemoryMaintenanceJobDao(
     }
 }
 
-private class InMemoryProcessorMemoryIndexDao : MemoryIndexDao {
+internal class InMemoryProcessorMemoryIndexDao : MemoryIndexDao {
     val documents = linkedMapOf<String, MemoryDocument>()
     val chunks = linkedMapOf<String, MemoryChunk>()
 

@@ -55,6 +55,34 @@ class LlmMemoryIntelligence @Inject constructor(
         explicitNulls = false
     }
 
+    private val strictJson = Json {
+        ignoreUnknownKeys = false
+        isLenient = false
+        encodeDefaults = true
+        explicitNulls = false
+    }
+
+    override suspend fun consolidateMemoryBatch(
+        request: MemoryBatchConsolidationRequest,
+        preferredPlatform: PlatformV2?
+    ): MemoryBatchConsolidationProposal? {
+        val response = requestJson(
+            operation = "consolidate_batch",
+            systemPrompt = BATCH_CONSOLIDATION_PROMPT,
+            userJson = strictJson.encodeToString(request),
+            preferredPlatform = preferredPlatform
+        ) ?: return null
+        return try {
+            strictJson.decodeFromString<MemoryBatchConsolidationProposal>(extractJsonObject(response))
+        } catch (e: SerializationException) {
+            runCatching { Log.w(TAG, "Memory consolidate_batch returned invalid JSON", e) }
+            null
+        } catch (e: IllegalArgumentException) {
+            runCatching { Log.w(TAG, "Memory consolidate_batch returned invalid JSON", e) }
+            null
+        }
+    }
+
     override suspend fun classifyConversation(
         request: ConversationClassificationRequest,
         preferredPlatform: PlatformV2?
@@ -431,7 +459,7 @@ class LlmMemoryIntelligence @Inject constructor(
         if (timeout == 0) return 0
         val minimumSeconds = when (operation) {
             "classify", "select" -> MEMORY_FAST_OPERATION_TIMEOUT_SECONDS
-            "extract", "plan", "markdown_write" -> MEMORY_DEEP_OPERATION_TIMEOUT_SECONDS
+            "extract", "plan", "markdown_write", "consolidate_batch" -> MEMORY_DEEP_OPERATION_TIMEOUT_SECONDS
             else -> MEMORY_DEFAULT_OPERATION_TIMEOUT_SECONDS
         }
         return maxOf(timeout, minimumSeconds)
@@ -439,7 +467,7 @@ class LlmMemoryIntelligence @Inject constructor(
 
     private fun memoryMaxOutputTokens(operation: String): Int = when (operation) {
         "classify", "select" -> MEMORY_FAST_OPERATION_MAX_OUTPUT_TOKENS
-        "extract", "plan", "markdown_write" -> MEMORY_DEEP_OPERATION_MAX_OUTPUT_TOKENS
+        "extract", "plan", "markdown_write", "consolidate_batch" -> MEMORY_DEEP_OPERATION_MAX_OUTPUT_TOKENS
         else -> MEMORY_DEFAULT_OPERATION_MAX_OUTPUT_TOKENS
     }
 
@@ -543,6 +571,18 @@ Use targetMemoryId only for ids present in existingMarkdownMemories. Do not inve
 Write semantic, condensed memory notes. Do not transcribe full user messages, and do not prefix notes with "The user said:".
 Daily notes may capture useful newly learned facts from this turn. Long-term updates should be concise and stable enough for MEMORY.md.
 If nothing should be remembered, return empty arrays.
+"""
+
+        private const val BATCH_CONSOLIDATION_PROMPT = """
+Consolidate one immutable batch of completed chat turns into controlled personal-memory operations.
+Return only strict JSON matching this schema:
+{"operations":[{"destination":"daily|long_term","action":"create|replace|remove|ignore","targetMemoryId":"an id from existingMemories or null","text":"complete semantic memory text, or empty for remove/ignore","type":"stable_profile|communication_style|project_context|interest|important_event|important_person|emotional_pattern|boundary|life_context|recurring_theme|light_productivity_preference","sensitivity":"normal|private|sensitive","source":"explicit_user_statement|assistant_inferred|user_confirmed","evidenceTurnKeys":["a turnKey from turns"],"reason":"short reason"}]}
+The user's messages are the source of truth. Assistant content is only context for resolving references and must not become a user fact unless the user confirmed it.
+Remember durable preferences, communication style, important people or events, interests, boundaries, life context, recurring themes, and ongoing personal or project context.
+For progress or corrections, replace the complete matching existing memory by its supplied id instead of creating a neighboring duplicate.
+Use replace or remove only with an id present in existingMemories. Never invent ids, paths, destinations, actions, or evidence keys.
+Do not copy raw transcripts, do not prefix text with "The user said:", and do not duplicate one fact into both daily and long-term destinations.
+Use ignore or an empty operations list when nothing durable should be written.
 """
     }
 }

@@ -60,12 +60,14 @@ class InMemoryChatClassificationDao : ChatClassificationDao {
 }
 
 class FakeMemoryIntelligence(
+    var batchProposal: MemoryBatchConsolidationProposal? = null,
     var classification: ConversationClassificationResult? = null,
     var selection: MemorySelectionResult? = null,
     var candidates: List<MemoryCandidate> = emptyList(),
     var updatePlan: MemoryUpdatePlan? = null,
     var markdownProposal: MarkdownMemoryLearningProposal? = null
 ) : MemoryIntelligence {
+    var lastBatchRequest: MemoryBatchConsolidationRequest? = null
     var lastSelectionRequest: MemorySelectionRequest? = null
     var lastExtractionRequest: MemoryExtractionRequest? = null
     var lastMarkdownLearningRequest: MarkdownMemoryLearningRequest? = null
@@ -75,6 +77,17 @@ class FakeMemoryIntelligence(
     var extractCalls = 0
     var planCalls = 0
     var markdownProposalCalls = 0
+    var consolidateCalls = 0
+
+    override suspend fun consolidateMemoryBatch(
+        request: MemoryBatchConsolidationRequest,
+        preferredPlatform: PlatformV2?
+    ): MemoryBatchConsolidationProposal? {
+        consolidateCalls += 1
+        lastBatchRequest = request
+        lastPreferredPlatform = preferredPlatform
+        return batchProposal
+    }
 
     override suspend fun classifyConversation(
         request: ConversationClassificationRequest,
