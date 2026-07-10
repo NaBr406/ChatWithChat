@@ -413,12 +413,21 @@ Complete these tasks in order. After each task, run the listed focused tests and
 
 ### Task 0: Audit And Baseline Call Counts
 
-- [ ] Re-read `AGENTS.md` and capture `git status --short --branch`.
-- [ ] Trace current foreground recall, post-save learning, Markdown learning, compaction flush, maintenance retry, and memory-toggle paths.
-- [ ] Identify all production call sites of every `MemoryIntelligence` method.
-- [ ] Add or update fakes so tests can assert exact method/network call counts.
-- [ ] Record the current database version and migration registration path.
-- [ ] Run the existing memory test suite before changes.
+- [x] Re-read `AGENTS.md` and capture `git status --short --branch`.
+- [x] Trace current foreground recall, post-save learning, Markdown learning, compaction flush, maintenance retry, and memory-toggle paths.
+- [x] Identify all production call sites of every `MemoryIntelligence` method.
+- [x] Add or update fakes so tests can assert exact method/network call counts.
+- [x] Record the current database version and migration registration path.
+- [x] Run the existing memory test suite before changes.
+
+Audit record (2026-07-10):
+
+- Baseline branch was `main` at `96ff1df`; implementation branch is `feature/five-turn-memory-batching-vector-readiness`.
+- Foreground recall calls `classifyConversation` and may call `selectMemories`; post-save learning calls `classifyConversation`, `extractMemoryCandidates`, and `planMemoryUpdates`, then `MarkdownMemoryLearningService` calls `proposeMarkdownMemoryWrites`.
+- `scheduleCompactionFlushIfNeeded(...)` creates `COMPACTION_FLUSH`; retry work is dispatched by `MemoryMaintenanceProcessor`; the memory toggle is read by `ChatViewModel` before recall/learning but does not yet cancel pending maintenance state.
+- `FakeMemoryIntelligence` already exposes exact per-method counters for all five legacy methods; the batch method added later must follow the same pattern.
+- `ChatDatabaseV2` is version 12 and migrations through `MIGRATION_11_12` are registered in `DatabaseModule.addMigrations(...)`.
+- Baseline `./gradlew.bat :app:testDebugUnitTest --tests "*Memory*"` passed. No emulator was connected at audit time.
 
 Verification:
 
