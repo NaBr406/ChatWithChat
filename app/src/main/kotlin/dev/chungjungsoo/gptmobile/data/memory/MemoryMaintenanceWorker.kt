@@ -20,10 +20,9 @@ class MemoryMaintenanceWorker(
                 applicationContext,
                 MemoryMaintenanceWorkerEntryPoint::class.java
             )
+            entryPoint.memoryTurnBatchScheduler().repairAndSchedule()
             entryPoint.memoryMaintenanceProcessor().processRunnableJobs()
-            entryPoint.memoryMaintenanceScheduler().nextScheduledDelaySeconds()?.let { delaySeconds ->
-                entryPoint.memoryMaintenanceWorkEnqueuer().enqueueRepairWork(delaySeconds)
-            }
+            entryPoint.memoryTurnBatchScheduler().scheduleNextWake()
             ListenableWorker.Result.success()
         }.getOrElse {
             ListenableWorker.Result.retry()
@@ -36,4 +35,5 @@ interface MemoryMaintenanceWorkerEntryPoint {
     fun memoryMaintenanceProcessor(): MemoryMaintenanceProcessor
     fun memoryMaintenanceScheduler(): MemoryMaintenanceScheduler
     fun memoryMaintenanceWorkEnqueuer(): MemoryMaintenanceWorkEnqueuer
+    fun memoryTurnBatchScheduler(): MemoryTurnBatchScheduler
 }

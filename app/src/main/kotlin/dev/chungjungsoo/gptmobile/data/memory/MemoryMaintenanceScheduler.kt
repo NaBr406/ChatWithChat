@@ -15,14 +15,15 @@ class MemoryMaintenanceScheduler(
         type: String,
         idempotencyKey: String,
         payloadJson: String,
-        nextRunAt: Long? = null
+        nextRunAt: Long? = null,
+        jobId: String = UUID.randomUUID().toString()
     ): MemoryMaintenanceJob {
         val existing = jobDao.getByIdempotencyKey(idempotencyKey)
         if (existing != null) return existing
 
         val now = now()
         val job = MemoryMaintenanceJob(
-            jobId = UUID.randomUUID().toString(),
+            jobId = jobId,
             type = type,
             status = MemoryMaintenanceJobStatus.PENDING,
             idempotencyKey = idempotencyKey,
@@ -43,11 +44,17 @@ class MemoryMaintenanceScheduler(
     suspend fun runnableJobs(
         limit: Int = DEFAULT_RUNNABLE_LIMIT,
         now: Long = now()
-    ): List<MemoryMaintenanceJob> = jobDao.getRunnableJobs(
-        statuses = listOf(MemoryMaintenanceJobStatus.PENDING, MemoryMaintenanceJobStatus.FAILED_RETRYABLE),
-        now = now,
-        limit = limit
-    )
+    ): List<MemoryMaintenanceJob> {
+        val candidates = jobDao.getRunnableJobs(
+            statuses = listOf(MemoryMaintenanceJobStatus.PENDING, MemoryMaintenanceJobStatus.FAILED_RETRYABLE),
+            now = now,
+            limit = limit * RUNNABLE_SCAN_MULTIPLIER
+        )
+        candidates.filter { it.attempts >= MAX_AUTOMATIC_ATTEMPTS }.forEach { exhaustedJob ->
+            markFailedTerminal(exhaustedJob, "automatic_attempt_limit_reached")
+        }
+        return candidates.filter { it.attempts < MAX_AUTOMATIC_ATTEMPTS }.take(limit)
+    }
 
     suspend fun nextScheduledRunAt(now: Long = now()): Long? =
         jobDao.getEarliestFutureRunAt(now)
@@ -88,6 +95,9 @@ class MemoryMaintenanceScheduler(
         error: String,
         nextRunAt: Long? = retryAt(job.attempts)
     ): MemoryMaintenanceJob {
+        if (job.attempts >= MAX_AUTOMATIC_ATTEMPTS) {
+            return markFailedTerminal(job, error)
+        }
         val now = now()
         val updated = job.copy(
             status = MemoryMaintenanceJobStatus.FAILED_RETRYABLE,
@@ -132,14 +142,18 @@ class MemoryMaintenanceScheduler(
         olderThanSeconds: Long = STALE_RUNNING_SECONDS
     ): Int {
         val now = now()
-        return jobDao.moveStaleJobs(
-            fromStatus = MemoryMaintenanceJobStatus.RUNNING,
-            status = MemoryMaintenanceJobStatus.FAILED_RETRYABLE,
-            before = now - olderThanSeconds,
-            lastError = "Job was interrupted before completion.",
-            updatedAt = now,
-            nextRunAt = now
+        val staleJobs = jobDao.getStaleJobs(
+            status = MemoryMaintenanceJobStatus.RUNNING,
+            before = now - olderThanSeconds
         )
+        staleJobs.forEach { job ->
+            markFailedRetryable(
+                job = job,
+                error = "Job was interrupted before completion.",
+                nextRunAt = now
+            )
+        }
+        return staleJobs.size
     }
 
     private fun retryAt(attempts: Int): Long {
@@ -173,6 +187,8 @@ class MemoryMaintenanceScheduler(
 
     companion object {
         private const val DEFAULT_RUNNABLE_LIMIT = 20
+        const val MAX_AUTOMATIC_ATTEMPTS = 3
+        private const val RUNNABLE_SCAN_MULTIPLIER = 4
         private const val MAX_ERROR_LENGTH = 500
         private const val STALE_RUNNING_SECONDS = 15 * 60L
     }
@@ -185,6 +201,7 @@ object MemoryMaintenanceJobType {
     const val PROMOTE_LONG_TERM_CANDIDATE = "promote_long_term_candidate"
     const val REPAIR_MARKDOWN_METADATA = "repair_markdown_metadata"
     const val COMPACTION_FLUSH = "compaction_flush"
+    const val CONSOLIDATE_TURN_BATCH = "consolidate_turn_batch"
 }
 
 object MemoryMaintenanceJobStatus {

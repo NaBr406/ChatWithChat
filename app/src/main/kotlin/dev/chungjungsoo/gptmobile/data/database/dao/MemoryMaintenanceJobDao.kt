@@ -19,6 +19,24 @@ interface MemoryMaintenanceJobDao {
     @Query(
         """
         SELECT * FROM memory_maintenance_job
+        WHERE type = :type AND status IN (:statuses)
+        ORDER BY created_at ASC
+        """
+    )
+    suspend fun getByTypeAndStatuses(type: String, statuses: List<String>): List<MemoryMaintenanceJob>
+
+    @Query(
+        """
+        SELECT * FROM memory_maintenance_job
+        WHERE status = :status AND updated_at < :before
+        ORDER BY updated_at ASC
+        """
+    )
+    suspend fun getStaleJobs(status: String, before: Long): List<MemoryMaintenanceJob>
+
+    @Query(
+        """
+        SELECT * FROM memory_maintenance_job
         WHERE status IN ('pending', 'running', 'failed_retryable', 'failed_terminal')
         ORDER BY updated_at DESC
         LIMIT :limit

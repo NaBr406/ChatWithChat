@@ -485,7 +485,7 @@ Likely files:
 Acceptance tests must cover:
 
 - [x] Four completed turns produce zero memory LLM calls.
-- [ ] The fifth completed turn produces one queued batch, not five jobs.
+- [x] The fifth completed turn produces one queued batch, not five jobs.
 - [x] One successful and one failed provider still count as one turn.
 - [x] All providers failing count as zero turns.
 - [x] Retry/revision does not add a turn.
@@ -496,7 +496,7 @@ Task 2 implementation record (2026-07-10):
 - `ChatViewModel` now marks only newly accepted user prompts, reuses the all-provider-idle save boundary, reloads persisted message IDs, and records one canonical completed-turn snapshot asynchronously.
 - Retry and revision paths do not set the new-turn marker. Reprocessing the same user ID updates one unclaimed row; a claimed row remains immutable.
 - `MemoryTurnBatchCoordinator` stores bounded user/assistant text plus safe attachment metadata, prefers the configured memory platform when successful, and emits local pending state without depending on `MemoryIntelligence`.
-- Focused coordinator/DAO/ViewModel tests pass. The unchecked fifth-turn job assertion is completed by Task 3, where the observer is connected to the durable maintenance queue.
+- Focused coordinator/DAO/ViewModel tests pass. Task 3 connects the observer to the durable maintenance queue and verifies the fifth turn creates exactly one job.
 
 ### Task 3: Implement Threshold, Idle, And Compaction Scheduling
 
@@ -509,30 +509,38 @@ Likely files:
 - `MemoryMaintenanceJob.kt` and DAO
 - `ChatRepositoryImpl.kt`
 
-- [ ] Add one unified consolidation job type, for example `CONSOLIDATE_TURN_BATCH`.
-- [ ] Claim at most five oldest pending turns from one chat per job.
-- [ ] Implement the 30-minute persisted idle deadline and recheck-on-wake behavior.
-- [ ] Push the deadline forward on new user activity without making an LLM request.
-- [ ] Route context-compaction urgency into the same job type and idempotency key.
-- [ ] Serialize memory LLM work globally.
-- [ ] Schedule the earliest due job correctly across multiple chats.
-- [ ] Repair due unclaimed turns on app launch and boot.
-- [ ] Bound automatic attempts to three.
-- [ ] Add a network-connected WorkManager constraint.
-- [ ] Handle legacy pending `APPEND_DAILY_NOTE`/`COMPACTION_FLUSH` jobs without stranding or duplicating their data.
+- [x] Add one unified consolidation job type, for example `CONSOLIDATE_TURN_BATCH`.
+- [x] Claim at most five oldest pending turns from one chat per job.
+- [x] Implement the 30-minute persisted idle deadline and recheck-on-wake behavior.
+- [x] Push the deadline forward on new user activity without making an LLM request.
+- [x] Route context-compaction urgency into the same job type and idempotency key.
+- [x] Serialize memory LLM work globally.
+- [x] Schedule the earliest due job correctly across multiple chats.
+- [x] Repair due unclaimed turns on app launch and boot.
+- [x] Bound automatic attempts to three.
+- [x] Add a network-connected WorkManager constraint.
+- [x] Handle legacy pending `APPEND_DAILY_NOTE`/`COMPACTION_FLUSH` jobs without stranding or duplicating their data.
 
 Use a fake clock and fake WorkManager boundary in unit tests. Do not make tests wait 30 real minutes.
 
 Acceptance tests must cover:
 
 - [ ] One to four turns consolidate once after the idle deadline.
-- [ ] A new prompt before the deadline causes zero calls and postpones the job.
-- [ ] A worker waking early causes zero calls.
-- [ ] Five turns cause immediate eligibility and invalidate the partial idle wait.
-- [ ] Threshold and compaction triggers for the same range create one job.
+- [x] A new prompt before the deadline causes zero calls and postpones the job.
+- [x] A worker waking early causes zero calls.
+- [x] Five turns cause immediate eligibility and invalidate the partial idle wait.
+- [x] Threshold and compaction triggers for the same range create one job.
 - [ ] Ten pending turns become two sequential calls, never concurrent calls.
-- [ ] Three failed attempts become terminal rather than retrying forever.
-- [ ] Memory disabled causes zero calls and no retry loop.
+- [x] Three failed attempts become terminal rather than retrying forever.
+- [x] Memory disabled causes zero calls and no retry loop.
+
+Task 3 implementation record (2026-07-10):
+
+- Added `CONSOLIDATE_TURN_BATCH` with stable batch/job IDs, immutable claimed payloads, at most five oldest turns per chat, orphan-claim repair, and one active claimed batch per chat.
+- Threshold, persisted 30-minute idle, and context-compaction triggers now converge on `MemoryTurnBatchScheduler`; delayed work always uses the earliest database deadline across jobs and chats.
+- `MemoryMaintenanceProcessor` uses a process-wide mutex, automatic failures become terminal on attempt three, disabled memory dismisses work instead of retrying, and WorkManager requires network connectivity.
+- Startup/boot repair discovers threshold, due idle, and orphan-claimed work. Existing legacy jobs remain processable, while `ChatRepositoryImpl` no longer creates new `COMPACTION_FLUSH` jobs.
+- Fake-clock scheduler and processor tests pass. The two unchecked acceptance items require the real single-call consolidation handler implemented in Task 4.
 
 ### Task 4: Replace The Learning Chain With One Consolidation Call
 

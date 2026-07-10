@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformModelV2
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
+import dev.chungjungsoo.gptmobile.data.repository.MemoryRepository
 import dev.chungjungsoo.gptmobile.data.repository.SettingRepository
 import dev.chungjungsoo.gptmobile.data.tool.ToolCallingMode
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchMode
@@ -19,7 +20,8 @@ import kotlinx.coroutines.launch
 
 @HiltViewModel
 class SettingViewModelV2 @Inject constructor(
-    private val settingRepository: SettingRepository
+    private val settingRepository: SettingRepository,
+    private val memoryRepository: MemoryRepository
 ) : ViewModel() {
 
     private val _platformState = MutableStateFlow(listOf<PlatformV2>())
@@ -83,6 +85,7 @@ class SettingViewModelV2 @Inject constructor(
         _memoryEnabled.update { enabled }
         viewModelScope.launch {
             settingRepository.updateMemoryEnabled(enabled)
+            memoryRepository.onMemoryEnabledChanged(enabled)
         }
     }
 

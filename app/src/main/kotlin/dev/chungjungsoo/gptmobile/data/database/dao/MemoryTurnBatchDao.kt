@@ -59,6 +59,24 @@ interface MemoryTurnBatchDao {
 
     @Query(
         """
+        SELECT DISTINCT claimed_job_id FROM memory_pending_turn
+        WHERE claimed_job_id IS NOT NULL
+        ORDER BY claimed_job_id ASC
+        """
+    )
+    suspend fun getClaimedJobIds(): List<String>
+
+    @Query(
+        """
+        SELECT DISTINCT chat_id FROM memory_pending_turn
+        WHERE claimed_job_id IS NULL
+        ORDER BY chat_id ASC
+        """
+    )
+    suspend fun getChatIdsWithUnclaimedTurns(): List<Int>
+
+    @Query(
+        """
         SELECT COUNT(*) FROM memory_pending_turn
         WHERE chat_id = :chatId AND claimed_job_id IS NULL
         """
@@ -93,6 +111,20 @@ interface MemoryTurnBatchDao {
 
     @Query("DELETE FROM memory_pending_turn WHERE claimed_job_id = :jobId")
     suspend fun deleteClaimedTurns(jobId: String): Int
+
+    @Query("DELETE FROM memory_pending_turn")
+    suspend fun deleteAllPendingTurns(): Int
+
+    @Query(
+        """
+        UPDATE memory_chat_checkpoint
+        SET last_processed_user_message_id = last_observed_user_message_id,
+            pending_since = NULL,
+            idle_due_at = NULL,
+            updated_at = :updatedAt
+        """
+    )
+    suspend fun advanceAllCheckpointsToObserved(updatedAt: Long): Int
 
     @Query(
         """
@@ -172,5 +204,12 @@ interface MemoryTurnBatchDao {
             )
         )
         return true
+    }
+
+    @Transaction
+    suspend fun clearPendingAndAdvanceBaselines(updatedAt: Long): Int {
+        val deletedCount = deleteAllPendingTurns()
+        advanceAllCheckpointsToObserved(updatedAt)
+        return deletedCount
     }
 }

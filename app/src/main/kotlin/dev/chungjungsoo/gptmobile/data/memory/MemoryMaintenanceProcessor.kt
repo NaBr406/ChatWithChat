@@ -4,6 +4,8 @@ import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMaintenanceJob
 import dev.chungjungsoo.gptmobile.data.database.dao.PersonalMemoryDao
 import dev.chungjungsoo.gptmobile.data.repository.SettingRepository
 import javax.inject.Inject
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class MemoryMaintenanceProcessor @Inject constructor(
     private val maintenanceScheduler: MemoryMaintenanceScheduler,
@@ -11,9 +13,11 @@ class MemoryMaintenanceProcessor @Inject constructor(
     private val settingRepository: SettingRepository,
     private val personalMemoryDao: PersonalMemoryDao,
     private val memoryIntelligence: MemoryIntelligence,
-    private val markdownMemoryLearningService: MarkdownMemoryLearningService
+    private val markdownMemoryLearningService: MarkdownMemoryLearningService,
+    private val memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null
 ) {
-    suspend fun processRunnableJobs(limit: Int = DEFAULT_LIMIT): MemoryMaintenanceProcessResult {
+    suspend fun processRunnableJobs(limit: Int = DEFAULT_LIMIT): MemoryMaintenanceProcessResult = PROCESS_MUTEX.withLock {
+        memoryTurnBatchScheduler?.promoteDueIdleBatches()
         maintenanceScheduler.resetStaleRunningJobs()
         val jobs = maintenanceScheduler.runnableJobs(limit = limit)
         var succeededCount = 0
@@ -49,7 +53,7 @@ class MemoryMaintenanceProcessor @Inject constructor(
             }
         }
 
-        return MemoryMaintenanceProcessResult(
+        MemoryMaintenanceProcessResult(
             processedCount = jobs.size,
             succeededCount = succeededCount,
             retryableCount = retryableCount,
@@ -59,11 +63,25 @@ class MemoryMaintenanceProcessor @Inject constructor(
 
     private suspend fun processLlmJob(job: MemoryMaintenanceJob): MarkdownMemoryLearningResult {
         if (!settingRepository.fetchMemoryEnabled()) {
-            maintenanceScheduler.markFailedRetryable(job, "memory_disabled")
+            maintenanceScheduler.markDismissed(job)
+            memoryTurnBatchScheduler?.onMemoryEnabledChanged(false)
             return MarkdownMemoryLearningResult.skipped(
-                status = MarkdownMemoryLearningResult.STATUS_FAILED_RETRYABLE,
+                status = MarkdownMemoryLearningResult.STATUS_FAILED_TERMINAL,
                 jobId = job.jobId,
                 reason = "memory_disabled"
+            )
+        }
+        if (job.type == MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH) {
+            val runningJob = maintenanceScheduler.markRunning(job)
+            val failedJob = maintenanceScheduler.markFailedRetryable(runningJob, "batch_consolidation_pending")
+            return MarkdownMemoryLearningResult.skipped(
+                status = if (failedJob.status == MemoryMaintenanceJobStatus.FAILED_TERMINAL) {
+                    MarkdownMemoryLearningResult.STATUS_FAILED_TERMINAL
+                } else {
+                    MarkdownMemoryLearningResult.STATUS_FAILED_RETRYABLE
+                },
+                jobId = job.jobId,
+                reason = "batch_consolidation_pending"
             )
         }
         val platform = settingRepository.fetchPlatformV2s()
@@ -114,11 +132,13 @@ class MemoryMaintenanceProcessor @Inject constructor(
         private const val DEFAULT_LIMIT = 10
         private const val MAX_ROOM_MEMORY_CANDIDATES = 24
         private val LLM_JOB_TYPES = setOf(
+            MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH,
             MemoryMaintenanceJobType.APPEND_DAILY_NOTE,
             MemoryMaintenanceJobType.COMPACTION_FLUSH,
             MemoryMaintenanceJobType.DISTILL_DAILY_NOTES,
             MemoryMaintenanceJobType.PROMOTE_LONG_TERM_CANDIDATE
         )
+        private val PROCESS_MUTEX = Mutex()
     }
 }
 

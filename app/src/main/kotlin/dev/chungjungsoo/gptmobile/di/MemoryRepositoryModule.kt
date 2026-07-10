@@ -29,6 +29,7 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceWorkScheduler
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMarkdownCodec
 import dev.chungjungsoo.gptmobile.data.memory.MemoryPromptBuilder
 import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnBatchCoordinator
+import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnBatchScheduler
 import dev.chungjungsoo.gptmobile.data.network.AnthropicAPI
 import dev.chungjungsoo.gptmobile.data.network.GoogleAPI
 import dev.chungjungsoo.gptmobile.data.network.OpenAIAPI
@@ -122,8 +123,28 @@ object MemoryRepositoryModule {
     @Provides
     @Singleton
     fun provideMemoryTurnBatchCoordinator(
-        memoryTurnBatchDao: MemoryTurnBatchDao
-    ): MemoryTurnBatchCoordinator = MemoryTurnBatchCoordinator(memoryTurnBatchDao)
+        memoryTurnBatchDao: MemoryTurnBatchDao,
+        memoryTurnBatchScheduler: MemoryTurnBatchScheduler
+    ): MemoryTurnBatchCoordinator = MemoryTurnBatchCoordinator(
+        turnBatchDao = memoryTurnBatchDao,
+        pendingTurnObserver = memoryTurnBatchScheduler
+    )
+
+    @Provides
+    @Singleton
+    fun provideMemoryTurnBatchScheduler(
+        memoryTurnBatchDao: MemoryTurnBatchDao,
+        memoryMaintenanceJobDao: MemoryMaintenanceJobDao,
+        memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
+        memoryMaintenanceWorkScheduler: MemoryMaintenanceWorkEnqueuer,
+        settingRepository: SettingRepository
+    ): MemoryTurnBatchScheduler = MemoryTurnBatchScheduler(
+        turnBatchDao = memoryTurnBatchDao,
+        maintenanceJobDao = memoryMaintenanceJobDao,
+        maintenanceScheduler = memoryMaintenanceScheduler,
+        workEnqueuer = memoryMaintenanceWorkScheduler,
+        settingRepository = settingRepository
+    )
 
     @Provides
     @Singleton
@@ -163,7 +184,8 @@ object MemoryRepositoryModule {
         memoryMaintenanceJobDao: MemoryMaintenanceJobDao,
         memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
         memoryMaintenanceWorkScheduler: MemoryMaintenanceWorkEnqueuer,
-        memoryTurnBatchCoordinator: MemoryTurnBatchCoordinator
+        memoryTurnBatchCoordinator: MemoryTurnBatchCoordinator,
+        memoryTurnBatchScheduler: MemoryTurnBatchScheduler
     ): MemoryRepository = MemoryRepositoryImpl(
         personalMemoryDao = personalMemoryDao,
         chatClassificationDao = chatClassificationDao,
@@ -178,6 +200,7 @@ object MemoryRepositoryModule {
         memoryMaintenanceJobDao = memoryMaintenanceJobDao,
         memoryMaintenanceScheduler = memoryMaintenanceScheduler,
         memoryMaintenanceWorkScheduler = memoryMaintenanceWorkScheduler,
-        memoryTurnBatchCoordinator = memoryTurnBatchCoordinator
+        memoryTurnBatchCoordinator = memoryTurnBatchCoordinator,
+        memoryTurnBatchScheduler = memoryTurnBatchScheduler
     )
 }

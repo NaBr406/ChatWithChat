@@ -27,6 +27,7 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexSearcher
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIntelligence
 import dev.chungjungsoo.gptmobile.data.memory.MemoryLearningResult
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceJobStatus
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceJobType
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceScheduler
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceWorkEnqueuer
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryLearningService
@@ -38,6 +39,7 @@ import dev.chungjungsoo.gptmobile.data.memory.MemorySensitivity
 import dev.chungjungsoo.gptmobile.data.memory.MemorySource
 import dev.chungjungsoo.gptmobile.data.memory.MemoryStatus
 import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnBatchCoordinator
+import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnBatchScheduler
 import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnRecordingResult
 import dev.chungjungsoo.gptmobile.data.memory.MemoryUpdatePlanningRequest
 import dev.chungjungsoo.gptmobile.data.memory.PreparedMemoryContext
@@ -62,8 +64,13 @@ class MemoryRepositoryImpl(
     private val memoryMaintenanceJobDao: MemoryMaintenanceJobDao? = null,
     private val memoryMaintenanceScheduler: MemoryMaintenanceScheduler? = null,
     private val memoryMaintenanceWorkScheduler: MemoryMaintenanceWorkEnqueuer? = null,
-    private val memoryTurnBatchCoordinator: MemoryTurnBatchCoordinator? = null
+    private val memoryTurnBatchCoordinator: MemoryTurnBatchCoordinator? = null,
+    private val memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null
 ) : MemoryRepository {
+
+    override suspend fun onMemoryEnabledChanged(enabled: Boolean) {
+        memoryTurnBatchScheduler?.onMemoryEnabledChanged(enabled)
+    }
 
     override suspend fun recordUserActivity(chatId: Int, activityAt: Long) {
         memoryTurnBatchCoordinator?.recordUserActivity(chatId, activityAt)
@@ -478,6 +485,7 @@ class MemoryRepositoryImpl(
         dao.update(
             job.copy(
                 status = MemoryMaintenanceJobStatus.PENDING,
+                attempts = 0,
                 lastError = null,
                 updatedAt = now(),
                 nextRunAt = now()
@@ -489,6 +497,9 @@ class MemoryRepositoryImpl(
     override suspend fun dismissMaintenanceJob(jobId: String) {
         val dao = memoryMaintenanceJobDao ?: return
         val job = dao.getById(jobId) ?: return
+        if (job.type == MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH) {
+            memoryTurnBatchScheduler?.dismissBatch(job)?.let { return }
+        }
         memoryMaintenanceScheduler?.markDismissed(job)?.let { return }
         dao.update(
             job.copy(

@@ -115,6 +115,39 @@ class MemoryMaintenanceProcessorTest {
     }
 
     @Test
+    fun `batch consolidation becomes terminal after three automatic attempts`() = runBlocking {
+        val jobDao = InMemoryMaintenanceJobDao(listOf(job(MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH)))
+        val processor = createProcessor(jobDao = jobDao)
+
+        repeat(3) {
+            processor.processRunnableJobs()
+            val currentJob = jobDao.jobs.single()
+            if (currentJob.status == MemoryMaintenanceJobStatus.FAILED_RETRYABLE) {
+                jobDao.update(currentJob.copy(nextRunAt = 1_000L))
+            }
+        }
+
+        val terminalJob = jobDao.jobs.single()
+        assertEquals(3, terminalJob.attempts)
+        assertEquals(MemoryMaintenanceJobStatus.FAILED_TERMINAL, terminalJob.status)
+        assertEquals("batch_consolidation_pending", terminalJob.lastError)
+        assertEquals(0, processor.processRunnableJobs().processedCount)
+    }
+
+    @Test
+    fun `memory disabled dismisses batch without retrying`() = runBlocking {
+        val jobDao = InMemoryMaintenanceJobDao(listOf(job(MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH)))
+        val processor = createProcessor(jobDao = jobDao, memoryEnabled = false)
+
+        val result = processor.processRunnableJobs()
+
+        assertEquals(1, result.terminalCount)
+        assertEquals(MemoryMaintenanceJobStatus.DISMISSED, jobDao.jobs.single().status)
+        assertEquals(0, jobDao.jobs.single().attempts)
+        assertEquals(0, processor.processRunnableJobs().processedCount)
+    }
+
+    @Test
     fun `repairer resets stale running jobs and enqueues work`() = runBlocking {
         val jobDao = InMemoryMaintenanceJobDao(
             listOf(
@@ -186,11 +219,12 @@ class MemoryMaintenanceProcessorTest {
         jobDao: InMemoryMaintenanceJobDao,
         fileStore: MemoryFileStore = MemoryFileStore(MemoryFilePaths(Files.createTempDirectory("memory-maintenance-processor-default").toFile()), FIXED_CLOCK),
         indexDao: InMemoryProcessorMemoryIndexDao = InMemoryProcessorMemoryIndexDao(),
-        intelligence: FakeMemoryIntelligence = FakeMemoryIntelligence()
+        intelligence: FakeMemoryIntelligence = FakeMemoryIntelligence(),
+        memoryEnabled: Boolean = true
     ): MemoryMaintenanceProcessor = MemoryMaintenanceProcessor(
         maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK),
         memoryIndexRepository = MemoryIndexRepository(fileStore, indexDao, MemoryChunker(), FIXED_CLOCK),
-        settingRepository = FakeMaintenanceSettingRepository(memoryEnabled = true),
+        settingRepository = FakeMaintenanceSettingRepository(memoryEnabled = memoryEnabled),
         personalMemoryDao = InMemoryPersonalMemoryDao(),
         memoryIntelligence = intelligence,
         markdownMemoryLearningService = MarkdownMemoryLearningService(
@@ -207,7 +241,7 @@ class MemoryMaintenanceProcessorTest {
     }
 }
 
-private class RecordingWorkEnqueuer : MemoryMaintenanceWorkEnqueuer {
+internal class RecordingWorkEnqueuer : MemoryMaintenanceWorkEnqueuer {
     var enqueueCalls = 0
     val delays = mutableListOf<Long>()
 
@@ -217,7 +251,7 @@ private class RecordingWorkEnqueuer : MemoryMaintenanceWorkEnqueuer {
     }
 }
 
-private class InMemoryMaintenanceJobDao(
+internal class InMemoryMaintenanceJobDao(
     initialJobs: List<MemoryMaintenanceJob> = emptyList()
 ) : MemoryMaintenanceJobDao {
     val jobs = initialJobs.toMutableList()
@@ -227,6 +261,12 @@ private class InMemoryMaintenanceJobDao(
 
     override suspend fun getByIdempotencyKey(idempotencyKey: String): MemoryMaintenanceJob? =
         jobs.firstOrNull { it.idempotencyKey == idempotencyKey }
+
+    override suspend fun getByTypeAndStatuses(type: String, statuses: List<String>): List<MemoryMaintenanceJob> =
+        jobs.filter { it.type == type && it.status in statuses }.sortedBy { it.createdAt }
+
+    override suspend fun getStaleJobs(status: String, before: Long): List<MemoryMaintenanceJob> =
+        jobs.filter { it.status == status && it.updatedAt < before }.sortedBy { it.updatedAt }
 
     override suspend fun getVisibleJobs(limit: Int): List<MemoryMaintenanceJob> =
         jobs.sortedByDescending { it.updatedAt }.take(limit)
@@ -310,8 +350,8 @@ private class InMemoryProcessorMemoryIndexDao : MemoryIndexDao {
     }
 }
 
-private class FakeMaintenanceSettingRepository(
-    private val memoryEnabled: Boolean
+internal class FakeMaintenanceSettingRepository(
+    var memoryEnabled: Boolean
 ) : SettingRepository {
     override suspend fun fetchMemoryEnabled(): Boolean = memoryEnabled
     override suspend fun fetchPlatforms(): List<Platform> = emptyList()

@@ -11,6 +11,8 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnRecordingResult
 import dev.chungjungsoo.gptmobile.data.memory.PreparedMemoryContext
 
 interface MemoryRepository {
+    suspend fun onMemoryEnabledChanged(enabled: Boolean)
+
     suspend fun recordUserActivity(chatId: Int, activityAt: Long)
 
     suspend fun recordCompletedTurn(input: MemoryCompletedTurnInput): MemoryTurnRecordingResult

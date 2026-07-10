@@ -54,6 +54,31 @@ data class MemoryPendingTurnState(
     val thresholdEligible: Boolean
 )
 
+@Serializable
+data class MemoryTurnBatchJobPayload(
+    val batchId: String,
+    val chatId: Int,
+    val triggerReason: String,
+    val turns: List<MemoryTurnBatchJobTurn>,
+    val contentHash: String,
+    val createdAt: Long
+)
+
+@Serializable
+data class MemoryTurnBatchJobTurn(
+    val turnKey: String,
+    val userMessageId: Int,
+    val payloadJson: String,
+    val contentHash: String
+)
+
+object MemoryTurnBatchTriggerReason {
+    const val THRESHOLD = "threshold"
+    const val IDLE = "idle"
+    const val CONTEXT_COMPACTION = "context_compaction"
+    const val MANUAL_RETRY = "manual_retry"
+}
+
 fun interface MemoryPendingTurnObserver {
     suspend fun onPendingTurnStateChanged(state: MemoryPendingTurnState)
 }

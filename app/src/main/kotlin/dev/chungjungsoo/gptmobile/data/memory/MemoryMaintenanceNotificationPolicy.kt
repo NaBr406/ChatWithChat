@@ -43,7 +43,8 @@ class MemoryMaintenanceNotificationPolicy {
             MemoryMaintenanceJobType.DISTILL_DAILY_NOTES,
             MemoryMaintenanceJobType.PROMOTE_LONG_TERM_CANDIDATE,
             MemoryMaintenanceJobType.REPAIR_MARKDOWN_METADATA,
-            MemoryMaintenanceJobType.COMPACTION_FLUSH
+            MemoryMaintenanceJobType.COMPACTION_FLUSH,
+            MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH
         )
     }
 }

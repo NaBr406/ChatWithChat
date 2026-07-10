@@ -129,6 +129,14 @@ internal class InMemoryMemoryTurnBatchDao : MemoryTurnBatchDao {
     override suspend fun getTurnsClaimedByJob(jobId: String): List<MemoryPendingTurn> = sortedTurns()
         .filter { it.claimedJobId == jobId }
 
+    override suspend fun getClaimedJobIds(): List<String> = turns.values.mapNotNull { it.claimedJobId }.distinct().sorted()
+
+    override suspend fun getChatIdsWithUnclaimedTurns(): List<Int> = turns.values
+        .filter { it.claimedJobId == null }
+        .map { it.chatId }
+        .distinct()
+        .sorted()
+
     override suspend fun countUnclaimedTurns(chatId: Int): Int = turns.values.count {
         it.chatId == chatId && it.claimedJobId == null
     }
@@ -166,6 +174,24 @@ internal class InMemoryMemoryTurnBatchDao : MemoryTurnBatchDao {
         val keys = turns.filterValues { it.claimedJobId == jobId }.keys
         keys.forEach(turns::remove)
         return keys.size
+    }
+
+    override suspend fun deleteAllPendingTurns(): Int {
+        val count = turns.size
+        turns.clear()
+        return count
+    }
+
+    override suspend fun advanceAllCheckpointsToObserved(updatedAt: Long): Int {
+        checkpoints.replaceAll { _, checkpoint ->
+            checkpoint.copy(
+                lastProcessedUserMessageId = checkpoint.lastObservedUserMessageId,
+                pendingSince = null,
+                idleDueAt = null,
+                updatedAt = updatedAt
+            )
+        }
+        return checkpoints.size
     }
 
     override suspend fun getDueIdleCheckpoints(now: Long, limit: Int): List<MemoryChatCheckpoint> = checkpoints.values
