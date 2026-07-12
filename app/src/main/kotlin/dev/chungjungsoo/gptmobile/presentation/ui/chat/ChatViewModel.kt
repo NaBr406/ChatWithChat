@@ -99,7 +99,10 @@ class ChatViewModel @Inject constructor(
         val reasoningMode: ReasoningMode
     )
 
-    private val chatRoomId: Int = checkNotNull(savedStateHandle["chatRoomId"])
+    private val routeChatRoomId: Int = checkNotNull(savedStateHandle["chatRoomId"])
+    private val launchState = ChatLaunchState(savedStateHandle, routeChatRoomId)
+    private val chatRoomId: Int
+        get() = launchState.chatRoomId
     private val enabledPlatformString: String = checkNotNull(savedStateHandle["enabledPlatforms"])
     private val initialQuestion: String = Uri.decode(savedStateHandle.get<String>("initialQuestion").orEmpty())
     private val initialModel: String = Uri.decode(savedStateHandle.get<String>("initialModel").orEmpty())
@@ -184,8 +187,6 @@ class ChatViewModel @Inject constructor(
     val isLoaded = _isLoaded.asStateFlow()
 
     private var pendingQuestionText: String? = null
-    private var initialQuestionConsumed = false
-    private var initialAttachmentsConsumed = false
     private var pendingMemoryTurnActivityAt: Long? = null
 
     init {
@@ -1046,7 +1047,7 @@ class ChatViewModel @Inject constructor(
     }
 
     private fun maybeSendInitialQuestion() {
-        if (initialQuestionConsumed) return
+        if (launchState.initialQuestionConsumed) return
         if (chatRoomId != 0) return
         if (initialQuestion.isBlank() && initialAttachmentPaths.isEmpty()) return
         if (_chatRoom.value.id == -1) return
@@ -1054,9 +1055,9 @@ class ChatViewModel @Inject constructor(
         val enabledPlatformUids = _enabledPlatformsInApp.value.map { it.uid }.toSet()
         if ((enabledPlatformsInChat.toSet() - enabledPlatformUids).isNotEmpty()) return
 
-        initialQuestionConsumed = true
-        if (!initialAttachmentsConsumed) {
-            initialAttachmentsConsumed = true
+        launchState.initialQuestionConsumed = true
+        if (!launchState.initialAttachmentsConsumed) {
+            launchState.initialAttachmentsConsumed = true
             initialAttachmentPaths.forEach(::addSelectedFile)
         }
         if (initialQuestion.isNotBlank()) {
@@ -1181,6 +1182,7 @@ class ChatViewModel @Inject constructor(
                         )
                         saved to fetchGroupedMessages(saved.id)
                     }
+                    launchState.recordPersistedChatRoomId(savedChatRoom.id)
                     _chatRoom.update { currentChatRoom ->
                         if (currentChatRoom.id == chatRoom.id && chatRoom.id == 0) {
                             savedChatRoom
