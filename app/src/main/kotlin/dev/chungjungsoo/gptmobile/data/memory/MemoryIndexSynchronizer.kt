@@ -33,8 +33,8 @@ class MemoryIndexSynchronizer(
     private val embeddingCapability: MemoryEmbeddingCapability,
     private val clock: Clock = Clock.systemUTC(),
     private val json: Json = Json
-) {
-    suspend fun synchronize(job: MemoryMaintenanceJob): MemoryIndexSyncResult {
+) : MemoryIndexSyncService {
+    override suspend fun synchronize(job: MemoryMaintenanceJob): MemoryIndexSyncResult {
         val payload = decodePayload(job) ?: return MemoryIndexSyncResult.Terminal("invalid_vector_index_payload")
         return try {
             synchronize(payload)
@@ -368,6 +368,10 @@ class MemoryIndexSynchronizer(
         val SHA_256_REGEX = Regex("[0-9a-f]{64}")
         val CHAT_RECALL_CORPUS_KEY = MemoryCorpus.CHAT_RECALL_LONG_TERM.name.lowercase()
     }
+}
+
+fun interface MemoryIndexSyncService {
+    suspend fun synchronize(job: MemoryMaintenanceJob): MemoryIndexSyncResult
 }
 
 sealed interface MemoryIndexSyncResult {

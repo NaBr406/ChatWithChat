@@ -17,7 +17,8 @@ class MemoryMaintenanceProcessor @Inject constructor(
     private val leaseWatchdog: MemoryMaintenanceLeaseWatchdog,
     private val memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null,
     private val memoryBatchConsolidationService: MemoryBatchConsolidationService? = null,
-    private val memoryMutationRecoveryService: MemoryMutationRecoveryService? = null
+    private val memoryMutationRecoveryService: MemoryMutationRecoveryService? = null,
+    private val memoryIndexSyncService: MemoryIndexSyncService? = null
 ) {
     suspend fun processRunnableJobs(
         family: String,
@@ -108,12 +109,37 @@ class MemoryMaintenanceProcessor @Inject constructor(
 
     private suspend fun processIndexJob(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome = when (job.type) {
         MemoryMaintenanceJobType.REBUILD_MEMORY_INDEX -> rebuildLegacyRoomIndex(job)
-        MemoryMaintenanceJobType.SYNC_VECTOR_INDEX,
+        MemoryMaintenanceJobType.SYNC_VECTOR_INDEX -> synchronizeVectorIndex(job)
         MemoryMaintenanceJobType.REBUILD_VECTOR_INDEX -> {
-            maintenanceScheduler.markBlockedDependency(job, "vector_index_synchronizer_not_available")
+            maintenanceScheduler.markBlockedDependency(job, "vector_index_rebuild_payload_not_available")
             MemoryMaintenanceOutcome.BLOCKED
         }
         else -> dismissUnknownJob(job)
+    }
+
+    private suspend fun synchronizeVectorIndex(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome {
+        val syncService = memoryIndexSyncService ?: run {
+            maintenanceScheduler.markBlockedDependency(job, "vector_index_synchronizer_not_available")
+            return MemoryMaintenanceOutcome.BLOCKED
+        }
+        return when (val result = syncService.synchronize(job)) {
+            MemoryIndexSyncResult.Succeeded,
+            MemoryIndexSyncResult.Superseded -> {
+                maintenanceScheduler.markSucceeded(job)
+                MemoryMaintenanceOutcome.SUCCEEDED
+            }
+            is MemoryIndexSyncResult.Retryable -> {
+                maintenanceScheduler.markFailedRetryable(job, result.reason).toFailureOutcome()
+            }
+            is MemoryIndexSyncResult.BlockedDependency -> {
+                maintenanceScheduler.markBlockedDependency(job, result.reason)
+                MemoryMaintenanceOutcome.BLOCKED
+            }
+            is MemoryIndexSyncResult.Terminal -> {
+                maintenanceScheduler.markFailedTerminal(job, result.reason)
+                MemoryMaintenanceOutcome.TERMINAL
+            }
+        }
     }
 
     private suspend fun processRepairJob(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome = when (job.type) {

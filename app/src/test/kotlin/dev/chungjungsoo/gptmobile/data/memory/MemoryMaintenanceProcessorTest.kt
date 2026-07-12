@@ -59,6 +59,91 @@ class MemoryMaintenanceProcessorTest {
     }
 
     @Test
+    fun `vector index sync success marks job succeeded`() = runBlocking {
+        val jobDao = InMemoryMaintenanceJobDao(listOf(job(MemoryMaintenanceJobType.SYNC_VECTOR_INDEX)))
+        val processor = createProcessor(
+            jobDao = jobDao,
+            memoryIndexSyncService = syncServiceReturning(MemoryIndexSyncResult.Succeeded)
+        )
+
+        val result = processor.processRunnableJobs(MemoryMaintenanceJobFamily.INDEX)
+
+        assertEquals(1, result.succeededCount)
+        assertEquals(MemoryMaintenanceJobStatus.SUCCEEDED, jobDao.jobs.single().status)
+    }
+
+    @Test
+    fun `superseded vector index sync marks job succeeded`() = runBlocking {
+        val jobDao = InMemoryMaintenanceJobDao(listOf(job(MemoryMaintenanceJobType.SYNC_VECTOR_INDEX)))
+        val processor = createProcessor(
+            jobDao = jobDao,
+            memoryIndexSyncService = syncServiceReturning(MemoryIndexSyncResult.Superseded)
+        )
+
+        val result = processor.processRunnableJobs(MemoryMaintenanceJobFamily.INDEX)
+
+        assertEquals(1, result.succeededCount)
+        assertEquals(MemoryMaintenanceJobStatus.SUCCEEDED, jobDao.jobs.single().status)
+    }
+
+    @Test
+    fun `retryable vector index sync marks job retryable`() = runBlocking {
+        val jobDao = InMemoryMaintenanceJobDao(listOf(job(MemoryMaintenanceJobType.SYNC_VECTOR_INDEX)))
+        val processor = createProcessor(
+            jobDao = jobDao,
+            memoryIndexSyncService = syncServiceReturning(MemoryIndexSyncResult.Retryable("embedding_provider_loading"))
+        )
+
+        val result = processor.processRunnableJobs(MemoryMaintenanceJobFamily.INDEX)
+
+        assertEquals(1, result.retryableCount)
+        assertEquals(MemoryMaintenanceJobStatus.FAILED_RETRYABLE, jobDao.jobs.single().status)
+        assertEquals("embedding_provider_loading", jobDao.jobs.single().lastError)
+    }
+
+    @Test
+    fun `blocked vector index sync marks dependency blocked`() = runBlocking {
+        val jobDao = InMemoryMaintenanceJobDao(listOf(job(MemoryMaintenanceJobType.SYNC_VECTOR_INDEX)))
+        val processor = createProcessor(
+            jobDao = jobDao,
+            memoryIndexSyncService = syncServiceReturning(MemoryIndexSyncResult.BlockedDependency("artifact_missing"))
+        )
+
+        val result = processor.processRunnableJobs(MemoryMaintenanceJobFamily.INDEX)
+
+        assertEquals(1, result.blockedCount)
+        assertEquals(MemoryMaintenanceJobStatus.BLOCKED_DEPENDENCY, jobDao.jobs.single().status)
+        assertEquals("artifact_missing", jobDao.jobs.single().blockedReason)
+    }
+
+    @Test
+    fun `terminal vector index sync marks job terminal`() = runBlocking {
+        val jobDao = InMemoryMaintenanceJobDao(listOf(job(MemoryMaintenanceJobType.SYNC_VECTOR_INDEX)))
+        val processor = createProcessor(
+            jobDao = jobDao,
+            memoryIndexSyncService = syncServiceReturning(MemoryIndexSyncResult.Terminal("vector_manifest_conflict"))
+        )
+
+        val result = processor.processRunnableJobs(MemoryMaintenanceJobFamily.INDEX)
+
+        assertEquals(1, result.terminalCount)
+        assertEquals(MemoryMaintenanceJobStatus.FAILED_TERMINAL, jobDao.jobs.single().status)
+        assertEquals("vector_manifest_conflict", jobDao.jobs.single().lastError)
+    }
+
+    @Test
+    fun `missing vector index sync service blocks job explicitly`() = runBlocking {
+        val jobDao = InMemoryMaintenanceJobDao(listOf(job(MemoryMaintenanceJobType.SYNC_VECTOR_INDEX)))
+        val processor = createProcessor(jobDao = jobDao)
+
+        val result = processor.processRunnableJobs(MemoryMaintenanceJobFamily.INDEX)
+
+        assertEquals(1, result.blockedCount)
+        assertEquals(MemoryMaintenanceJobStatus.BLOCKED_DEPENDENCY, jobDao.jobs.single().status)
+        assertEquals("vector_index_synchronizer_not_available", jobDao.jobs.single().blockedReason)
+    }
+
+    @Test
     fun `processor blocks distillation until its implementation is available`() = runBlocking {
         val jobDao = InMemoryMaintenanceJobDao(listOf(job(MemoryMaintenanceJobType.DISTILL_DAILY_NOTES)))
         val processor = createProcessor(jobDao = jobDao)
@@ -258,14 +343,19 @@ class MemoryMaintenanceProcessorTest {
         indexDao: InMemoryProcessorMemoryIndexDao = InMemoryProcessorMemoryIndexDao(),
         memoryEnabled: Boolean = true,
         leaseWatchdog: MemoryMaintenanceLeaseWatchdog = NoOpLeaseWatchdog,
-        memoryMutationRecoveryService: MemoryMutationRecoveryService? = null
+        memoryMutationRecoveryService: MemoryMutationRecoveryService? = null,
+        memoryIndexSyncService: MemoryIndexSyncService? = null
     ): MemoryMaintenanceProcessor = MemoryMaintenanceProcessor(
         maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK),
         memoryIndexRepository = MemoryIndexRepository(fileStore, indexDao, MemoryChunker(), FIXED_CLOCK),
         settingRepository = FakeMaintenanceSettingRepository(memoryEnabled = memoryEnabled),
         leaseWatchdog = leaseWatchdog,
-        memoryMutationRecoveryService = memoryMutationRecoveryService
+        memoryMutationRecoveryService = memoryMutationRecoveryService,
+        memoryIndexSyncService = memoryIndexSyncService
     )
+
+    private fun syncServiceReturning(result: MemoryIndexSyncResult): MemoryIndexSyncService =
+        MemoryIndexSyncService { result }
 
     private companion object {
         val FIXED_CLOCK: Clock = Clock.fixed(Instant.ofEpochSecond(1_000L), ZoneOffset.UTC)

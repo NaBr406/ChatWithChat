@@ -23,6 +23,8 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryCorpusSnapshotter
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFilePaths
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFileStore
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexRepository
+import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexSyncService
+import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexSynchronizer
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIntelligence
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceCorpusReader
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceEventSink
@@ -110,6 +112,22 @@ object MemoryRepositoryModule {
         memoryFileStore: MemoryFileStore,
         memoryChunker: MemoryChunker
     ): MemoryCorpusSnapshotter = MemoryCorpusSnapshotter(memoryFileStore, memoryChunker)
+
+    @Provides
+    @Singleton
+    fun provideMemoryIndexSyncService(
+        memoryRecoveryDao: MemoryRecoveryDao,
+        memoryCorpusSnapshotter: MemoryCorpusSnapshotter,
+        memoryFileStore: MemoryFileStore,
+        memoryVectorStore: MemoryVectorStore,
+        memoryEmbeddingCapability: MemoryEmbeddingCapability
+    ): MemoryIndexSyncService = MemoryIndexSynchronizer(
+        recoveryDao = memoryRecoveryDao,
+        snapshotSource = memoryCorpusSnapshotter,
+        memoryFileStore = memoryFileStore,
+        vectorStore = memoryVectorStore,
+        embeddingCapability = memoryEmbeddingCapability
+    )
 
     @Provides
     @Singleton
