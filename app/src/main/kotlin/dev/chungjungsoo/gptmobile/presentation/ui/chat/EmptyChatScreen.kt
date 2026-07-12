@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.chungjungsoo.gptmobile.R
 import dev.chungjungsoo.gptmobile.data.model.ReasoningMode
+import dev.chungjungsoo.gptmobile.presentation.common.settingsMaterialColors
 import dev.chungjungsoo.gptmobile.presentation.ui.home.HomeViewModel
 import java.io.File
 
@@ -64,11 +65,12 @@ fun EmptyChatScreen(
 
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        containerColor = settingsMaterialColors().canvas,
         topBar = {
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.84f),
-                    scrolledContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                    containerColor = settingsMaterialColors().navigation,
+                    scrolledContainerColor = settingsMaterialColors().navigation,
                     navigationIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     titleContentColor = MaterialTheme.colorScheme.onSurface
                 ),

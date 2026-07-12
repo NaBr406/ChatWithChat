@@ -6,6 +6,7 @@ import dagger.Provides
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import dev.chungjungsoo.gptmobile.data.database.dao.MemoryActivityLogDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryIndexDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryMaintenanceJobDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryTurnBatchDao
@@ -13,6 +14,7 @@ import dev.chungjungsoo.gptmobile.data.database.dao.PersonalMemoryDao
 import dev.chungjungsoo.gptmobile.data.memory.LlmMemoryIntelligence
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryCodec
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryDebugEditor
+import dev.chungjungsoo.gptmobile.data.memory.MemoryActivityLogger
 import dev.chungjungsoo.gptmobile.data.memory.MemoryBatchConsolidationService
 import dev.chungjungsoo.gptmobile.data.memory.MemoryChunker
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFilePaths
@@ -29,6 +31,7 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryMarkdownCodec
 import dev.chungjungsoo.gptmobile.data.memory.MemoryPromptBuilder
 import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnBatchCoordinator
 import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnBatchScheduler
+import dev.chungjungsoo.gptmobile.data.memory.RoomMemoryActivityLogger
 import dev.chungjungsoo.gptmobile.data.network.AnthropicAPI
 import dev.chungjungsoo.gptmobile.data.network.GoogleAPI
 import dev.chungjungsoo.gptmobile.data.network.OpenAIAPI
@@ -40,6 +43,11 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 object MemoryRepositoryModule {
+
+    @Provides
+    @Singleton
+    fun provideMemoryActivityLogger(memoryActivityLogDao: MemoryActivityLogDao): MemoryActivityLogger =
+        RoomMemoryActivityLogger(memoryActivityLogDao)
 
     @Provides
     @Singleton
@@ -155,7 +163,8 @@ object MemoryRepositoryModule {
         memoryIntelligence: MemoryIntelligence,
         memoryFileStore: MemoryFileStore,
         markdownMemoryCodec: MarkdownMemoryCodec,
-        memoryIndexRepository: MemoryIndexRepository
+        memoryIndexRepository: MemoryIndexRepository,
+        memoryActivityLogger: MemoryActivityLogger
     ): MemoryBatchConsolidationService = MemoryBatchConsolidationService(
         turnBatchDao = memoryTurnBatchDao,
         maintenanceScheduler = memoryMaintenanceScheduler,
@@ -165,7 +174,8 @@ object MemoryRepositoryModule {
         memoryFileStore = memoryFileStore,
         markdownMemoryCodec = markdownMemoryCodec,
         memoryRetriever = memoryIndexRepository,
-        memoryIndexRebuilder = memoryIndexRepository
+        memoryIndexRebuilder = memoryIndexRepository,
+        activityLogger = memoryActivityLogger
     )
 
     @Provides
@@ -174,8 +184,9 @@ object MemoryRepositoryModule {
         settingRepository: SettingRepository,
         openAIAPI: OpenAIAPI,
         anthropicAPI: AnthropicAPI,
-        googleAPI: GoogleAPI
-    ): MemoryIntelligence = LlmMemoryIntelligence(settingRepository, openAIAPI, anthropicAPI, googleAPI)
+        googleAPI: GoogleAPI,
+        memoryActivityLogger: MemoryActivityLogger
+    ): MemoryIntelligence = LlmMemoryIntelligence(settingRepository, openAIAPI, anthropicAPI, googleAPI, memoryActivityLogger)
 
     @Provides
     @Singleton

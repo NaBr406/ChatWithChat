@@ -8,10 +8,10 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -31,6 +31,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import dev.chungjungsoo.gptmobile.R
+import dev.chungjungsoo.gptmobile.presentation.common.settingsMaterialColors
+import dev.chungjungsoo.gptmobile.presentation.common.settingsTextFieldColors
 import dev.chungjungsoo.gptmobile.util.isValidUrl
 import kotlin.math.roundToInt
 
@@ -157,6 +159,9 @@ private fun PlatformNameDialog(
     val screenHeight = with(LocalDensity.current) { configuration.containerSize.height.toDp() }
 
     AlertDialog(
+        containerColor = settingsMaterialColors().grouped,
+        titleContentColor = settingsMaterialColors().primaryLabel,
+        textContentColor = settingsMaterialColors().secondaryLabel,
         properties = DialogProperties(usePlatformDefaultWidth = false),
         modifier = Modifier
             .widthIn(max = screenWidth - 40.dp)
@@ -165,6 +170,8 @@ private fun PlatformNameDialog(
         text = {
             OutlinedTextField(
                 modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+                colors = settingsTextFieldColors(),
                 value = platformName,
                 onValueChange = { platformName = it },
                 label = { Text(stringResource(R.string.platform_name)) },
@@ -204,6 +211,9 @@ private fun APIUrlDialog(
     val screenHeight = with(LocalDensity.current) { configuration.containerSize.height.toDp() }
 
     AlertDialog(
+        containerColor = settingsMaterialColors().grouped,
+        titleContentColor = settingsMaterialColors().primaryLabel,
+        textContentColor = settingsMaterialColors().secondaryLabel,
         properties = DialogProperties(usePlatformDefaultWidth = false),
         modifier = Modifier
             .widthIn(max = screenWidth - 40.dp)
@@ -218,6 +228,8 @@ private fun APIUrlDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 16.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = settingsTextFieldColors(),
                     value = apiUrl,
                     singleLine = true,
                     isError = apiUrl.isValidUrl().not(),
@@ -261,6 +273,9 @@ private fun APIKeyDialog(
     val screenHeight = with(LocalDensity.current) { configuration.containerSize.height.toDp() }
 
     AlertDialog(
+        containerColor = settingsMaterialColors().grouped,
+        titleContentColor = settingsMaterialColors().primaryLabel,
+        textContentColor = settingsMaterialColors().secondaryLabel,
         properties = DialogProperties(usePlatformDefaultWidth = false),
         modifier = Modifier
             .widthIn(max = screenWidth - 40.dp)
@@ -269,6 +284,8 @@ private fun APIKeyDialog(
         text = {
             OutlinedTextField(
                 modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+                colors = settingsTextFieldColors(),
                 value = token,
                 onValueChange = { token = it },
                 label = { Text(stringResource(R.string.api_key)) },
@@ -308,6 +325,9 @@ private fun TimeoutDialog(
     val isValidTimeout = parsedTimeout != null && parsedTimeout >= 0
 
     AlertDialog(
+        containerColor = settingsMaterialColors().grouped,
+        titleContentColor = settingsMaterialColors().primaryLabel,
+        textContentColor = settingsMaterialColors().secondaryLabel,
         properties = DialogProperties(usePlatformDefaultWidth = false),
         modifier = Modifier
             .widthIn(max = screenWidth - 40.dp)
@@ -316,6 +336,8 @@ private fun TimeoutDialog(
         text = {
             OutlinedTextField(
                 modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+                colors = settingsTextFieldColors(),
                 value = timeoutSeconds,
                 onValueChange = { timeoutSeconds = it },
                 label = { Text(stringResource(R.string.timeout_seconds_label)) },
@@ -367,6 +389,9 @@ private fun TemperatureDialog(
     var isUnset by remember { mutableStateOf(temperature == null) }
 
     AlertDialog(
+        containerColor = settingsMaterialColors().grouped,
+        titleContentColor = settingsMaterialColors().primaryLabel,
+        textContentColor = settingsMaterialColors().secondaryLabel,
         properties = DialogProperties(usePlatformDefaultWidth = false),
         modifier = Modifier
             .widthIn(max = screenWidth - 40.dp)
@@ -381,6 +406,8 @@ private fun TemperatureDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 20.dp, vertical = 16.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = settingsTextFieldColors(),
                     value = textFieldTemperature,
                     onValueChange = { t ->
                         textFieldTemperature = t
@@ -464,6 +491,9 @@ private fun TopPDialog(
     var isUnset by remember { mutableStateOf(topP == null) }
 
     AlertDialog(
+        containerColor = settingsMaterialColors().grouped,
+        titleContentColor = settingsMaterialColors().primaryLabel,
+        textContentColor = settingsMaterialColors().secondaryLabel,
         properties = DialogProperties(usePlatformDefaultWidth = false),
         modifier = Modifier
             .widthIn(max = screenWidth - 40.dp)
@@ -478,6 +508,8 @@ private fun TopPDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 20.dp, vertical = 16.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = settingsTextFieldColors(),
                     value = textFieldTopP,
                     onValueChange = { p ->
                         textFieldTopP = p
@@ -559,6 +591,9 @@ private fun SystemPromptDialog(
     var textFieldPrompt by remember { mutableStateOf(prompt) }
 
     AlertDialog(
+        containerColor = settingsMaterialColors().grouped,
+        titleContentColor = settingsMaterialColors().primaryLabel,
+        textContentColor = settingsMaterialColors().secondaryLabel,
         properties = DialogProperties(usePlatformDefaultWidth = false),
         modifier = Modifier
             .widthIn(max = screenWidth - 40.dp)
@@ -573,6 +608,8 @@ private fun SystemPromptDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 20.dp, vertical = 16.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = settingsTextFieldColors(),
                     value = textFieldPrompt,
                     onValueChange = { textFieldPrompt = it },
                     label = {
@@ -622,6 +659,9 @@ private fun DeletePlatformDialog(
     val screenHeight = with(LocalDensity.current) { configuration.containerSize.height.toDp() }
 
     AlertDialog(
+        containerColor = settingsMaterialColors().grouped,
+        titleContentColor = settingsMaterialColors().primaryLabel,
+        textContentColor = settingsMaterialColors().secondaryLabel,
         properties = DialogProperties(usePlatformDefaultWidth = false),
         modifier = Modifier
             .widthIn(max = screenWidth - 40.dp)

@@ -44,6 +44,7 @@ class MemoryBatchConsolidationServiceTest {
         assertEquals(5, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
         assertEquals(MemoryMaintenanceJobStatus.SUCCEEDED, fixture.jobDao.jobs.single().status)
         assertTrue(fixture.indexDao.chunks.isNotEmpty())
+        assertEquals(MemoryActivityStatus.SUCCEEDED, fixture.activityLogger.lastStatus)
     }
 
     @Test
@@ -169,6 +170,7 @@ class MemoryBatchConsolidationServiceTest {
         assertEquals(0, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
         assertEquals(5, fixture.turnDao.getTurnsClaimedByJob(job.jobId).size)
         assertEquals(MemoryMaintenanceJobStatus.FAILED_RETRYABLE, fixture.jobDao.jobs.single().status)
+        assertEquals(MemoryActivityStatus.FAILED, fixture.activityLogger.lastStatus)
     }
 
     @Test
@@ -186,6 +188,7 @@ class MemoryBatchConsolidationServiceTest {
         assertEquals(beforeDaily, fixture.fileStore.readDailyMemory().getOrThrow())
         assertEquals(0, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
         assertEquals(5, fixture.turnDao.getTurnsClaimedByJob(job.jobId).size)
+        assertEquals(MemoryActivityStatus.FAILED, fixture.activityLogger.lastStatus)
     }
 
     @Test
@@ -357,6 +360,7 @@ class MemoryBatchConsolidationServiceTest {
         val indexDao = InMemoryProcessorMemoryIndexDao()
         val indexRepository = MemoryIndexRepository(fileStore, indexDao, MemoryChunker(), FIXED_CLOCK)
         val intelligence = FakeMemoryIntelligence(batchProposal = proposal)
+        val activityLogger = RecordingOrganizationActivityLogger()
         val retriever = object : MemoryRetriever {
             override suspend fun retrieve(request: MemoryRetrievalRequest): Result<List<MemoryRetrievalResult>> =
                 Result.success(searchResults.map { it.toRetrievalResult() })
@@ -372,6 +376,7 @@ class MemoryBatchConsolidationServiceTest {
             fileStore = fileStore,
             indexDao = indexDao,
             intelligence = intelligence,
+            activityLogger = activityLogger,
             coordinator = MemoryTurnBatchCoordinator(turnDao, turnBatchScheduler),
             turnBatchScheduler = turnBatchScheduler,
             service = MemoryBatchConsolidationService(
@@ -384,6 +389,7 @@ class MemoryBatchConsolidationServiceTest {
                 markdownMemoryCodec = MarkdownMemoryCodec(),
                 memoryRetriever = retriever,
                 memoryIndexRebuilder = rebuilder,
+                activityLogger = activityLogger,
                 clock = FIXED_CLOCK
             )
         )
@@ -446,6 +452,7 @@ class MemoryBatchConsolidationServiceTest {
         val fileStore: MemoryFileStore,
         val indexDao: InMemoryProcessorMemoryIndexDao,
         val intelligence: FakeMemoryIntelligence,
+        val activityLogger: RecordingOrganizationActivityLogger,
         val coordinator: MemoryTurnBatchCoordinator,
         val turnBatchScheduler: MemoryTurnBatchScheduler,
         val service: MemoryBatchConsolidationService
@@ -491,6 +498,23 @@ class MemoryBatchConsolidationServiceTest {
     companion object {
         private const val CHAT_ID = 7
         private val FIXED_CLOCK: Clock = Clock.fixed(Instant.ofEpochSecond(1_000L), ZoneOffset.UTC)
+    }
+}
+
+private class RecordingOrganizationActivityLogger : MemoryActivityLogger {
+    var lastStatus: String? = null
+
+    override suspend fun start(
+        batchId: String,
+        category: String,
+        platformName: String?,
+        modelName: String?,
+        attempt: Int?,
+        turnCount: Int?
+    ): String = category
+
+    override suspend fun finish(logId: String, status: String, detail: String?, operationCount: Int?) {
+        if (logId == MemoryActivityCategory.MEMORY_ORGANIZATION) lastStatus = status
     }
 }
 

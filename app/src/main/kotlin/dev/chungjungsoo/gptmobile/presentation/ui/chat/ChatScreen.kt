@@ -6,15 +6,17 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.util.Log
 import android.widget.Toast
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -24,9 +26,9 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -37,18 +39,21 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.IosShare
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -80,8 +85,9 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider.getUriForFile
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -94,6 +100,7 @@ import dev.chungjungsoo.gptmobile.data.database.entity.effectiveContent
 import dev.chungjungsoo.gptmobile.data.database.entity.effectiveThoughts
 import dev.chungjungsoo.gptmobile.data.database.entity.effectiveTokenUsage
 import dev.chungjungsoo.gptmobile.data.model.ReasoningMode
+import dev.chungjungsoo.gptmobile.presentation.common.settingsMaterialColors
 import java.io.File
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -436,8 +443,10 @@ private fun ChatContent(
             delay(POST_STREAM_ANCHOR_RESTORE_INTERVAL_MILLIS)
             val jumpedBeforeAnchor =
                 listState.firstVisibleItemIndex < firstVisibleIndex ||
-                    (listState.firstVisibleItemIndex == firstVisibleIndex &&
-                        listState.firstVisibleItemScrollOffset < firstVisibleOffset)
+                    (
+                        listState.firstVisibleItemIndex == firstVisibleIndex &&
+                            listState.firstVisibleItemScrollOffset < firstVisibleOffset
+                        )
             if (jumpedBeforeAnchor && (firstVisibleIndex > 0 || firstVisibleOffset > 0)) {
                 if (pendingPostStreamBottomRestore) {
                     scrollToLatestMessage(animated = false)
@@ -469,6 +478,7 @@ private fun ChatContent(
                 interactionSource = remember { MutableInteractionSource() }
             ) { focusManager.clearFocus() },
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        containerColor = settingsMaterialColors().canvas,
         topBar = {
             ChatTopBar(
                 title = title,
@@ -838,8 +848,8 @@ private fun ChatTopBar(
 
     CenterAlignedTopAppBar(
         colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.84f),
-            scrolledContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+            containerColor = settingsMaterialColors().navigation,
+            scrolledContainerColor = settingsMaterialColors().navigation,
             navigationIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
             actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
             titleContentColor = MaterialTheme.colorScheme.onSurface
@@ -866,22 +876,39 @@ private fun ChatTopBar(
                 completedRoundCount = completedRoundCount,
                 onClick = onRoundCountClick
             )
-            IconButton(
-                onClick = { isDropDownMenuExpanded = isDropDownMenuExpanded.not() }
-            ) {
-                Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.options))
-            }
+            Box(contentAlignment = Alignment.Center) {
+                val overflowButtonColor by animateColorAsState(
+                    targetValue = settingsMaterialColors().controlFill.copy(
+                        alpha = if (isDropDownMenuExpanded) 0.44f else 0f
+                    ),
+                    label = "chatOverflowButtonColor"
+                )
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .background(overflowButtonColor, CircleShape)
+                )
+                IconButton(
+                    onClick = { isDropDownMenuExpanded = isDropDownMenuExpanded.not() }
+                ) {
+                    Icon(
+                        modifier = Modifier.size(22.dp),
+                        imageVector = Icons.Rounded.MoreHoriz,
+                        contentDescription = stringResource(R.string.options)
+                    )
+                }
 
-            ChatDropdownMenu(
-                isDropdownMenuExpanded = isDropDownMenuExpanded,
-                isMenuItemEnabled = isMenuItemEnabled,
-                onDismissRequest = { isDropDownMenuExpanded = false },
-                onChatTitleItemClick = {
-                    onChatTitleItemClick.invoke()
-                    isDropDownMenuExpanded = false
-                },
-                onExportChatItemClick = onExportChatItemClick
-            )
+                ChatDropdownMenu(
+                    isDropdownMenuExpanded = isDropDownMenuExpanded,
+                    isMenuItemEnabled = isMenuItemEnabled,
+                    onDismissRequest = { isDropDownMenuExpanded = false },
+                    onChatTitleItemClick = {
+                        onChatTitleItemClick()
+                        isDropDownMenuExpanded = false
+                    },
+                    onExportChatItemClick = onExportChatItemClick
+                )
+            }
         },
         scrollBehavior = scrollBehavior
     )
@@ -895,20 +922,57 @@ fun ChatDropdownMenu(
     onChatTitleItemClick: () -> Unit,
     onExportChatItemClick: () -> Unit
 ) {
+    val materialColors = settingsMaterialColors()
     DropdownMenu(
-        modifier = Modifier.wrapContentSize(),
+        modifier = Modifier.widthIn(min = 216.dp, max = 280.dp),
         expanded = isDropdownMenuExpanded,
-        onDismissRequest = onDismissRequest
+        onDismissRequest = onDismissRequest,
+        offset = DpOffset(x = (-8).dp, y = 4.dp),
+        shape = RoundedCornerShape(14.dp),
+        containerColor = materialColors.grouped,
+        tonalElevation = 0.dp,
+        shadowElevation = 12.dp,
+        border = BorderStroke(0.5.dp, materialColors.separatorStrong)
     ) {
         DropdownMenuItem(
+            modifier = Modifier.heightIn(min = 52.dp),
             enabled = isMenuItemEnabled,
-            text = { Text(text = stringResource(R.string.update_chat_title)) },
+            leadingIcon = {
+                Icon(
+                    imageVector = Icons.Outlined.Edit,
+                    contentDescription = null
+                )
+            },
+            text = {
+                Text(
+                    text = stringResource(R.string.update_chat_title),
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium
+                )
+            },
             onClick = onChatTitleItemClick
         )
-        /* Export Chat */
+        HorizontalDivider(
+            modifier = Modifier.padding(start = 56.dp, end = 12.dp),
+            thickness = 0.5.dp,
+            color = materialColors.separator
+        )
         DropdownMenuItem(
+            modifier = Modifier.heightIn(min = 52.dp),
             enabled = isMenuItemEnabled,
-            text = { Text(text = stringResource(R.string.export_chat)) },
+            leadingIcon = {
+                Icon(
+                    imageVector = Icons.Outlined.IosShare,
+                    contentDescription = null
+                )
+            },
+            text = {
+                Text(
+                    text = stringResource(R.string.export_chat),
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium
+                )
+            },
             onClick = {
                 onExportChatItemClick()
                 onDismissRequest()

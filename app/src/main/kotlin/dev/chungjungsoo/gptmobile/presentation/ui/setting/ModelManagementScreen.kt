@@ -2,7 +2,9 @@ package dev.chungjungsoo.gptmobile.presentation.ui.setting
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -11,27 +13,26 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -44,6 +45,11 @@ import dev.chungjungsoo.gptmobile.R
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformModelRefreshStatus
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformModelV2
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
+import dev.chungjungsoo.gptmobile.presentation.common.AppleBlue
+import dev.chungjungsoo.gptmobile.presentation.common.SettingsMaterialGroup
+import dev.chungjungsoo.gptmobile.presentation.common.SettingsTopAppBar
+import dev.chungjungsoo.gptmobile.presentation.common.settingsMaterialColors
+import dev.chungjungsoo.gptmobile.presentation.common.settingsSwitchColors
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -54,6 +60,7 @@ fun ModelManagementScreen(
 ) {
     val state by settingViewModel.modelManagementState.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
+    val materialColors = settingsMaterialColors()
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -68,25 +75,19 @@ fun ModelManagementScreen(
     Scaffold(
         modifier = modifier,
         topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.model_management)) },
-                navigationIcon = {
-                    IconButton(onClick = onNavigationClick) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = stringResource(R.string.go_back)
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
+            SettingsTopAppBar(
+                title = stringResource(R.string.model_management),
+                onNavigationClick = onNavigationClick
             )
-        }
+        },
+        containerColor = materialColors.canvas
     ) { innerPadding ->
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             items(state.platforms, key = { it.uid }) { platform ->
                 val models = state.modelsByPlatformUid[platform.uid].orEmpty()
@@ -117,7 +118,7 @@ private fun PlatformModelGroup(
     onModelEnabledChange: (PlatformModelV2, Boolean) -> Unit,
     onDefaultClick: (PlatformModelV2) -> Unit
 ) {
-    Column(modifier = Modifier.fillMaxWidth()) {
+    SettingsMaterialGroup {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -128,7 +129,7 @@ private fun PlatformModelGroup(
                 Text(
                     text = platform.name,
                     style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = settingsMaterialColors().primaryLabel,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -138,7 +139,7 @@ private fun PlatformModelGroup(
                     color = if (platform.modelRefreshStatus == PlatformModelRefreshStatus.FAILED) {
                         MaterialTheme.colorScheme.error
                     } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
+                        settingsMaterialColors().secondaryLabel
                     },
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
@@ -146,7 +147,8 @@ private fun PlatformModelGroup(
             }
             TextButton(
                 enabled = !refreshing,
-                onClick = onRefreshClick
+                onClick = onRefreshClick,
+                colors = ButtonDefaults.textButtonColors(contentColor = AppleBlue)
             ) {
                 if (refreshing) {
                     CircularProgressIndicator(
@@ -176,7 +178,7 @@ private fun PlatformModelGroup(
                     stringResource(R.string.no_available_models)
                 },
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = settingsMaterialColors().secondaryLabel
             )
         } else {
             models.forEachIndexed { index, model ->
@@ -202,11 +204,18 @@ private fun ModelManagementRow(
     ListItem(
         modifier = Modifier.clickable(enabled = model.enabled, onClick = onDefaultClick),
         leadingContent = {
-            RadioButton(
-                selected = model.isDefault,
-                enabled = model.enabled,
-                onClick = onDefaultClick
-            )
+            Box(
+                modifier = Modifier.size(24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                if (model.isDefault) {
+                    Icon(
+                        imageVector = Icons.Rounded.Check,
+                        contentDescription = null,
+                        tint = if (model.enabled) AppleBlue else settingsMaterialColors().tertiaryLabel
+                    )
+                }
+            }
         },
         headlineContent = {
             Text(
@@ -225,9 +234,11 @@ private fun ModelManagementRow(
         trailingContent = {
             Switch(
                 checked = model.enabled,
-                onCheckedChange = onEnabledChange
+                onCheckedChange = onEnabledChange,
+                colors = settingsSwitchColors()
             )
-        }
+        },
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent)
     )
 }
 

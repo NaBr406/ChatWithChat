@@ -186,27 +186,48 @@ class LlmMemoryIntelligenceTest {
         val openAIAPI = RecordingOpenAIAPI(
             chatChunks = chatChunks("""{"operations":[],"unexpected":true}""")
         )
+        val activityLogger = RecordingMemoryActivityLogger()
         val intelligence = intelligence(
             platforms = listOf(platform(ClientType.OPENROUTER, "model")),
-            openAIAPI = openAIAPI
+            openAIAPI = openAIAPI,
+            activityLogger = activityLogger
         )
 
         val result = intelligence.consolidateMemoryBatch(batchRequest())
 
         assertNull(result)
         assertEquals(1, openAIAPI.streamChatCompletionCalls)
+        assertEquals(MemoryActivityStatus.SUCCEEDED, activityLogger.finishedStatus(MemoryActivityCategory.MODEL_CALL))
+        assertEquals(MemoryActivityStatus.FAILED, activityLogger.finishedStatus(MemoryActivityCategory.MEMORY_GENERATION))
+    }
+
+    @Test
+    fun `missing memory platform records model call and generation failures`() = runBlocking {
+        val activityLogger = RecordingMemoryActivityLogger()
+        val intelligence = intelligence(
+            platforms = emptyList(),
+            activityLogger = activityLogger
+        )
+
+        val result = intelligence.consolidateMemoryBatch(batchRequest())
+
+        assertNull(result)
+        assertEquals(MemoryActivityStatus.FAILED, activityLogger.finishedStatus(MemoryActivityCategory.MODEL_CALL))
+        assertEquals(MemoryActivityStatus.FAILED, activityLogger.finishedStatus(MemoryActivityCategory.MEMORY_GENERATION))
     }
 
     private fun intelligence(
         platforms: List<PlatformV2>,
         openAIAPI: RecordingOpenAIAPI = RecordingOpenAIAPI(),
         anthropicAPI: RecordingAnthropicAPI = RecordingAnthropicAPI(),
-        googleAPI: RecordingGoogleAPI = RecordingGoogleAPI()
+        googleAPI: RecordingGoogleAPI = RecordingGoogleAPI(),
+        activityLogger: MemoryActivityLogger = MemoryActivityLogger.None
     ) = LlmMemoryIntelligence(
         settingRepository = FakeSettingRepository(platforms),
         openAIAPI = openAIAPI,
         anthropicAPI = anthropicAPI,
-        googleAPI = googleAPI
+        googleAPI = googleAPI,
+        activityLogger = activityLogger
     )
 
     private fun chatChunks(content: String): Flow<ChatCompletionChunk> = flowOf(
@@ -375,4 +396,24 @@ private class RecordingGoogleAPI(
     override suspend fun uploadFile(filePath: String, fileName: String, mimeType: String): UploadedProviderFile =
         error("Not used")
     override suspend fun isFileAvailable(fileName: String): Boolean = error("Not used")
+}
+
+private class RecordingMemoryActivityLogger : MemoryActivityLogger {
+    private val categoriesById = mutableMapOf<String, String>()
+    private val statusesByCategory = mutableMapOf<String, String>()
+
+    override suspend fun start(
+        batchId: String,
+        category: String,
+        platformName: String?,
+        modelName: String?,
+        attempt: Int?,
+        turnCount: Int?
+    ): String = "log-${categoriesById.size}".also { logId -> categoriesById[logId] = category }
+
+    override suspend fun finish(logId: String, status: String, detail: String?, operationCount: Int?) {
+        categoriesById[logId]?.let { category -> statusesByCategory[category] = status }
+    }
+
+    fun finishedStatus(category: String): String? = statusesByCategory[category]
 }

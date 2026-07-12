@@ -20,6 +20,7 @@ class MemoryBatchConsolidationService(
     private val markdownMemoryCodec: MarkdownMemoryCodec,
     private val memoryRetriever: MemoryRetriever,
     private val memoryIndexRebuilder: MemoryIndexRebuilder,
+    private val activityLogger: MemoryActivityLogger = MemoryActivityLogger.None,
     private val clock: Clock = Clock.systemDefaultZone(),
     private val json: Json = Json {
         ignoreUnknownKeys = false
@@ -71,9 +72,24 @@ class MemoryBatchConsolidationService(
         logBatch(runningJob, request, "started", proposalCount = null, elapsedMs = null)
 
         val proposal = memoryIntelligence.consolidateMemoryBatch(request, preferredPlatform)
-            ?: return retryable(runningJob, request, "consolidation_unavailable_or_invalid", startedAt, null)
+        if (proposal == null) {
+            val organizationLogId = startOrganizationActivity(runningJob, request, preferredPlatform)
+            finishOrganizationActivity(
+                organizationLogId,
+                MemoryActivityStatus.FAILED,
+                "记忆生成失败，未能开始整理"
+            )
+            return retryable(runningJob, request, "consolidation_unavailable_or_invalid", startedAt, null)
+        }
+        val organizationLogId = startOrganizationActivity(runningJob, request, preferredPlatform)
         val validatedOperations = runCatching { validateOperations(request, proposal.operations) }
             .getOrElse { throwable ->
+                finishOrganizationActivity(
+                    organizationLogId,
+                    MemoryActivityStatus.FAILED,
+                    "记忆整理方案校验失败：${throwable.message}",
+                    proposal.operations.size
+                )
                 return retryable(
                     runningJob,
                     request,
@@ -91,6 +107,12 @@ class MemoryBatchConsolidationService(
                 operations = validatedOperations
             )
         }.getOrElse { throwable ->
+            finishOrganizationActivity(
+                organizationLogId,
+                MemoryActivityStatus.FAILED,
+                "写入记忆失败：${throwable.message}",
+                proposal.operations.size
+            )
             return retryable(
                 runningJob,
                 request,
@@ -102,6 +124,12 @@ class MemoryBatchConsolidationService(
 
         if (!complete()) {
             applyResult.rollback()
+            finishOrganizationActivity(
+                organizationLogId,
+                MemoryActivityStatus.FAILED,
+                "记忆批次完成状态写入失败，已回滚",
+                proposal.operations.size
+            )
             return retryable(
                 runningJob,
                 request,
@@ -112,6 +140,12 @@ class MemoryBatchConsolidationService(
         }
         maintenanceScheduler.markSucceeded(runningJob)
         turnBatchScheduler.repairAndSchedule()
+        finishOrganizationActivity(
+            organizationLogId,
+            MemoryActivityStatus.SUCCEEDED,
+            "长期记忆 ${applyResult.longTermWriteCount} 条，每日记忆 ${applyResult.dailyWriteCount} 条",
+            proposal.operations.size
+        )
         logBatch(
             runningJob,
             request,
@@ -484,6 +518,30 @@ class MemoryBatchConsolidationService(
 
     private suspend fun preferredMemoryPlatform(): PlatformV2? = settingRepository.fetchPlatformV2s()
         .firstOrNull { platform -> platform.enabled && platform.model.isNotBlank() }
+
+    private suspend fun startOrganizationActivity(
+        job: MemoryMaintenanceJob,
+        request: MemoryBatchConsolidationRequest,
+        platform: PlatformV2?
+    ): String = runCatching {
+        activityLogger.start(
+            batchId = request.batchId,
+            category = MemoryActivityCategory.MEMORY_ORGANIZATION,
+            platformName = platform?.name,
+            modelName = platform?.model,
+            attempt = job.attempts,
+            turnCount = request.turns.size
+        )
+    }.getOrDefault("")
+
+    private suspend fun finishOrganizationActivity(
+        logId: String,
+        status: String,
+        detail: String? = null,
+        operationCount: Int? = null
+    ) {
+        runCatching { activityLogger.finish(logId, status, detail, operationCount) }
+    }
 
     private suspend fun retryable(
         job: MemoryMaintenanceJob,

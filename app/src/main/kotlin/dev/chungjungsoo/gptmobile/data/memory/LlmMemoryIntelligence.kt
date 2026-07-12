@@ -44,7 +44,8 @@ class LlmMemoryIntelligence @Inject constructor(
     private val settingRepository: SettingRepository,
     private val openAIAPI: OpenAIAPI,
     private val anthropicAPI: AnthropicAPI,
-    private val googleAPI: GoogleAPI
+    private val googleAPI: GoogleAPI,
+    private val activityLogger: MemoryActivityLogger = MemoryActivityLogger.None
 ) : MemoryIntelligence {
 
     private val strictJson = Json {
@@ -58,21 +59,69 @@ class LlmMemoryIntelligence @Inject constructor(
         request: MemoryBatchConsolidationRequest,
         preferredPlatform: PlatformV2?
     ): MemoryBatchConsolidationProposal? {
+        val platform = resolveMemoryPlatform(preferredPlatform)
+        val modelCallLogId = startActivity(
+            request = request,
+            category = MemoryActivityCategory.MODEL_CALL,
+            platform = platform
+        )
+        val generationLogId = startActivity(
+            request = request,
+            category = MemoryActivityCategory.MEMORY_GENERATION,
+            platform = platform
+        )
         val response = requestJson(
             operation = "consolidate_batch",
             systemPrompt = BATCH_CONSOLIDATION_PROMPT,
             userJson = strictJson.encodeToString(request),
-            preferredPlatform = preferredPlatform
-        ) ?: return null
+            preferredPlatform = platform
+        )
+        if (response == null) {
+            finishActivity(modelCallLogId, MemoryActivityStatus.FAILED, "模型未返回可用响应")
+            finishActivity(generationLogId, MemoryActivityStatus.FAILED, "没有可用于生成记忆的模型响应")
+            return null
+        }
+        finishActivity(modelCallLogId, MemoryActivityStatus.SUCCEEDED)
         return try {
-            strictJson.decodeFromString<MemoryBatchConsolidationProposal>(extractJsonObject(response))
+            val proposal = strictJson.decodeFromString<MemoryBatchConsolidationProposal>(extractJsonObject(response))
+            finishActivity(
+                generationLogId,
+                MemoryActivityStatus.SUCCEEDED,
+                operationCount = proposal.operations.size
+            )
+            proposal
         } catch (e: SerializationException) {
             runCatching { Log.w(TAG, "Memory consolidate_batch returned invalid JSON", e) }
+            finishActivity(generationLogId, MemoryActivityStatus.FAILED, "模型返回的记忆格式无效")
             null
         } catch (e: IllegalArgumentException) {
             runCatching { Log.w(TAG, "Memory consolidate_batch returned invalid JSON", e) }
+            finishActivity(generationLogId, MemoryActivityStatus.FAILED, "模型返回的记忆格式无效")
             null
         }
+    }
+
+    private suspend fun startActivity(
+        request: MemoryBatchConsolidationRequest,
+        category: String,
+        platform: PlatformV2?
+    ): String = runCatching {
+        activityLogger.start(
+            batchId = request.batchId,
+            category = category,
+            platformName = platform?.name,
+            modelName = platform?.model,
+            turnCount = request.turns.size
+        )
+    }.getOrDefault("")
+
+    private suspend fun finishActivity(
+        logId: String,
+        status: String,
+        detail: String? = null,
+        operationCount: Int? = null
+    ) {
+        runCatching { activityLogger.finish(logId, status, detail, operationCount) }
     }
 
     private suspend fun requestJson(
@@ -83,15 +132,15 @@ class LlmMemoryIntelligence @Inject constructor(
     ): String? {
         val platform = resolveMemoryPlatform(preferredPlatform)
         if (platform == null) {
-            Log.w(TAG, "Memory $operation skipped: no enabled OpenAI-compatible memory platform")
+            logWarning("Memory $operation skipped: no enabled OpenAI-compatible memory platform")
             return null
         }
         if (platform.model.isBlank()) {
-            Log.w(TAG, "Memory $operation skipped: selected platform ${platform.name} has no model")
+            logWarning("Memory $operation skipped: selected platform ${platform.name} has no model")
             return null
         }
         if (platform.requiresToken() && platform.token.isNullOrBlank()) {
-            Log.w(TAG, "Memory $operation skipped: selected platform ${platform.name} has no token")
+            logWarning("Memory $operation skipped: selected platform ${platform.name} has no token")
             return null
         }
 
@@ -150,13 +199,13 @@ class LlmMemoryIntelligence @Inject constructor(
         }.getOrNull() ?: return null
 
         chunks.firstNotNullOfOrNull { it.error }?.let { error ->
-            Log.w(TAG, "Memory $operation request returned ${error.type ?: "error"}: ${error.message}")
+            logWarning("Memory $operation request returned ${error.type ?: "error"}: ${error.message}")
             return null
         }
 
         return collectContent(chunks).takeIf { it.isNotBlank() }
             ?: run {
-                Log.w(TAG, "Memory $operation request returned blank content from ${platform.name}")
+                logWarning("Memory $operation request returned blank content from ${platform.name}")
                 null
             }
     }
@@ -200,13 +249,13 @@ class LlmMemoryIntelligence @Inject constructor(
         }.getOrNull() ?: return null
 
         events.firstMemoryErrorOrNull()?.let { error ->
-            Log.w(TAG, "Memory $operation Responses request returned error: $error")
+            logWarning("Memory $operation Responses request returned error: $error")
             return null
         }
 
         return collectResponsesContent(events).takeIf { it.isNotBlank() }
             ?: run {
-                Log.w(TAG, "Memory $operation Responses request returned blank content from ${platform.name}")
+                logWarning("Memory $operation Responses request returned blank content from ${platform.name}")
                 null
             }
     }
@@ -248,7 +297,7 @@ class LlmMemoryIntelligence @Inject constructor(
         }.getOrNull() ?: return null
 
         chunks.filterIsInstance<ErrorResponseChunk>().firstOrNull()?.let { error ->
-            Log.w(TAG, "Memory $operation Anthropic request returned ${error.error.type}: ${error.error.message}")
+            logWarning("Memory $operation Anthropic request returned ${error.error.type}: ${error.error.message}")
             return null
         }
 
@@ -264,7 +313,7 @@ class LlmMemoryIntelligence @Inject constructor(
             .trim()
             .takeIf { it.isNotBlank() }
             ?: run {
-                Log.w(TAG, "Memory $operation Anthropic request returned blank content from ${platform.name}")
+                logWarning("Memory $operation Anthropic request returned blank content from ${platform.name}")
                 null
             }
     }
@@ -307,7 +356,7 @@ class LlmMemoryIntelligence @Inject constructor(
         }.getOrNull() ?: return null
 
         responses.firstNotNullOfOrNull { it.error }?.let { error ->
-            Log.w(TAG, "Memory $operation Google request returned ${error.status ?: error.code}: ${error.message}")
+            logWarning("Memory $operation Google request returned ${error.status ?: error.code}: ${error.message}")
             return null
         }
 
@@ -326,7 +375,7 @@ class LlmMemoryIntelligence @Inject constructor(
 
         return text.takeIf { it.isNotBlank() }
             ?: run {
-                Log.w(TAG, "Memory $operation Google request returned blank content from ${platform.name}")
+                logWarning("Memory $operation Google request returned blank content from ${platform.name}")
                 null
             }
     }
@@ -455,5 +504,9 @@ Use replace or remove only with an id present in existingMemories. Never invent 
 Do not copy raw transcripts, do not prefix text with "The user said:", and do not duplicate one fact into both daily and long-term destinations.
 Use ignore or an empty operations list when nothing durable should be written.
 """
+    }
+
+    private fun logWarning(message: String) {
+        runCatching { Log.w(TAG, message) }
     }
 }

@@ -196,6 +196,21 @@ class ChatDatabaseV2MigrationsTest {
         assertTrue(executedSql.all { it.contains("IF NOT EXISTS") })
     }
 
+    @Test
+    fun `migration 13 to 14 creates persistent memory activity log`() {
+        val executedSql = mutableListOf<String>()
+        val db = recordingDatabase(executedSql)
+
+        ChatDatabaseV2Migrations.MIGRATION_13_14.migrate(db)
+
+        val migrationSql = executedSql.joinToString(separator = "\n")
+        assertTrue(migrationSql.contains("CREATE TABLE IF NOT EXISTS `memory_activity_log`"))
+        assertTrue(migrationSql.contains("`category` TEXT NOT NULL"))
+        assertTrue(migrationSql.contains("`completed_at` INTEGER"))
+        assertTrue(executedSql.any { it == "CREATE INDEX IF NOT EXISTS `index_memory_activity_log_started_at` ON `memory_activity_log` (`started_at`)" })
+        assertTrue(executedSql.all { it.contains("IF NOT EXISTS") })
+    }
+
     private fun recordingDatabase(executedSql: MutableList<String>): SupportSQLiteDatabase = Proxy.newProxyInstance(
         SupportSQLiteDatabase::class.java.classLoader,
         arrayOf(SupportSQLiteDatabase::class.java),

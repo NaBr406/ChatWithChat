@@ -2,6 +2,7 @@ package dev.chungjungsoo.gptmobile.presentation.ui.setting
 
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,9 +12,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Label
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.Check
@@ -22,14 +23,11 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LargeTopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -40,17 +38,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.chungjungsoo.gptmobile.R
 import dev.chungjungsoo.gptmobile.presentation.common.SettingItem
+import dev.chungjungsoo.gptmobile.presentation.common.SettingsMaterialGroup
+import dev.chungjungsoo.gptmobile.presentation.common.SettingsTopAppBar
+import dev.chungjungsoo.gptmobile.presentation.common.settingsMaterialColors
+import dev.chungjungsoo.gptmobile.presentation.common.settingsSwitchColors
 import dev.chungjungsoo.gptmobile.util.formatPlatformTimeout
-import dev.chungjungsoo.gptmobile.util.pinnedExitUntilCollapsedScrollBehavior
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -60,9 +59,6 @@ fun PlatformSettingScreen(
     onNavigationClick: () -> Unit
 ) {
     val scrollState = rememberScrollState()
-    val scrollBehavior = pinnedExitUntilCollapsedScrollBehavior(
-        canScroll = { scrollState.canScrollForward || scrollState.canScrollBackward }
-    )
     val platform by settingViewModel.platformState.collectAsStateWithLifecycle()
     val dialogState by settingViewModel.dialogState.collectAsStateWithLifecycle()
     val isDeleted by settingViewModel.isDeleted.collectAsStateWithLifecycle()
@@ -74,17 +70,17 @@ fun PlatformSettingScreen(
     }
 
     platform?.let { platformData ->
+        val materialColors = settingsMaterialColors()
         Scaffold(
-            modifier = modifier
-                .nestedScroll(scrollBehavior.nestedScrollConnection),
+            modifier = modifier,
             topBar = {
                 PlatformTopAppBar(
                     title = platformData.name,
                     onNavigationClick = onNavigationClick,
-                    onDeleteClick = settingViewModel::openDeleteDialog,
-                    scrollBehavior = scrollBehavior
+                    onDeleteClick = settingViewModel::openDeleteDialog
                 )
-            }
+            },
+            containerColor = materialColors.canvas
         ) { innerPadding ->
             Column(
                 Modifier
@@ -95,116 +91,126 @@ fun PlatformSettingScreen(
                     title = stringResource(R.string.enable_api),
                     isChecked = platformData.enabled
                 ) { settingViewModel.toggleEnabled() }
-                SettingItem(
-                    modifier = Modifier.height(64.dp),
-                    title = stringResource(R.string.platform_name),
-                    description = platformData.name,
-                    enabled = platformData.enabled,
-                    onItemClick = settingViewModel::openPlatformNameDialog,
-                    showTrailingIcon = false,
-                    showLeadingIcon = true,
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.Label,
-                            contentDescription = stringResource(R.string.platform_name_icon)
-                        )
-                    }
-                )
-                SettingItem(
-                    modifier = Modifier.height(64.dp),
-                    title = stringResource(R.string.api_url),
-                    description = platformData.apiUrl,
-                    enabled = platformData.enabled,
-                    onItemClick = settingViewModel::openApiUrlDialog,
-                    showTrailingIcon = false,
-                    showLeadingIcon = true,
-                    leadingIcon = {
-                        Icon(
-                            ImageVector.vectorResource(id = R.drawable.ic_link),
-                            contentDescription = stringResource(R.string.url_icon)
-                        )
-                    }
-                )
-                SettingItem(
-                    modifier = Modifier.height(64.dp),
-                    title = stringResource(R.string.api_key),
-                    description = if (platformData.token.isNullOrEmpty()) {
-                        stringResource(R.string.token_not_set)
-                    } else {
-                        stringResource(R.string.token_set, platformData.token[0])
-                    },
-                    enabled = platformData.enabled,
-                    onItemClick = settingViewModel::openApiTokenDialog,
-                    showTrailingIcon = false,
-                    showLeadingIcon = true,
-                    leadingIcon = {
-                        Icon(
-                            ImageVector.vectorResource(id = R.drawable.ic_key),
-                            contentDescription = stringResource(R.string.key_icon)
-                        )
-                    }
-                )
-                val notSetText = stringResource(R.string.not_set)
-                SettingItem(
-                    modifier = Modifier.height(64.dp),
-                    title = stringResource(R.string.temperature),
-                    description = platformData.temperature?.toString() ?: notSetText,
-                    enabled = platformData.enabled,
-                    onItemClick = settingViewModel::openTemperatureDialog,
-                    showTrailingIcon = false,
-                    showLeadingIcon = true,
-                    leadingIcon = {
-                        Icon(
-                            ImageVector.vectorResource(id = R.drawable.ic_temperature),
-                            contentDescription = stringResource(R.string.temperature_icon)
-                        )
-                    }
-                )
-                SettingItem(
-                    modifier = Modifier.height(64.dp),
-                    title = stringResource(R.string.top_p),
-                    description = platformData.topP?.toString() ?: notSetText,
-                    enabled = platformData.enabled,
-                    onItemClick = settingViewModel::openTopPDialog,
-                    showTrailingIcon = false,
-                    showLeadingIcon = true,
-                    leadingIcon = {
-                        Icon(
-                            ImageVector.vectorResource(id = R.drawable.ic_chart),
-                            contentDescription = stringResource(R.string.top_p_icon)
-                        )
-                    }
-                )
-                SettingItem(
-                    modifier = Modifier.height(64.dp),
-                    title = stringResource(R.string.system_prompt),
-                    description = platformData.systemPrompt,
-                    enabled = platformData.enabled,
-                    onItemClick = settingViewModel::openSystemPromptDialog,
-                    showTrailingIcon = false,
-                    showLeadingIcon = true,
-                    leadingIcon = {
-                        Icon(
-                            ImageVector.vectorResource(id = R.drawable.ic_instructions),
-                            contentDescription = stringResource(R.string.system_prompt_icon)
-                        )
-                    }
-                )
-                SettingItem(
-                    modifier = Modifier.height(64.dp),
-                    title = stringResource(R.string.timeout),
-                    description = formatPlatformTimeout(platformData.timeout, stringResource(R.string.off)),
-                    enabled = platformData.enabled,
-                    onItemClick = settingViewModel::openTimeoutDialog,
-                    showTrailingIcon = false,
-                    showLeadingIcon = true,
-                    leadingIcon = {
-                        Icon(
-                            ImageVector.vectorResource(id = R.drawable.ic_info),
-                            contentDescription = stringResource(R.string.timeout_icon)
-                        )
-                    }
-                )
+                SettingsMaterialGroup(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                ) {
+                    SettingItem(
+                        modifier = Modifier.height(64.dp),
+                        title = stringResource(R.string.platform_name),
+                        description = platformData.name,
+                        enabled = platformData.enabled,
+                        onItemClick = settingViewModel::openPlatformNameDialog,
+                        showTrailingIcon = true,
+                        showLeadingIcon = true,
+                        showDivider = true,
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Label,
+                                contentDescription = stringResource(R.string.platform_name_icon)
+                            )
+                        }
+                    )
+                    SettingItem(
+                        modifier = Modifier.height(64.dp),
+                        title = stringResource(R.string.api_url),
+                        description = platformData.apiUrl,
+                        enabled = platformData.enabled,
+                        onItemClick = settingViewModel::openApiUrlDialog,
+                        showTrailingIcon = true,
+                        showLeadingIcon = true,
+                        showDivider = true,
+                        leadingIcon = {
+                            Icon(
+                                ImageVector.vectorResource(id = R.drawable.ic_link),
+                                contentDescription = stringResource(R.string.url_icon)
+                            )
+                        }
+                    )
+                    SettingItem(
+                        modifier = Modifier.height(64.dp),
+                        title = stringResource(R.string.api_key),
+                        description = if (platformData.token.isNullOrEmpty()) {
+                            stringResource(R.string.token_not_set)
+                        } else {
+                            stringResource(R.string.token_set, platformData.token[0])
+                        },
+                        enabled = platformData.enabled,
+                        onItemClick = settingViewModel::openApiTokenDialog,
+                        showTrailingIcon = true,
+                        showLeadingIcon = true,
+                        showDivider = true,
+                        leadingIcon = {
+                            Icon(
+                                ImageVector.vectorResource(id = R.drawable.ic_key),
+                                contentDescription = stringResource(R.string.key_icon)
+                            )
+                        }
+                    )
+                    val notSetText = stringResource(R.string.not_set)
+                    SettingItem(
+                        modifier = Modifier.height(64.dp),
+                        title = stringResource(R.string.temperature),
+                        description = platformData.temperature?.toString() ?: notSetText,
+                        enabled = platformData.enabled,
+                        onItemClick = settingViewModel::openTemperatureDialog,
+                        showTrailingIcon = true,
+                        showLeadingIcon = true,
+                        showDivider = true,
+                        leadingIcon = {
+                            Icon(
+                                ImageVector.vectorResource(id = R.drawable.ic_temperature),
+                                contentDescription = stringResource(R.string.temperature_icon)
+                            )
+                        }
+                    )
+                    SettingItem(
+                        modifier = Modifier.height(64.dp),
+                        title = stringResource(R.string.top_p),
+                        description = platformData.topP?.toString() ?: notSetText,
+                        enabled = platformData.enabled,
+                        onItemClick = settingViewModel::openTopPDialog,
+                        showTrailingIcon = true,
+                        showLeadingIcon = true,
+                        showDivider = true,
+                        leadingIcon = {
+                            Icon(
+                                ImageVector.vectorResource(id = R.drawable.ic_chart),
+                                contentDescription = stringResource(R.string.top_p_icon)
+                            )
+                        }
+                    )
+                    SettingItem(
+                        modifier = Modifier.height(64.dp),
+                        title = stringResource(R.string.system_prompt),
+                        description = platformData.systemPrompt,
+                        enabled = platformData.enabled,
+                        onItemClick = settingViewModel::openSystemPromptDialog,
+                        showTrailingIcon = true,
+                        showLeadingIcon = true,
+                        showDivider = true,
+                        leadingIcon = {
+                            Icon(
+                                ImageVector.vectorResource(id = R.drawable.ic_instructions),
+                                contentDescription = stringResource(R.string.system_prompt_icon)
+                            )
+                        }
+                    )
+                    SettingItem(
+                        modifier = Modifier.height(64.dp),
+                        title = stringResource(R.string.timeout),
+                        description = formatPlatformTimeout(platformData.timeout, stringResource(R.string.off)),
+                        enabled = platformData.enabled,
+                        onItemClick = settingViewModel::openTimeoutDialog,
+                        showTrailingIcon = true,
+                        showLeadingIcon = true,
+                        leadingIcon = {
+                            Icon(
+                                ImageVector.vectorResource(id = R.drawable.ic_info),
+                                contentDescription = stringResource(R.string.timeout_icon)
+                            )
+                        }
+                    )
+                }
 
                 PlatformNameDialog(dialogState, platformData.name, settingViewModel)
                 APIUrlDialog(dialogState, platformData.apiUrl, settingViewModel)
@@ -224,32 +230,13 @@ fun PlatformSettingScreen(
 fun PlatformTopAppBar(
     title: String,
     onNavigationClick: () -> Unit,
-    onDeleteClick: () -> Unit,
-    scrollBehavior: TopAppBarScrollBehavior
+    onDeleteClick: () -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
 
-    LargeTopAppBar(
-        colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = MaterialTheme.colorScheme.background,
-            titleContentColor = MaterialTheme.colorScheme.onBackground
-        ),
-        title = {
-            Text(
-                modifier = Modifier.padding(4.dp),
-                text = title,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        },
-        navigationIcon = {
-            IconButton(
-                modifier = Modifier.padding(4.dp),
-                onClick = onNavigationClick
-            ) {
-                Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.go_back))
-            }
-        },
+    SettingsTopAppBar(
+        title = title,
+        onNavigationClick = onNavigationClick,
         actions = {
             IconButton(onClick = { showMenu = true }) {
                 Icon(
@@ -269,8 +256,7 @@ fun PlatformTopAppBar(
                     }
                 )
             }
-        },
-        scrollBehavior = scrollBehavior
+        }
     )
 }
 
@@ -296,14 +282,14 @@ fun PreferenceSwitchWithContainer(
     }
 
     val interactionSource = remember { MutableInteractionSource() }
+    val materialColors = settingsMaterialColors()
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 12.dp)
-            .clip(MaterialTheme.shapes.extraLarge)
-            .background(
-                MaterialTheme.colorScheme.surfaceContainerHigh
-            )
+            .clip(RoundedCornerShape(12.dp))
+            .background(materialColors.grouped)
+            .border(0.5.dp, materialColors.separator, RoundedCornerShape(12.dp))
             .toggleable(
                 value = isChecked,
                 onValueChange = { onClick() },
@@ -320,7 +306,7 @@ fun PreferenceSwitchWithContainer(
                 modifier = Modifier
                     .padding(start = 8.dp, end = 16.dp)
                     .size(24.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                tint = materialColors.secondaryLabel
             )
         }
         Column(
@@ -332,7 +318,7 @@ fun PreferenceSwitchWithContainer(
                 text = title,
                 maxLines = 1,
                 style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface
+                color = materialColors.primaryLabel
             )
         }
         Switch(
@@ -340,7 +326,8 @@ fun PreferenceSwitchWithContainer(
             interactionSource = interactionSource,
             onCheckedChange = null,
             modifier = Modifier.padding(start = 12.dp, end = 6.dp),
-            thumbContent = thumbContent
+            thumbContent = thumbContent,
+            colors = settingsSwitchColors()
         )
     }
 }

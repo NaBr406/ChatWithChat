@@ -305,6 +305,12 @@ object ChatDatabaseV2Migrations {
         }
     }
 
+    val MIGRATION_13_14 = object : Migration(13, 14) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            ensureMemoryActivityLogTable(db)
+        }
+    }
+
     internal fun legacyFilesToAttachmentsJson(filesValue: String): String {
         val attachments = filesValue
             .split(",")
@@ -536,5 +542,32 @@ object ChatDatabaseV2Migrations {
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_pending_turn_chat_id_claimed_job_id` ON `memory_pending_turn` (`chat_id`, `claimed_job_id`)")
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_pending_turn_claimed_job_id` ON `memory_pending_turn` (`claimed_job_id`)")
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_pending_turn_completed_at` ON `memory_pending_turn` (`completed_at`)")
+    }
+
+    private fun ensureMemoryActivityLogTable(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `memory_activity_log` (
+                `log_id` TEXT NOT NULL,
+                `batch_id` TEXT NOT NULL,
+                `category` TEXT NOT NULL,
+                `status` TEXT NOT NULL,
+                `platform_name` TEXT,
+                `model_name` TEXT,
+                `attempt` INTEGER,
+                `turn_count` INTEGER,
+                `operation_count` INTEGER,
+                `detail` TEXT,
+                `started_at` INTEGER NOT NULL,
+                `completed_at` INTEGER,
+                `updated_at` INTEGER NOT NULL,
+                PRIMARY KEY(`log_id`)
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_activity_log_batch_id` ON `memory_activity_log` (`batch_id`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_activity_log_category` ON `memory_activity_log` (`category`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_activity_log_status` ON `memory_activity_log` (`status`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_activity_log_started_at` ON `memory_activity_log` (`started_at`)")
     }
 }

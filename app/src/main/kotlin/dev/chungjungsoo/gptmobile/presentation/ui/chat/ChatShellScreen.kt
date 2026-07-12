@@ -4,7 +4,6 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.rememberDrawerState
@@ -20,6 +19,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.chungjungsoo.gptmobile.R
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatRoomV2
+import dev.chungjungsoo.gptmobile.presentation.common.settingsMaterialColors
 import dev.chungjungsoo.gptmobile.presentation.ui.home.ChatHistoryDrawer
 import dev.chungjungsoo.gptmobile.presentation.ui.home.DeleteWarningDialog
 import dev.chungjungsoo.gptmobile.presentation.ui.home.HomeViewModel
@@ -51,6 +51,7 @@ fun ChatShellScreen(
     val searchQuery by homeViewModel.searchQuery.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
     val lifecycleState by lifecycleOwner.lifecycle.currentStateFlow.collectAsStateWithLifecycle()
+    val materialColors = settingsMaterialColors()
 
     fun openDrawer() {
         scope.launch { drawerState.open() }
@@ -101,8 +102,8 @@ fun ChatShellScreen(
         drawerState = drawerState,
         drawerContent = {
             ModalDrawerSheet(
-                drawerContainerColor = MaterialTheme.colorScheme.surface,
-                drawerContentColor = MaterialTheme.colorScheme.onSurface,
+                drawerContainerColor = materialColors.canvas,
+                drawerContentColor = materialColors.primaryLabel,
                 drawerTonalElevation = 0.dp
             ) {
                 ChatHistoryDrawer(
