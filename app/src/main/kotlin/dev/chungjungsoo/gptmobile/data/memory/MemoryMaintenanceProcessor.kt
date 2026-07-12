@@ -19,7 +19,8 @@ class MemoryMaintenanceProcessor @Inject constructor(
     private val memoryBatchConsolidationService: MemoryBatchConsolidationService? = null,
     private val memoryMutationRecoveryService: MemoryMutationRecoveryService? = null,
     private val memoryIndexSyncService: MemoryIndexSyncService? = null,
-    private val memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler? = null
+    private val memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler? = null,
+    private val memoryDailyDistillationService: MemoryDailyDistillationService? = null
 ) {
     suspend fun processRunnableJobs(
         family: String,
@@ -96,10 +97,8 @@ class MemoryMaintenanceProcessor @Inject constructor(
             MemoryMaintenanceJobType.APPEND_DAILY_NOTE,
             MemoryMaintenanceJobType.COMPACTION_FLUSH ->
                 memoryBatchConsolidationService?.processLegacy(job)?.toOutcome() ?: unavailableConsolidation(job)
-            MemoryMaintenanceJobType.DISTILL_DAILY_NOTES -> {
-                maintenanceScheduler.markBlockedDependency(job, "daily_distillation_not_available")
-                MemoryMaintenanceOutcome.BLOCKED
-            }
+            MemoryMaintenanceJobType.DISTILL_DAILY_NOTES ->
+                memoryDailyDistillationService?.process(job)?.toOutcome() ?: unavailableDistillation(job)
             MemoryMaintenanceJobType.PROMOTE_LONG_TERM_CANDIDATE -> {
                 maintenanceScheduler.markDismissed(job, "superseded_by_daily_distillation")
                 MemoryMaintenanceOutcome.TERMINAL
@@ -151,6 +150,10 @@ class MemoryMaintenanceProcessor @Inject constructor(
     }
 
     private suspend fun planDailyDistillation(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome {
+        if (!settingRepository.fetchMemoryEnabled()) {
+            maintenanceScheduler.markDismissed(job, "memory_disabled")
+            return MemoryMaintenanceOutcome.TERMINAL
+        }
         val scheduler = memoryDailyDistillationScheduler ?: run {
             maintenanceScheduler.markBlockedDependency(job, "daily_distillation_scheduler_not_available")
             return MemoryMaintenanceOutcome.BLOCKED
@@ -208,6 +211,11 @@ class MemoryMaintenanceProcessor @Inject constructor(
         return failedJob.toFailureOutcome()
     }
 
+    private suspend fun unavailableDistillation(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome {
+        val failedJob = maintenanceScheduler.markFailedRetryable(job, "daily_distillation_not_available")
+        return failedJob.toFailureOutcome()
+    }
+
     private suspend fun unavailableMutationRecovery(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome {
         val failedJob = maintenanceScheduler.markFailedRetryable(job, "memory_mutation_recovery_not_available")
         return failedJob.toFailureOutcome()
@@ -234,6 +242,13 @@ class MemoryMaintenanceProcessor @Inject constructor(
         MemoryBatchProcessResult.STATUS_SUCCEEDED,
         MemoryBatchProcessResult.STATUS_DUPLICATE -> MemoryMaintenanceOutcome.SUCCEEDED
         MemoryBatchProcessResult.STATUS_TERMINAL -> MemoryMaintenanceOutcome.TERMINAL
+        else -> MemoryMaintenanceOutcome.RETRYABLE
+    }
+
+    private fun MemoryDailyDistillationProcessResult.toOutcome(): MemoryMaintenanceOutcome = when (status) {
+        MemoryDailyDistillationProcessResult.STATUS_SUCCEEDED,
+        MemoryDailyDistillationProcessResult.STATUS_DUPLICATE -> MemoryMaintenanceOutcome.SUCCEEDED
+        MemoryDailyDistillationProcessResult.STATUS_TERMINAL -> MemoryMaintenanceOutcome.TERMINAL
         else -> MemoryMaintenanceOutcome.RETRYABLE
     }
 

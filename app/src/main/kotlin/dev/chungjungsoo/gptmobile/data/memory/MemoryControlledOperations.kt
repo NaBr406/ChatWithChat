@@ -78,7 +78,9 @@ class MemoryDailyDistillationOperationController(
                     val target = if (operation.action == MemoryDailyDistillationAction.REPLACE) {
                         val targetId = requireNotNull(operation.targetMemoryId?.takeIf(String::isNotBlank))
                         require(targetedIds.add(targetId))
-                        requireNotNull(existingById[targetId])
+                        requireNotNull(existingById[targetId]).also { existing ->
+                            require(normalizeText(normalizedText) != normalizeText(existing.text))
+                        }
                     } else {
                         require(operation.targetMemoryId.isNullOrBlank())
                         require(normalizeText(normalizedText) !in normalizedExistingTexts)
@@ -163,7 +165,7 @@ class MemoryDailyDistillationOperationController(
                 }
             }
         }
-        val normalizedTarget = markdown.trimEnd() + "\n"
+        val normalizedTarget = if (writeCount == 0) baseMarkdown else markdown.trimEnd() + "\n"
         val targets = if (normalizedTarget == baseMarkdown) {
             emptyList()
         } else {

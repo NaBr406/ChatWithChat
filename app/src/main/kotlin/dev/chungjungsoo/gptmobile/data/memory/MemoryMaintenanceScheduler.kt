@@ -97,6 +97,8 @@ class MemoryMaintenanceScheduler(
         now: Long = now()
     ): Boolean = jobDao.hasRunnableJob(family, now)
 
+    suspend fun jobType(jobId: String): String? = jobDao.getById(jobId)?.type
+
     suspend fun nextRepairWakeAt(now: Long = now()): Long? = listOfNotNull(
         nextScheduledRunAt(MemoryMaintenanceJobFamily.REPAIR, now),
         jobDao.getEarliestLeaseExpiry(now)
@@ -324,10 +326,17 @@ class MemoryMaintenanceScheduler(
         return updated
     }
 
-    suspend fun reviveDismissedDailyDistillation(jobId: String): MemoryMaintenanceJob? {
+    suspend fun reviveDismissedDailyDistillation(jobId: String): MemoryMaintenanceJob? = reviveDismissedDailyJob(jobId, MemoryMaintenanceJobType.DISTILL_DAILY_NOTES)
+
+    suspend fun reviveDismissedDailyPlan(jobId: String): MemoryMaintenanceJob? = reviveDismissedDailyJob(jobId, MemoryMaintenanceJobType.PLAN_DAILY_DISTILLATION)
+
+    private suspend fun reviveDismissedDailyJob(
+        jobId: String,
+        expectedType: String
+    ): MemoryMaintenanceJob? {
         val job = jobDao.getById(jobId) ?: return null
         if (
-            job.type != MemoryMaintenanceJobType.DISTILL_DAILY_NOTES ||
+            job.type != expectedType ||
             job.status != MemoryMaintenanceJobStatus.DISMISSED ||
             job.lastError != "memory_disabled"
         ) {

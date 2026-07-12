@@ -145,17 +145,17 @@ class MemoryMaintenanceProcessorTest {
     }
 
     @Test
-    fun `processor blocks distillation until its implementation is available`() = runBlocking {
+    fun `processor retries distillation when its service is unavailable`() = runBlocking {
         val jobDao = InMemoryMaintenanceJobDao(listOf(job(MemoryMaintenanceJobType.DISTILL_DAILY_NOTES)))
         val processor = createProcessor(jobDao = jobDao)
 
         val result = processor.processRunnableJobs(MemoryMaintenanceJobFamily.SEMANTIC)
 
-        assertEquals(1, result.blockedCount)
-        assertEquals(MemoryMaintenanceJobStatus.BLOCKED_DEPENDENCY, jobDao.jobs.single().status)
+        assertEquals(1, result.retryableCount)
+        assertEquals(MemoryMaintenanceJobStatus.FAILED_RETRYABLE, jobDao.jobs.single().status)
         assertEquals(
             "daily_distillation_not_available",
-            jobDao.jobs.single().blockedReason
+            jobDao.jobs.single().lastError
         )
     }
 
@@ -190,6 +190,19 @@ class MemoryMaintenanceProcessorTest {
         assertEquals(MemoryMaintenanceJobStatus.DISMISSED, jobDao.jobs.single().status)
         assertTrue(jobDao.jobs.single().attempts > 0)
         assertEquals(0, processor.processRunnableJobs(MemoryMaintenanceJobFamily.SEMANTIC).processedCount)
+    }
+
+    @Test
+    fun `memory disabled dismisses daily planning without a retry loop`() = runBlocking {
+        val jobDao = InMemoryMaintenanceJobDao(listOf(job(MemoryMaintenanceJobType.PLAN_DAILY_DISTILLATION)))
+        val processor = createProcessor(jobDao = jobDao, memoryEnabled = false)
+
+        val result = processor.processRunnableJobs(MemoryMaintenanceJobFamily.REPAIR)
+
+        assertEquals(1, result.terminalCount)
+        assertEquals(MemoryMaintenanceJobStatus.DISMISSED, jobDao.jobs.single().status)
+        assertEquals("memory_disabled", jobDao.jobs.single().lastError)
+        assertEquals(0, processor.processRunnableJobs(MemoryMaintenanceJobFamily.REPAIR).processedCount)
     }
 
     @Test

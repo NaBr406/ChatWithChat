@@ -21,7 +21,10 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryActivityLogger
 import dev.chungjungsoo.gptmobile.data.memory.MemoryBatchConsolidationService
 import dev.chungjungsoo.gptmobile.data.memory.MemoryChunker
 import dev.chungjungsoo.gptmobile.data.memory.MemoryCorpusSnapshotter
+import dev.chungjungsoo.gptmobile.data.memory.MemoryDailyDistillationOperationController
+import dev.chungjungsoo.gptmobile.data.memory.MemoryDailyDistillationRecoveryFinalizer
 import dev.chungjungsoo.gptmobile.data.memory.MemoryDailyDistillationScheduler
+import dev.chungjungsoo.gptmobile.data.memory.MemoryDailyDistillationService
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFilePaths
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFileStore
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexRepository
@@ -272,11 +275,13 @@ object MemoryRepositoryModule {
     fun provideMemoryMutationRecoveryService(
         memoryMutationCoordinator: MemoryMutationCoordinator,
         memoryTurnBatchDao: MemoryTurnBatchDao,
-        memoryMaintenanceScheduler: MemoryMaintenanceScheduler
+        memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
+        memoryDailyDistillationRecoveryFinalizer: MemoryDailyDistillationRecoveryFinalizer
     ): MemoryMutationRecoveryService = MemoryMutationRecoveryService(
         memoryMutationCoordinator = memoryMutationCoordinator,
         turnBatchDao = memoryTurnBatchDao,
-        maintenanceScheduler = memoryMaintenanceScheduler
+        maintenanceScheduler = memoryMaintenanceScheduler,
+        dailyDistillationFinalizer = memoryDailyDistillationRecoveryFinalizer
     )
 
     @Provides
@@ -328,6 +333,41 @@ object MemoryRepositoryModule {
         settingRepository = settingRepository,
         workEnqueuer = memoryMaintenanceWorkEnqueuer
     )
+
+    @Provides
+    @Singleton
+    fun provideMemoryDailyDistillationOperationController(
+        markdownMemoryCodec: MarkdownMemoryCodec
+    ): MemoryDailyDistillationOperationController =
+        MemoryDailyDistillationOperationController(markdownMemoryCodec)
+
+    @Provides
+    @Singleton
+    fun provideMemoryDailyDistillationService(
+        memoryRecoveryDao: MemoryRecoveryDao,
+        memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
+        settingRepository: SettingRepository,
+        memoryIntelligence: MemoryIntelligence,
+        memoryFileStore: MemoryFileStore,
+        memoryDailyDistillationOperationController: MemoryDailyDistillationOperationController,
+        memoryMutationCoordinator: MemoryMutationCoordinator,
+        memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler
+    ): MemoryDailyDistillationService = MemoryDailyDistillationService(
+        recoveryDao = memoryRecoveryDao,
+        maintenanceScheduler = memoryMaintenanceScheduler,
+        settingRepository = settingRepository,
+        memoryIntelligence = memoryIntelligence,
+        memoryFileStore = memoryFileStore,
+        operationController = memoryDailyDistillationOperationController,
+        memoryMutationCoordinator = memoryMutationCoordinator,
+        dailyDistillationScheduler = memoryDailyDistillationScheduler
+    )
+
+    @Provides
+    @Singleton
+    fun provideMemoryDailyDistillationRecoveryFinalizer(
+        memoryDailyDistillationService: MemoryDailyDistillationService
+    ): MemoryDailyDistillationRecoveryFinalizer = memoryDailyDistillationService
 
     @Provides
     @Singleton

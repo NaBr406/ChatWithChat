@@ -51,12 +51,29 @@ class MemoryDailyDistillationScheduler(
                     workEnqueuer.enqueueWork(MemoryMaintenanceJobFamily.SEMANTIC)
                 }
                 checkpoint.status == MemoryDistillationCheckpointStatus.PENDING -> {
-                    markCheckpointStale(checkpoint, MemoryDistillationCheckpointStatus.STALE_TARGET_BASE)
-                    val replanned = replanCheckpoint(checkpoint, nextBatch.input)
-                    val semanticJob = ensureSemanticJob(replanned, nextBatch.input.withCreatedAt(replanned.createdAt))
-                    scheduledJobId = semanticJob.jobId
-                    scheduledCheckpointId = replanned.checkpointId
-                    workEnqueuer.enqueueWork(MemoryMaintenanceJobFamily.SEMANTIC)
+                    when (
+                        maintenanceScheduler.markRecoveredTerminal(
+                            checkpoint.semanticJobId,
+                            MemoryDistillationCheckpointStatus.STALE_TARGET_BASE
+                        )
+                    ) {
+                        MemoryRecoveredJobDisposition.ACTIVE -> {
+                            scheduledJobId = checkpoint.semanticJobId
+                            scheduledCheckpointId = checkpoint.checkpointId
+                        }
+                        MemoryRecoveredJobDisposition.MISSING,
+                        MemoryRecoveredJobDisposition.SUCCEEDED -> {
+                            markCheckpointStale(checkpoint, MemoryDistillationCheckpointStatus.STALE_TARGET_BASE)
+                            val replanned = replanCheckpoint(checkpoint, nextBatch.input)
+                            val semanticJob = ensureSemanticJob(
+                                replanned,
+                                nextBatch.input.withCreatedAt(replanned.createdAt)
+                            )
+                            scheduledJobId = semanticJob.jobId
+                            scheduledCheckpointId = replanned.checkpointId
+                            workEnqueuer.enqueueWork(MemoryMaintenanceJobFamily.SEMANTIC)
+                        }
+                    }
                 }
                 checkpoint.status in MemoryDistillationCheckpointStatus.REPLANNABLE -> {
                     val replanned = replanCheckpoint(checkpoint, nextBatch.input)
@@ -166,7 +183,7 @@ class MemoryDailyDistillationScheduler(
 
     private suspend fun enqueueBatchPlan(batch: PlannedBatch): MemoryMaintenanceJob {
         val input = batch.input
-        return maintenanceScheduler.enqueue(
+        val job = maintenanceScheduler.enqueue(
             type = MemoryMaintenanceJobType.PLAN_DAILY_DISTILLATION,
             idempotencyKey = "memory-daily-distillation-plan:${input.batchId}:${input.targetBaseHash}",
             payloadJson = json.encodeToString(
@@ -180,6 +197,14 @@ class MemoryDailyDistillationScheduler(
                 )
             )
         )
+        return if (
+            job.status == MemoryMaintenanceJobStatus.DISMISSED &&
+            job.lastError == "memory_disabled"
+        ) {
+            maintenanceScheduler.reviveDismissedDailyPlan(job.jobId) ?: job
+        } else {
+            job
+        }
     }
 
     private suspend fun insertPendingCheckpoint(
@@ -346,7 +371,7 @@ class MemoryDailyDistillationScheduler(
     private suspend fun ensureNextDailyWake(): Long {
         val nextDate = LocalDate.now(clock).plusDays(1)
         val nextRunAt = nextDate.atStartOfDay(clock.zone).toEpochSecond()
-        maintenanceScheduler.enqueue(
+        val job = maintenanceScheduler.enqueue(
             type = MemoryMaintenanceJobType.PLAN_DAILY_DISTILLATION,
             idempotencyKey = "memory-daily-distillation-wake:$nextDate",
             payloadJson = json.encodeToString(
@@ -357,6 +382,12 @@ class MemoryDailyDistillationScheduler(
             ),
             nextRunAt = nextRunAt
         )
+        if (
+            job.status == MemoryMaintenanceJobStatus.DISMISSED &&
+            job.lastError == "memory_disabled"
+        ) {
+            maintenanceScheduler.reviveDismissedDailyPlan(job.jobId)
+        }
         return nextRunAt
     }
 

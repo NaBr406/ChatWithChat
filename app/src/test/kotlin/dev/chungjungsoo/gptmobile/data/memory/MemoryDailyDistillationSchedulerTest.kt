@@ -59,6 +59,28 @@ class MemoryDailyDistillationSchedulerTest {
     }
 
     @Test
+    fun `completed bounded batch advances to the next immutable batch`() = runBlocking {
+        val fixture = fixture()
+        val entries = (1..25).map { index -> entry("entry_$index", "Stable preference number $index.") }
+        fixture.writeDaily(LocalDate.parse("2026-07-11"), *entries.toTypedArray())
+        fixture.scheduler.ensurePlanningJobs()
+        fixture.scheduler.processPlan(fixture.currentBatchPlan())
+        val firstCheckpoint = checkNotNull(
+            fixture.recoveryDao.getDistillationCheckpointsByStatuses(
+                listOf(MemoryDistillationCheckpointStatus.PENDING)
+            ).single()
+        )
+        fixture.complete(firstCheckpoint)
+
+        fixture.scheduler.ensurePlanningJobs()
+        val nextPlan = STRICT_JSON.decodeFromString<MemoryDailyDistillationPlanJobPayload>(
+            fixture.currentBatchPlan().payloadJson
+        )
+
+        assertTrue(nextPlan.batchKey!!.startsWith("batch_0001_"))
+    }
+
+    @Test
     fun `completed exact batch produces no second semantic job`() = runBlocking {
         val fixture = fixture()
         fixture.writeDaily(LocalDate.parse("2026-07-11"), entry("stable", "Stable preference."))
@@ -116,6 +138,25 @@ class MemoryDailyDistillationSchedulerTest {
     }
 
     @Test
+    fun `reenabling memory revives the exact dismissed daily plan`() = runBlocking {
+        val fixture = fixture()
+        fixture.writeDaily(LocalDate.parse("2026-07-11"), entry("stable", "Stable preference."))
+        fixture.scheduler.ensurePlanningJobs()
+        val original = checkNotNull(
+            fixture.maintenanceScheduler.claimNextRunnable(MemoryMaintenanceJobFamily.REPAIR, "owner")
+        )
+        fixture.maintenanceScheduler.markDismissed(original, "memory_disabled")
+        fixture.settings.memoryEnabled = false
+        assertNull(fixture.scheduler.ensurePlanningJobs().scheduledJobId)
+
+        fixture.settings.memoryEnabled = true
+        val result = fixture.scheduler.ensurePlanningJobs()
+
+        assertEquals(original.jobId, result.scheduledJobId)
+        assertEquals(MemoryMaintenanceJobStatus.PENDING, fixture.jobDao.jobs.single { job -> job.jobId == original.jobId }.status)
+    }
+
+    @Test
     fun `next wake uses the next local midnight`() = runBlocking {
         val fixture = fixture(clock = SHANGHAI_MIDNIGHT_CLOCK)
 
@@ -139,16 +180,18 @@ class MemoryDailyDistillationSchedulerTest {
         val recoveryDao = InMemoryMemoryRecoveryDao()
         val jobDao = InMemoryMaintenanceJobDao()
         val workEnqueuer = RecordingWorkEnqueuer()
+        val settings = FakeMaintenanceSettingRepository(memoryEnabled)
+        val maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, clock)
         val scheduler = MemoryDailyDistillationScheduler(
             memoryFileStore = fileStore,
             markdownMemoryCodec = MarkdownMemoryCodec(),
             recoveryDao = recoveryDao,
-            maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, clock),
-            settingRepository = FakeMaintenanceSettingRepository(memoryEnabled),
+            maintenanceScheduler = maintenanceScheduler,
+            settingRepository = settings,
             workEnqueuer = workEnqueuer,
             clock = clock
         )
-        return Fixture(fileStore, recoveryDao, jobDao, workEnqueuer, scheduler)
+        return Fixture(fileStore, recoveryDao, jobDao, workEnqueuer, settings, maintenanceScheduler, scheduler)
     }
 
     private fun entry(id: String, text: String) = MarkdownMemoryEntry(
@@ -166,6 +209,8 @@ class MemoryDailyDistillationSchedulerTest {
         val recoveryDao: InMemoryMemoryRecoveryDao,
         val jobDao: InMemoryMaintenanceJobDao,
         val workEnqueuer: RecordingWorkEnqueuer,
+        val settings: FakeMaintenanceSettingRepository,
+        val maintenanceScheduler: MemoryMaintenanceScheduler,
         val scheduler: MemoryDailyDistillationScheduler
     ) {
         fun writeDaily(date: LocalDate, vararg entries: MarkdownMemoryEntry) {

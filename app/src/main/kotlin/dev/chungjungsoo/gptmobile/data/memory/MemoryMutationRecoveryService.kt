@@ -8,6 +8,7 @@ class MemoryMutationRecoveryService(
     private val memoryMutationCoordinator: MemoryMutationCoordinator,
     private val turnBatchDao: MemoryTurnBatchDao,
     private val maintenanceScheduler: MemoryMaintenanceScheduler,
+    private val dailyDistillationFinalizer: MemoryDailyDistillationRecoveryFinalizer? = null,
     private val clock: Clock = Clock.systemDefaultZone()
 ) {
     suspend fun recoverIncomplete(scheduleRetry: Boolean = true): MemoryMutationRecoveryResult {
@@ -19,7 +20,15 @@ class MemoryMutationRecoveryService(
         }
         repair.recoveredSemanticMutations.forEach { recovered ->
             try {
-                turnBatchDao.completeClaimedBatch(recovered.semanticJobId, now())
+                val finalizedDailyDistillation = dailyDistillationFinalizer
+                    ?.finalizeRecoveredMutation(recovered)
+                    ?: false
+                if (!finalizedDailyDistillation) {
+                    check(maintenanceScheduler.jobType(recovered.semanticJobId) != MemoryMaintenanceJobType.DISTILL_DAILY_NOTES) {
+                        "Recovered daily distillation mutation has no checkpoint finalizer"
+                    }
+                    turnBatchDao.completeClaimedBatch(recovered.semanticJobId, now())
+                }
                 val sourceJobDisposition = recovered.terminalReason?.let { terminalReason ->
                     maintenanceScheduler.markRecoveredTerminal(recovered.semanticJobId, terminalReason)
                 } ?: maintenanceScheduler.markRecoveredSucceeded(recovered.semanticJobId)
