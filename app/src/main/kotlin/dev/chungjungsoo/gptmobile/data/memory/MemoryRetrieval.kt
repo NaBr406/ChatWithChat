@@ -1,5 +1,8 @@
 package dev.chungjungsoo.gptmobile.data.memory
 
+import dev.chungjungsoo.gptmobile.data.model.ClientType
+import dev.chungjungsoo.gptmobile.data.token.TokenUsageEstimator
+
 interface MemoryRetriever {
     suspend fun retrieve(request: MemoryRetrievalRequest): Result<List<MemoryRetrievalResult>>
 }
@@ -45,3 +48,29 @@ data class MemoryRetrievalConfig(
     val lexicalWeight: Float = 1f,
     val vectorWeight: Float = 0f
 )
+
+internal fun List<MemoryRetrievalResult>.packFor(request: MemoryRetrievalRequest): List<MemoryRetrievalResult> {
+    if (request.limit <= 0 || request.tokenBudget <= 0) return emptyList()
+    var usedTokens = 0
+    return filter { result ->
+        val resultTokens = TokenUsageEstimator.estimateText(
+            text = result.text,
+            model = "",
+            clientType = ClientType.OPENAI
+        ) + MEMORY_RETRIEVAL_RESULT_TOKEN_OVERHEAD
+        if (usedTokens + resultTokens > request.tokenBudget) {
+            false
+        } else {
+            usedTokens += resultTokens
+            true
+        }
+    }.take(request.limit)
+}
+
+internal fun MemoryRetrievalRequest.combinedQuery(): String = listOfNotNull(
+    query.trim().takeIf { it.isNotBlank() },
+    recentContext?.trim()?.takeIf { it.isNotBlank() }
+).joinToString(separator = "\n").take(MAX_MEMORY_RETRIEVAL_QUERY_CHARS)
+
+private const val MEMORY_RETRIEVAL_RESULT_TOKEN_OVERHEAD = 24
+private const val MAX_MEMORY_RETRIEVAL_QUERY_CHARS = 8_000

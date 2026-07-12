@@ -1,11 +1,9 @@
 package dev.chungjungsoo.gptmobile.data.memory
 
-import dev.chungjungsoo.gptmobile.data.model.ClientType
-import dev.chungjungsoo.gptmobile.data.token.TokenUsageEstimator
-
 class MarkdownLexicalRetriever(
     private val snapshotSource: MemoryCorpusSnapshotSource
-) : MemoryRetriever, MemoryMaintenanceCorpusReader {
+) : MemoryRetriever,
+    MemoryMaintenanceCorpusReader {
 
     override suspend fun retrieve(request: MemoryRetrievalRequest): Result<List<MemoryRetrievalResult>> =
         retrieveForCorpus(request, MemoryCorpus.CHAT_RECALL_LONG_TERM)
@@ -24,15 +22,12 @@ class MarkdownLexicalRetriever(
             "Markdown lexical retrieval only supports the lexical strategy"
         }
         if (request.limit <= 0 || request.tokenBudget <= 0) return@runCatching emptyList()
-        val combinedQuery = listOfNotNull(
-            request.query.trim().takeIf { it.isNotBlank() },
-            request.recentContext?.trim()?.takeIf { it.isNotBlank() }
-        ).joinToString(separator = "\n").take(MAX_COMBINED_QUERY_CHARS)
+        val combinedQuery = request.combinedQuery()
         if (combinedQuery.isBlank()) return@runCatching emptyList()
 
         repeat(MAX_SNAPSHOT_ATTEMPTS) {
             val snapshots = snapshotSource.snapshots(request.corpus).getOrThrow()
-            val results = retrieveFromSnapshots(request, combinedQuery, snapshots)
+            val results = rankCandidates(request, combinedQuery, snapshots).packFor(request)
             if (snapshotSource.isCurrent(snapshots).getOrThrow()) {
                 return@runCatching results
             }
@@ -40,7 +35,7 @@ class MarkdownLexicalRetriever(
         emptyList()
     }
 
-    private fun retrieveFromSnapshots(
+    internal fun rankCandidates(
         request: MemoryRetrievalRequest,
         combinedQuery: String,
         snapshots: List<MemoryCorpusSnapshot>
@@ -57,7 +52,8 @@ class MarkdownLexicalRetriever(
                     chunk.sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME
             }
             .filter { chunk ->
-                request.includePrivate || chunk.sensitivity == null ||
+                request.includePrivate ||
+                    chunk.sensitivity == null ||
                     chunk.sensitivity !in setOf(MemorySensitivity.PRIVATE, MemorySensitivity.SENSITIVE)
             }
             .mapNotNull { chunk ->
@@ -75,21 +71,7 @@ class MarkdownLexicalRetriever(
             .map { result -> result.toRetrievalResult() }
             .distinctBy { result -> result.entryId?.let { entryId -> "entry:$entryId" } ?: "hash:${result.contentHash}" }
             .toList()
-
-        var usedTokens = 0
-        return ranked.filter { result ->
-            val resultTokens = TokenUsageEstimator.estimateText(
-                text = result.text,
-                model = "",
-                clientType = ClientType.OPENAI
-            ) + RESULT_TOKEN_OVERHEAD
-            if (usedTokens + resultTokens > request.tokenBudget) {
-                false
-            } else {
-                usedTokens += resultTokens
-                true
-            }
-        }.take(request.limit)
+        return ranked
     }
 
     private fun MemoryCorpusChunk.score(tokens: List<String>, rawQuery: String): Float {
@@ -173,8 +155,6 @@ class MarkdownLexicalRetriever(
         private const val CJK_BIGRAM_MATCH_SCORE = 1f
         private const val CJK_TRIGRAM_MATCH_SCORE = 1.5f
         private const val LONG_TERM_BONUS = 0.25f
-        private const val RESULT_TOKEN_OVERHEAD = 24
-        private const val MAX_COMBINED_QUERY_CHARS = 8_000
         private const val MAX_CANDIDATE_LIMIT = 500
         private const val MAX_SNAPSHOT_ATTEMPTS = 2
     }

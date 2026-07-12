@@ -3,8 +3,8 @@ package dev.chungjungsoo.gptmobile.di
 import android.content.Context
 import dagger.Module
 import dagger.Provides
-import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.InstallIn
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryActivityLogDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryIndexDao
@@ -12,9 +12,10 @@ import dev.chungjungsoo.gptmobile.data.database.dao.MemoryMaintenanceJobDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryRecoveryDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryTurnBatchDao
 import dev.chungjungsoo.gptmobile.data.database.dao.PersonalMemoryDao
+import dev.chungjungsoo.gptmobile.data.memory.HybridMemoryRetriever
 import dev.chungjungsoo.gptmobile.data.memory.LlmMemoryIntelligence
-import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryCodec
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownLexicalRetriever
+import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryCodec
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryDebugEditor
 import dev.chungjungsoo.gptmobile.data.memory.MemoryActivityLogger
 import dev.chungjungsoo.gptmobile.data.memory.MemoryBatchConsolidationService
@@ -42,7 +43,11 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryRetriever
 import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnBatchCoordinator
 import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnBatchScheduler
 import dev.chungjungsoo.gptmobile.data.memory.MemoryVectorIndexRecoveryService
+import dev.chungjungsoo.gptmobile.data.memory.MemoryVectorRecallRepairTrigger
+import dev.chungjungsoo.gptmobile.data.memory.MemoryVectorRecallStateSource
 import dev.chungjungsoo.gptmobile.data.memory.RoomMemoryActivityLogger
+import dev.chungjungsoo.gptmobile.data.memory.RoomMemoryVectorRecallStateSource
+import dev.chungjungsoo.gptmobile.data.memory.WorkEnqueuingMemoryVectorRecallRepairTrigger
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingAvailability
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingCapability
 import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorStore
@@ -153,6 +158,37 @@ object MemoryRepositoryModule {
     fun provideMarkdownLexicalRetriever(
         memoryCorpusSnapshotter: MemoryCorpusSnapshotter
     ): MarkdownLexicalRetriever = MarkdownLexicalRetriever(memoryCorpusSnapshotter)
+
+    @Provides
+    @Singleton
+    fun provideMemoryVectorRecallStateSource(
+        memoryRecoveryDao: MemoryRecoveryDao
+    ): MemoryVectorRecallStateSource = RoomMemoryVectorRecallStateSource(memoryRecoveryDao)
+
+    @Provides
+    @Singleton
+    fun provideMemoryVectorRecallRepairTrigger(
+        memoryMaintenanceWorkEnqueuer: MemoryMaintenanceWorkEnqueuer
+    ): MemoryVectorRecallRepairTrigger =
+        WorkEnqueuingMemoryVectorRecallRepairTrigger(memoryMaintenanceWorkEnqueuer)
+
+    @Provides
+    @Singleton
+    fun provideHybridMemoryRetriever(
+        memoryCorpusSnapshotter: MemoryCorpusSnapshotter,
+        markdownLexicalRetriever: MarkdownLexicalRetriever,
+        memoryVectorStore: MemoryVectorStore,
+        memoryEmbeddingCapability: MemoryEmbeddingCapability,
+        memoryVectorRecallStateSource: MemoryVectorRecallStateSource,
+        memoryVectorRecallRepairTrigger: MemoryVectorRecallRepairTrigger
+    ): HybridMemoryRetriever = HybridMemoryRetriever(
+        snapshotSource = memoryCorpusSnapshotter,
+        lexicalRetriever = markdownLexicalRetriever,
+        vectorStore = memoryVectorStore,
+        embeddingCapability = memoryEmbeddingCapability,
+        vectorRecallStateSource = memoryVectorRecallStateSource,
+        repairTrigger = memoryVectorRecallRepairTrigger
+    )
 
     @Provides
     @Singleton
