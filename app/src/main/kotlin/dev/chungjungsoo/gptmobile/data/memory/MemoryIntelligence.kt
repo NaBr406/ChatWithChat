@@ -7,4 +7,9 @@ interface MemoryIntelligence {
         request: MemoryBatchConsolidationRequest,
         preferredPlatform: PlatformV2? = null
     ): MemoryBatchConsolidationProposal?
+
+    suspend fun distillDailyMemory(
+        request: MemoryDailyDistillationFrozenInput,
+        preferredPlatform: PlatformV2? = null
+    ): MemoryDailyDistillationProposal?
 }

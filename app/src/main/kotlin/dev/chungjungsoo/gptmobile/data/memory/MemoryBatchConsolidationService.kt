@@ -485,7 +485,7 @@ class MemoryBatchConsolidationService(
         request: MemoryBatchConsolidationRequest,
         operations: List<MemoryBatchOperation>
     ): List<MemoryBatchOperation> {
-        check(operations.size <= MAX_OPERATIONS)
+        check(operations.size <= MemoryControlledOperationPolicy.MAX_OPERATIONS)
         val existingById = request.existingMemories.associateBy { it.id }
         val turnKeys = request.turns.map { it.turnKey }.toSet()
         val targetedIds = mutableSetOf<String>()
@@ -493,9 +493,9 @@ class MemoryBatchConsolidationService(
         operations.forEach { operation ->
             check(operation.destination in VALID_DESTINATIONS)
             check(operation.action in VALID_ACTIONS)
-            check(operation.type in VALID_TYPES)
-            check(operation.sensitivity in VALID_SENSITIVITIES)
-            check(operation.source in VALID_SOURCES)
+            check(operation.type in MemoryControlledOperationPolicy.validTypes)
+            check(operation.sensitivity in MemoryControlledOperationPolicy.validSensitivities)
+            check(operation.source in MemoryControlledOperationPolicy.validSources)
             check(operation.evidenceTurnKeys.all { it in turnKeys })
 
             when (operation.action) {
@@ -540,7 +540,7 @@ class MemoryBatchConsolidationService(
     private fun validateWriteText(text: String) {
         val normalized = text.trim()
         check(normalized.isNotBlank())
-        check(normalized.length <= MAX_MEMORY_TEXT_CHARS)
+        check(normalized.length <= MemoryControlledOperationPolicy.MAX_MEMORY_TEXT_CHARS)
         check(!normalized.startsWith("The user said:", ignoreCase = true))
     }
 
@@ -788,8 +788,6 @@ class MemoryBatchConsolidationService(
         private const val MAX_EXISTING_MEMORIES = 24
         private const val MAX_EXISTING_CANDIDATES = 200
         private const val MAX_EXISTING_MEMORY_TOKEN_BUDGET = 2_400
-        private const val MAX_OPERATIONS = 32
-        private const val MAX_MEMORY_TEXT_CHARS = 4_000
         private val VALID_TRIGGER_REASONS = setOf(
             MemoryTurnBatchTriggerReason.THRESHOLD,
             MemoryTurnBatchTriggerReason.IDLE,
@@ -802,29 +800,6 @@ class MemoryBatchConsolidationService(
             MemoryBatchAction.REPLACE,
             MemoryBatchAction.REMOVE,
             MemoryBatchAction.IGNORE
-        )
-        private val VALID_TYPES = setOf(
-            "stable_profile",
-            "communication_style",
-            "project_context",
-            "interest",
-            "important_event",
-            "important_person",
-            "emotional_pattern",
-            "boundary",
-            "life_context",
-            "recurring_theme",
-            "light_productivity_preference"
-        )
-        private val VALID_SENSITIVITIES = setOf(
-            MemorySensitivity.NORMAL,
-            MemorySensitivity.PRIVATE,
-            MemorySensitivity.SENSITIVE
-        )
-        private val VALID_SOURCES = setOf(
-            MemorySource.EXPLICIT_USER_STATEMENT,
-            MemorySource.ASSISTANT_INFERRED,
-            MemorySource.USER_CONFIRMED
         )
     }
 }

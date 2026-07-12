@@ -158,7 +158,7 @@ class MarkdownMemoryCodec {
             } else {
                 entries += entry
             }
-            index = (bulletIndex ?: index) + 1
+            index = entryBlockEndExclusive(lines, index, bulletIndex)
         }
 
         return MarkdownMemoryParseResult(

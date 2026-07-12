@@ -61,11 +61,13 @@ class InMemoryChatClassificationDao : ChatClassificationDao {
 
 class FakeMemoryIntelligence(
     var batchProposal: MemoryBatchConsolidationProposal? = null,
+    var distillationProposal: MemoryDailyDistillationProposal? = null,
     var onConsolidate: suspend () -> Unit = {}
 ) : MemoryIntelligence {
     var lastBatchRequest: MemoryBatchConsolidationRequest? = null
     var lastPreferredPlatform: PlatformV2? = null
     var consolidateCalls = 0
+    var distillationCalls = 0
 
     override suspend fun consolidateMemoryBatch(
         request: MemoryBatchConsolidationRequest,
@@ -76,6 +78,15 @@ class FakeMemoryIntelligence(
         lastPreferredPlatform = preferredPlatform
         onConsolidate()
         return batchProposal
+    }
+
+    override suspend fun distillDailyMemory(
+        request: MemoryDailyDistillationFrozenInput,
+        preferredPlatform: PlatformV2?
+    ): MemoryDailyDistillationProposal? {
+        distillationCalls += 1
+        lastPreferredPlatform = preferredPlatform
+        return distillationProposal
     }
 }
 

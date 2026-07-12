@@ -216,6 +216,42 @@ class LlmMemoryIntelligenceTest {
         assertEquals(MemoryActivityStatus.FAILED, activityLogger.finishedStatus(MemoryActivityCategory.MEMORY_GENERATION))
     }
 
+    @Test
+    fun `daily distillation uses one strict provider request`() = runBlocking {
+        val response =
+            """{"operations":[{"action":"create","text":"Prefers concise answers.","type":"communication_style","sensitivity":"normal","source":"explicit_user_statement","evidenceKeys":["evidence-1"],"reason":"stable preference"}]}"""
+        val openAIAPI = RecordingOpenAIAPI(chatChunks = chatChunks(response))
+        val intelligence = intelligence(
+            platforms = listOf(platform(ClientType.OPENROUTER, "model")),
+            openAIAPI = openAIAPI
+        )
+
+        val result = intelligence.distillDailyMemory(dailyRequest())
+
+        assertEquals(1, result?.operations?.size)
+        assertEquals(MemoryDailyDistillationAction.CREATE, result?.operations?.single()?.action)
+        assertEquals(listOf("evidence-1"), result?.operations?.single()?.evidenceKeys)
+        assertEquals(1, openAIAPI.streamChatCompletionCalls)
+        assertEquals(120, openAIAPI.lastChatTimeoutSeconds)
+        assertEquals(1200, openAIAPI.lastChatRequest?.maxTokens)
+    }
+
+    @Test
+    fun `daily distillation rejects non strict json after one call`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatChunks = chatChunks("""{"operations":[],"unexpected":true}""")
+        )
+        val intelligence = intelligence(
+            platforms = listOf(platform(ClientType.OPENROUTER, "model")),
+            openAIAPI = openAIAPI
+        )
+
+        val result = intelligence.distillDailyMemory(dailyRequest())
+
+        assertNull(result)
+        assertEquals(1, openAIAPI.streamChatCompletionCalls)
+    }
+
     private fun intelligence(
         platforms: List<PlatformV2>,
         openAIAPI: RecordingOpenAIAPI = RecordingOpenAIAPI(),
@@ -255,6 +291,29 @@ class LlmMemoryIntelligenceTest {
             )
         ),
         existingMemories = emptyList()
+    )
+
+    private fun dailyRequest() = MemoryDailyDistillationFrozenInput(
+        batchId = "daily-batch",
+        batchKey = "batch-0000",
+        dailySourcePath = "memory/2026-07-11.md",
+        dailySourceHash = "d".repeat(64),
+        dailyDate = "2026-07-11",
+        dailyEvidence = listOf(
+            MemoryDailyDistillationEvidence(
+                evidenceKey = "evidence-1",
+                entryId = "daily-1",
+                text = "The user explicitly prefers concise answers.",
+                type = "communication_style",
+                sensitivity = MemorySensitivity.NORMAL,
+                source = MemorySource.EXPLICIT_USER_STATEMENT,
+                createdAt = 1,
+                updatedAt = 2
+            )
+        ),
+        existingMemories = emptyList(),
+        targetBaseHash = "b".repeat(64),
+        createdAt = 10
     )
 
     private fun platform(
