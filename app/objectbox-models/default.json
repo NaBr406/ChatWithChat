@@ -5,7 +5,7 @@
   "entities": [
     {
       "id": "1:6442722752014373420",
-      "lastPropertyId": "22:1270399603252277314",
+      "lastPropertyId": "23:7076584201729569500",
       "name": "MemoryVectorChunkEntity",
       "properties": [
         {
@@ -122,13 +122,154 @@
           "indexId": "2:3809515016552505541",
           "type": 28,
           "flags": 8
+        },
+        {
+          "id": "23:7076584201729569500",
+          "name": "chatId",
+          "type": 5
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "2:7800818799189404236",
+      "lastPropertyId": "25:5631116402990522578",
+      "name": "MemoryVectorManifestEntity",
+      "properties": [
+        {
+          "id": "1:5364327785429832504",
+          "name": "objectBoxId",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:1468525681768037364",
+          "name": "manifestKey",
+          "indexId": "3:2531935813453685518",
+          "type": 9,
+          "flags": 2080
+        },
+        {
+          "id": "3:3474113643589694431",
+          "name": "state",
+          "type": 9
+        },
+        {
+          "id": "4:37259712974752213",
+          "name": "corpus",
+          "type": 9
+        },
+        {
+          "id": "5:931749108779193711",
+          "name": "sourcePath",
+          "type": 9
+        },
+        {
+          "id": "6:214583738179783854",
+          "name": "sourceHash",
+          "type": 9
+        },
+        {
+          "id": "7:5226986821308885780",
+          "name": "corpusGeneration",
+          "type": 6
+        },
+        {
+          "id": "8:2726911730300082397",
+          "name": "indexFingerprint",
+          "type": 9
+        },
+        {
+          "id": "9:4798882134057959572",
+          "name": "expectedChunkCount",
+          "type": 6
+        },
+        {
+          "id": "10:4446130663678613031",
+          "name": "completedAt",
+          "type": 6
+        },
+        {
+          "id": "11:8083314152100744837",
+          "name": "embeddingProviderId",
+          "type": 9
+        },
+        {
+          "id": "12:3306156703500804933",
+          "name": "embeddingRuntimeVersion",
+          "type": 9
+        },
+        {
+          "id": "13:1734207467295287697",
+          "name": "embeddingModelId",
+          "type": 9
+        },
+        {
+          "id": "14:1828460223512985272",
+          "name": "embeddingModelVersion",
+          "type": 9
+        },
+        {
+          "id": "15:1657477319811403435",
+          "name": "embeddingModelSha256",
+          "type": 9
+        },
+        {
+          "id": "16:6054422420262796840",
+          "name": "embeddingDimension",
+          "type": 5
+        },
+        {
+          "id": "17:7919592728814487154",
+          "name": "embeddingNormalized",
+          "type": 1
+        },
+        {
+          "id": "18:7439176041625412106",
+          "name": "tokenizerVersion",
+          "type": 9
+        },
+        {
+          "id": "19:4337340777012298541",
+          "name": "tokenizerFingerprint",
+          "type": 9
+        },
+        {
+          "id": "20:6299002110373328994",
+          "name": "embeddingMaxInputTokens",
+          "type": 5
+        },
+        {
+          "id": "21:1499638910178959435",
+          "name": "embeddingPooling",
+          "type": 9
+        },
+        {
+          "id": "22:7221425516759101250",
+          "name": "queryPrefix",
+          "type": 9
+        },
+        {
+          "id": "23:7141149181122852082",
+          "name": "documentPrefix",
+          "type": 9
+        },
+        {
+          "id": "24:4303594870228075401",
+          "name": "chunkerVersion",
+          "type": 9
+        },
+        {
+          "id": "25:5631116402990522578",
+          "name": "indexSchemaVersion",
+          "type": 5
         }
       ],
       "relations": []
     }
   ],
-  "lastEntityId": "1:6442722752014373420",
-  "lastIndexId": "2:3809515016552505541",
+  "lastEntityId": "2:7800818799189404236",
+  "lastIndexId": "3:2531935813453685518",
   "lastRelationId": "0:0",
   "lastSequenceId": "0:0",
   "modelVersion": 5,

@@ -22,6 +22,7 @@ data class MemoryVectorChunkEntity(
     var type: String? = null,
     var sensitivity: String? = null,
     var source: String? = null,
+    var chatId: Int? = null,
     var createdAt: Long = 0,
     var updatedAt: Long = 0,
     var contentHash: String = "",

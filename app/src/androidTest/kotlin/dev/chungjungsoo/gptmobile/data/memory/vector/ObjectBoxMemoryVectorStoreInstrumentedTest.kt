@@ -1,0 +1,377 @@
+package dev.chungjungsoo.gptmobile.data.memory.vector
+
+import android.content.Context
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import io.objectbox.BoxStore
+import dev.chungjungsoo.gptmobile.data.memory.MemoryCorpus
+import dev.chungjungsoo.gptmobile.data.memory.MemoryCorpusChunk
+import dev.chungjungsoo.gptmobile.data.memory.MemoryFilePaths
+import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingDescriptor
+import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingPooling
+import java.io.File
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+
+@RunWith(AndroidJUnit4::class)
+class ObjectBoxMemoryVectorStoreInstrumentedTest {
+    private lateinit var context: Context
+    private lateinit var directory: File
+    private lateinit var factory: MemoryVectorStoreFactory
+    private val openedStores = mutableListOf<MemoryVectorStore>()
+
+    @Before
+    fun setUp() {
+        context = InstrumentationRegistry.getInstrumentation().targetContext
+        directory = File(
+            context.noBackupFilesDir,
+            "memory_vector_index_test/store-${System.nanoTime()}"
+        )
+        BoxStore.deleteAllFiles(directory)
+        factory = MemoryVectorStoreFactory(context)
+    }
+
+    @After
+    fun tearDown() {
+        openedStores.asReversed().forEach { store -> runCatching { store.close() } }
+        runCatching { BoxStore.deleteAllFiles(directory) }
+        directory.deleteRecursively()
+    }
+
+    @Test
+    fun snapshotReplace_queryUpdateDeleteAndReopen_workOnDevice() {
+        val firstIdentity = identity(generation = 1, sourceHash = hash('a'))
+        val firstSnapshot = snapshot(
+            identity = firstIdentity,
+            chunks = listOf(
+                embeddedChunk("target", "first target", axis = 0, hashCharacter = '1'),
+                embeddedChunk("removed", "removed later", axis = 1, hashCharacter = '2')
+            )
+        )
+        val firstStore = openStore()
+        firstStore.replaceSnapshot(firstSnapshot)
+
+        val firstResult = firstStore.query(query(firstIdentity, axis = 0)) as MemoryVectorQueryResult.Ready
+        assertEquals("target", firstResult.matches.first().chunk.chunkId)
+        assertEquals(2L, firstStore.countChunks())
+
+        val secondIdentity = identity(generation = 2, sourceHash = hash('b'))
+        val secondSnapshot = snapshot(
+            identity = secondIdentity,
+            chunks = listOf(
+                embeddedChunk("target", "updated target", axis = 0, hashCharacter = '3')
+            )
+        )
+        firstStore.replaceSnapshot(secondSnapshot)
+
+        val staleResult = firstStore.query(query(firstIdentity, axis = 0)) as MemoryVectorQueryResult.Unavailable
+        assertEquals(MemoryVectorUnavailableReason.STALE_MANIFEST, staleResult.reason)
+        val secondResult = firstStore.query(query(secondIdentity, axis = 0)) as MemoryVectorQueryResult.Ready
+        assertEquals("updated target", secondResult.matches.single().chunk.text)
+        assertEquals(1L, firstStore.countChunks())
+
+        firstStore.close()
+        val reopenedStore = openStore()
+        assertEquals(secondSnapshot.manifest, reopenedStore.readManifest())
+        val reopenedResult = reopenedStore.query(query(secondIdentity, axis = 0)) as MemoryVectorQueryResult.Ready
+        assertEquals("target", reopenedResult.matches.single().chunk.chunkId)
+
+        reopenedStore.clearSnapshot()
+        assertNull(reopenedStore.readManifest())
+        assertEquals(0L, reopenedStore.countChunks())
+    }
+
+    @Test
+    fun wrongVectorDimension_failsBeforeMutatingThePublishedSnapshot() {
+        val identity = identity(generation = 1, sourceHash = hash('a'))
+        val original = snapshot(
+            identity = identity,
+            chunks = listOf(embeddedChunk("target", "valid", axis = 0, hashCharacter = '1'))
+        )
+        val store = openStore()
+        store.replaceSnapshot(original)
+
+        val invalidSnapshot = original.copy(
+            chunks = listOf(
+                MemoryEmbeddedChunk(
+                    chunk = original.chunks.single().chunk.copy(text = "must not publish"),
+                    embedding = FloatArray(MEMORY_VECTOR_DIMENSION - 1)
+                )
+            )
+        )
+        val replaceFailure = assertThrows(IllegalArgumentException::class.java) {
+            store.replaceSnapshot(invalidSnapshot)
+        }
+        assertTrue(replaceFailure.message.orEmpty().contains("exactly $MEMORY_VECTOR_DIMENSION"))
+
+        val queryFailure = assertThrows(IllegalArgumentException::class.java) {
+            store.query(
+                MemoryVectorQuery(
+                    expectedIdentity = identity,
+                    embedding = FloatArray(MEMORY_VECTOR_DIMENSION - 1),
+                    limit = 1
+                )
+            )
+        }
+        assertTrue(queryFailure.message.orEmpty().contains("exactly $MEMORY_VECTOR_DIMENSION"))
+        assertEquals(original.manifest, store.readManifest())
+        assertEquals(1L, store.countChunks())
+    }
+
+    @Test
+    fun sourceModelTokenizerAndChunkerMismatch_failClosed() {
+        val identity = identity(generation = 1, sourceHash = hash('a'))
+        val store = openStore()
+        store.replaceSnapshot(
+            snapshot(
+                identity = identity,
+                chunks = listOf(embeddedChunk("target", "valid", axis = 0, hashCharacter = '1'))
+            )
+        )
+        val mismatchedIdentities = listOf(
+            identity.copy(sourceHash = hash('b')),
+            configuration(DESCRIPTOR.copy(modelVersion = "test-model-v2"))
+                .identity(MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME, identity.sourceHash, identity.corpusGeneration),
+            configuration(DESCRIPTOR.copy(tokenizerFingerprint = hash('c')))
+                .identity(MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME, identity.sourceHash, identity.corpusGeneration),
+            configuration(DESCRIPTOR, chunkerVersion = "memory-chunker-v2")
+                .identity(MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME, identity.sourceHash, identity.corpusGeneration),
+            identity.copy(indexFingerprint = hash('0'))
+        )
+
+        mismatchedIdentities.forEach { mismatchedIdentity ->
+            val result = store.query(query(mismatchedIdentity, axis = 0)) as MemoryVectorQueryResult.Unavailable
+            assertEquals(MemoryVectorUnavailableReason.STALE_MANIFEST, result.reason)
+        }
+
+        val incompatibleDimension = identity.copy(
+            embeddingDescriptor = DESCRIPTOR.copy(dimension = MEMORY_VECTOR_DIMENSION - 1)
+        )
+        assertThrows(IllegalArgumentException::class.java) {
+            store.query(query(incompatibleDimension, axis = 0))
+        }
+        assertEquals(identity, store.readManifest()?.identity)
+    }
+
+    @Test
+    fun staleNonMatchingChunk_rejectsTheWholeReadyManifestBeforeHnswQuery() {
+        val identity = identity(generation = 1, sourceHash = hash('a'))
+        val store = openStore()
+        store.replaceSnapshot(
+            snapshot(
+                identity = identity,
+                chunks = listOf(
+                    embeddedChunk("target", "valid nearest target", axis = 0, hashCharacter = '1'),
+                    embeddedChunk("stale", "must invalidate the generation", axis = 1, hashCharacter = '2')
+                )
+            )
+        )
+        store.close()
+        MyObjectBox.builder()
+            .androidContext(context)
+            .directory(directory)
+            .build()
+            .use { rawStore ->
+                val chunkBox = rawStore.boxFor(MemoryVectorChunkEntity::class.java)
+                val stale = checkNotNull(
+                    chunkBox.query(MemoryVectorChunkEntity_.chunkId.equal("stale"))
+                        .build()
+                        .use { query -> query.findUnique() }
+                )
+                stale.sourceHash = hash('b')
+                chunkBox.put(stale)
+            }
+
+        val reopenedStore = openStore()
+        val result = reopenedStore.query(query(identity, axis = 0)) as MemoryVectorQueryResult.Unavailable
+
+        assertEquals(MemoryVectorUnavailableReason.CHUNK_COUNT_MISMATCH, result.reason)
+    }
+
+    @Test
+    fun failedManifestPublish_rollsBackChunksAndManifestTogether() {
+        val firstIdentity = identity(generation = 1, sourceHash = hash('a'))
+        val firstSnapshot = snapshot(
+            identity = firstIdentity,
+            chunks = listOf(embeddedChunk("old", "old snapshot", axis = 0, hashCharacter = '1'))
+        )
+        val initialStore = openStore()
+        initialStore.replaceSnapshot(firstSnapshot)
+        initialStore.close()
+
+        val failedStore = openStore(beforeManifestPublished = { error("injected publish failure") })
+        val replacementIdentity = identity(generation = 2, sourceHash = hash('b'))
+        val replacement = snapshot(
+            identity = replacementIdentity,
+            chunks = listOf(embeddedChunk("new", "new snapshot", axis = 1, hashCharacter = '2'))
+        )
+        assertThrows(IllegalStateException::class.java) {
+            failedStore.replaceSnapshot(replacement)
+        }
+
+        assertEquals(firstSnapshot.manifest, failedStore.readManifest())
+        assertEquals(1L, failedStore.countChunks())
+        val result = failedStore.query(query(firstIdentity, axis = 0)) as MemoryVectorQueryResult.Ready
+        assertEquals("old", result.matches.single().chunk.chunkId)
+    }
+
+    @Test
+    fun corruptionRecovery_deletesOnlyTheDerivedStoreAndReopensEmpty() {
+        val identity = identity(generation = 1, sourceHash = hash('a'))
+        val store = openStore()
+        store.replaceSnapshot(
+            snapshot(
+                identity = identity,
+                chunks = listOf(embeddedChunk("target", "valid", axis = 0, hashCharacter = '1'))
+            )
+        )
+        val outsideSentinel = File(context.filesDir, "vector-store-sentinel-${System.nanoTime()}")
+        outsideSentinel.writeText("outside derived vector store")
+
+        try {
+            assertFalse(store.recoverFromCorruption(IllegalArgumentException("not corruption")))
+            assertEquals(1L, store.countChunks())
+
+            assertTrue(store.recoverFromCorruption(MemoryVectorStoreCorruptionException("test corruption")))
+            assertTrue(outsideSentinel.exists())
+            assertNull(store.readManifest())
+            assertEquals(0L, store.countChunks())
+
+            store.deleteDerivedStore()
+            assertTrue(outsideSentinel.exists())
+        } finally {
+            outsideSentinel.delete()
+        }
+    }
+
+    @Test
+    fun emptyReadySnapshot_queriesAsAnEmptyReadyResult() {
+        val identity = identity(generation = 1, sourceHash = hash('a'))
+        val store = openStore()
+        store.replaceSnapshot(snapshot(identity, emptyList()))
+
+        val result = store.query(query(identity, axis = 0)) as MemoryVectorQueryResult.Ready
+        assertTrue(result.matches.isEmpty())
+        assertEquals(0L, store.countChunks())
+    }
+
+    private fun openStore(
+        beforeManifestPublished: () -> Unit = {}
+    ): MemoryVectorStore = factory.createForTesting(
+        directory = directory,
+        beforeManifestPublished = beforeManifestPublished
+    ).also(openedStores::add)
+
+    private fun identity(
+        generation: Long,
+        sourceHash: String
+    ): MemoryVectorIndexIdentity = INDEX_CONFIGURATION.identity(
+        sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+        sourceHash = sourceHash,
+        corpusGeneration = generation
+    )
+
+    private fun configuration(
+        descriptor: MemoryEmbeddingDescriptor,
+        chunkerVersion: String = "memory-chunker-v1"
+    ): MemoryVectorIndexConfiguration = MemoryVectorIndexConfiguration(
+        corpus = MemoryCorpus.CHAT_RECALL_LONG_TERM,
+        indexSchemaVersion = MEMORY_VECTOR_INDEX_SCHEMA_VERSION,
+        chunkerVersion = chunkerVersion,
+        maxChunkChars = 1200,
+        chunkOverlapChars = 0,
+        markdownCodecVersion = "markdown-memory-v1",
+        embeddingDescriptor = descriptor,
+        queryTextNormalization = "trim-collapse-whitespace",
+        documentTextNormalization = "trim-collapse-whitespace",
+        distanceMetric = MemoryVectorDistanceMetric.COSINE
+    )
+
+    private fun snapshot(
+        identity: MemoryVectorIndexIdentity,
+        chunks: List<MemoryEmbeddedChunk>
+    ): MemoryVectorSnapshot = MemoryVectorSnapshot(
+        manifest = MemoryVectorManifest(
+            identity = identity,
+            expectedChunkCount = chunks.size.toLong(),
+            completedAt = 1_000L + identity.corpusGeneration,
+            state = MemoryVectorManifestState.READY
+        ),
+        chunks = chunks
+    )
+
+    private fun embeddedChunk(
+        chunkId: String,
+        text: String,
+        axis: Int,
+        hashCharacter: Char
+    ): MemoryEmbeddedChunk = MemoryEmbeddedChunk(
+        chunk = MemoryCorpusChunk(
+            chunkId = chunkId,
+            entryId = "entry-$chunkId",
+            sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+            chunkIndex = axis,
+            heading = "Test",
+            text = text,
+            type = "fact",
+            sensitivity = null,
+            source = "instrumentation",
+            chatId = 7,
+            createdAt = 100,
+            updatedAt = 200,
+            contentHash = hash(hashCharacter)
+        ),
+        embedding = embedding(axis)
+    )
+
+    private fun query(
+        identity: MemoryVectorIndexIdentity,
+        axis: Int
+    ): MemoryVectorQuery = MemoryVectorQuery(
+        expectedIdentity = identity,
+        embedding = embedding(axis),
+        limit = 4
+    )
+
+    private fun embedding(axis: Int): FloatArray =
+        FloatArray(MEMORY_VECTOR_DIMENSION).apply { this[axis] = 1f }
+
+    private fun hash(character: Char): String = character.toString().repeat(64)
+
+    private companion object {
+        val DESCRIPTOR = MemoryEmbeddingDescriptor(
+            providerId = "instrumentation-fake",
+            runtimeVersion = "test-runtime-v1",
+            modelId = "test-model",
+            modelVersion = "test-model-v1",
+            modelSha256 = "d".repeat(64),
+            dimension = MEMORY_VECTOR_DIMENSION,
+            normalized = true,
+            tokenizerVersion = "test-tokenizer-v1",
+            tokenizerFingerprint = "e".repeat(64),
+            maxInputTokens = 256,
+            pooling = MemoryEmbeddingPooling.CLS,
+            queryPrefix = "query: ",
+            documentPrefix = ""
+        )
+        val INDEX_CONFIGURATION = MemoryVectorIndexConfiguration(
+            corpus = MemoryCorpus.CHAT_RECALL_LONG_TERM,
+            indexSchemaVersion = MEMORY_VECTOR_INDEX_SCHEMA_VERSION,
+            chunkerVersion = "memory-chunker-v1",
+            maxChunkChars = 1200,
+            chunkOverlapChars = 0,
+            markdownCodecVersion = "markdown-memory-v1",
+            embeddingDescriptor = DESCRIPTOR,
+            queryTextNormalization = "trim-collapse-whitespace",
+            documentTextNormalization = "trim-collapse-whitespace",
+            distanceMetric = MemoryVectorDistanceMetric.COSINE
+        )
+    }
+}

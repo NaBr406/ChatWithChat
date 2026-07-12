@@ -36,6 +36,8 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryRetriever
 import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnBatchCoordinator
 import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnBatchScheduler
 import dev.chungjungsoo.gptmobile.data.memory.RoomMemoryActivityLogger
+import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorStore
+import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorStoreFactory
 import dev.chungjungsoo.gptmobile.data.network.AnthropicAPI
 import dev.chungjungsoo.gptmobile.data.network.GoogleAPI
 import dev.chungjungsoo.gptmobile.data.network.OpenAIAPI
@@ -75,6 +77,12 @@ object MemoryRepositoryModule {
     @Singleton
     fun provideMemoryFileStore(memoryFilePaths: MemoryFilePaths): MemoryFileStore =
         MemoryFileStore(memoryFilePaths)
+
+    @Provides
+    @Singleton
+    fun provideMemoryVectorStore(
+        @ApplicationContext context: Context
+    ): MemoryVectorStore = MemoryVectorStoreFactory(context).create()
 
     @Provides
     @Singleton
