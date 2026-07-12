@@ -8,7 +8,8 @@ class MemoryMaintenanceRepairer @Inject constructor(
     private val workScheduler: MemoryMaintenanceWorkEnqueuer,
     private val memoryMutationRecoveryService: MemoryMutationRecoveryService? = null,
     private val memoryVectorIndexRecoveryService: MemoryVectorIndexRecoveryService? = null,
-    private val memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null
+    private val memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null,
+    private val memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler? = null
 ) {
     suspend fun repairAndEnqueue(
         reopenWaitingRepair: Boolean = false
@@ -29,6 +30,12 @@ class MemoryMaintenanceRepairer @Inject constructor(
         if (
             memoryVectorIndexRecoveryService != null &&
             !runSchedulingStep { memoryVectorIndexRecoveryService.reconcile() }
+        ) {
+            schedulingSucceeded = false
+        }
+        if (
+            memoryDailyDistillationScheduler != null &&
+            !runSchedulingStep { memoryDailyDistillationScheduler.ensurePlanningJobs() }
         ) {
             schedulingSucceeded = false
         }

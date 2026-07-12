@@ -18,7 +18,8 @@ class MemoryMaintenanceProcessor @Inject constructor(
     private val memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null,
     private val memoryBatchConsolidationService: MemoryBatchConsolidationService? = null,
     private val memoryMutationRecoveryService: MemoryMutationRecoveryService? = null,
-    private val memoryIndexSyncService: MemoryIndexSyncService? = null
+    private val memoryIndexSyncService: MemoryIndexSyncService? = null,
+    private val memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler? = null
 ) {
     suspend fun processRunnableJobs(
         family: String,
@@ -145,7 +146,26 @@ class MemoryMaintenanceProcessor @Inject constructor(
     private suspend fun processRepairJob(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome = when (job.type) {
         MemoryMaintenanceJobType.REPAIR_MARKDOWN_METADATA -> rebuildLegacyRoomIndex(job)
         MemoryMaintenanceJobType.RECONCILE_MEMORY_MUTATIONS -> reconcileMemoryMutations(job)
+        MemoryMaintenanceJobType.PLAN_DAILY_DISTILLATION -> planDailyDistillation(job)
         else -> dismissUnknownJob(job)
+    }
+
+    private suspend fun planDailyDistillation(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome {
+        val scheduler = memoryDailyDistillationScheduler ?: run {
+            maintenanceScheduler.markBlockedDependency(job, "daily_distillation_scheduler_not_available")
+            return MemoryMaintenanceOutcome.BLOCKED
+        }
+        return try {
+            maintenanceScheduler.renewClaimedLease(job)
+            scheduler.processPlan(job)
+            maintenanceScheduler.renewClaimedLease(job)
+            maintenanceScheduler.markSucceeded(job)
+            MemoryMaintenanceOutcome.SUCCEEDED
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (throwable: Throwable) {
+            persistUnexpectedFailure(job, throwable)
+        }
     }
 
     private suspend fun reconcileMemoryMutations(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome {

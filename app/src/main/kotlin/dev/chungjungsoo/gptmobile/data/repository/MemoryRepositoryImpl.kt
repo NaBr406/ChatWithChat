@@ -10,6 +10,7 @@ import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryCodec
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryEntry
 import dev.chungjungsoo.gptmobile.data.memory.MemoryCompletedTurnInput
 import dev.chungjungsoo.gptmobile.data.memory.MemoryCorpus
+import dev.chungjungsoo.gptmobile.data.memory.MemoryDailyDistillationScheduler
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFilePaths
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFileStore
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexRebuilder
@@ -34,11 +35,13 @@ class MemoryRepositoryImpl(
     private val markdownMemoryCodec: MarkdownMemoryCodec? = null,
     private val memoryIndexRebuilder: MemoryIndexRebuilder? = null,
     private val memoryTurnBatchCoordinator: MemoryTurnBatchCoordinator? = null,
-    private val memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null
+    private val memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null,
+    private val memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler? = null
 ) : MemoryRepository {
 
     override suspend fun onMemoryEnabledChanged(enabled: Boolean) {
         memoryTurnBatchScheduler?.onMemoryEnabledChanged(enabled)
+        if (enabled) memoryDailyDistillationScheduler?.ensurePlanningJobs()
     }
 
     override suspend fun recordUserActivity(chatId: Int, activityAt: Long) {

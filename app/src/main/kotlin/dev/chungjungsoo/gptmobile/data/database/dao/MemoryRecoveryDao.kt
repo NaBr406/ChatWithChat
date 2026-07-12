@@ -5,7 +5,6 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
-import androidx.room.Update
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryCorpusState
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryDistillationCheckpoint
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMutationGroup
@@ -508,14 +507,107 @@ interface MemoryRecoveryDao {
     @Query(
         """
         SELECT * FROM memory_distillation_checkpoint
+        WHERE semantic_job_id = :semanticJobId
+        ORDER BY daily_date ASC, daily_source_path ASC, batch_key ASC, checkpoint_id ASC
+        LIMIT 1
+        """
+    )
+    suspend fun getDistillationCheckpointBySemanticJobId(semanticJobId: String): MemoryDistillationCheckpoint?
+
+    @Query(
+        """
+        SELECT * FROM memory_distillation_checkpoint
         WHERE status IN (:statuses)
         ORDER BY daily_date ASC, daily_source_path ASC
         """
     )
     suspend fun getDistillationCheckpointsByStatuses(statuses: List<String>): List<MemoryDistillationCheckpoint>
 
-    @Update
-    suspend fun updateDistillationCheckpoint(checkpoint: MemoryDistillationCheckpoint)
+    @Query(
+        """
+        UPDATE memory_distillation_checkpoint
+        SET status = :newStatus,
+            target_source_hash = :newTargetSourceHash,
+            mutation_group_id = COALESCE(:mutationGroupId, mutation_group_id),
+            updated_at = :updatedAt,
+            processed_at = COALESCE(processed_at, :processedAt),
+            row_version = row_version + 1
+        WHERE checkpoint_id = :checkpointId
+            AND status = :expectedStatus
+            AND row_version = :expectedRowVersion
+            AND daily_source_path = :expectedDailySourcePath
+            AND daily_source_hash = :expectedDailySourceHash
+            AND batch_key = :expectedBatchKey
+            AND semantic_job_id = :expectedSemanticJobId
+            AND target_source_path = :expectedTargetSourcePath
+            AND target_base_hash = :expectedTargetBaseHash
+            AND target_source_hash = :expectedTargetSourceHash
+            AND mutation_group_id IS :expectedMutationGroupId
+            AND :updatedAt >= updated_at
+            AND (:processedAt IS NULL OR :processedAt >= 0)
+        """
+    )
+    suspend fun transitionDistillationCheckpointCas(
+        checkpointId: String,
+        expectedStatus: String,
+        expectedRowVersion: Long,
+        expectedDailySourcePath: String,
+        expectedDailySourceHash: String,
+        expectedBatchKey: String,
+        expectedSemanticJobId: String,
+        expectedTargetSourcePath: String,
+        expectedTargetBaseHash: String,
+        expectedTargetSourceHash: String,
+        expectedMutationGroupId: String?,
+        newStatus: String,
+        newTargetSourceHash: String,
+        mutationGroupId: String?,
+        updatedAt: Long,
+        processedAt: Long?
+    ): Int
+
+    @Query(
+        """
+        UPDATE memory_distillation_checkpoint
+        SET semantic_job_id = :newSemanticJobId,
+            target_base_hash = :newTargetBaseHash,
+            target_source_hash = :newTargetBaseHash,
+            mutation_group_id = NULL,
+            status = :newStatus,
+            updated_at = :updatedAt,
+            processed_at = NULL,
+            row_version = row_version + 1
+        WHERE checkpoint_id = :checkpointId
+            AND status = :expectedStatus
+            AND row_version = :expectedRowVersion
+            AND daily_source_path = :expectedDailySourcePath
+            AND daily_source_hash = :expectedDailySourceHash
+            AND batch_key = :expectedBatchKey
+            AND semantic_job_id = :expectedSemanticJobId
+            AND target_source_path = :expectedTargetSourcePath
+            AND target_base_hash = :expectedTargetBaseHash
+            AND target_source_hash = :expectedTargetSourceHash
+            AND mutation_group_id IS NULL
+            AND processed_at IS NULL
+            AND :updatedAt >= updated_at
+        """
+    )
+    suspend fun replanDistillationCheckpointCas(
+        checkpointId: String,
+        expectedStatus: String,
+        expectedRowVersion: Long,
+        expectedDailySourcePath: String,
+        expectedDailySourceHash: String,
+        expectedBatchKey: String,
+        expectedSemanticJobId: String,
+        expectedTargetSourcePath: String,
+        expectedTargetBaseHash: String,
+        expectedTargetSourceHash: String,
+        newSemanticJobId: String,
+        newTargetBaseHash: String,
+        newStatus: String,
+        updatedAt: Long
+    ): Int
 
     private fun MemoryMutationPrepareRequest.validate() {
         require(groupId.isNotBlank()) { "Mutation group ID must not be blank" }

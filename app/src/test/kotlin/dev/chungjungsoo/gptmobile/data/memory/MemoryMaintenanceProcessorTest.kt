@@ -20,6 +20,7 @@ import dev.chungjungsoo.gptmobile.data.websearch.WebSearchMode
 import java.nio.file.Files
 import java.time.Clock
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneOffset
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -239,6 +240,53 @@ class MemoryMaintenanceProcessorTest {
     }
 
     @Test
+    fun `processor materializes a due daily distillation plan`() = runBlocking {
+        val fileStore = MemoryFileStore(
+            MemoryFilePaths(Files.createTempDirectory("memory-daily-plan-processor").toFile()),
+            FIXED_CLOCK
+        )
+        fileStore.ensureStore().getOrThrow()
+        fileStore.appendDailyNote(
+            MarkdownMemoryCodec().renderDailyAppend(
+                listOf(
+                    MarkdownMemoryEntry(
+                        id = "daily-stable",
+                        text = "Stable preference.",
+                        type = "communication_style",
+                        sensitivity = MemorySensitivity.NORMAL,
+                        source = MemorySource.EXPLICIT_USER_STATEMENT
+                    )
+                )
+            ),
+            LocalDate.of(1969, 12, 31)
+        ).getOrThrow()
+        val jobDao = InMemoryMaintenanceJobDao()
+        val recoveryDao = InMemoryMemoryRecoveryDao()
+        val enqueuer = RecordingWorkEnqueuer()
+        val dailyScheduler = MemoryDailyDistillationScheduler(
+            memoryFileStore = fileStore,
+            markdownMemoryCodec = MarkdownMemoryCodec(),
+            recoveryDao = recoveryDao,
+            maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK),
+            settingRepository = FakeMaintenanceSettingRepository(memoryEnabled = true),
+            workEnqueuer = enqueuer,
+            clock = FIXED_CLOCK
+        )
+        dailyScheduler.ensurePlanningJobs()
+        val processor = createProcessor(
+            jobDao = jobDao,
+            fileStore = fileStore,
+            memoryDailyDistillationScheduler = dailyScheduler
+        )
+
+        val result = processor.processRunnableJobs(MemoryMaintenanceJobFamily.REPAIR, limit = 1)
+
+        assertEquals(1, result.succeededCount)
+        assertEquals(1, jobDao.jobs.count { job -> job.type == MemoryMaintenanceJobType.DISTILL_DAILY_NOTES })
+        assertEquals(1, recoveryDao.getDistillationCheckpointsByStatuses(listOf(MemoryDistillationCheckpointStatus.PENDING)).size)
+    }
+
+    @Test
     fun `repairer resets stale running jobs and enqueues work`() = runBlocking {
         val jobDao = InMemoryMaintenanceJobDao(
             listOf(
@@ -344,14 +392,16 @@ class MemoryMaintenanceProcessorTest {
         memoryEnabled: Boolean = true,
         leaseWatchdog: MemoryMaintenanceLeaseWatchdog = NoOpLeaseWatchdog,
         memoryMutationRecoveryService: MemoryMutationRecoveryService? = null,
-        memoryIndexSyncService: MemoryIndexSyncService? = null
+        memoryIndexSyncService: MemoryIndexSyncService? = null,
+        memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler? = null
     ): MemoryMaintenanceProcessor = MemoryMaintenanceProcessor(
         maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK),
         memoryIndexRepository = MemoryIndexRepository(fileStore, indexDao, MemoryChunker(), FIXED_CLOCK),
         settingRepository = FakeMaintenanceSettingRepository(memoryEnabled = memoryEnabled),
         leaseWatchdog = leaseWatchdog,
         memoryMutationRecoveryService = memoryMutationRecoveryService,
-        memoryIndexSyncService = memoryIndexSyncService
+        memoryIndexSyncService = memoryIndexSyncService,
+        memoryDailyDistillationScheduler = memoryDailyDistillationScheduler
     )
 
     private fun syncServiceReturning(result: MemoryIndexSyncResult): MemoryIndexSyncService =

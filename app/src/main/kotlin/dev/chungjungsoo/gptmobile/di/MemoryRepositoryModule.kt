@@ -21,6 +21,7 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryActivityLogger
 import dev.chungjungsoo.gptmobile.data.memory.MemoryBatchConsolidationService
 import dev.chungjungsoo.gptmobile.data.memory.MemoryChunker
 import dev.chungjungsoo.gptmobile.data.memory.MemoryCorpusSnapshotter
+import dev.chungjungsoo.gptmobile.data.memory.MemoryDailyDistillationScheduler
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFilePaths
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFileStore
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexRepository
@@ -312,6 +313,24 @@ object MemoryRepositoryModule {
 
     @Provides
     @Singleton
+    fun provideMemoryDailyDistillationScheduler(
+        memoryFileStore: MemoryFileStore,
+        markdownMemoryCodec: MarkdownMemoryCodec,
+        memoryRecoveryDao: MemoryRecoveryDao,
+        memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
+        settingRepository: SettingRepository,
+        memoryMaintenanceWorkEnqueuer: MemoryMaintenanceWorkEnqueuer
+    ): MemoryDailyDistillationScheduler = MemoryDailyDistillationScheduler(
+        memoryFileStore = memoryFileStore,
+        markdownMemoryCodec = markdownMemoryCodec,
+        recoveryDao = memoryRecoveryDao,
+        maintenanceScheduler = memoryMaintenanceScheduler,
+        settingRepository = settingRepository,
+        workEnqueuer = memoryMaintenanceWorkEnqueuer
+    )
+
+    @Provides
+    @Singleton
     fun provideMemoryBatchConsolidationService(
         memoryTurnBatchDao: MemoryTurnBatchDao,
         memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
@@ -356,7 +375,8 @@ object MemoryRepositoryModule {
         memoryFileStore: MemoryFileStore,
         markdownMemoryCodec: MarkdownMemoryCodec,
         memoryTurnBatchCoordinator: MemoryTurnBatchCoordinator,
-        memoryTurnBatchScheduler: MemoryTurnBatchScheduler
+        memoryTurnBatchScheduler: MemoryTurnBatchScheduler,
+        memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler
     ): MemoryRepository = MemoryRepositoryImpl(
         personalMemoryDao = personalMemoryDao,
         memoryPromptBuilder = memoryPromptBuilder,
@@ -365,6 +385,7 @@ object MemoryRepositoryModule {
         markdownMemoryCodec = markdownMemoryCodec,
         memoryIndexRebuilder = memoryIndexRepository,
         memoryTurnBatchCoordinator = memoryTurnBatchCoordinator,
-        memoryTurnBatchScheduler = memoryTurnBatchScheduler
+        memoryTurnBatchScheduler = memoryTurnBatchScheduler,
+        memoryDailyDistillationScheduler = memoryDailyDistillationScheduler
     )
 }

@@ -324,6 +324,19 @@ internal class InMemoryMemoryRecoveryDao : MemoryRecoveryDao {
             checkpoint.batchKey == batchKey
     }
 
+    override suspend fun getDistillationCheckpointBySemanticJobId(
+        semanticJobId: String
+    ): MemoryDistillationCheckpoint? = distillationCheckpoints.values
+        .asSequence()
+        .filter { checkpoint -> checkpoint.semanticJobId == semanticJobId }
+        .sortedWith(
+            compareBy<MemoryDistillationCheckpoint> { checkpoint -> checkpoint.dailyDate }
+                .thenBy { checkpoint -> checkpoint.dailySourcePath }
+                .thenBy { checkpoint -> checkpoint.batchKey }
+                .thenBy { checkpoint -> checkpoint.checkpointId }
+        )
+        .firstOrNull()
+
     override suspend fun getDistillationCheckpointsByStatuses(
         statuses: List<String>
     ): List<MemoryDistillationCheckpoint> = distillationCheckpoints.values
@@ -333,9 +346,89 @@ internal class InMemoryMemoryRecoveryDao : MemoryRecoveryDao {
                 .thenBy { it.dailySourcePath }
         )
 
-    override suspend fun updateDistillationCheckpoint(checkpoint: MemoryDistillationCheckpoint) {
-        if (checkpoint.checkpointId in distillationCheckpoints) {
-            distillationCheckpoints[checkpoint.checkpointId] = checkpoint
-        }
+    override suspend fun transitionDistillationCheckpointCas(
+        checkpointId: String,
+        expectedStatus: String,
+        expectedRowVersion: Long,
+        expectedDailySourcePath: String,
+        expectedDailySourceHash: String,
+        expectedBatchKey: String,
+        expectedSemanticJobId: String,
+        expectedTargetSourcePath: String,
+        expectedTargetBaseHash: String,
+        expectedTargetSourceHash: String,
+        expectedMutationGroupId: String?,
+        newStatus: String,
+        newTargetSourceHash: String,
+        mutationGroupId: String?,
+        updatedAt: Long,
+        processedAt: Long?
+    ): Int {
+        val current = distillationCheckpoints[checkpointId] ?: return 0
+        val matches = current.status == expectedStatus &&
+            current.rowVersion == expectedRowVersion &&
+            current.dailySourcePath == expectedDailySourcePath &&
+            current.dailySourceHash == expectedDailySourceHash &&
+            current.batchKey == expectedBatchKey &&
+            current.semanticJobId == expectedSemanticJobId &&
+            current.targetSourcePath == expectedTargetSourcePath &&
+            current.targetBaseHash == expectedTargetBaseHash &&
+            current.targetSourceHash == expectedTargetSourceHash &&
+            current.mutationGroupId == expectedMutationGroupId &&
+            updatedAt >= current.updatedAt &&
+            (processedAt == null || processedAt >= 0)
+        if (!matches) return 0
+        distillationCheckpoints[checkpointId] = current.copy(
+            targetSourceHash = newTargetSourceHash,
+            mutationGroupId = mutationGroupId ?: current.mutationGroupId,
+            status = newStatus,
+            updatedAt = updatedAt,
+            processedAt = current.processedAt ?: processedAt,
+            rowVersion = current.rowVersion + 1
+        )
+        return 1
+    }
+
+    override suspend fun replanDistillationCheckpointCas(
+        checkpointId: String,
+        expectedStatus: String,
+        expectedRowVersion: Long,
+        expectedDailySourcePath: String,
+        expectedDailySourceHash: String,
+        expectedBatchKey: String,
+        expectedSemanticJobId: String,
+        expectedTargetSourcePath: String,
+        expectedTargetBaseHash: String,
+        expectedTargetSourceHash: String,
+        newSemanticJobId: String,
+        newTargetBaseHash: String,
+        newStatus: String,
+        updatedAt: Long
+    ): Int {
+        val current = distillationCheckpoints[checkpointId] ?: return 0
+        val matches = current.status == expectedStatus &&
+            current.rowVersion == expectedRowVersion &&
+            current.dailySourcePath == expectedDailySourcePath &&
+            current.dailySourceHash == expectedDailySourceHash &&
+            current.batchKey == expectedBatchKey &&
+            current.semanticJobId == expectedSemanticJobId &&
+            current.targetSourcePath == expectedTargetSourcePath &&
+            current.targetBaseHash == expectedTargetBaseHash &&
+            current.targetSourceHash == expectedTargetSourceHash &&
+            current.mutationGroupId == null &&
+            current.processedAt == null &&
+            updatedAt >= current.updatedAt
+        if (!matches) return 0
+        distillationCheckpoints[checkpointId] = current.copy(
+            semanticJobId = newSemanticJobId,
+            targetBaseHash = newTargetBaseHash,
+            targetSourceHash = newTargetBaseHash,
+            mutationGroupId = null,
+            status = newStatus,
+            updatedAt = updatedAt,
+            processedAt = null,
+            rowVersion = current.rowVersion + 1
+        )
+        return 1
     }
 }

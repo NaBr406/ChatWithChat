@@ -291,9 +291,7 @@ class MemoryMaintenanceScheduler(
         return resetCount
     }
 
-    suspend fun reopenWaitingRepairJobs(limit: Int = DEFAULT_VISIBLE_LIMIT): Int {
-        return jobDao.getReopenableLocalJobs(limit).count { job -> retryManually(job.jobId) != null }
-    }
+    suspend fun reopenWaitingRepairJobs(limit: Int = DEFAULT_VISIBLE_LIMIT): Int = jobDao.getReopenableLocalJobs(limit).count { job -> retryManually(job.jobId) != null }
 
     suspend fun reviveLocalJob(jobId: String): MemoryMaintenanceJob? {
         val job = jobDao.getById(jobId) ?: return null
@@ -304,6 +302,34 @@ class MemoryMaintenanceScheduler(
                 MemoryMaintenanceJobStatus.RUNNING,
                 MemoryMaintenanceJobStatus.FAILED_RETRYABLE
             )
+        ) {
+            return job
+        }
+        val now = now()
+        val changed = jobDao.transitionUnclaimedJob(
+            jobId = job.jobId,
+            expectedStatus = job.status,
+            expectedRowVersion = job.rowVersion,
+            newStatus = MemoryMaintenanceJobStatus.PENDING,
+            attempts = 0,
+            retryCycle = job.retryCycle + 1,
+            lastError = null,
+            blockedReason = null,
+            updatedAt = now,
+            nextRunAt = now
+        )
+        if (changed != 1) return jobDao.getById(job.jobId)
+        val updated = checkNotNull(jobDao.getById(job.jobId))
+        emitStatusChanged(job, updated, now)
+        return updated
+    }
+
+    suspend fun reviveDismissedDailyDistillation(jobId: String): MemoryMaintenanceJob? {
+        val job = jobDao.getById(jobId) ?: return null
+        if (
+            job.type != MemoryMaintenanceJobType.DISTILL_DAILY_NOTES ||
+            job.status != MemoryMaintenanceJobStatus.DISMISSED ||
+            job.lastError != "memory_disabled"
         ) {
             return job
         }
@@ -465,8 +491,7 @@ private data class MemoryMaintenanceRetryPolicy(
         retryDelaysSeconds.getOrElse((attempts - 1).coerceAtLeast(0)) { retryDelaysSeconds.last() }
 }
 
-class MemoryMaintenanceLeaseLostException(jobId: String) :
-    IllegalStateException("Memory maintenance lease lost for job $jobId")
+class MemoryMaintenanceLeaseLostException(jobId: String) : IllegalStateException("Memory maintenance lease lost for job $jobId")
 
 enum class MemoryRecoveredJobDisposition {
     SUCCEEDED,
@@ -487,6 +512,7 @@ object MemoryMaintenanceJobFamily {
         MemoryMaintenanceJobType.REBUILD_VECTOR_INDEX -> INDEX
         MemoryMaintenanceJobType.REPAIR_MARKDOWN_METADATA -> REPAIR
         MemoryMaintenanceJobType.RECONCILE_MEMORY_MUTATIONS -> REPAIR
+        MemoryMaintenanceJobType.PLAN_DAILY_DISTILLATION -> REPAIR
         MemoryMaintenanceJobType.APPEND_DAILY_NOTE,
         MemoryMaintenanceJobType.DISTILL_DAILY_NOTES,
         MemoryMaintenanceJobType.PROMOTE_LONG_TERM_CANDIDATE,
@@ -505,6 +531,7 @@ object MemoryMaintenanceJobType {
     const val PROMOTE_LONG_TERM_CANDIDATE = "promote_long_term_candidate"
     const val REPAIR_MARKDOWN_METADATA = "repair_markdown_metadata"
     const val RECONCILE_MEMORY_MUTATIONS = "reconcile_memory_mutations"
+    const val PLAN_DAILY_DISTILLATION = "plan_daily_distillation"
     const val COMPACTION_FLUSH = "compaction_flush"
     const val CONSOLIDATE_TURN_BATCH = "consolidate_turn_batch"
 }
