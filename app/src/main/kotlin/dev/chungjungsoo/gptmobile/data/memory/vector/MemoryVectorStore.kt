@@ -9,7 +9,7 @@ interface MemoryVectorStore : AutoCloseable {
 
     fun countChunks(): Long
 
-    fun replaceSnapshot(snapshot: MemoryVectorSnapshot)
+    fun replaceSnapshot(snapshot: MemoryVectorSnapshot): MemoryVectorPublishResult
 
     fun query(request: MemoryVectorQuery): MemoryVectorQueryResult
 
@@ -41,6 +41,12 @@ data class MemoryVectorManifest(
 enum class MemoryVectorManifestState {
     BUILDING,
     READY
+}
+
+enum class MemoryVectorPublishResult {
+    PUBLISHED,
+    ALREADY_READY,
+    SUPERSEDED
 }
 
 data class MemoryEmbeddedChunk(
@@ -87,3 +93,5 @@ class MemoryVectorStoreCorruptionException(
     message: String,
     cause: Throwable? = null
 ) : IllegalStateException(message, cause)
+
+class MemoryVectorStoreConflictException(message: String) : IllegalStateException(message)

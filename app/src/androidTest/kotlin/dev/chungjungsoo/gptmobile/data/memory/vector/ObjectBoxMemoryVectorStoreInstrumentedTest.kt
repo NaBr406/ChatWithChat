@@ -56,7 +56,7 @@ class ObjectBoxMemoryVectorStoreInstrumentedTest {
             )
         )
         val firstStore = openStore()
-        firstStore.replaceSnapshot(firstSnapshot)
+        assertEquals(MemoryVectorPublishResult.PUBLISHED, firstStore.replaceSnapshot(firstSnapshot))
 
         val firstResult = firstStore.query(query(firstIdentity, axis = 0)) as MemoryVectorQueryResult.Ready
         assertEquals("target", firstResult.matches.first().chunk.chunkId)
@@ -69,7 +69,7 @@ class ObjectBoxMemoryVectorStoreInstrumentedTest {
                 embeddedChunk("target", "updated target", axis = 0, hashCharacter = '3')
             )
         )
-        firstStore.replaceSnapshot(secondSnapshot)
+        assertEquals(MemoryVectorPublishResult.PUBLISHED, firstStore.replaceSnapshot(secondSnapshot))
 
         val staleResult = firstStore.query(query(firstIdentity, axis = 0)) as MemoryVectorQueryResult.Unavailable
         assertEquals(MemoryVectorUnavailableReason.STALE_MANIFEST, staleResult.reason)
@@ -220,6 +220,71 @@ class ObjectBoxMemoryVectorStoreInstrumentedTest {
         assertEquals(1L, failedStore.countChunks())
         val result = failedStore.query(query(firstIdentity, axis = 0)) as MemoryVectorQueryResult.Ready
         assertEquals("old", result.matches.single().chunk.chunkId)
+    }
+
+    @Test
+    fun sameReadyIdentity_isIdempotentWithoutRepublishing() {
+        var publishCount = 0
+        val store = openStore(beforeManifestPublished = { publishCount += 1 })
+        val identity = identity(generation = 1, sourceHash = hash('a'))
+        val snapshot = snapshot(
+            identity = identity,
+            chunks = listOf(embeddedChunk("target", "stable snapshot", axis = 0, hashCharacter = '1'))
+        )
+
+        assertEquals(MemoryVectorPublishResult.PUBLISHED, store.replaceSnapshot(snapshot))
+        assertEquals(MemoryVectorPublishResult.ALREADY_READY, store.replaceSnapshot(snapshot))
+
+        assertEquals(1, publishCount)
+        assertEquals(snapshot.manifest, store.readManifest())
+        assertEquals(1L, store.countChunks())
+    }
+
+    @Test
+    fun olderGeneration_afterNewerPublication_isRejectedWithoutOverwriting() {
+        val store = openStore()
+        val newerIdentity = identity(generation = 2, sourceHash = hash('b'))
+        val newerSnapshot = snapshot(
+            identity = newerIdentity,
+            chunks = listOf(embeddedChunk("new", "newer snapshot", axis = 1, hashCharacter = '2'))
+        )
+        assertEquals(MemoryVectorPublishResult.PUBLISHED, store.replaceSnapshot(newerSnapshot))
+
+        val olderIdentity = identity(generation = 1, sourceHash = hash('a'))
+        val olderSnapshot = snapshot(
+            identity = olderIdentity,
+            chunks = listOf(embeddedChunk("old", "older snapshot", axis = 0, hashCharacter = '1'))
+        )
+        assertEquals(MemoryVectorPublishResult.SUPERSEDED, store.replaceSnapshot(olderSnapshot))
+
+        assertEquals(newerSnapshot.manifest, store.readManifest())
+        assertEquals(1L, store.countChunks())
+        val result = store.query(query(newerIdentity, axis = 1)) as MemoryVectorQueryResult.Ready
+        assertEquals("new", result.matches.single().chunk.chunkId)
+    }
+
+    @Test
+    fun sameGenerationWithDifferentIdentity_isAnExplicitConflict() {
+        val store = openStore()
+        val publishedIdentity = identity(generation = 1, sourceHash = hash('a'))
+        val publishedSnapshot = snapshot(
+            identity = publishedIdentity,
+            chunks = listOf(embeddedChunk("published", "published snapshot", axis = 0, hashCharacter = '1'))
+        )
+        store.replaceSnapshot(publishedSnapshot)
+        val conflictingSnapshot = snapshot(
+            identity = identity(generation = 1, sourceHash = hash('b')),
+            chunks = listOf(embeddedChunk("conflict", "conflicting snapshot", axis = 1, hashCharacter = '2'))
+        )
+
+        assertThrows(MemoryVectorStoreConflictException::class.java) {
+            store.replaceSnapshot(conflictingSnapshot)
+        }
+
+        assertEquals(publishedSnapshot.manifest, store.readManifest())
+        assertEquals(1L, store.countChunks())
+        val result = store.query(query(publishedIdentity, axis = 0)) as MemoryVectorQueryResult.Ready
+        assertEquals("published", result.matches.single().chunk.chunkId)
     }
 
     @Test

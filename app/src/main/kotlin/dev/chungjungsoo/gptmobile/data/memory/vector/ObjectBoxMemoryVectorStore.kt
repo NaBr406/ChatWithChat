@@ -36,25 +36,35 @@ internal class ObjectBoxMemoryVectorStore(
         currentStore.callInReadTx(Callable { currentStore.chunkBox().count() })
     }
 
-    override fun replaceSnapshot(snapshot: MemoryVectorSnapshot) {
+    override fun replaceSnapshot(snapshot: MemoryVectorSnapshot): MemoryVectorPublishResult {
         validateSnapshot(snapshot)
         val chunkEntities = snapshot.chunks.map { embeddedChunk ->
             embeddedChunk.toEntity(snapshot.manifest.identity)
         }
         val manifestEntity = snapshot.manifest.toEntity()
 
-        withStore { currentStore ->
+        return withStore { currentStore ->
             val chunkBox = currentStore.chunkBox()
             val manifestBox = currentStore.manifestBox()
-            currentStore.runInTx {
-                manifestBox.removeAll()
-                chunkBox.removeAll()
-                if (chunkEntities.isNotEmpty()) {
-                    chunkBox.put(chunkEntities)
+            currentStore.callInTx(
+                Callable {
+                    val currentManifest = manifestBox.findCurrentManifest()?.toDomain()
+                    publicationResultOrNull(
+                        currentStore = currentStore,
+                        currentManifest = currentManifest,
+                        targetManifest = snapshot.manifest
+                    )?.let { result -> return@Callable result }
+
+                    manifestBox.removeAll()
+                    chunkBox.removeAll()
+                    if (chunkEntities.isNotEmpty()) {
+                        chunkBox.put(chunkEntities)
+                    }
+                    beforeManifestPublished()
+                    manifestBox.put(manifestEntity)
+                    MemoryVectorPublishResult.PUBLISHED
                 }
-                beforeManifestPublished()
-                manifestBox.put(manifestEntity)
-            }
+            )
         }
     }
 
@@ -188,6 +198,50 @@ internal class ObjectBoxMemoryVectorStore(
             }
             validateEmbedding(embeddedChunk.embedding, "chunk ${chunk.chunkId} embedding")
         }
+    }
+
+    private fun publicationResultOrNull(
+        currentStore: BoxStore,
+        currentManifest: MemoryVectorManifest?,
+        targetManifest: MemoryVectorManifest
+    ): MemoryVectorPublishResult? {
+        currentManifest ?: return null
+        val currentGeneration = currentManifest.identity.corpusGeneration
+        val targetGeneration = targetManifest.identity.corpusGeneration
+        if (currentGeneration > targetGeneration) {
+            return MemoryVectorPublishResult.SUPERSEDED
+        }
+        if (currentGeneration < targetGeneration) {
+            return null
+        }
+        if (currentManifest.identity != targetManifest.identity) {
+            throw MemoryVectorStoreConflictException(
+                "Vector manifests have the same generation but different identities"
+            )
+        }
+        if (currentManifest.state != MemoryVectorManifestState.READY) {
+            return null
+        }
+        if (currentManifest.expectedChunkCount != targetManifest.expectedChunkCount) {
+            throw MemoryVectorStoreConflictException(
+                "Vector manifests have the same identity but different chunk counts"
+            )
+        }
+
+        val matchingChunkCount = currentStore.chunkBox()
+            .query(chunkIdentityCondition(currentManifest.identity))
+            .build()
+            .use { query -> query.count() }
+        val totalChunkCount = currentStore.chunkBox().count()
+        if (
+            matchingChunkCount != currentManifest.expectedChunkCount ||
+            totalChunkCount != currentManifest.expectedChunkCount
+        ) {
+            throw MemoryVectorStoreCorruptionException(
+                "Published vector snapshot does not match its manifest"
+            )
+        }
+        return MemoryVectorPublishResult.ALREADY_READY
     }
 
     private fun validateIdentity(identity: MemoryVectorIndexIdentity) {
