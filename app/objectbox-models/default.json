@@ -1,0 +1,141 @@
+{
+  "_note1": "KEEP THIS FILE! Check it into a version control system (VCS) like git.",
+  "_note2": "ObjectBox manages crucial IDs for your object model. See docs for details.",
+  "_note3": "If you have VCS merge conflicts, you must resolve them according to ObjectBox docs.",
+  "entities": [
+    {
+      "id": "1:6442722752014373420",
+      "lastPropertyId": "22:1270399603252277314",
+      "name": "MemoryVectorChunkEntity",
+      "properties": [
+        {
+          "id": "1:8576927480006327098",
+          "name": "objectBoxId",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:8485982035193839058",
+          "name": "chunkId",
+          "indexId": "1:7929914586375302412",
+          "type": 9,
+          "flags": 2080
+        },
+        {
+          "id": "3:459623415208160414",
+          "name": "entryId",
+          "type": 9
+        },
+        {
+          "id": "4:8292215775766856575",
+          "name": "sourcePath",
+          "type": 9
+        },
+        {
+          "id": "5:8540836519746864039",
+          "name": "chunkIndex",
+          "type": 5
+        },
+        {
+          "id": "6:3394867535015197873",
+          "name": "heading",
+          "type": 9
+        },
+        {
+          "id": "7:6810185655064805071",
+          "name": "text",
+          "type": 9
+        },
+        {
+          "id": "8:7082553342636358205",
+          "name": "type",
+          "type": 9
+        },
+        {
+          "id": "9:5038767618115417114",
+          "name": "sensitivity",
+          "type": 9
+        },
+        {
+          "id": "10:446182172723821848",
+          "name": "source",
+          "type": 9
+        },
+        {
+          "id": "11:4892755120759831775",
+          "name": "createdAt",
+          "type": 6
+        },
+        {
+          "id": "12:4583279396909373994",
+          "name": "updatedAt",
+          "type": 6
+        },
+        {
+          "id": "13:503436099666220906",
+          "name": "contentHash",
+          "type": 9
+        },
+        {
+          "id": "14:8568584913980023172",
+          "name": "sourceHash",
+          "type": 9
+        },
+        {
+          "id": "15:2845914341765614779",
+          "name": "corpusGeneration",
+          "type": 6
+        },
+        {
+          "id": "16:7825291004944229631",
+          "name": "indexFingerprint",
+          "type": 9
+        },
+        {
+          "id": "17:8372298570950866531",
+          "name": "embeddingModelId",
+          "type": 9
+        },
+        {
+          "id": "18:4050293048423734312",
+          "name": "embeddingModelVersion",
+          "type": 9
+        },
+        {
+          "id": "19:2800957729855409852",
+          "name": "embeddingDimension",
+          "type": 5
+        },
+        {
+          "id": "20:6306443117502119386",
+          "name": "chunkerVersion",
+          "type": 9
+        },
+        {
+          "id": "21:6796194918851427522",
+          "name": "indexSchemaVersion",
+          "type": 5
+        },
+        {
+          "id": "22:1270399603252277314",
+          "name": "embedding",
+          "indexId": "2:3809515016552505541",
+          "type": 28,
+          "flags": 8
+        }
+      ],
+      "relations": []
+    }
+  ],
+  "lastEntityId": "1:6442722752014373420",
+  "lastIndexId": "2:3809515016552505541",
+  "lastRelationId": "0:0",
+  "lastSequenceId": "0:0",
+  "modelVersion": 5,
+  "modelVersionParserMinimum": 5,
+  "retiredEntityUids": [],
+  "retiredIndexUids": [],
+  "retiredPropertyUids": [],
+  "retiredRelationUids": [],
+  "version": 1
+}
