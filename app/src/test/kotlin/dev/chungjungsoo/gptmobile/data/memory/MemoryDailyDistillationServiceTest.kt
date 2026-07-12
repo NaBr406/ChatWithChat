@@ -3,11 +3,13 @@ package dev.chungjungsoo.gptmobile.data.memory
 import dev.chungjungsoo.gptmobile.data.database.InMemoryMemoryRecoveryDao
 import dev.chungjungsoo.gptmobile.data.database.InMemoryMemoryTurnBatchDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryTurnBatchDao
+import dev.chungjungsoo.gptmobile.data.database.entity.MemoryDistillationCheckpoint
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMaintenanceJob
 import java.nio.file.Files
 import java.time.Clock
 import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.ZoneOffset
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.decodeFromString
@@ -200,13 +202,111 @@ class MemoryDailyDistillationServiceTest {
         assertEquals(mutation.group.groupId, fixture.checkpoint().mutationGroupId)
     }
 
+    @Test
+    fun `process death after prepared receipt recovers without a second semantic call`() = runBlocking {
+        val clock = MutableDailyDistillationClock(FIXED_CLOCK.instant())
+        val fixture = fixture(
+            proposal = createProposal(),
+            clock = clock,
+            commitObserver = OneShotDailyDistillationCommitObserver(
+                DailyDistillationInterruptionPoint.AFTER_PREPARED
+            )
+        )
+        val job = fixture.claimSemanticJob()
+
+        val failure = runCatching { fixture.service.process(job) }.exceptionOrNull()
+
+        assertTrue(failure is SimulatedDailyDistillationProcessDeath)
+        assertEquals(1, fixture.intelligence.distillationCalls)
+        assertEquals(MemoryDistillationCheckpointStatus.PENDING, fixture.checkpoint().status)
+        assertEquals(
+            MemoryMutationState.PREPARED,
+            fixture.recoveryDao.getMutationGroupBySemanticJobId(job.jobId)?.state
+        )
+        assertFalse(fixture.fileStore.readLongTermMemory().getOrThrow().contains("silver compass"))
+
+        val recovery = fixture.recoverAfterProcessDeath(job, clock)
+
+        assertEquals(1, recovery.recoveredSemanticCount)
+        assertEquals(0, recovery.failedCount)
+        assertEquals(1, fixture.intelligence.distillationCalls)
+        fixture.assertRecoveredAndAcknowledged(job)
+        assertTrue(fixture.fileStore.readLongTermMemory().getOrThrow().contains("silver compass"))
+    }
+
+    @Test
+    fun `process death after canonical commit recovers without a second semantic call`() = runBlocking {
+        val clock = MutableDailyDistillationClock(FIXED_CLOCK.instant())
+        val fixture = fixture(
+            proposal = createProposal(),
+            clock = clock,
+            commitObserver = OneShotDailyDistillationCommitObserver(
+                DailyDistillationInterruptionPoint.AFTER_CANONICAL_COMMIT
+            )
+        )
+        val job = fixture.claimSemanticJob()
+
+        val failure = runCatching { fixture.service.process(job) }.exceptionOrNull()
+
+        assertTrue(failure is SimulatedDailyDistillationProcessDeath)
+        assertEquals(1, fixture.intelligence.distillationCalls)
+        assertEquals(MemoryDistillationCheckpointStatus.PREPARED, fixture.checkpoint().status)
+        assertEquals(
+            MemoryMutationState.SEMANTIC_ACK_PENDING,
+            fixture.recoveryDao.getMutationGroupBySemanticJobId(job.jobId)?.state
+        )
+        assertTrue(fixture.fileStore.readLongTermMemory().getOrThrow().contains("silver compass"))
+
+        val recovery = fixture.recoverAfterProcessDeath(job, clock)
+
+        assertEquals(1, recovery.recoveredSemanticCount)
+        assertEquals(0, recovery.failedCount)
+        assertEquals(1, fixture.intelligence.distillationCalls)
+        fixture.assertRecoveredAndAcknowledged(job)
+        assertEquals(1, fixture.codec.parse(fixture.fileStore.readLongTermMemory().getOrThrow()).entries.size)
+    }
+
+    @Test
+    fun `process death after checkpoint completion recovers job and semantic acknowledgement`() = runBlocking {
+        val clock = MutableDailyDistillationClock(FIXED_CLOCK.instant())
+        val fixture = fixture(
+            proposal = createProposal(),
+            clock = clock,
+            commitObserver = OneShotDailyDistillationCommitObserver(
+                DailyDistillationInterruptionPoint.AFTER_CHECKPOINT_COMPLETION
+            )
+        )
+        val job = fixture.claimSemanticJob()
+
+        val failure = runCatching { fixture.service.process(job) }.exceptionOrNull()
+
+        assertTrue(failure is SimulatedDailyDistillationProcessDeath)
+        assertEquals(1, fixture.intelligence.distillationCalls)
+        assertEquals(MemoryDistillationCheckpointStatus.COMPLETED, fixture.checkpoint().status)
+        assertEquals(MemoryMaintenanceJobStatus.RUNNING, fixture.jobDao.getById(job.jobId)?.status)
+        assertEquals(
+            MemoryMutationState.SEMANTIC_ACK_PENDING,
+            fixture.recoveryDao.getMutationGroupBySemanticJobId(job.jobId)?.state
+        )
+
+        val recovery = fixture.recoverAfterProcessDeath(job, clock)
+
+        assertEquals(1, recovery.recoveredSemanticCount)
+        assertEquals(0, recovery.failedCount)
+        assertEquals(1, fixture.intelligence.distillationCalls)
+        fixture.assertRecoveredAndAcknowledged(job)
+        assertEquals(1, fixture.codec.parse(fixture.fileStore.readLongTermMemory().getOrThrow()).entries.size)
+    }
+
     private suspend fun fixture(
-        proposal: MemoryDailyDistillationProposal
+        proposal: MemoryDailyDistillationProposal,
+        clock: Clock = FIXED_CLOCK,
+        commitObserver: MemoryDailyDistillationCommitObserver = MemoryDailyDistillationCommitObserver.None
     ): Fixture {
         val codec = MarkdownMemoryCodec()
         val fileStore = MemoryFileStore(
             MemoryFilePaths(Files.createTempDirectory("daily-distillation-service").toFile()),
-            FIXED_CLOCK
+            clock
         )
         fileStore.ensureStore().getOrThrow()
         fileStore.appendDailyNote(
@@ -229,7 +329,7 @@ class MemoryDailyDistillationServiceTest {
         val jobDao = InMemoryMaintenanceJobDao()
         val workEnqueuer = RecordingWorkEnqueuer()
         val settings = FakeMaintenanceSettingRepository(memoryEnabled = true)
-        val maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK)
+        val maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, clock)
         val dailyScheduler = MemoryDailyDistillationScheduler(
             memoryFileStore = fileStore,
             markdownMemoryCodec = codec,
@@ -237,7 +337,7 @@ class MemoryDailyDistillationServiceTest {
             maintenanceScheduler = maintenanceScheduler,
             settingRepository = settings,
             workEnqueuer = workEnqueuer,
-            clock = FIXED_CLOCK
+            clock = clock
         )
         dailyScheduler.ensurePlanningJobs()
         dailyScheduler.processPlan(
@@ -250,7 +350,7 @@ class MemoryDailyDistillationServiceTest {
             memoryFileStore = fileStore,
             maintenanceScheduler = maintenanceScheduler,
             workEnqueuer = workEnqueuer,
-            clock = FIXED_CLOCK
+            clock = clock
         )
         val semanticPayload = STRICT_JSON.decodeFromString<MemoryDailyDistillationJobPayload>(
             jobDao.jobs.single { job -> job.type == MemoryMaintenanceJobType.DISTILL_DAILY_NOTES }.payloadJson
@@ -273,7 +373,8 @@ class MemoryDailyDistillationServiceTest {
             operationController = controller,
             memoryMutationCoordinator = mutationCoordinator,
             dailyDistillationScheduler = dailyScheduler,
-            clock = FIXED_CLOCK
+            commitObserver = commitObserver,
+            clock = clock
         )
         return Fixture(
             codec = codec,
@@ -404,6 +505,30 @@ class MemoryDailyDistillationServiceTest {
                 )
             )
         }
+
+        suspend fun recoverAfterProcessDeath(
+            job: MemoryMaintenanceJob,
+            clock: MutableDailyDistillationClock
+        ): MemoryMutationRecoveryResult {
+            clock.setInstant(Instant.ofEpochSecond(checkNotNull(job.leaseExpiresAt) + 1L))
+            check(maintenanceScheduler.resetExpiredRunningJobs() == 1)
+            return MemoryMutationRecoveryService(
+                memoryMutationCoordinator = mutationCoordinator,
+                turnBatchDao = ThrowingTurnBatchDao(),
+                maintenanceScheduler = maintenanceScheduler,
+                dailyDistillationFinalizer = service,
+                clock = clock
+            ).recoverIncomplete(scheduleRetry = false)
+        }
+
+        suspend fun assertRecoveredAndAcknowledged(job: MemoryMaintenanceJob) {
+            assertEquals(MemoryDistillationCheckpointStatus.COMPLETED, checkpoint().status)
+            assertEquals(MemoryMaintenanceJobStatus.SUCCEEDED, jobDao.getById(job.jobId)?.status)
+            assertEquals(
+                MemoryMutationState.INDEX_PENDING,
+                recoveryDao.getMutationGroupBySemanticJobId(job.jobId)?.state
+            )
+        }
     }
 
     private class ThrowingTurnBatchDao : MemoryTurnBatchDao by InMemoryMemoryTurnBatchDao() {
@@ -421,4 +546,51 @@ class MemoryDailyDistillationServiceTest {
             explicitNulls = false
         }
     }
+}
+
+private enum class DailyDistillationInterruptionPoint {
+    AFTER_PREPARED,
+    AFTER_CANONICAL_COMMIT,
+    AFTER_CHECKPOINT_COMPLETION
+}
+
+private class SimulatedDailyDistillationProcessDeath(message: String) : RuntimeException(message)
+
+private class OneShotDailyDistillationCommitObserver(
+    private val interruptionPoint: DailyDistillationInterruptionPoint
+) : MemoryDailyDistillationCommitObserver {
+    private var interrupted = false
+
+    override suspend fun afterPrepared(mutation: MemoryPreparedMutation) {
+        interruptAt(DailyDistillationInterruptionPoint.AFTER_PREPARED)
+    }
+
+    override suspend fun afterCanonicalFileCommit(mutation: MemoryPreparedMutation) {
+        interruptAt(DailyDistillationInterruptionPoint.AFTER_CANONICAL_COMMIT)
+    }
+
+    override suspend fun afterCheckpointCompletion(checkpoint: MemoryDistillationCheckpoint) {
+        interruptAt(DailyDistillationInterruptionPoint.AFTER_CHECKPOINT_COMPLETION)
+    }
+
+    private fun interruptAt(point: DailyDistillationInterruptionPoint) {
+        if (!interrupted && interruptionPoint == point) {
+            interrupted = true
+            throw SimulatedDailyDistillationProcessDeath("Simulated process death at $point")
+        }
+    }
+}
+
+private class MutableDailyDistillationClock(initialInstant: Instant) : Clock() {
+    private var currentInstant = initialInstant
+
+    fun setInstant(instant: Instant) {
+        currentInstant = instant
+    }
+
+    override fun getZone(): ZoneId = ZoneOffset.UTC
+
+    override fun withZone(zone: ZoneId): Clock = Clock.fixed(currentInstant, zone)
+
+    override fun instant(): Instant = currentInstant
 }

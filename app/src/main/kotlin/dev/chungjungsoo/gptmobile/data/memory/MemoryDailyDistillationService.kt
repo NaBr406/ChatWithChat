@@ -1,5 +1,6 @@
 package dev.chungjungsoo.gptmobile.data.memory
 
+import dev.chungjungsoo.gptmobile.BuildConfig
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryRecoveryDao
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryDistillationCheckpoint
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMaintenanceJob
@@ -23,6 +24,7 @@ class MemoryDailyDistillationService(
     private val operationController: MemoryDailyDistillationOperationController,
     private val memoryMutationCoordinator: MemoryMutationCoordinator,
     private val dailyDistillationScheduler: MemoryDailyDistillationScheduler,
+    private val commitObserver: MemoryDailyDistillationCommitObserver = MemoryDailyDistillationCommitObserver.None,
     private val clock: Clock = Clock.systemDefaultZone(),
     private val json: Json = Json {
         ignoreUnknownKeys = false
@@ -133,6 +135,7 @@ class MemoryDailyDistillationService(
                 rethrowInterruption(throwable)
                 return retryable(job, "daily_distillation_prepare_failed:${throwable.message}")
             }
+            if (BuildConfig.DEBUG) commitObserver.afterPrepared(mutation)
             checkpoint = transitionCheckpoint(
                 checkpoint = checkpoint,
                 newStatus = MemoryDistillationCheckpointStatus.PREPARED,
@@ -173,7 +176,9 @@ class MemoryDailyDistillationService(
         }
 
         val committed = commitResult as MemoryMutationCommitResult.CanonicalCommitted
+        if (BuildConfig.DEBUG) commitObserver.afterCanonicalFileCommit(committed.mutation)
         checkpoint = completeCheckpoint(checkpoint, committed.mutation)
+        if (BuildConfig.DEBUG) commitObserver.afterCheckpointCompletion(checkpoint)
         maintenanceScheduler.markSucceeded(job)
         memoryMutationCoordinator.acknowledgeSemanticCompletion(committed.mutation.group.groupId)
         dailyDistillationScheduler.ensurePlanningJobs()
