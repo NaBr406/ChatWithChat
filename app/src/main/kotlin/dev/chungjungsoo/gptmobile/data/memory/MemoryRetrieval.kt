@@ -4,14 +4,18 @@ interface MemoryRetriever {
     suspend fun retrieve(request: MemoryRetrievalRequest): Result<List<MemoryRetrievalResult>>
 }
 
+interface MemoryMaintenanceCorpusReader {
+    suspend fun retrieveWorkingSet(request: MemoryRetrievalRequest): Result<List<MemoryRetrievalResult>>
+}
+
 data class MemoryRetrievalRequest(
+    val corpus: MemoryCorpus,
     val query: String,
     val recentContext: String? = null,
     val limit: Int = 8,
     val candidateLimit: Int = 200,
     val tokenBudget: Int = 900,
     val includePrivate: Boolean = true,
-    val sourcePath: String? = null,
     val strategy: MemoryRetrievalStrategy = MemoryRetrievalStrategy.LEXICAL
 )
 

@@ -4,10 +4,15 @@ import dev.chungjungsoo.gptmobile.data.database.InMemoryMemoryTurnBatchDao
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatRoomV2
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
 import dev.chungjungsoo.gptmobile.data.memory.InMemoryPersonalMemoryDao
+import dev.chungjungsoo.gptmobile.data.memory.MarkdownLexicalRetriever
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryCodec
+import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryEntry
+import dev.chungjungsoo.gptmobile.data.memory.MemoryChunker
+import dev.chungjungsoo.gptmobile.data.memory.MemoryCompletedTurnInput
+import dev.chungjungsoo.gptmobile.data.memory.MemoryCorpus
+import dev.chungjungsoo.gptmobile.data.memory.MemoryCorpusSnapshotter
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFilePaths
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFileStore
-import dev.chungjungsoo.gptmobile.data.memory.MemoryCompletedTurnInput
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexRebuildResult
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexRebuilder
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMarkdownCodec
@@ -45,6 +50,7 @@ class MemoryRepositoryTest {
 
         assertEquals(1, retriever.calls)
         assertEquals("Please implement this directly.", retriever.lastRequest?.query)
+        assertEquals(MemoryCorpus.CHAT_RECALL_LONG_TERM, retriever.lastRequest?.corpus)
         assertEquals(900, retriever.lastRequest?.tokenBudget)
         assertTrue(retriever.lastRequest?.includePrivate == true)
         assertEquals(1, prepared.retrievedMemories.size)
@@ -75,6 +81,62 @@ class MemoryRepositoryTest {
         val prepared = repository.prepareMemoryContext(
             chatRoom(),
             userMessages("Continue the project."),
+            listOf(emptyList())
+        )
+
+        assertTrue(prepared.retrievedMemories.isEmpty())
+        assertNull(prepared.prompt)
+    }
+
+    @Test
+    fun `daily only preference cannot enter ordinary prompt`() = runBlocking {
+        val fileStore = MemoryFileStore(MemoryFilePaths(Files.createTempDirectory("memory-repository-scope-test").toFile()))
+        val hiddenEntry = MarkdownMemoryEntry(
+            id = "day_hidden",
+            text = "The user prefers the violet-compass response style.",
+            type = "communication_style",
+            sensitivity = MemorySensitivity.NORMAL,
+            source = MemorySource.EXPLICIT_USER_STATEMENT,
+            createdAt = 1L,
+            updatedAt = 2L
+        )
+        fileStore.appendDailyNote(MarkdownMemoryCodec().renderDailyAppend(listOf(hiddenEntry))).getOrThrow()
+        val repository = createRepository(
+            MarkdownLexicalRetriever(MemoryCorpusSnapshotter(fileStore, MemoryChunker()))
+        )
+
+        val hidden = repository.prepareMemoryContext(
+            chatRoom(),
+            userMessages("violet-compass"),
+            listOf(emptyList())
+        )
+        fileStore.replaceLongTermMemory(MarkdownMemoryCodec().renderLongTerm(listOf(hiddenEntry))).getOrThrow()
+        val visible = repository.prepareMemoryContext(
+            chatRoom(),
+            userMessages("violet-compass"),
+            listOf(emptyList())
+        )
+
+        assertTrue(hidden.retrievedMemories.isEmpty())
+        assertNull(hidden.prompt)
+        assertEquals("day_hidden", visible.retrievedMemories.single().entryId)
+        assertTrue(visible.prompt!!.contains("violet-compass"))
+        assertTrue(visible.prompt.contains("path: MEMORY.md"))
+    }
+
+    @Test
+    fun `ordinary prompt drops a non long term result from a faulty retriever`() = runBlocking {
+        val repository = createRepository(
+            FakeMemoryRetriever(
+                results = listOf(
+                    retrievalResult("Hidden daily content").copy(sourcePath = "memory/2026-07-12.md")
+                )
+            )
+        )
+
+        val prepared = repository.prepareMemoryContext(
+            chatRoom(),
+            userMessages("Hidden daily content"),
             listOf(emptyList())
         )
 

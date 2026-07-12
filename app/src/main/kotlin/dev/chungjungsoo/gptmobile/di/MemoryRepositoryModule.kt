@@ -13,22 +13,26 @@ import dev.chungjungsoo.gptmobile.data.database.dao.MemoryTurnBatchDao
 import dev.chungjungsoo.gptmobile.data.database.dao.PersonalMemoryDao
 import dev.chungjungsoo.gptmobile.data.memory.LlmMemoryIntelligence
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryCodec
+import dev.chungjungsoo.gptmobile.data.memory.MarkdownLexicalRetriever
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryDebugEditor
 import dev.chungjungsoo.gptmobile.data.memory.MemoryActivityLogger
 import dev.chungjungsoo.gptmobile.data.memory.MemoryBatchConsolidationService
 import dev.chungjungsoo.gptmobile.data.memory.MemoryChunker
+import dev.chungjungsoo.gptmobile.data.memory.MemoryCorpusSnapshotter
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFilePaths
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFileStore
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexRepository
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIntelligence
-import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceScheduler
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceCorpusReader
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceEventSink
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceNotificationEventSink
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceNotificationPolicy
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceScheduler
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceWorkEnqueuer
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceWorkScheduler
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMarkdownCodec
 import dev.chungjungsoo.gptmobile.data.memory.MemoryPromptBuilder
+import dev.chungjungsoo.gptmobile.data.memory.MemoryRetriever
 import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnBatchCoordinator
 import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnBatchScheduler
 import dev.chungjungsoo.gptmobile.data.memory.RoomMemoryActivityLogger
@@ -75,6 +79,30 @@ object MemoryRepositoryModule {
     @Provides
     @Singleton
     fun provideMemoryChunker(): MemoryChunker = MemoryChunker()
+
+    @Provides
+    @Singleton
+    fun provideMemoryCorpusSnapshotter(
+        memoryFileStore: MemoryFileStore,
+        memoryChunker: MemoryChunker
+    ): MemoryCorpusSnapshotter = MemoryCorpusSnapshotter(memoryFileStore, memoryChunker)
+
+    @Provides
+    @Singleton
+    fun provideMarkdownLexicalRetriever(
+        memoryCorpusSnapshotter: MemoryCorpusSnapshotter
+    ): MarkdownLexicalRetriever = MarkdownLexicalRetriever(memoryCorpusSnapshotter)
+
+    @Provides
+    @Singleton
+    fun provideMemoryRetriever(markdownLexicalRetriever: MarkdownLexicalRetriever): MemoryRetriever =
+        markdownLexicalRetriever
+
+    @Provides
+    @Singleton
+    fun provideMemoryMaintenanceCorpusReader(
+        markdownLexicalRetriever: MarkdownLexicalRetriever
+    ): MemoryMaintenanceCorpusReader = markdownLexicalRetriever
 
     @Provides
     @Singleton
@@ -163,6 +191,7 @@ object MemoryRepositoryModule {
         memoryIntelligence: MemoryIntelligence,
         memoryFileStore: MemoryFileStore,
         markdownMemoryCodec: MarkdownMemoryCodec,
+        memoryMaintenanceCorpusReader: MemoryMaintenanceCorpusReader,
         memoryIndexRepository: MemoryIndexRepository,
         memoryActivityLogger: MemoryActivityLogger
     ): MemoryBatchConsolidationService = MemoryBatchConsolidationService(
@@ -173,7 +202,7 @@ object MemoryRepositoryModule {
         memoryIntelligence = memoryIntelligence,
         memoryFileStore = memoryFileStore,
         markdownMemoryCodec = markdownMemoryCodec,
-        memoryRetriever = memoryIndexRepository,
+        memoryMaintenanceCorpusReader = memoryMaintenanceCorpusReader,
         memoryIndexRebuilder = memoryIndexRepository,
         activityLogger = memoryActivityLogger
     )
@@ -193,6 +222,7 @@ object MemoryRepositoryModule {
     fun provideMemoryRepository(
         personalMemoryDao: PersonalMemoryDao,
         memoryPromptBuilder: MemoryPromptBuilder,
+        memoryRetriever: MemoryRetriever,
         memoryIndexRepository: MemoryIndexRepository,
         memoryFileStore: MemoryFileStore,
         markdownMemoryCodec: MarkdownMemoryCodec,
@@ -201,7 +231,7 @@ object MemoryRepositoryModule {
     ): MemoryRepository = MemoryRepositoryImpl(
         personalMemoryDao = personalMemoryDao,
         memoryPromptBuilder = memoryPromptBuilder,
-        memoryRetriever = memoryIndexRepository,
+        memoryRetriever = memoryRetriever,
         memoryFileStore = memoryFileStore,
         markdownMemoryCodec = markdownMemoryCodec,
         memoryIndexRebuilder = memoryIndexRepository,

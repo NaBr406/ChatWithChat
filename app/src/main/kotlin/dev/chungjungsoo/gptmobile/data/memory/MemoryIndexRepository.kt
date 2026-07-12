@@ -3,8 +3,6 @@ package dev.chungjungsoo.gptmobile.data.memory
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryIndexDao
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryChunk
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryDocument
-import dev.chungjungsoo.gptmobile.data.model.ClientType
-import dev.chungjungsoo.gptmobile.data.token.TokenUsageEstimator
 import java.io.File
 import java.security.MessageDigest
 import java.time.Clock
@@ -22,7 +20,7 @@ class MemoryIndexRepository(
     private val memoryIndexDao: MemoryIndexDao,
     private val memoryChunker: MemoryChunker,
     private val clock: Clock = Clock.systemDefaultZone()
-) : MemoryIndexSearcher, MemoryIndexRebuilder, MemoryRetriever {
+) : MemoryIndexSearcher, MemoryIndexRebuilder {
 
     suspend fun rebuildAll(): Result<MemoryIndexRebuildResult> = runCatching {
         val indexedFiles = memoryFileStore.listMemoryFiles().getOrThrow()
@@ -63,45 +61,6 @@ class MemoryIndexRepository(
         )
     }
 
-    override suspend fun retrieve(request: MemoryRetrievalRequest): Result<List<MemoryRetrievalResult>> = runCatching {
-        check(request.strategy == MemoryRetrievalStrategy.LEXICAL) {
-            "Only lexical memory retrieval is enabled in production"
-        }
-        if (request.limit <= 0 || request.tokenBudget <= 0) return@runCatching emptyList()
-        val combinedQuery = listOfNotNull(
-            request.query.trim().takeIf { it.isNotBlank() },
-            request.recentContext?.trim()?.takeIf { it.isNotBlank() }
-        ).joinToString(separator = "\n").take(MAX_COMBINED_QUERY_CHARS)
-        if (combinedQuery.isBlank()) return@runCatching emptyList()
-
-        val ranked = search(
-            MemoryIndexSearchRequest(
-                query = combinedQuery,
-                sourcePath = request.sourcePath,
-                includePrivate = request.includePrivate,
-                limit = request.candidateLimit.coerceIn(1, MAX_CANDIDATE_LIMIT),
-                candidateLimit = request.candidateLimit.coerceIn(1, MAX_CANDIDATE_LIMIT)
-            )
-        ).getOrThrow()
-            .map { result -> result.toRetrievalResult() }
-            .distinctBy { result -> result.entryId?.let { "entry:$it" } ?: "hash:${result.contentHash}" }
-
-        var usedTokens = 0
-        ranked.filter { result ->
-            val resultTokens = TokenUsageEstimator.estimateText(
-                text = result.text,
-                model = "",
-                clientType = ClientType.OPENAI
-            ) + RESULT_TOKEN_OVERHEAD
-            if (usedTokens + resultTokens > request.tokenBudget) {
-                false
-            } else {
-                usedTokens += resultTokens
-                true
-            }
-        }.take(request.limit)
-    }
-
     override suspend fun search(request: MemoryIndexSearchRequest): Result<List<MemoryIndexSearchResult>> = runCatching {
         val tokens = tokenize(request.query)
         if (tokens.isEmpty()) return@runCatching emptyList()
@@ -128,11 +87,8 @@ class MemoryIndexRepository(
         val sourcePath = memoryFileStore.relativePath(file).getOrThrow()
         val markdown = memoryFileStore.readMemoryFile(file).getOrThrow()
         val indexedAt = clock.instant().epochSecond
-        val chunks = memoryChunker.chunksFor(
-            sourcePath = sourcePath,
-            markdown = markdown,
-            indexedAt = indexedAt
-        )
+        val chunks = memoryChunker.chunksFor(sourcePath = sourcePath, markdown = markdown)
+            .map { chunk -> chunk.toRoomChunk(indexedAt) }
         IndexedMemoryFile(
             document = MemoryDocument(
                 sourcePath = sourcePath,
@@ -195,6 +151,22 @@ class MemoryIndexRepository(
             score = score
         )
 
+    private fun MemoryCorpusChunk.toRoomChunk(indexedAt: Long): MemoryChunk = MemoryChunk(
+        chunkId = chunkId,
+        sourcePath = sourcePath,
+        chunkIndex = chunkIndex,
+        heading = heading,
+        text = text,
+        entryId = entryId,
+        type = type,
+        sensitivity = sensitivity,
+        source = source,
+        chatId = chatId,
+        createdAt = createdAt,
+        updatedAt = updatedAt,
+        indexedAt = indexedAt
+    )
+
     private fun tokenize(query: String): List<String> = buildList {
         val normalized = normalizeSearchText(query)
         LATIN_TOKEN_REGEX.findAll(normalized).forEach { match ->
@@ -212,26 +184,6 @@ class MemoryIndexRepository(
             }
         }
     }.distinct()
-
-    private fun MemoryIndexSearchResult.toRetrievalResult(): MemoryRetrievalResult {
-        val hash = listOf(sourcePath, entryId.orEmpty(), text, type.orEmpty(), sensitivity.orEmpty(), source.orEmpty())
-            .joinToString(separator = "|")
-            .sha256()
-        return MemoryRetrievalResult(
-            chunkId = chunkId,
-            entryId = entryId,
-            sourcePath = sourcePath,
-            text = text,
-            type = type,
-            sensitivity = sensitivity,
-            source = source,
-            contentHash = hash,
-            lexicalScore = score,
-            vectorScore = null,
-            fusedScore = score,
-            updatedAt = updatedAt
-        )
-    }
 
     private fun normalizeSearchText(text: String): String = text
         .lowercase()
@@ -260,9 +212,6 @@ class MemoryIndexRepository(
         private const val CJK_BIGRAM_MATCH_SCORE = 1f
         private const val CJK_TRIGRAM_MATCH_SCORE = 1.5f
         private const val LONG_TERM_BONUS = 0.25f
-        private const val RESULT_TOKEN_OVERHEAD = 24
-        private const val MAX_COMBINED_QUERY_CHARS = 8_000
-        private const val MAX_CANDIDATE_LIMIT = 500
     }
 }
 

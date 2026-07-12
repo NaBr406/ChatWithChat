@@ -361,9 +361,13 @@ class MemoryBatchConsolidationServiceTest {
         val indexRepository = MemoryIndexRepository(fileStore, indexDao, MemoryChunker(), FIXED_CLOCK)
         val intelligence = FakeMemoryIntelligence(batchProposal = proposal)
         val activityLogger = RecordingOrganizationActivityLogger()
-        val retriever = object : MemoryRetriever {
-            override suspend fun retrieve(request: MemoryRetrievalRequest): Result<List<MemoryRetrievalResult>> =
-                Result.success(searchResults.map { it.toRetrievalResult() })
+        val maintenanceCorpusReader = object : MemoryMaintenanceCorpusReader {
+            override suspend fun retrieveWorkingSet(request: MemoryRetrievalRequest): Result<List<MemoryRetrievalResult>> =
+                if (request.corpus == MemoryCorpus.MAINTENANCE_WORKING_SET) {
+                    Result.success(searchResults.map { it.toRetrievalResult() })
+                } else {
+                    Result.failure(IllegalArgumentException("Expected maintenance working set"))
+                }
         }
         val rebuilder = if (failIndexRebuild) {
             FailingMemoryIndexRebuilder()
@@ -387,7 +391,7 @@ class MemoryBatchConsolidationServiceTest {
                 memoryIntelligence = intelligence,
                 memoryFileStore = fileStore,
                 markdownMemoryCodec = MarkdownMemoryCodec(),
-                memoryRetriever = retriever,
+                memoryMaintenanceCorpusReader = maintenanceCorpusReader,
                 memoryIndexRebuilder = rebuilder,
                 activityLogger = activityLogger,
                 clock = FIXED_CLOCK

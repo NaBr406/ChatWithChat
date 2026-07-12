@@ -1,11 +1,13 @@
 package dev.chungjungsoo.gptmobile.data.memory
 
-import dev.chungjungsoo.gptmobile.data.database.entity.MemoryChunk
-
 class MemoryChunker(
     private val markdownMemoryCodec: MarkdownMemoryCodec = MarkdownMemoryCodec(),
     private val maxChunkChars: Int = DEFAULT_MAX_CHUNK_CHARS
 ) {
+
+    init {
+        require(maxChunkChars > 0) { "maxChunkChars must be positive" }
+    }
 
     fun titleFor(markdown: String): String =
         markdown
@@ -19,13 +21,12 @@ class MemoryChunker(
 
     fun chunksFor(
         sourcePath: String,
-        markdown: String,
-        indexedAt: Long
-    ): List<MemoryChunk> {
+        markdown: String
+    ): List<MemoryCorpusChunk> {
         val parsed = markdownMemoryCodec.parse(markdown)
         val parsedEntryChunks = parsed.entries.flatMapIndexed { entryIndex, entry ->
             splitText(entry.text).mapIndexed { partIndex, chunkText ->
-                MemoryChunk(
+                corpusChunk(
                     chunkId = chunkId(sourcePath, entry.id, partIndex),
                     sourcePath = sourcePath,
                     chunkIndex = entryIndex * CHUNK_INDEX_STRIDE + partIndex,
@@ -37,25 +38,23 @@ class MemoryChunker(
                     source = entry.source,
                     chatId = entry.chatId,
                     createdAt = entry.createdAt,
-                    updatedAt = entry.updatedAt,
-                    indexedAt = indexedAt
+                    updatedAt = entry.updatedAt
                 )
             }
         }
         if (parsedEntryChunks.isNotEmpty()) return parsedEntryChunks
 
-        return fallbackChunks(sourcePath, markdown, indexedAt)
+        return fallbackChunks(sourcePath, markdown)
     }
 
     private fun fallbackChunks(
         sourcePath: String,
-        markdown: String,
-        indexedAt: Long
-    ): List<MemoryChunk> {
+        markdown: String
+    ): List<MemoryCorpusChunk> {
         val sections = splitSections(markdown)
         return sections.flatMapIndexed { sectionIndex, section ->
             splitText(section.text).mapIndexed { partIndex, chunkText ->
-                MemoryChunk(
+                corpusChunk(
                     chunkId = chunkId(sourcePath, "section_$sectionIndex", partIndex),
                     sourcePath = sourcePath,
                     chunkIndex = sectionIndex * CHUNK_INDEX_STRIDE + partIndex,
@@ -67,12 +66,63 @@ class MemoryChunker(
                     source = null,
                     chatId = null,
                     createdAt = 0L,
-                    updatedAt = 0L,
-                    indexedAt = indexedAt
+                    updatedAt = 0L
                 )
             }
         }
     }
+
+    private fun corpusChunk(
+        chunkId: String,
+        sourcePath: String,
+        chunkIndex: Int,
+        heading: String?,
+        text: String,
+        entryId: String?,
+        type: String?,
+        sensitivity: String?,
+        source: String?,
+        chatId: Int?,
+        createdAt: Long,
+        updatedAt: Long
+    ): MemoryCorpusChunk {
+        val contentHash = listOf(
+            hashField("entryId", entryId),
+            hashField("sourcePath", sourcePath),
+            hashField("chunkIndex", chunkIndex.toString()),
+            hashField("heading", heading),
+            hashField("text", text),
+            hashField("type", type),
+            hashField("sensitivity", sensitivity),
+            hashField("source", source),
+            hashField("chatId", chatId?.toString()),
+            hashField("createdAt", createdAt.toString()),
+            hashField("updatedAt", updatedAt.toString())
+        ).joinToString(separator = "")
+            .sha256Utf8()
+        return MemoryCorpusChunk(
+            chunkId = chunkId,
+            entryId = entryId,
+            sourcePath = sourcePath,
+            chunkIndex = chunkIndex,
+            heading = heading,
+            text = text,
+            type = type,
+            sensitivity = sensitivity,
+            source = source,
+            chatId = chatId,
+            createdAt = createdAt,
+            updatedAt = updatedAt,
+            contentHash = contentHash
+        )
+    }
+
+    private fun hashField(name: String, value: String?): String {
+        val normalized = value?.normalizedHashValue()
+        return "$name:${normalized?.length ?: -1}:${normalized.orEmpty()}"
+    }
+
+    private fun String.normalizedHashValue(): String = trim().replace(WHITESPACE_REGEX, " ")
 
     private fun splitSections(markdown: String): List<MarkdownSection> {
         val sections = mutableListOf<MarkdownSection>()
@@ -158,5 +208,6 @@ class MemoryChunker(
         private const val DEFAULT_MAX_CHUNK_CHARS = 1200
         private const val CHUNK_INDEX_STRIDE = 100
         private const val MIN_NATURAL_BREAK_DISTANCE = 240
+        private val WHITESPACE_REGEX = Regex("\\s+")
     }
 }

@@ -14,44 +14,62 @@ class MemoryFileStore(
     private val paths: MemoryFilePaths,
     private val clock: Clock = Clock.systemDefaultZone()
 ) {
+    private val revisionGate = Any()
+    private var longTermRevision = 0L
+    private var maintenanceRevision = 0L
+
     fun ensureStore(): Result<MemoryFileStoreSnapshot> = runCatching {
-        ensureDirectories()
-        val longTermFile = ensureLongTermMemoryFile()
-        val todayFile = ensureDailyMemoryFile(LocalDate.now(clock))
-        MemoryFileStoreSnapshot(
-            rootDirectory = paths.rootDirectory,
-            longTermMemoryFile = longTermFile,
-            todayMemoryFile = todayFile
-        )
+        synchronized(revisionGate) {
+            ensureDirectories()
+            val longTermFile = ensureLongTermMemoryFile()
+            val todayFile = ensureDailyMemoryFile(LocalDate.now(clock))
+            MemoryFileStoreSnapshot(
+                rootDirectory = paths.rootDirectory,
+                longTermMemoryFile = longTermFile,
+                todayMemoryFile = todayFile
+            )
+        }
     }
 
     fun readLongTermMemory(): Result<String> = runCatching {
-        ensureDirectories()
-        ensureLongTermMemoryFile().readText(StandardCharsets.UTF_8)
+        synchronized(revisionGate) {
+            ensureDirectories()
+            ensureLongTermMemoryFile().readText(StandardCharsets.UTF_8)
+        }
     }
 
     fun readDailyMemory(date: LocalDate = LocalDate.now(clock)): Result<String> = runCatching {
-        ensureDirectories()
-        ensureDailyMemoryFile(date).readText(StandardCharsets.UTF_8)
+        synchronized(revisionGate) {
+            ensureDirectories()
+            ensureDailyMemoryFile(date).readText(StandardCharsets.UTF_8)
+        }
     }
 
     fun readMemoryFile(file: File): Result<String> = runCatching {
-        ensureDirectories()
-        file.readText(StandardCharsets.UTF_8)
+        synchronized(revisionGate) {
+            ensureDirectories()
+            file.readText(StandardCharsets.UTF_8)
+        }
     }
 
     fun listMemoryFiles(): Result<List<File>> = runCatching {
-        ensureDirectories()
-        buildList {
-            add(ensureLongTermMemoryFile())
-            if (paths.dailyMemoryDirectory.exists()) {
-                addAll(
-                    paths.dailyMemoryDirectory
-                        .listFiles { file -> file.isFile && file.extension.equals("md", ignoreCase = true) }
-                        .orEmpty()
-                        .sortedBy { it.name }
-                )
-            }
+        synchronized(revisionGate) {
+            managedMemoryFiles(includeDaily = true)
+        }
+    }
+
+    internal fun readCorpusFiles(corpus: MemoryCorpus): Result<MemoryFileCorpusRead> = runCatching {
+        synchronized(revisionGate) {
+            val files = managedMemoryFiles(includeDaily = corpus == MemoryCorpus.MAINTENANCE_WORKING_SET)
+            MemoryFileCorpusRead(
+                revision = revisionFor(corpus),
+                files = files.map { file ->
+                    MemoryFileContent(
+                        sourcePath = paths.relativePath(file),
+                        bytes = Files.readAllBytes(file.toPath())
+                    )
+                }
+            )
         }
     }
 
@@ -63,49 +81,84 @@ class MemoryFileStore(
         text: String,
         date: LocalDate = LocalDate.now(clock)
     ): Result<File> = runCatching {
-        ensureDirectories()
-        val dailyFile = ensureDailyMemoryFile(date)
-        dailyFile.appendText(normalizeAppendedBlock(text), StandardCharsets.UTF_8)
-        dailyFile
+        synchronized(revisionGate) {
+            ensureDirectories()
+            val dailyFile = ensureDailyMemoryFile(date)
+            val block = normalizeAppendedBlock(text)
+            if (block.isNotEmpty()) {
+                dailyFile.appendText(block, StandardCharsets.UTF_8)
+                advanceRevisionFor(dailyFile)
+            }
+            dailyFile
+        }
     }
 
     fun appendLongTermMemory(text: String): Result<File> = runCatching {
-        ensureDirectories()
-        val longTermFile = ensureLongTermMemoryFile()
-        longTermFile.appendText(normalizeAppendedBlock(text), StandardCharsets.UTF_8)
-        longTermFile
+        synchronized(revisionGate) {
+            ensureDirectories()
+            val longTermFile = ensureLongTermMemoryFile()
+            val block = normalizeAppendedBlock(text)
+            if (block.isNotEmpty()) {
+                longTermFile.appendText(block, StandardCharsets.UTF_8)
+                advanceRevisionFor(longTermFile)
+            }
+            longTermFile
+        }
     }
 
     fun replaceLongTermMemory(content: String): Result<MemoryFileReplacement> = runCatching {
-        ensureDirectories()
-        val target = ensureLongTermMemoryFile()
-        replaceMemoryFileInternal(target, content)
+        synchronized(revisionGate) {
+            ensureDirectories()
+            val target = ensureLongTermMemoryFile()
+            replaceMemoryFileInternal(target, content)
+        }
     }
 
     fun replaceMemoryFile(file: File, content: String): Result<MemoryFileReplacement> = runCatching {
-        ensureDirectories()
-        val target = requireManagedMemoryFile(file)
-        if (!target.exists()) error("Memory file does not exist: ${target.absolutePath}")
-        replaceMemoryFileInternal(target, content)
+        synchronized(revisionGate) {
+            ensureDirectories()
+            val target = requireManagedMemoryFile(file)
+            if (!target.exists()) error("Memory file does not exist: ${target.absolutePath}")
+            replaceMemoryFileInternal(target, content)
+        }
     }
 
     fun restoreMemoryFile(replacement: MemoryFileReplacement): Result<File> = runCatching {
-        ensureDirectories()
-        val target = requireManagedMemoryFile(replacement.file)
-        if (!replacement.backupFile.exists()) {
-            error("Memory backup does not exist: ${replacement.backupFile.absolutePath}")
+        synchronized(revisionGate) {
+            ensureDirectories()
+            val target = requireManagedMemoryFile(replacement.file)
+            if (!replacement.backupFile.exists()) {
+                error("Memory backup does not exist: ${replacement.backupFile.absolutePath}")
+            }
+            writeAtomically(target, replacement.backupFile.readText(StandardCharsets.UTF_8))
+            advanceRevisionFor(target)
+            target
         }
-        writeAtomically(target, replacement.backupFile.readText(StandardCharsets.UTF_8))
-        target
     }
 
     private fun replaceMemoryFileInternal(target: File, content: String): MemoryFileReplacement {
         val backup = backupMemoryFile(target)
         writeAtomically(target, normalizeFullFileContent(content))
+        advanceRevisionFor(target)
         return MemoryFileReplacement(
             file = target,
             backupFile = backup
         )
+    }
+
+    private fun managedMemoryFiles(includeDaily: Boolean): List<File> {
+        ensureDirectories()
+        return buildList {
+            add(ensureLongTermMemoryFile())
+            if (includeDaily && paths.dailyMemoryDirectory.exists()) {
+                addAll(
+                    paths.dailyMemoryDirectory
+                        .listFiles { file -> file.isFile && file.extension.equals("md", ignoreCase = true) }
+                        .orEmpty()
+                        .sortedBy { it.name }
+                )
+            }
+        }
     }
 
     private fun ensureDirectories() {
@@ -118,6 +171,7 @@ class MemoryFileStore(
         val file = paths.longTermMemoryFile
         if (!file.exists()) {
             writeAtomically(file, LONG_TERM_MEMORY_HEADER)
+            advanceRevisionFor(file)
         }
         return file
     }
@@ -126,8 +180,27 @@ class MemoryFileStore(
         val file = paths.dailyMemoryFile(date)
         if (!file.exists()) {
             writeAtomically(file, dailyMemoryHeader(date))
+            advanceRevisionFor(file)
         }
         return file
+    }
+
+    private fun revisionFor(corpus: MemoryCorpus): Long = when (corpus) {
+        MemoryCorpus.CHAT_RECALL_LONG_TERM -> longTermRevision
+        MemoryCorpus.MAINTENANCE_WORKING_SET -> maintenanceRevision
+    }
+
+    private fun advanceRevisionFor(file: File) {
+        val canonicalPath = file.canonicalFile.toPath()
+        when {
+            canonicalPath == paths.longTermMemoryFile.canonicalFile.toPath() -> {
+                longTermRevision += 1
+                maintenanceRevision += 1
+            }
+            canonicalPath.startsWith(paths.dailyMemoryDirectory.canonicalFile.toPath()) -> {
+                maintenanceRevision += 1
+            }
+        }
     }
 
     private fun backupMemoryFile(file: File): File {
@@ -210,4 +283,14 @@ data class MemoryFileStoreSnapshot(
 data class MemoryFileReplacement(
     val file: File,
     val backupFile: File
+)
+
+internal data class MemoryFileCorpusRead(
+    val revision: Long,
+    val files: List<MemoryFileContent>
+)
+
+internal data class MemoryFileContent(
+    val sourcePath: String,
+    val bytes: ByteArray
 )

@@ -18,7 +18,7 @@ class MemoryBatchConsolidationService(
     private val memoryIntelligence: MemoryIntelligence,
     private val memoryFileStore: MemoryFileStore,
     private val markdownMemoryCodec: MarkdownMemoryCodec,
-    private val memoryRetriever: MemoryRetriever,
+    private val memoryMaintenanceCorpusReader: MemoryMaintenanceCorpusReader,
     private val memoryIndexRebuilder: MemoryIndexRebuilder,
     private val activityLogger: MemoryActivityLogger = MemoryActivityLogger.None,
     private val clock: Clock = Clock.systemDefaultZone(),
@@ -276,8 +276,9 @@ class MemoryBatchConsolidationService(
             .joinToString(separator = "\n")
             .take(MAX_RETRIEVAL_QUERY_CHARS)
         if (query.isBlank()) return emptyList()
-        val results = memoryRetriever.retrieve(
+        val results = memoryMaintenanceCorpusReader.retrieveWorkingSet(
             MemoryRetrievalRequest(
+                corpus = MemoryCorpus.MAINTENANCE_WORKING_SET,
                 query = query,
                 includePrivate = true,
                 limit = MAX_EXISTING_MEMORIES,

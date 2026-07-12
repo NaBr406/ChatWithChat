@@ -9,6 +9,8 @@ import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryCodec
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryEntry
 import dev.chungjungsoo.gptmobile.data.memory.MemoryCompletedTurnInput
+import dev.chungjungsoo.gptmobile.data.memory.MemoryCorpus
+import dev.chungjungsoo.gptmobile.data.memory.MemoryFilePaths
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFileStore
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexRebuilder
 import dev.chungjungsoo.gptmobile.data.memory.MemoryPromptBuilder
@@ -59,6 +61,7 @@ class MemoryRepositoryImpl(
         val recentContext = buildLocalRecentContext(chatRoom, userMessages, assistantMessages)
         val retrievedMemories = retriever.retrieve(
             MemoryRetrievalRequest(
+                corpus = MemoryCorpus.CHAT_RECALL_LONG_TERM,
                 query = query,
                 recentContext = recentContext,
                 limit = MAX_SELECTED_MEMORIES,
@@ -69,7 +72,7 @@ class MemoryRepositoryImpl(
         ).getOrElse { throwable ->
             logWarning("Local memory retrieval failed; continuing without memory: ${throwable.message}", throwable)
             emptyList()
-        }
+        }.filter { memory -> memory.sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME }
         return PreparedMemoryContext(
             retrievedMemories = retrievedMemories,
             prompt = memoryPromptBuilder.buildRetrieved(retrievedMemories)
