@@ -120,13 +120,6 @@ fun ChatShellScreen(
                             homeViewModel.updateSearchQuery(query)
                         }
                     },
-                    onSearchClick = {
-                        if (chatListState.isSearchMode) {
-                            homeViewModel.disableSearchMode()
-                        } else {
-                            homeViewModel.enableSearchMode()
-                        }
-                    },
                     onClearSearch = homeViewModel::disableSearchMode,
                     onNewChatClick = { startNewChat(null, emptyList(), preferPrimaryPlatform = false) },
                     onChatClick = { chatRoom ->

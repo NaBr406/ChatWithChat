@@ -7,6 +7,7 @@ import android.provider.OpenableColumns
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -16,10 +17,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.input.TextFieldLineLimits
@@ -27,9 +31,11 @@ import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -48,18 +54,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider.getUriForFile
 import dev.chungjungsoo.gptmobile.R
+import dev.chungjungsoo.gptmobile.presentation.common.AppleBlue
+import dev.chungjungsoo.gptmobile.presentation.common.settingsMaterialColors
 import dev.chungjungsoo.gptmobile.presentation.theme.GPTMobileTheme
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -81,6 +92,7 @@ fun ChatComposer(
     val mergedStyle = localStyle.merge(TextStyle(color = LocalContentColor.current))
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val materialColors = settingsMaterialColors()
     val chatInputLineLimits = TextFieldLineLimits.MultiLine(maxHeightInLines = 5)
     val hasQuestionText = inputState.text.isNotBlank()
     val hasSendableAttachment = selectedAttachments.any {
@@ -89,6 +101,10 @@ fun ChatComposer(
     val canSend = chatEnabled && sendButtonEnabled && (hasQuestionText || hasSendableAttachment)
     var isAttachmentMenuExpanded by remember { mutableStateOf(false) }
     var pendingCameraPhotoPath by remember { mutableStateOf<String?>(null) }
+    val attachmentButtonColor by animateColorAsState(
+        targetValue = materialColors.controlFill.copy(alpha = if (isAttachmentMenuExpanded) 0.44f else 0f),
+        label = "attachmentButtonColor"
+    )
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -139,8 +155,9 @@ fun ChatComposer(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.84f))
+            .background(color = materialColors.navigation)
     ) {
+        HorizontalDivider(thickness = 0.5.dp, color = materialColors.separator)
         if (selectedAttachments.isNotEmpty()) {
             FileThumbnailRow(
                 selectedAttachments = selectedAttachments,
@@ -159,12 +176,12 @@ fun ChatComposer(
                     modifier = Modifier
                         .padding(horizontal = 12.dp, vertical = 8.dp)
                         .fillMaxWidth(),
-                    shape = RoundedCornerShape(28.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.78f),
-                    contentColor = MaterialTheme.colorScheme.onSurface,
+                    shape = RoundedCornerShape(22.dp),
+                    color = materialColors.grouped,
+                    contentColor = materialColors.primaryLabel,
                     border = BorderStroke(
-                        width = 1.dp,
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                        width = 0.5.dp,
+                        color = materialColors.separatorStrong
                     ),
                     tonalElevation = 0.dp,
                     shadowElevation = 0.dp
@@ -172,30 +189,51 @@ fun ChatComposer(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(start = if (showAttachmentButton) 4.dp else 16.dp, top = 6.dp, end = 6.dp, bottom = 6.dp),
+                            .heightIn(min = 48.dp)
+                            .padding(start = if (showAttachmentButton) 2.dp else 14.dp, end = 2.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         if (showAttachmentButton) {
-                            Box {
+                            Box(contentAlignment = Alignment.Center) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .background(attachmentButtonColor, CircleShape)
+                                )
                                 IconButton(
                                     enabled = chatEnabled,
                                     onClick = { isAttachmentMenuExpanded = true },
                                     colors = IconButtonDefaults.iconButtonColors(
-                                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                                        contentColor = if (isAttachmentMenuExpanded) AppleBlue else materialColors.secondaryLabel,
+                                        disabledContentColor = materialColors.tertiaryLabel
                                     )
                                 ) {
                                     Icon(
+                                        modifier = Modifier.size(22.dp),
                                         imageVector = ImageVector.vectorResource(R.drawable.ic_attach_file),
                                         contentDescription = stringResource(R.string.attach_file)
                                     )
                                 }
                                 DropdownMenu(
+                                    modifier = Modifier.widthIn(min = 208.dp, max = 260.dp),
                                     expanded = isAttachmentMenuExpanded,
-                                    onDismissRequest = { isAttachmentMenuExpanded = false }
+                                    onDismissRequest = { isAttachmentMenuExpanded = false },
+                                    offset = DpOffset(x = (-4).dp, y = 4.dp),
+                                    shape = RoundedCornerShape(14.dp),
+                                    containerColor = materialColors.grouped,
+                                    tonalElevation = 0.dp,
+                                    shadowElevation = 12.dp,
+                                    border = BorderStroke(0.5.dp, materialColors.separatorStrong)
                                 ) {
                                     DropdownMenuItem(
-                                        text = { Text(text = stringResource(R.string.choose_image)) },
+                                        modifier = Modifier.heightIn(min = 52.dp),
+                                        text = {
+                                            Text(
+                                                text = stringResource(R.string.choose_image),
+                                                style = MaterialTheme.typography.bodyLarge,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                        },
                                         leadingIcon = {
                                             Icon(
                                                 imageVector = ImageVector.vectorResource(R.drawable.ic_image),
@@ -208,7 +246,14 @@ fun ChatComposer(
                                         }
                                     )
                                     DropdownMenuItem(
-                                        text = { Text(text = stringResource(R.string.take_photo)) },
+                                        modifier = Modifier.heightIn(min = 52.dp),
+                                        text = {
+                                            Text(
+                                                text = stringResource(R.string.take_photo),
+                                                style = MaterialTheme.typography.bodyLarge,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                        },
                                         leadingIcon = {
                                             Icon(
                                                 imageVector = ImageVector.vectorResource(R.drawable.ic_photo_camera),
@@ -230,26 +275,39 @@ fun ChatComposer(
                         ) {
                             if (inputState.text.isEmpty()) {
                                 Text(
-                                    modifier = Modifier.alpha(0.46f),
+                                    modifier = Modifier.alpha(0.7f),
                                     text = if (chatEnabled) stringResource(R.string.ask_a_question) else stringResource(R.string.some_platforms_disabled),
-                                    style = MaterialTheme.typography.bodyLarge
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = materialColors.secondaryLabel
                                 )
                             }
                             Box(modifier = Modifier.fillMaxWidth()) {
                                 innerTextField()
                             }
                         }
-                        IconButton(
-                            enabled = canSend,
-                            onClick = onSendButtonClick,
-                            colors = IconButtonDefaults.iconButtonColors(
-                                containerColor = MaterialTheme.colorScheme.primary,
-                                contentColor = MaterialTheme.colorScheme.onPrimary,
-                                disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                                disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        Box(contentAlignment = Alignment.Center) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .background(
+                                        color = if (canSend) AppleBlue else materialColors.controlFill,
+                                        shape = CircleShape
+                                    )
                             )
-                        ) {
-                            Icon(imageVector = ImageVector.vectorResource(id = R.drawable.ic_send), contentDescription = stringResource(R.string.send))
+                            IconButton(
+                                enabled = canSend,
+                                onClick = onSendButtonClick,
+                                colors = IconButtonDefaults.iconButtonColors(
+                                    contentColor = Color.White,
+                                    disabledContentColor = materialColors.tertiaryLabel
+                                )
+                            ) {
+                                Icon(
+                                    modifier = Modifier.size(20.dp),
+                                    imageVector = Icons.Rounded.ArrowUpward,
+                                    contentDescription = stringResource(R.string.send)
+                                )
+                            }
                         }
                     }
                 }

@@ -1,11 +1,6 @@
 package dev.chungjungsoo.gptmobile.presentation.ui.home
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -22,36 +17,41 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.chungjungsoo.gptmobile.R
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatRoomV2
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
+import dev.chungjungsoo.gptmobile.presentation.common.AppleBlue
+import dev.chungjungsoo.gptmobile.presentation.common.settingsMaterialColors
 import dev.chungjungsoo.gptmobile.util.getPlatformName
 import java.time.Instant
 import java.time.LocalDate
@@ -65,7 +65,6 @@ fun ChatHistoryDrawer(
     platformState: List<PlatformV2>,
     searchQuery: String,
     onSearchQueryChanged: (String) -> Unit,
-    onSearchClick: () -> Unit,
     onClearSearch: () -> Unit,
     onNewChatClick: () -> Unit,
     onChatClick: (ChatRoomV2) -> Unit,
@@ -86,30 +85,13 @@ fun ChatHistoryDrawer(
             .padding(horizontal = 14.dp, vertical = 18.dp)
     ) {
         DrawerHeader(
-            onNewChatClick = onNewChatClick,
-            isSearchMode = chatListState.isSearchMode,
-            onSearchClick = onSearchClick
+            onNewChatClick = onNewChatClick
         )
-
-        AnimatedVisibility(
-            visible = chatListState.isSearchMode || searchQuery.isNotBlank(),
-            enter = fadeIn(animationSpec = tween(durationMillis = 120)) +
-                expandVertically(
-                    animationSpec = tween(durationMillis = 180),
-                    expandFrom = Alignment.Top
-                ),
-            exit = fadeOut(animationSpec = tween(durationMillis = 90)) +
-                shrinkVertically(
-                    animationSpec = tween(durationMillis = 140),
-                    shrinkTowards = Alignment.Top
-                )
-        ) {
-            ChatDrawerSearchField(
-                query = searchQuery,
-                onQueryChange = onSearchQueryChanged,
-                onClearSearch = onClearSearch
-            )
-        }
+        ChatDrawerSearchField(
+            query = searchQuery,
+            onQueryChange = onSearchQueryChanged,
+            onClearSearch = onClearSearch
+        )
 
         if (chatListState.isSelectionMode) {
             DrawerSelectionToolbar(
@@ -264,10 +246,9 @@ fun ChatHistoryRow(
 
 @Composable
 private fun DrawerHeader(
-    onNewChatClick: () -> Unit,
-    isSearchMode: Boolean,
-    onSearchClick: () -> Unit
+    onNewChatClick: () -> Unit
 ) {
+    val materialColors = settingsMaterialColors()
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
@@ -276,33 +257,21 @@ private fun DrawerHeader(
             modifier = Modifier.weight(1f),
             text = stringResource(R.string.chatwithchat_brand),
             style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.onSurface
+            color = materialColors.primaryLabel
         )
-        IconButton(onClick = onSearchClick) {
-            Icon(
-                imageVector = if (isSearchMode) Icons.Rounded.Close else Icons.Rounded.Search,
-                contentDescription = stringResource(R.string.search_chats),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
+        IconButton(
+            modifier = Modifier.size(40.dp),
+            onClick = onNewChatClick,
+            colors = IconButtonDefaults.iconButtonColors(
+                containerColor = AppleBlue.copy(alpha = 0.12f),
+                contentColor = AppleBlue
             )
-        }
-    }
-    Surface(
-        modifier = Modifier
-            .padding(top = 16.dp)
-            .fillMaxWidth()
-            .heightIn(min = 48.dp),
-        shape = RoundedCornerShape(14.dp),
-        onClick = onNewChatClick,
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        contentColor = MaterialTheme.colorScheme.onSurface
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.new_chat))
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(text = stringResource(R.string.new_chat))
+            Icon(
+                modifier = Modifier.size(22.dp),
+                imageVector = Icons.Rounded.Add,
+                contentDescription = stringResource(R.string.new_chat)
+            )
         }
     }
 }
@@ -313,37 +282,66 @@ private fun ChatDrawerSearchField(
     onQueryChange: (String) -> Unit,
     onClearSearch: () -> Unit
 ) {
-    TextField(
+    val materialColors = settingsMaterialColors()
+    BasicTextField(
         modifier = Modifier
-            .padding(top = 14.dp, bottom = 8.dp)
+            .padding(top = 14.dp, bottom = 10.dp)
             .fillMaxWidth(),
         value = query,
         onValueChange = onQueryChange,
-        placeholder = { Text(stringResource(R.string.search_chats)) },
-        leadingIcon = {
-            Icon(
-                imageVector = Icons.Rounded.Search,
-                contentDescription = null
-            )
-        },
-        trailingIcon = {
-            if (query.isNotEmpty()) {
-                IconButton(onClick = onClearSearch) {
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+        textStyle = MaterialTheme.typography.bodyLarge.copy(color = materialColors.primaryLabel),
+        cursorBrush = SolidColor(AppleBlue),
+        decorationBox = { innerTextField ->
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = materialColors.grouped,
+                border = BorderStroke(0.5.dp, materialColors.separator)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 44.dp)
+                        .padding(start = 12.dp, end = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Icon(
-                        imageVector = Icons.Rounded.Close,
-                        contentDescription = stringResource(R.string.clear)
+                        modifier = Modifier.size(20.dp),
+                        imageVector = Icons.Rounded.Search,
+                        contentDescription = null,
+                        tint = materialColors.secondaryLabel
                     )
+                    androidx.compose.foundation.layout.Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 8.dp)
+                    ) {
+                        if (query.isEmpty()) {
+                            Text(
+                                text = stringResource(R.string.search_chats),
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = materialColors.secondaryLabel
+                            )
+                        }
+                        innerTextField()
+                    }
+                    if (query.isNotEmpty()) {
+                        IconButton(
+                            modifier = Modifier.size(36.dp),
+                            onClick = onClearSearch
+                        ) {
+                            Icon(
+                                modifier = Modifier.size(18.dp),
+                                imageVector = Icons.Rounded.Close,
+                                contentDescription = stringResource(R.string.clear),
+                                tint = materialColors.secondaryLabel
+                            )
+                        }
+                    }
                 }
             }
-        },
-        singleLine = true,
-        shape = RoundedCornerShape(14.dp),
-        colors = TextFieldDefaults.colors(
-            focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-            focusedIndicatorColor = Color.Transparent,
-            unfocusedIndicatorColor = Color.Transparent
-        )
+        }
     )
 }
 

@@ -24,17 +24,20 @@ import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalUriHandler
@@ -56,6 +59,7 @@ import com.mikepenz.markdown.compose.elements.MarkdownCodeBlock
 import com.mikepenz.markdown.compose.elements.MarkdownCodeFence
 import com.mikepenz.markdown.compose.elements.MarkdownParagraph
 import com.mikepenz.markdown.m3.Markdown
+import com.mikepenz.markdown.m3.markdownColor
 import com.mikepenz.markdown.m3.markdownTypography
 import com.mikepenz.markdown.model.MarkdownAnnotator
 import com.mikepenz.markdown.model.markdownAnimations
@@ -84,6 +88,7 @@ fun ChatMarkdown(
     contentIdentity: Any = content,
     renderMath: Boolean = true,
     useMathJax: Boolean = true,
+    contentColor: Color = MaterialTheme.colorScheme.onBackground,
     modifier: Modifier = Modifier
 ) {
     val isDarkTheme = isSystemInDarkTheme()
@@ -229,15 +234,23 @@ fun ChatMarkdown(
         )
         val animations = markdownAnimations(animateTextSize = { this })
 
-        Markdown(
-            markdownState = markdownState,
-            inlineContent = markdownInlineContent(inlineMathContent),
-            annotator = annotator,
-            components = components,
-            typography = chatMarkdownTypography(),
-            animations = animations,
-            modifier = modifier
-        )
+        CompositionLocalProvider(LocalContentColor provides contentColor) {
+            Markdown(
+                markdownState = markdownState,
+                colors = markdownColor(
+                    text = contentColor,
+                    codeBackground = contentColor.copy(alpha = 0.14f),
+                    inlineCodeBackground = contentColor.copy(alpha = 0.16f),
+                    dividerColor = contentColor.copy(alpha = 0.22f)
+                ),
+                inlineContent = markdownInlineContent(inlineMathContent),
+                annotator = annotator,
+                components = components,
+                typography = chatMarkdownTypography(),
+                animations = animations,
+                modifier = modifier
+            )
+        }
     }
 }
 
@@ -549,7 +562,7 @@ private fun ChatMarkdownTable(
         Text(
             text = rawTable,
             style = style,
-            color = MaterialTheme.colorScheme.onSurface
+            color = LocalContentColor.current
         )
         return
     }
@@ -604,7 +617,7 @@ private fun ChatMarkdownTableRow(
     style: TextStyle,
     inlineContent: Map<String, InlineTextContent>,
     inlineMathByPlaceholder: Map<String, InlineMathToken>,
-    backgroundColor: androidx.compose.ui.graphics.Color,
+    backgroundColor: Color,
     isHeader: Boolean
 ) {
     Row {
@@ -613,23 +626,25 @@ private fun ChatMarkdownTableRow(
             val annotatedCell = remember(cellText, inlineMathByPlaceholder) {
                 buildInlineMathAnnotatedString(cellText, inlineMathByPlaceholder)
             }
-            BasicText(
-                text = annotatedCell,
-                modifier = Modifier
-                    .width(width)
-                    .defaultMinSize(minHeight = 44.dp)
-                    .background(backgroundColor)
-                    .border(
-                        width = 0.5.dp,
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.62f)
-                    )
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                style = style.copy(
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontWeight = if (isHeader) FontWeight.SemiBold else style.fontWeight
-                ),
-                inlineContent = inlineContent
-            )
+            CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
+                BasicText(
+                    text = annotatedCell,
+                    modifier = Modifier
+                        .width(width)
+                        .defaultMinSize(minHeight = 44.dp)
+                        .background(backgroundColor)
+                        .border(
+                            width = 0.5.dp,
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.62f)
+                        )
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    style = style.copy(
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = if (isHeader) FontWeight.SemiBold else style.fontWeight
+                    ),
+                    inlineContent = inlineContent
+                )
+            }
         }
     }
 }

@@ -301,7 +301,7 @@ private fun ChatContent(
     val screenHeightDp = with(LocalDensity.current) { containerSize.height.toDp() }
     val focusManager = LocalFocusManager.current
     val systemChatMargin = 32.dp
-    val maximumUserChatBubbleWidth = (screenWidthDp - systemChatMargin) * 0.8F
+    val maximumUserChatBubbleWidth = ((screenWidthDp - systemChatMargin) * 0.78F).coerceAtMost(560.dp)
     val maximumOpponentChatBubbleWidth = screenWidthDp - systemChatMargin
     val listState = rememberLazyListState()
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
@@ -707,7 +707,7 @@ private fun ChatMessagePair(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 20.dp, end = 16.dp, top = 8.dp, bottom = 4.dp),
+                .padding(start = 20.dp, end = 12.dp, top = 8.dp, bottom = 4.dp),
             horizontalAlignment = Alignment.End
         ) {
             Box {
@@ -771,6 +771,9 @@ private fun ChatMessagePair(
                 canEdit = canUseChat && isIdle,
                 canRetry = canUseChat && isActiveMessage && !isCurrentPlatformLoading,
                 isLoading = isActiveMessage && isCurrentPlatformLoading,
+                showPendingIndicator = selectedToolProgressStates.none { state ->
+                    state.status == ChatViewModel.ToolProgressStatus.Running
+                },
                 text = assistantContent,
                 thoughts = assistantThoughts,
                 attachments = selectedAssistantMessage?.attachments.orEmpty().map { it.filePathForDisplay },

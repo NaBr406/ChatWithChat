@@ -381,6 +381,7 @@
     <string name="view_thinking">查看思考过程</string>
     <string name="hide_thinking">隐藏思考过程</string>
     <string name="thinking_in_progress">思考中...</string>
+    <string name="response_preparing">正在准备回复</string>
     <string name="expand">展开</string>
     <string name="collapse">收起</string>
     <string name="your_platforms">你的平台</string>

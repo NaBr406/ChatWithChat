@@ -4,7 +4,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -22,6 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
@@ -46,10 +46,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -59,8 +61,12 @@ import dev.chungjungsoo.gptmobile.data.database.entity.MessageSourceMetadata
 import dev.chungjungsoo.gptmobile.data.database.entity.SafeMessageSourceTarget
 import dev.chungjungsoo.gptmobile.data.database.entity.safeDedupeKey
 import dev.chungjungsoo.gptmobile.data.database.entity.safeNavigationTarget
+import dev.chungjungsoo.gptmobile.presentation.common.AppleBlue
+import dev.chungjungsoo.gptmobile.presentation.common.settingsMaterialColors
 import dev.chungjungsoo.gptmobile.presentation.theme.GPTMobileTheme
 import java.io.File
+
+private val OutgoingMessageBlue = Color(0xFF0062CC)
 
 @Composable
 fun UserChatBubble(
@@ -75,17 +81,14 @@ fun UserChatBubble(
                 .pointerInput(Unit) {
                     detectTapGestures(onLongPress = { onLongPress.invoke() })
                 },
-            shape = RoundedCornerShape(topStart = 22.dp, topEnd = 8.dp, bottomStart = 22.dp, bottomEnd = 22.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            contentColor = MaterialTheme.colorScheme.onSurface,
-            border = BorderStroke(
-                width = 1.dp,
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.48f)
-            )
+            shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = 20.dp, bottomEnd = 6.dp),
+            color = OutgoingMessageBlue,
+            contentColor = Color.White
         ) {
             ChatMarkdown(
                 content = text,
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
+                contentColor = Color.White,
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp)
             )
         }
         MessageFileThumbnailRow(
@@ -100,6 +103,7 @@ fun OpponentChatBubble(
     modifier: Modifier = Modifier,
     canRetry: Boolean,
     isLoading: Boolean,
+    showPendingIndicator: Boolean = true,
     isError: Boolean = false,
     text: String,
     thoughts: String = "",
@@ -144,30 +148,19 @@ fun OpponentChatBubble(
         Column {
             val displayText = visibleText
 
-            if (isLoading && displayText.isBlank()) {
-                Row(
-                    modifier = Modifier.padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(14.dp),
-                        strokeWidth = 2.dp
-                    )
-                    Text(
-                        text = stringResource(R.string.thinking_in_progress),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+            when {
+                isLoading && displayText.isBlank() && thoughts.isBlank() && showPendingIndicator -> {
+                    ResponseLoadingIndicator()
+                }
+                displayText.isNotBlank() || !isLoading -> {
+                    ChatMarkdown(
+                        content = appendStreamingTextTail(displayText, isLoading),
+                        contentIdentity = contentIdentity,
+                        renderMath = true,
+                        useMathJax = !isLoading,
+                        modifier = Modifier.padding(vertical = 6.dp)
                     )
                 }
-            } else {
-                ChatMarkdown(
-                    content = appendStreamingTextTail(displayText, isLoading),
-                    contentIdentity = contentIdentity,
-                    renderMath = true,
-                    useMathJax = !isLoading,
-                    modifier = Modifier.padding(vertical = 6.dp)
-                )
             }
 
             MessageFileThumbnailRow(
@@ -237,6 +230,35 @@ fun OpponentChatBubble(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ResponseLoadingIndicator() {
+    val materialColors = settingsMaterialColors()
+    Row(
+        modifier = Modifier.padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(30.dp)
+                .background(AppleBlue.copy(alpha = 0.1f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(15.dp),
+                strokeWidth = 2.dp,
+                color = AppleBlue
+            )
+        }
+        Text(
+            text = stringResource(R.string.response_preparing),
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            color = materialColors.secondaryLabel
+        )
     }
 }
 
