@@ -123,7 +123,7 @@ function Ensure-DeviceBooted {
             $script:AvdName = Get-FirstAvdName $EmulatorPath
         }
 
-        $arguments = @("-avd", $script:AvdName, "-no-snapshot-save")
+        $arguments = @("-avd", $script:AvdName, "-no-snapshot")
         if ($Headless) { $arguments += "-no-window" }
 
         Write-Step "Starting emulator '$script:AvdName'"
