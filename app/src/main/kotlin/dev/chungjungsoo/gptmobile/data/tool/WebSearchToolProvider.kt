@@ -1,6 +1,6 @@
 package dev.chungjungsoo.gptmobile.data.tool
 
-import dev.chungjungsoo.gptmobile.data.database.entity.MessageSourceMetadata
+import dev.chungjungsoo.gptmobile.data.database.entity.safeHttpUrlOrNull
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchRepository
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchResult
 
@@ -8,6 +8,16 @@ class WebSearchToolProvider(
     private val webSearchRepository: WebSearchRepository
 ) : ToolProvider {
     override val definition: ToolDefinition = ToolDefinition.WebSearch
+
+    override val settingsMetadata: ToolSettingsMetadata = ToolSettingsMetadata(
+        category = ToolCategory.Web,
+        defaultEnabled = true,
+        isSensitive = false,
+        presentationKey = "web_search",
+        iconKey = "search"
+    )
+
+    override val securityPolicy: ToolSecurityPolicy = ToolSecurityPolicy.ReadOnlyPublic
     override val policy: ToolPolicy = ToolPolicy(
         maxCallsPerRequest = 2,
         maxCallsPerChat = 4,
@@ -37,7 +47,9 @@ class WebSearchToolProvider(
             }
         }
         val boundedResults = results
-            .filter { it.url.isNotBlank() }
+            .mapNotNull { result ->
+                result.url.safeHttpUrlOrNull()?.let { safeUrl -> result.copy(url = safeUrl) }
+            }
             .distinctBy { it.url }
             .take(resultLimit)
 
@@ -45,33 +57,15 @@ class WebSearchToolProvider(
             callId = call.id,
             name = call.name,
             content = formatSearchResults(query, boundedResults),
-            metadata = buildMap {
-                put("result_count", boundedResults.size.toString())
-                boundedResults.forEachIndexed { index, result ->
-                    put("source_${index}_title", result.title)
-                    put("source_${index}_url", result.url)
-                    put("source_${index}_snippet", result.snippet)
-                    put("source_${index}_tool", call.name)
-                }
+            metadata = mapOf("result_count" to boundedResults.size.toString()),
+            sources = boundedResults.map { result ->
+                ToolSource.PublicUrl(
+                    title = result.title.ifBlank { result.url },
+                    url = result.url,
+                    snippet = result.snippet.clip(MAX_SOURCE_SNIPPET_CHARS)
+                )
             }
         )
-    }
-
-    override fun sourceMetadata(result: ToolResult): List<MessageSourceMetadata> {
-        val sources = mutableListOf<MessageSourceMetadata>()
-        val count = result.metadata["result_count"]?.toIntOrNull()
-        var index = 0
-        while (count == null || index < count.coerceAtLeast(0)) {
-            val url = result.metadata["source_${index}_url"]?.trim()?.takeIf { it.isNotBlank() } ?: break
-            sources += MessageSourceMetadata(
-                title = result.metadata["source_${index}_title"]?.trim()?.takeIf { it.isNotBlank() } ?: url,
-                url = url,
-                snippet = result.metadata["source_${index}_snippet"].orEmpty().clip(MAX_SOURCE_SNIPPET_CHARS),
-                sourceToolName = result.metadata["source_${index}_tool"]?.trim()?.takeIf { it.isNotBlank() } ?: result.name
-            )
-            index += 1
-        }
-        return sources
     }
 
     private fun formatSearchResults(

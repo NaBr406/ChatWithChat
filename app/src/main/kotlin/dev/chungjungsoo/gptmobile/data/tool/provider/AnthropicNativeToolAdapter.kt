@@ -9,17 +9,23 @@ import dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ContentBlockType
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ContentDeltaResponseChunk
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ContentStartResponseChunk
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.response.MessageResponseChunk
+import dev.chungjungsoo.gptmobile.data.tool.ToolArgumentStreamLimiter
 import dev.chungjungsoo.gptmobile.data.tool.ToolCall
 import dev.chungjungsoo.gptmobile.data.tool.ToolDefinition
 import dev.chungjungsoo.gptmobile.data.tool.ToolLoopConfig
 import dev.chungjungsoo.gptmobile.data.tool.ToolResult
+import dev.chungjungsoo.gptmobile.data.tool.ToolSchemaDialect
+import dev.chungjungsoo.gptmobile.data.tool.ToolSource
+import dev.chungjungsoo.gptmobile.data.tool.appendToolArgumentFragment
+import dev.chungjungsoo.gptmobile.data.tool.requireWithinToolArgumentLimit
+import dev.chungjungsoo.gptmobile.data.tool.toSchemaJson
 import dev.chungjungsoo.gptmobile.data.tool.toolProtocolJson
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonObject
 
 class AnthropicNativeToolAdapter {
@@ -27,26 +33,40 @@ class AnthropicNativeToolAdapter {
         AnthropicTool(
             name = definition.name,
             description = definition.description,
-            inputSchema = definition.parameters.toAnthropicSchema()
+            inputSchema = definition.parameters.toSchemaJson(ToolSchemaDialect.ANTHROPIC)
         )
     }
 
-    fun toolCallsFromChunks(chunks: List<MessageResponseChunk>): List<ToolCall> {
+    fun toolCallsFromChunks(
+        chunks: List<MessageResponseChunk>,
+        config: ToolLoopConfig = ToolLoopConfig.Default
+    ): List<ToolCall> {
         val accumulators = linkedMapOf<Int, ToolCallAccumulator>()
+        val argumentLimiter = ToolArgumentStreamLimiter(
+            maxArgumentChars = config.maxToolArgumentChars,
+            maxCallIdentities = config.maxToolCallsPerRound
+        )
         chunks.forEach { chunk ->
             when (chunk) {
                 is ContentStartResponseChunk -> {
                     if (chunk.contentBlock.type == ContentBlockType.TOOL_USE) {
+                        argumentLimiter.register(chunk.index)
                         val accumulator = accumulators.getOrPut(chunk.index) { ToolCallAccumulator(index = chunk.index) }
                         chunk.contentBlock.id?.takeIf { it.isNotBlank() }?.let { accumulator.id = it }
                         chunk.contentBlock.name?.takeIf { it.isNotBlank() }?.let { accumulator.name = it }
-                        chunk.contentBlock.input?.let { accumulator.input = it }
+                        chunk.contentBlock.input?.let { input ->
+                            argumentLimiter.checkComplete(chunk.index, input.toString())
+                            accumulator.input = input
+                        }
                     }
                 }
                 is ContentDeltaResponseChunk -> {
                     if (chunk.delta.type == ContentBlockType.INPUT_JSON_DELTA) {
                         val accumulator = accumulators.getOrPut(chunk.index) { ToolCallAccumulator(index = chunk.index) }
-                        chunk.delta.partialJson?.let { accumulator.partialJson.append(it) }
+                        chunk.delta.partialJson?.let { fragment ->
+                            argumentLimiter.append(chunk.index, fragment)
+                            accumulator.partialJson.appendToolArgumentFragment(fragment, config.maxToolArgumentChars)
+                        }
                     }
                 }
                 else -> {}
@@ -55,7 +75,7 @@ class AnthropicNativeToolAdapter {
 
         return accumulators.values
             .sortedBy { it.index }
-            .mapNotNull { accumulator -> accumulator.toToolCall() }
+            .mapNotNull { accumulator -> accumulator.toToolCall(config.maxToolArgumentChars) }
     }
 
     fun continuationMessages(
@@ -100,19 +120,13 @@ class AnthropicNativeToolAdapter {
                 name = name,
                 ok = !isError,
                 content = content.clip(config.maxToolResultChars),
-                metadata = metadata
+                metadata = metadata,
+                structuredContent = structuredContent,
+                sources = sources
             )
         ),
         isError = isError.takeIf { it }
     )
-
-    private fun ToolDefinition.Parameters.toAnthropicSchema(): JsonObject {
-        val schema = toolProtocolJson.encodeToJsonElement(this).jsonObject
-        return buildJsonObject {
-            schema.forEach { (key, value) -> put(key, value) }
-            put("additionalProperties", JsonPrimitive(false))
-        }
-    }
 
     private data class ToolCallAccumulator(
         val index: Int,
@@ -121,12 +135,13 @@ class AnthropicNativeToolAdapter {
         var input: JsonObject? = null,
         val partialJson: StringBuilder = StringBuilder()
     ) {
-        fun toToolCall(): ToolCall? {
+        fun toToolCall(maxArgumentChars: Int): ToolCall? {
             val toolName = name.trim()
             if (toolName.isBlank()) return null
             val arguments = partialJson.toString()
                 .ifBlank { input?.toString().orEmpty() }
                 .ifBlank { "{}" }
+                .requireWithinToolArgumentLimit(maxArgumentChars)
             return ToolCall(
                 id = id.trim().ifBlank { "toolu_${index + 1}" },
                 name = toolName,
@@ -147,5 +162,8 @@ private data class AnthropicToolResultPayload(
     val name: String,
     val ok: Boolean,
     val content: String,
-    val metadata: Map<String, String> = emptyMap()
+    val metadata: Map<String, String> = emptyMap(),
+    @SerialName("structured_content")
+    val structuredContent: JsonElement? = null,
+    val sources: List<ToolSource> = emptyList()
 )

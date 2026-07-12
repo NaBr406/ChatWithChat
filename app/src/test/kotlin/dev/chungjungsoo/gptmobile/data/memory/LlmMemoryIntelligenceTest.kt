@@ -292,6 +292,7 @@ private class FakeSettingRepository(
     override suspend fun fetchMemoryEnabled(): Boolean = false
     override suspend fun fetchMemoryMaintenanceNotificationsEnabled(): Boolean = true
     override suspend fun fetchToolCallingMode(): ToolCallingMode = ToolCallingMode.Off
+    override suspend fun fetchDisabledToolNames(): Set<String> = emptySet()
     override suspend fun fetchWebSearchMode(): WebSearchMode = WebSearchMode.Off
     override suspend fun fetchWebSearchSearxngBaseUrl(): String = ""
     override suspend fun migrateToPlatformV2() = Unit
@@ -301,6 +302,7 @@ private class FakeSettingRepository(
     override suspend fun updateMemoryEnabled(enabled: Boolean) = Unit
     override suspend fun updateMemoryMaintenanceNotificationsEnabled(enabled: Boolean) = Unit
     override suspend fun updateToolCallingMode(mode: ToolCallingMode) = Unit
+    override suspend fun updateToolEnabled(toolName: String, enabled: Boolean) = Unit
     override suspend fun updateWebSearchMode(mode: WebSearchMode) = Unit
     override suspend fun updateWebSearchSearxngBaseUrl(baseUrl: String) = Unit
     override suspend fun refreshPlatformModels(platformUid: String): ModelRefreshResult = ModelRefreshResult(platforms.first(), emptyList())

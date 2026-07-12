@@ -21,16 +21,26 @@ class ToolLoopOrchestrator(
     val toolDefinitions: List<ToolDefinition>
         get() = toolExecutor.definitions
 
+    val toolCatalog: List<ToolCatalogEntry>
+        get() = toolExecutor.catalog
+
     fun availableToolDefinitions(includeTool: (ToolDefinition) -> Boolean): List<ToolDefinition> =
         toolExecutor.availableDefinitions(includeTool)
 
     fun sourceMetadata(results: List<ToolResult>): List<MessageSourceMetadata> =
         results.flatMap { result -> toolExecutor.sourceMetadata(result) }
 
+    fun createExecutionSession(): ToolLoopExecutionSession = ToolLoopExecutionSession(
+        config = config,
+        policyFor = toolExecutor::policyFor
+    )
+
+    fun boundToolCalls(calls: Iterable<ToolCall>): List<ToolCall> = calls.boundedDistinctToolCalls(config)
+
     suspend fun runLoop(
+        tools: List<ToolDefinition>,
         adapter: ToolCallingAdapter = defaultToolCallingAdapter,
         onProgress: suspend (ApiState) -> Unit = {},
-        tools: List<ToolDefinition> = toolDefinitions,
         requestModel: suspend (toolPrompt: String) -> Result<String>
     ): ToolLoopResult {
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)
@@ -42,7 +52,7 @@ class ToolLoopOrchestrator(
         val scratchpad = mutableListOf<ToolMessage>()
         val allCalls = mutableListOf<ToolCall>()
         val allResults = mutableListOf<ToolResult>()
-        val budget = ToolBudgetState(config, toolExecutor::policyFor)
+        val executionSession = createExecutionSession()
 
         repeat(maxRounds) {
             val toolPrompt = adapter.buildToolPrompt(
@@ -58,7 +68,7 @@ class ToolLoopOrchestrator(
                     failure = "tool_loop_model_failed:${throwable.message ?: throwable::class.simpleName.orEmpty()}"
                 )
             }
-            val modelOutput = adapter.parseModelOutput(modelText).getOrElse { throwable ->
+            val modelOutput = adapter.parseModelOutput(modelText, config).getOrElse { throwable ->
                 return fallbackOrFailure(
                     adapter = adapter,
                     allCalls = allCalls,
@@ -84,13 +94,11 @@ class ToolLoopOrchestrator(
                     }
                 }
                 is JsonToolModelOutput.ToolCalls -> {
-                    val calls = modelOutput.calls
-                        .distinctBy { call -> "${call.name}:${call.arguments}" }
-                        .take(config.maxToolCallsPerRound.coerceAtLeast(0))
+                    val calls = boundToolCalls(modelOutput.calls)
                     val availableCalls = calls.selectAvailable(activeToolNames)
-                    val budgetedCalls = budget.select(availableCalls.allowed)
-                    val rejectedCalls = availableCalls.rejected + budgetedCalls.rejected
-                    if (calls.isEmpty() || (budgetedCalls.allowed.isEmpty() && rejectedCalls.isEmpty())) {
+                    val (allowedCalls, budgetRejectedCalls) = executionSession.select(availableCalls.allowed)
+                    val rejectedCalls = availableCalls.rejected + budgetRejectedCalls
+                    if (calls.isEmpty() || (allowedCalls.isEmpty() && rejectedCalls.isEmpty())) {
                         return fallbackOrFailure(
                             adapter = adapter,
                             allCalls = allCalls,
@@ -102,7 +110,12 @@ class ToolLoopOrchestrator(
                     rejectedCalls.forEach { rejected ->
                         onProgress(ApiState.ToolFailed(rejected.name, rejected.content))
                     }
-                    val results = executeCallsWithProgress(budgetedCalls.allowed, onProgress) + rejectedCalls
+                    val rawResults = executeCallsWithProgress(
+                        calls = allowedCalls,
+                        activeToolNames = activeToolNames,
+                        onProgress = onProgress
+                    ) + rejectedCalls
+                    val results = executionSession.bound(rawResults)
                     allCalls += calls
                     allResults += results
                     calls.forEach { call -> scratchpad += ToolMessage.modelToolCall(call) }
@@ -120,37 +133,53 @@ class ToolLoopOrchestrator(
     }
 
     suspend fun runSingleRound(
-        tools: List<ToolDefinition> = toolDefinitions,
+        tools: List<ToolDefinition>,
         requestModel: suspend (toolPrompt: String) -> Result<String>
     ): ToolLoopResult = runLoop(tools = tools, requestModel = requestModel)
 
     suspend fun executeToolCalls(
         calls: List<ToolCall>,
-        tools: List<ToolDefinition> = toolDefinitions,
+        tools: List<ToolDefinition>,
+        executionSession: ToolLoopExecutionSession = createExecutionSession(),
+        onProgress: suspend (ApiState) -> Unit = {}
+    ): List<ToolResult> = executeBoundedToolCalls(
+        calls = boundToolCalls(calls),
+        tools = tools,
+        executionSession = executionSession,
+        onProgress = onProgress
+    )
+
+    internal suspend fun executeBoundedToolCalls(
+        calls: List<ToolCall>,
+        tools: List<ToolDefinition>,
+        executionSession: ToolLoopExecutionSession = createExecutionSession(),
         onProgress: suspend (ApiState) -> Unit = {}
     ): List<ToolResult> {
         val activeToolNames = tools.map { tool -> tool.name }.toSet()
-        val boundedCalls = calls
-            .distinctBy { call -> "${call.name}:${call.arguments}" }
-            .take(config.maxToolCallsPerRound.coerceAtLeast(0))
-        val availableCalls = boundedCalls.selectAvailable(activeToolNames)
-        val budgetedCalls = ToolBudgetState(config, toolExecutor::policyFor).select(availableCalls.allowed)
-        val rejectedCalls = availableCalls.rejected + budgetedCalls.rejected
+        val availableCalls = calls.selectAvailable(activeToolNames)
+        val (allowedCalls, budgetRejectedCalls) = executionSession.select(availableCalls.allowed)
+        val rejectedCalls = availableCalls.rejected + budgetRejectedCalls
         rejectedCalls.forEach { rejected ->
             onProgress(ApiState.ToolFailed(rejected.name, rejected.content))
         }
-        return executeCallsWithProgress(budgetedCalls.allowed, onProgress) + rejectedCalls
+        val rawResults = executeCallsWithProgress(
+            calls = allowedCalls,
+            activeToolNames = activeToolNames,
+            onProgress = onProgress
+        ) + rejectedCalls
+        return executionSession.bound(rawResults)
     }
 
     private suspend fun executeCallsWithProgress(
         calls: List<ToolCall>,
+        activeToolNames: Set<String>,
         onProgress: suspend (ApiState) -> Unit
     ): List<ToolResult> = calls.map { call ->
         val label = toolExecutor.progressLabel(call)
         onProgress(ApiState.ToolStarted(call.name, label))
-        val result = toolExecutor.execute(call, config)
+        val result = toolExecutor.execute(call, activeToolNames, config)
         if (result.isError) {
-            onProgress(ApiState.ToolFailed(call.name, result.content))
+            onProgress(ApiState.ToolFailed(call.name, result.content, result.metadata["error_code"]))
         } else {
             onProgress(ApiState.ToolFinished(call.name, label))
         }
@@ -250,3 +279,41 @@ private data class BudgetedToolCalls(
     val allowed: List<ToolCall>,
     val rejected: List<ToolResult>
 )
+
+class ToolLoopExecutionSession internal constructor(
+    config: ToolLoopConfig,
+    policyFor: (String) -> ToolPolicy
+) {
+    private val toolBudget = ToolBudgetState(config, policyFor)
+    private val resultPayloadBudget = ToolResultPayloadBudget(config)
+
+    internal fun select(calls: List<ToolCall>): Pair<List<ToolCall>, List<ToolResult>> {
+        val selection = toolBudget.select(calls)
+        return selection.allowed to selection.rejected
+    }
+
+    internal fun bound(results: List<ToolResult>): List<ToolResult> = resultPayloadBudget.bound(results)
+}
+
+private class ToolResultPayloadBudget(
+    private val config: ToolLoopConfig,
+    usedPayloadChars: Int = 0
+) {
+    private var remainingPayloadChars = (
+        config.maxTotalToolResultChars.toLong() - usedPayloadChars.coerceAtLeast(0).toLong()
+        ).coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
+
+    fun bound(results: List<ToolResult>): List<ToolResult> = results.map { result ->
+        val bounded = result.boundPayload(
+            ToolResultBounds(
+                maxContentChars = config.maxToolResultChars.coerceAtLeast(0),
+                maxStructuredContentChars = config.maxToolResultChars.coerceAtLeast(0),
+                maxSourcePayloadChars = config.maxToolResultChars.coerceAtLeast(0),
+                maxMetadataChars = config.maxToolResultChars.coerceAtLeast(0),
+                maxTotalPayloadChars = remainingPayloadChars
+            )
+        ).result
+        remainingPayloadChars = (remainingPayloadChars - bounded.payloadCharCount()).coerceAtLeast(0)
+        bounded
+    }
+}

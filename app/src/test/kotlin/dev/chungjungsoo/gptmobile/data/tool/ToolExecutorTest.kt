@@ -2,11 +2,9 @@ package dev.chungjungsoo.gptmobile.data.tool
 
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
-import dev.chungjungsoo.gptmobile.data.network.NetworkClient
 import dev.chungjungsoo.gptmobile.data.websearch.WebPageExtractor
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchRepository
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchResult
-import io.ktor.client.engine.cio.CIO
 import java.net.InetSocketAddress
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -28,7 +26,7 @@ class ToolExecutorTest {
         )
         val executor = builtInExecutor(searchRepository)
 
-        val toolResult = executor.execute(
+        val toolResult = executor.executeWithRegisteredTools(
             ToolCall(
                 id = "call_1",
                 name = "web_search",
@@ -72,7 +70,7 @@ class ToolExecutorTest {
         ) { baseUrl ->
             val executor = builtInExecutor(FakeWebSearchRepository(emptyList()))
 
-            val toolResult = executor.execute(
+            val toolResult = executor.executeWithRegisteredTools(
                 ToolCall(
                     id = "call_2",
                     name = "fetch_url",
@@ -92,6 +90,38 @@ class ToolExecutorTest {
     }
 
     @Test
+    fun `fetch url preserves its source when page content reaches the result limit`() = runBlocking {
+        val longPageText = "Long page content. ".repeat(1_000)
+        withServer(
+            body = """
+            <html>
+              <head><title>Long Page</title></head>
+              <body><main><p>$longPageText</p></main></body>
+            </html>
+            """.trimIndent()
+        ) { baseUrl ->
+            val executor = builtInExecutor(FakeWebSearchRepository(emptyList()))
+            val toolResult = executor.executeWithRegisteredTools(
+                ToolCall(
+                    id = "call_long_page",
+                    name = "fetch_url",
+                    arguments = """{"url":"$baseUrl/long"}"""
+                ),
+                ToolLoopConfig(
+                    maxFetchedPageChars = 10_000,
+                    maxToolResultChars = 3_000,
+                    allowPrivateNetworkFetch = true
+                )
+            )
+
+            assertEquals(3_000, toolResult.content.length)
+            val source = executor.sourceMetadata(toolResult).single()
+            assertEquals("Long Page", source.title)
+            assertEquals("$baseUrl/long", source.url)
+        }
+    }
+
+    @Test
     fun `unknown tool returns error result`() = runBlocking {
         val executor = ToolExecutor(
             ToolRegistry(
@@ -101,11 +131,12 @@ class ToolExecutorTest {
         )
 
         val toolResult = executor.execute(
-            ToolCall(
+            call = ToolCall(
                 id = "call_3",
                 name = "missing_tool",
                 arguments = "{}"
-            )
+            ),
+            activeToolNames = setOf("missing_tool")
         )
 
         assertTrue(toolResult.isError)
@@ -129,11 +160,12 @@ class ToolExecutorTest {
                         delay(1_000)
                         ToolResult(call.id, call.name, "done")
                     }
-                )
+                ),
+                securityPolicies = mapOf("slow_tool" to ToolSecurityPolicy.ReadOnlyPublic)
             )
         )
 
-        val toolResult = executor.execute(
+        val toolResult = executor.executeWithRegisteredTools(
             ToolCall(
                 id = "call_4",
                 name = "slow_tool",
@@ -157,6 +189,7 @@ class ToolExecutorTest {
                             description = "Sleeps longer than the timeout.",
                             parameters = ToolDefinition.Parameters()
                         )
+                        override val securityPolicy: ToolSecurityPolicy = ToolSecurityPolicy.ReadOnlyPublic
                         override val policy: ToolPolicy = ToolPolicy(timeoutSeconds = 0)
 
                         override suspend fun execute(call: ToolCall, config: ToolLoopConfig): ToolResult {
@@ -168,7 +201,7 @@ class ToolExecutorTest {
             )
         )
 
-        val toolResult = executor.execute(
+        val toolResult = executor.executeWithRegisteredTools(
             ToolCall(
                 id = "call_policy_timeout",
                 name = "slow_tool",
@@ -192,6 +225,7 @@ class ToolExecutorTest {
                             description = "Returns a bounded result.",
                             parameters = ToolDefinition.Parameters()
                         )
+                        override val securityPolicy: ToolSecurityPolicy = ToolSecurityPolicy.ReadOnlyPublic
                         override val policy: ToolPolicy = ToolPolicy(maxResultChars = 4)
 
                         override suspend fun execute(call: ToolCall, config: ToolLoopConfig): ToolResult =
@@ -201,7 +235,7 @@ class ToolExecutorTest {
             )
         )
 
-        val toolResult = executor.execute(
+        val toolResult = executor.executeWithRegisteredTools(
             ToolCall(
                 id = "call_policy_chars",
                 name = "bounded_tool",
@@ -235,6 +269,7 @@ class ToolExecutorTest {
                             description = "Needs permission.",
                             parameters = ToolDefinition.Parameters()
                         )
+                        override val securityPolicy: ToolSecurityPolicy = ToolSecurityPolicy.ReadOnlyPrivate
                         override val permissionRequirements: List<ToolPermissionRequirement> = listOf(requirement)
 
                         override suspend fun execute(call: ToolCall, config: ToolLoopConfig): ToolResult {
@@ -247,7 +282,7 @@ class ToolExecutorTest {
             permissionChecker = ToolPermissionChecker { requirements -> requirements }
         )
 
-        val toolResult = executor.execute(
+        val toolResult = executor.executeWithRegisteredTools(
             ToolCall(
                 id = "call_permission",
                 name = "permission_tool",
@@ -282,16 +317,16 @@ class ToolExecutorTest {
                             description = "Throws permission errors.",
                             parameters = ToolDefinition.Parameters()
                         )
+                        override val securityPolicy: ToolSecurityPolicy = ToolSecurityPolicy.ReadOnlyPrivate
 
-                        override suspend fun execute(call: ToolCall, config: ToolLoopConfig): ToolResult {
+                        override suspend fun execute(call: ToolCall, config: ToolLoopConfig): ToolResult =
                             throw ToolPermissionDeniedException(call.name, listOf(requirement))
-                        }
                     }
                 )
             )
         )
 
-        val toolResult = executor.execute(
+        val toolResult = executor.executeWithRegisteredTools(
             ToolCall(
                 id = "call_thrown_permission",
                 name = "throwing_permission_tool",
@@ -308,7 +343,7 @@ class ToolExecutorTest {
     fun `invalid fetch url returns error result`() = runBlocking {
         val executor = builtInExecutor(FakeWebSearchRepository(emptyList()))
 
-        val toolResult = executor.execute(
+        val toolResult = executor.executeWithRegisteredTools(
             ToolCall(
                 id = "call_5",
                 name = "fetch_url",
@@ -324,7 +359,7 @@ class ToolExecutorTest {
     fun `private fetch url is rejected by default`() = runBlocking {
         val executor = builtInExecutor(FakeWebSearchRepository(emptyList()))
 
-        val toolResult = executor.execute(
+        val toolResult = executor.executeWithRegisteredTools(
             ToolCall(
                 id = "call_6",
                 name = "fetch_url",
@@ -340,7 +375,7 @@ class ToolExecutorTest {
     fun `blocked fetch url domain is rejected`() = runBlocking {
         val executor = builtInExecutor(FakeWebSearchRepository(emptyList()))
 
-        val toolResult = executor.execute(
+        val toolResult = executor.executeWithRegisteredTools(
             ToolCall(
                 id = "call_7",
                 name = "fetch_url",
@@ -362,7 +397,7 @@ class ToolExecutorTest {
             )
         )
 
-        val toolResult = executor.execute(
+        val toolResult = executor.executeWithRegisteredTools(
             ToolCall(
                 id = "call_8",
                 name = "web_search",
@@ -383,7 +418,7 @@ class ToolExecutorTest {
             )
         )
 
-        val toolResult = executor.execute(
+        val toolResult = executor.executeWithRegisteredTools(
             ToolCall(
                 id = "call_9",
                 name = "web_search",
@@ -426,7 +461,7 @@ class ToolExecutorTest {
         val searchRepository = FakeWebSearchRepository(emptyList())
         val executor = builtInExecutor(searchRepository)
 
-        val toolResult = executor.execute(
+        val toolResult = executor.executeWithRegisteredTools(
             ToolCall(
                 id = "call_datetime",
                 name = "current_datetime",
@@ -445,7 +480,7 @@ class ToolExecutorTest {
         val searchRepository = FakeWebSearchRepository(emptyList())
         val executor = builtInExecutor(searchRepository)
 
-        val toolResult = executor.execute(
+        val toolResult = executor.executeWithRegisteredTools(
             ToolCall(
                 id = "call_location",
                 name = "device_location",
@@ -489,10 +524,11 @@ class ToolExecutorTest {
 
     @Test
     fun `built in registry exposes location runtime permissions`() {
-        val permissions = BuiltInTools(
+        val registry = BuiltInTools(
             webSearchRepository = FakeWebSearchRepository(emptyList()),
-            webPageExtractor = WebPageExtractor(NetworkClient(CIO))
-        ).registry().requestedRuntimePermissions()
+            webPageExtractor = WebPageExtractor()
+        ).registry()
+        val permissions = registry.requestedRuntimePermissions()
 
         assertEquals(
             listOf(
@@ -501,12 +537,112 @@ class ToolExecutorTest {
             ),
             permissions
         )
+        assertTrue(
+            registry.requestedRuntimePermissions { definition ->
+                definition.name != ToolDefinition.DeviceLocation.name
+            }.isEmpty()
+        )
+        val enabledByDefault = ToolEnablementResolver().enabledToolNames(
+            registry.catalog,
+            ToolEnablementOverrides()
+        )
+        assertTrue(ToolDefinition.WebSearch.name in enabledByDefault)
+        assertTrue(ToolDefinition.FetchUrl.name in enabledByDefault)
+        assertTrue(ToolDefinition.CurrentDateTime.name in enabledByDefault)
+        assertFalse(ToolDefinition.DeviceLocation.name in enabledByDefault)
+    }
+
+    @Test
+    fun `invalid arguments fail before permission checks and provider execution`() = runBlocking {
+        var didCheckPermission = false
+        var didExecute = false
+        val auditEvents = mutableListOf<ToolAuditEvent>()
+        val provider = object : ToolProvider {
+            override val definition = ToolDefinition(
+                name = "validated_tool",
+                description = "test",
+                parameters = ToolDefinition.Parameters(
+                    properties = mapOf(
+                        "query" to ToolDefinition.Parameter(type = "string")
+                    ),
+                    required = listOf("query")
+                )
+            )
+            override val securityPolicy: ToolSecurityPolicy = ToolSecurityPolicy.ReadOnlyPublic
+
+            override suspend fun execute(call: ToolCall, config: ToolLoopConfig): ToolResult {
+                didExecute = true
+                return ToolResult(call.id, call.name, "executed")
+            }
+        }
+        val executor = ToolExecutor(
+            toolRegistry = ToolRegistry(listOf(provider)),
+            permissionChecker = ToolPermissionChecker {
+                didCheckPermission = true
+                emptyList()
+            },
+            auditSink = ToolAuditSink { event -> auditEvents += event }
+        )
+
+        val results = listOf(
+            ToolCall("call-invalid-type", "validated_tool", """{"query":42}"""),
+            ToolCall("call-invalid-json", "validated_tool", "{"),
+            ToolCall("call-invalid-root", "validated_tool", "[]")
+        ).map { call -> executor.executeWithRegisteredTools(call) }
+
+        assertTrue(results.all { result -> result.isError })
+        assertTrue(results.all { result -> result.metadata["error_code"] == "tool_arguments_invalid" })
+        assertTrue(results.first().content.contains("type_mismatch"))
+        assertFalse(didCheckPermission)
+        assertFalse(didExecute)
+        assertEquals(
+            listOf(
+                ToolAuditStatus.ATTEMPTED,
+                ToolAuditStatus.FAILED,
+                ToolAuditStatus.ATTEMPTED,
+                ToolAuditStatus.FAILED,
+                ToolAuditStatus.ATTEMPTED,
+                ToolAuditStatus.FAILED
+            ),
+            auditEvents.map { event -> event.status }
+        )
+    }
+
+    @Test
+    fun `permission error content and metadata stay within executor limits`() = runBlocking {
+        val requirement = ToolPermissionRequirement(
+            permissions = listOf("android.permission.TEST"),
+            label = "Permission ".repeat(500),
+            deniedMessage = "Permission is required. ".repeat(500)
+        )
+        val provider = object : ToolProvider {
+            override val definition = ToolDefinition("bounded_permission", "test", ToolDefinition.Parameters())
+            override val permissionRequirements = listOf(requirement)
+            override val securityPolicy = ToolSecurityPolicy.ReadOnlyPrivate
+
+            override suspend fun execute(call: ToolCall, config: ToolLoopConfig): ToolResult =
+                ToolResult(call.id, call.name, "executed")
+        }
+        val executor = ToolExecutor(
+            toolRegistry = ToolRegistry(listOf(provider)),
+            permissionChecker = ToolPermissionChecker { listOf(requirement) }
+        )
+
+        val result = executor.executeWithRegisteredTools(
+            ToolCall("call_bounded_permission", provider.definition.name, "{}"),
+            ToolLoopConfig(maxToolResultChars = 128)
+        )
+
+        assertTrue(result.isError)
+        assertTrue(result.content.length <= 128)
+        assertTrue(result.payloadCharCount() <= 256)
+        assertEquals("tool_permission_denied", result.metadata["error_code"])
     }
 
     private fun builtInExecutor(searchRepository: WebSearchRepository): ToolExecutor = ToolExecutor(
         BuiltInTools(
             webSearchRepository = searchRepository,
-            webPageExtractor = WebPageExtractor(NetworkClient(CIO))
+            webPageExtractor = WebPageExtractor()
         ).registry()
     )
 

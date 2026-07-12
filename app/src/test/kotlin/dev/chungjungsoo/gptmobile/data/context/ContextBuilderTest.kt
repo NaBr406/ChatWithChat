@@ -1,6 +1,8 @@
 package dev.chungjungsoo.gptmobile.data.context
 
+import dev.chungjungsoo.gptmobile.data.database.entity.AppSourceNavigationTarget
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageSourceMetadata
+import dev.chungjungsoo.gptmobile.data.database.entity.MessageSourceType
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
 import dev.chungjungsoo.gptmobile.data.database.entity.effectiveContent
@@ -126,10 +128,33 @@ class ContextBuilderTest {
 
         val assistantContext = context.turns.first().assistantMessage?.effectiveContent().orEmpty()
         assertTrue(assistantContext.contains("Answer from search"))
-        assertTrue(assistantContext.contains("Referenced web sources from this answer"))
+        assertTrue(assistantContext.contains("Referenced sources from this answer"))
         assertTrue(assistantContext.contains("Example Source"))
         assertTrue(assistantContext.contains("https://example.com/source"))
         assertTrue(assistantContext.contains("Example search snippet"))
+    }
+
+    @Test
+    fun `assistant local sources use app owned targets in reusable context`() {
+        val source = MessageSourceMetadata(
+            title = "Project chat",
+            snippet = "Relevant discussion",
+            sourceToolName = "local_search",
+            sourceType = MessageSourceType.LOCAL_APP,
+            localEntityId = "chat:42",
+            appNavigationTarget = AppSourceNavigationTarget.CHAT_ROOM
+        )
+
+        val context = ContextBuilder().buildContext(
+            userMessages = listOf(userMessage(1, "Find the project chat")),
+            assistantMessages = listOf(listOf(assistantMessage(1, "Found it", listOf(source)))),
+            platform = platform(),
+            policy = policy(recentTurnWindow = 2, maxContextTokens = 600, summaryTokenBudget = 80)
+        )
+
+        val assistantContext = context.turns.single().assistantMessage?.effectiveContent().orEmpty()
+        assertTrue(assistantContext.contains("app:chat_room:chat:42"))
+        assertFalse(assistantContext.contains("file://"))
     }
 
     private fun policy(

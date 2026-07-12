@@ -8,12 +8,24 @@ import dev.chungjungsoo.gptmobile.data.dto.google.request.GoogleToolConfig
 import dev.chungjungsoo.gptmobile.data.dto.google.response.GenerateContentResponse
 import dev.chungjungsoo.gptmobile.data.network.NetworkClient
 import dev.chungjungsoo.gptmobile.data.tool.CurrentDateTimeToolProvider
+import dev.chungjungsoo.gptmobile.data.tool.ToolArgumentsTooLargeException
 import dev.chungjungsoo.gptmobile.data.tool.ToolCall
+import dev.chungjungsoo.gptmobile.data.tool.ToolCallIdentityLimitExceededException
 import dev.chungjungsoo.gptmobile.data.tool.ToolDefinition
+import dev.chungjungsoo.gptmobile.data.tool.ToolLoopConfig
 import dev.chungjungsoo.gptmobile.data.tool.ToolResult
+import dev.chungjungsoo.gptmobile.data.tool.ToolSource
+import dev.chungjungsoo.gptmobile.data.tool.complexSchemaToolDefinition
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -38,7 +50,7 @@ class GoogleNativeToolAdapterTest {
         assertTrue(payload.contains(""""tools""""))
         assertTrue(payload.contains(""""functionDeclarations""""))
         assertTrue(payload.contains(""""name":"web_search""""))
-        assertTrue(payload.contains(""""additionalProperties":false"""))
+        assertFalse(payload.contains(""""additionalProperties"""))
         assertTrue(payload.contains(""""toolConfig":{"functionCallingConfig":{"mode":"AUTO"}}"""))
     }
 
@@ -49,7 +61,34 @@ class GoogleNativeToolAdapterTest {
         )
 
         assertTrue(payload.contains(""""name":"current_datetime""""))
-        assertTrue(payload.contains(""""parameters":{"type":"object","properties":{},"required":[],"additionalProperties":false}"""))
+        assertTrue(payload.contains(""""parameters":{"type":"object","properties":{},"required":[]}"""))
+    }
+
+    @Test
+    fun `google tools project complex schema without unsupported additional properties`() {
+        val schema = adapter.toGoogleTools(listOf(complexSchemaToolDefinition()))
+            .single()
+            .functionDeclarations
+            .single()
+            .parameters
+        val properties = schema.getValue("properties").jsonObject
+
+        assertFalse(schema.containsKey("additionalProperties"))
+        assertEquals(
+            listOf("mode", "options", "tags", "retries", "endpoint"),
+            schema.getValue("required").jsonArray.map { value -> value.jsonPrimitive.content }
+        )
+        assertEquals(
+            listOf("safe", "fast"),
+            properties.getValue("mode").jsonObject.getValue("enum").jsonArray.map { value -> value.jsonPrimitive.content }
+        )
+        assertEquals("object", properties.getValue("options").jsonObject.getValue("type").jsonPrimitive.content)
+        assertFalse(properties.getValue("options").jsonObject.containsKey("additionalProperties"))
+        assertEquals(
+            "string",
+            properties.getValue("tags").jsonObject.getValue("items").jsonObject.getValue("type").jsonPrimitive.content
+        )
+        assertEquals("uri", properties.getValue("endpoint").jsonObject.getValue("format").jsonPrimitive.content)
     }
 
     @Test
@@ -88,6 +127,57 @@ class GoogleNativeToolAdapterTest {
     }
 
     @Test
+    fun `google function arguments enforce configured limit before tool call creation`() {
+        val response = NetworkClient.json.decodeFromString<GenerateContentResponse>(
+            """
+            {
+              "candidates": [{
+                "content": {
+                  "role": "model",
+                  "parts": [{
+                    "functionCall": {
+                      "id": "func_1",
+                      "name": "web_search",
+                      "args": {"query": "oversized"}
+                    }
+                  }]
+                }
+              }]
+            }
+            """.trimIndent()
+        )
+
+        val exception = assertThrows(ToolArgumentsTooLargeException::class.java) {
+            adapter.toolCallsFromResponses(listOf(response), ToolLoopConfig(maxToolArgumentChars = 8))
+        }
+
+        assertEquals("tool_arguments_too_large", exception.message)
+    }
+
+    @Test
+    fun `google counts every function call occurrence`() {
+        val response = NetworkClient.json.decodeFromString<GenerateContentResponse>(
+            """
+            {
+              "candidates": [{
+                "content": {
+                  "role": "model",
+                  "parts": [
+                    {"functionCall": {"id": "same", "name": "current_datetime", "args": {}}},
+                    {"functionCall": {"id": "same", "name": "current_datetime", "args": {}}}
+                  ]
+                }
+              }]
+            }
+            """.trimIndent()
+        )
+
+        assertThrows(ToolCallIdentityLimitExceededException::class.java) {
+            adapter.toolCallsFromResponses(listOf(response), ToolLoopConfig(maxToolCallsPerRound = 1))
+        }
+    }
+
+    @Test
     fun `continuation contents serialize function call and function response`() {
         val contents = adapter.continuationContents(
             calls = listOf(
@@ -102,7 +192,9 @@ class GoogleNativeToolAdapterTest {
                     callId = "func_1",
                     name = "web_search",
                     content = "Search result",
-                    metadata = mapOf("source_0_url" to "https://example.com/source")
+                    metadata = mapOf("source_0_url" to "https://example.com/source"),
+                    structuredContent = buildJsonObject { put("count", 1) },
+                    sources = listOf(ToolSource.PublicUrl("Example", "https://example.com/source"))
                 )
             )
         )
@@ -116,5 +208,7 @@ class GoogleNativeToolAdapterTest {
         assertTrue(payload.contains(""""functionResponse""""))
         assertTrue(payload.contains("Search result"))
         assertTrue(payload.contains("https://example.com/source"))
+        assertTrue(payload.contains("structured_content"))
+        assertTrue(payload.contains("public_url"))
     }
 }

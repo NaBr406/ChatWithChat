@@ -1,10 +1,10 @@
 package dev.chungjungsoo.gptmobile.data.tool
 
-import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 
 @Serializable
@@ -18,39 +18,59 @@ data class ToolCall(
     }
 
     companion object {
-        fun parseFallbackCalls(rawText: String): Result<List<ToolCall>> = runCatching {
+        fun parseFallbackCalls(
+            rawText: String,
+            config: ToolLoopConfig = ToolLoopConfig.Default
+        ): Result<List<ToolCall>> = runCatching {
+            rawText.requireWithinToolProtocolResponseLimit(config)
             val jsonText = rawText.extractJsonObject()
                 ?: throw IllegalArgumentException("tool_call_json_not_found")
-            val payload = toolProtocolJson.decodeFromString<FallbackToolCallPayload>(jsonText)
-            if (payload.type != TOOL_CALLS_TYPE) {
-                throw IllegalArgumentException("tool_call_type_expected")
-            }
-            payload.toolCalls
-                .mapIndexed { index, call ->
-                    ToolCall(
-                        id = call.id?.trim()?.takeIf { it.isNotBlank() } ?: "call_${index + 1}",
-                        name = call.name.trim(),
-                        arguments = toolProtocolJson.encodeToString(call.arguments)
-                    )
-                }
-                .filter { it.name.isNotBlank() }
+            val payload = toolProtocolJson.parseToJsonElement(jsonText) as? JsonObject
+                ?: throw IllegalArgumentException("tool_call_object_expected")
+            parseFallbackToolCalls(payload, config)
         }
     }
 }
 
-@Serializable
-private data class FallbackToolCallPayload(
-    val type: String,
-    @SerialName("tool_calls")
-    val toolCalls: List<FallbackToolCall> = emptyList()
-)
+internal fun parseFallbackToolCalls(
+    payload: JsonObject,
+    config: ToolLoopConfig
+): List<ToolCall> {
+    if (payload.stringValue("type") != TOOL_CALLS_TYPE) {
+        throw IllegalArgumentException("tool_call_type_expected")
+    }
+    val rawCalls = payload["tool_calls"] ?: return emptyList()
+    val calls = rawCalls as? JsonArray
+        ?: throw IllegalArgumentException("tool_calls_array_expected")
+    return calls
+        .asSequence()
+        .mapIndexedNotNull { index, element ->
+            val call = element as? JsonObject
+                ?: throw IllegalArgumentException("tool_call_object_expected")
+            val name = call.stringValue("name").orEmpty().trim()
+            if (name.isBlank()) return@mapIndexedNotNull null
+            val arguments = when (val value = call["arguments"]) {
+                null -> JsonObject(emptyMap())
+                is JsonObject -> value
+                else -> throw IllegalArgumentException("tool_arguments_object_expected")
+            }.toString().requireWithinToolArgumentLimit(config.maxToolArgumentChars)
+            ToolCall(
+                id = call.stringValue("id")?.trim()?.takeIf { it.isNotBlank() } ?: "call_${index + 1}",
+                name = name,
+                arguments = arguments
+            )
+        }
+        .asIterable()
+        .boundedDistinctToolCalls(config)
+}
 
-@Serializable
-private data class FallbackToolCall(
-    val id: String? = null,
-    val name: String = "",
-    val arguments: JsonObject = JsonObject(emptyMap())
-)
+private fun JsonObject.stringValue(key: String): String? {
+    val value = this[key] ?: return null
+    val primitive = value as? JsonPrimitive
+        ?: throw IllegalArgumentException("tool_call_string_expected:$key")
+    if (!primitive.isString) throw IllegalArgumentException("tool_call_string_expected:$key")
+    return primitive.contentOrNull
+}
 
 private const val TOOL_CALLS_TYPE = "tool_calls"
 

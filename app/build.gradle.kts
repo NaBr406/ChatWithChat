@@ -101,6 +101,7 @@ dependencies {
 
     // Web extraction
     implementation(libs.jsoup)
+    implementation(libs.okhttp)
 
     // License page UI
     implementation(libs.auto.license.core)

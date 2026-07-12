@@ -3,6 +3,7 @@ package dev.chungjungsoo.gptmobile.util
 import dev.chungjungsoo.gptmobile.data.database.entity.AssistantRevision
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageSourceMetadata
 import dev.chungjungsoo.gptmobile.data.database.entity.resetActiveRevision
+import dev.chungjungsoo.gptmobile.data.database.entity.safeDedupeKey
 import dev.chungjungsoo.gptmobile.data.dto.ApiState
 import dev.chungjungsoo.gptmobile.data.token.TokenUsageRecord
 import dev.chungjungsoo.gptmobile.presentation.ui.chat.ChatViewModel
@@ -93,8 +94,9 @@ private fun MutableStateFlow<ChatViewModel.GroupedMessages>.setSourceMetadata(
     sources: List<MessageSourceMetadata>
 ) {
     val distinctSources = sources
-        .filter { source -> source.url.isNotBlank() }
-        .distinctBy { source -> source.url.trim() }
+        .mapNotNull { source -> source.safeDedupeKey()?.let { key -> key to source } }
+        .distinctBy { (key, _) -> key }
+        .map { (_, source) -> source }
 
     update { groupedMessages ->
         updateAssistantSlot(

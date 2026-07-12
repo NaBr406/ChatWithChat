@@ -7,6 +7,6 @@ enum class ToolCallingMode(val storageValue: String) {
     companion object {
         fun fromStorageValue(value: String?): ToolCallingMode = entries.firstOrNull { mode ->
             mode.storageValue == value?.trim()?.lowercase()
-        } ?: Off
+        } ?: Auto
     }
 }

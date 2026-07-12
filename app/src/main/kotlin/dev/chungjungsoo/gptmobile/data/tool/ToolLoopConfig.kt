@@ -7,6 +7,7 @@ data class ToolLoopConfig(
     val toolTimeoutSeconds: Long = 20,
     val maxSearchResults: Int = 5,
     val maxFetchedPageChars: Int = 20_000,
+    val maxToolArgumentChars: Int = 16_000,
     val maxToolResultChars: Int = 3_000,
     val maxScratchpadChars: Int = 8_000,
     val maxTotalToolResultChars: Int = 8_000,

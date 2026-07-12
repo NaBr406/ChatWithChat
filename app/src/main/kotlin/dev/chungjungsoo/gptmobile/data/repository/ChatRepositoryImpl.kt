@@ -19,6 +19,7 @@ import dev.chungjungsoo.gptmobile.data.database.entity.MessageSourceMetadata
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
 import dev.chungjungsoo.gptmobile.data.database.entity.effectiveContent
+import dev.chungjungsoo.gptmobile.data.database.entity.safeDedupeKey
 import dev.chungjungsoo.gptmobile.data.dto.ApiState
 import dev.chungjungsoo.gptmobile.data.dto.ProviderUsage
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.common.ImageContent as AnthropicImageContent
@@ -34,6 +35,7 @@ import dev.chungjungsoo.gptmobile.data.dto.anthropic.request.MessageRequest
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.request.ThinkingConfig
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ContentBlockType
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ContentDeltaResponseChunk
+import dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ContentStartResponseChunk
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ErrorResponseChunk
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.response.MessageDeltaResponseChunk
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.response.MessageResponseChunk
@@ -66,6 +68,9 @@ import dev.chungjungsoo.gptmobile.data.dto.openai.request.ResponseTool
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ResponseToolChoice
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ResponsesRequest
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.ChatCompletionChunk
+import dev.chungjungsoo.gptmobile.data.dto.openai.response.FunctionCallArgumentsDeltaEvent
+import dev.chungjungsoo.gptmobile.data.dto.openai.response.FunctionCallArgumentsDoneEvent
+import dev.chungjungsoo.gptmobile.data.dto.openai.response.OutputItemDoneEvent
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.OutputTextDeltaEvent
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.OutputTextDoneEvent
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.ReasoningSummaryTextDeltaEvent
@@ -73,13 +78,13 @@ import dev.chungjungsoo.gptmobile.data.dto.openai.response.ResponseCompletedEven
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.ResponseErrorEvent
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.ResponseFailedEvent
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.ResponsesStreamEvent
+import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnBatchScheduler
 import dev.chungjungsoo.gptmobile.data.model.ApiType
 import dev.chungjungsoo.gptmobile.data.model.ChatPlatformConfig
 import dev.chungjungsoo.gptmobile.data.model.ClientType
 import dev.chungjungsoo.gptmobile.data.model.ReasoningMode
 import dev.chungjungsoo.gptmobile.data.model.defaultReasoningMode
 import dev.chungjungsoo.gptmobile.data.model.isGptOssModel
-import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnBatchScheduler
 import dev.chungjungsoo.gptmobile.data.network.AnthropicAPI
 import dev.chungjungsoo.gptmobile.data.network.GoogleAPI
 import dev.chungjungsoo.gptmobile.data.network.GroqAPI
@@ -88,13 +93,18 @@ import dev.chungjungsoo.gptmobile.data.network.OpenAIAPI
 import dev.chungjungsoo.gptmobile.data.token.TokenUsageEstimator
 import dev.chungjungsoo.gptmobile.data.token.TokenUsageRecord
 import dev.chungjungsoo.gptmobile.data.token.sumTokenUsage
+import dev.chungjungsoo.gptmobile.data.tool.ToolArgumentStreamLimiter
 import dev.chungjungsoo.gptmobile.data.tool.ToolCall
 import dev.chungjungsoo.gptmobile.data.tool.ToolCallingMode
 import dev.chungjungsoo.gptmobile.data.tool.ToolDefinition
+import dev.chungjungsoo.gptmobile.data.tool.ToolEnablementOverrides
+import dev.chungjungsoo.gptmobile.data.tool.ToolEnablementResolver
+import dev.chungjungsoo.gptmobile.data.tool.ToolLoopConfig
 import dev.chungjungsoo.gptmobile.data.tool.ToolLoopOrchestrator
 import dev.chungjungsoo.gptmobile.data.tool.ToolLoopResult
 import dev.chungjungsoo.gptmobile.data.tool.ToolResult
-import dev.chungjungsoo.gptmobile.data.tool.toolProtocolJson
+import dev.chungjungsoo.gptmobile.data.tool.appendToolProtocolFragment
+import dev.chungjungsoo.gptmobile.data.tool.maxToolProtocolResponseChars
 import dev.chungjungsoo.gptmobile.data.tool.provider.AnthropicNativeToolAdapter
 import dev.chungjungsoo.gptmobile.data.tool.provider.AnthropicToolAdapter
 import dev.chungjungsoo.gptmobile.data.tool.provider.GoogleNativeToolAdapter
@@ -103,12 +113,11 @@ import dev.chungjungsoo.gptmobile.data.tool.provider.OpenAIChatCompletionsToolAd
 import dev.chungjungsoo.gptmobile.data.tool.provider.OpenAICompatibleJsonToolAdapter
 import dev.chungjungsoo.gptmobile.data.tool.provider.OpenAIResponsesToolAdapter
 import dev.chungjungsoo.gptmobile.data.tool.provider.ToolCallingAdapter
+import dev.chungjungsoo.gptmobile.data.tool.toolLimitErrorCodeOrNull
+import dev.chungjungsoo.gptmobile.data.tool.toolProtocolJson
 import dev.chungjungsoo.gptmobile.data.websearch.SearchDecision
 import dev.chungjungsoo.gptmobile.data.websearch.SearchDecisionService
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchMode
-import dev.chungjungsoo.gptmobile.data.websearch.WebSearchPromptBuilder
-import dev.chungjungsoo.gptmobile.data.websearch.WebSearchRepository
-import dev.chungjungsoo.gptmobile.data.websearch.WebSearchResult
 import dev.chungjungsoo.gptmobile.util.AttachmentPayloadCache
 import dev.chungjungsoo.gptmobile.util.FileUtils
 import dev.chungjungsoo.gptmobile.util.isAssistantErrorMessage
@@ -143,10 +152,9 @@ class ChatRepositoryImpl @Inject constructor(
     private val googleAPI: GoogleAPI,
     private val attachmentUploadCoordinator: AttachmentUploadCoordinator,
     private val contextBuilder: ContextBuilder,
-    private val webSearchRepository: WebSearchRepository,
     private val toolLoopOrchestrator: ToolLoopOrchestrator,
+    private val toolEnablementResolver: ToolEnablementResolver = ToolEnablementResolver(),
     private val searchDecisionService: SearchDecisionService? = null,
-    private val webSearchPromptBuilder: WebSearchPromptBuilder = WebSearchPromptBuilder(),
     private val openAIResponsesToolAdapter: OpenAIResponsesToolAdapter = OpenAIResponsesToolAdapter(),
     private val openAIChatCompletionsToolAdapter: OpenAIChatCompletionsToolAdapter = OpenAIChatCompletionsToolAdapter(),
     private val anthropicNativeToolAdapter: AnthropicNativeToolAdapter = AnthropicNativeToolAdapter(),
@@ -206,7 +214,10 @@ class ChatRepositoryImpl @Inject constructor(
         val webSearchMode = runCatching { settingRepository.fetchWebSearchMode() }
             .getOrNull()
             ?: WebSearchMode.Off
-        val activeToolDefinitions = activeToolDefinitions(toolCallingMode, webSearchMode)
+        val toolEnablementOverrides = runCatching { settingRepository.fetchToolEnablementOverrides() }.getOrNull()
+        val activeToolDefinitions = toolEnablementOverrides
+            ?.let { overrides -> activeToolDefinitions(toolCallingMode, webSearchMode, overrides) }
+            .orEmpty()
         return if (activeToolDefinitions.isNotEmpty()) {
             when (platform.compatibleType) {
                 ClientType.OPENAI -> completeChatWithOpenAIResponsesNativeToolLoop(
@@ -257,20 +268,27 @@ class ChatRepositoryImpl @Inject constructor(
 
     private suspend fun activeToolDefinitions(
         toolCallingMode: ToolCallingMode,
-        webSearchMode: WebSearchMode
+        webSearchMode: WebSearchMode,
+        toolEnablementOverrides: ToolEnablementOverrides
     ): List<ToolDefinition> {
         if (toolCallingMode != ToolCallingMode.Auto) return emptyList()
+
+        val enabledToolNames = toolEnablementResolver.enabledToolNames(
+            catalog = toolLoopOrchestrator.toolCatalog,
+            overrides = toolEnablementOverrides
+        )
 
         val webSearchToolsAvailable = webSearchMode == WebSearchMode.Auto &&
             runCatching { settingRepository.fetchWebSearchSearxngBaseUrl().trim().isNotBlank() }
                 .getOrDefault(false)
 
         return toolLoopOrchestrator.availableToolDefinitions { definition ->
-            when (definition.name) {
-                ToolDefinition.WebSearch.name,
-                ToolDefinition.FetchUrl.name -> webSearchToolsAvailable
-                else -> true
-            }
+            definition.name in enabledToolNames &&
+                when (definition.name) {
+                    ToolDefinition.WebSearch.name,
+                    ToolDefinition.FetchUrl.name -> webSearchToolsAvailable
+                    else -> true
+                }
         }
     }
 
@@ -334,6 +352,7 @@ class ChatRepositoryImpl @Inject constructor(
             return@flow
         }
 
+        val config = toolLoopOrchestrator.configuration
         val toolCallingAdapter = toolCallingAdapterFor(platform.compatibleType)
         val toolUsageRecords = mutableListOf<TokenUsageRecord>()
         val loopResult = toolLoopOrchestrator.runLoop(
@@ -342,15 +361,18 @@ class ChatRepositoryImpl @Inject constructor(
             tools = activeToolDefinitions,
             requestModel = { toolPrompt ->
                 collectProviderText(
-                    completeChatByProvider(
+                    states = completeChatByProvider(
                         userMessages = userMessages,
                         assistantMessages = assistantMessages,
                         platform = platform,
                         memoryPrompt = memoryPrompt,
                         reasoningMode = reasoningMode,
                         extraPrompt = toolPrompt
-                    )
-                ) { usage -> toolUsageRecords += usage.asToolRelated() }
+                    ),
+                    maxChars = config.maxToolProtocolResponseChars()
+                ) { usage ->
+                    toolUsageRecords += usage.asToolRelated()
+                }
             }
         )
 
@@ -371,8 +393,8 @@ class ChatRepositoryImpl @Inject constructor(
                 toolLoopOrchestrator.sourceMetadata(loopResult.results)
                     .dedupeMessageSources()
                     .takeIf { it.isNotEmpty() }?.let { sources ->
-                    emit(ApiState.SourcesUpdated(sources))
-                }
+                        emit(ApiState.SourcesUpdated(sources))
+                    }
                 var finalAnswerUsage: TokenUsageRecord? = null
                 var isDone = false
                 completeChatByProvider(
@@ -403,15 +425,21 @@ class ChatRepositoryImpl @Inject constructor(
                 if (isDone) emit(ApiState.Done)
             }
             is ToolLoopResult.Failed -> {
-                emitProviderStatesSkippingLoading(
-                    completeChatByProvider(
-                        userMessages = userMessages,
-                        assistantMessages = assistantMessages,
-                        platform = platform,
-                        memoryPrompt = memoryPrompt,
-                        reasoningMode = reasoningMode
+                val limitErrorCode = loopResult.message.toolLimitErrorCodeOrNull()
+                if (limitErrorCode != null) {
+                    emit(ApiState.Error(limitErrorCode))
+                    emit(ApiState.Done)
+                } else {
+                    emitProviderStatesSkippingLoading(
+                        completeChatByProvider(
+                            userMessages = userMessages,
+                            assistantMessages = assistantMessages,
+                            platform = platform,
+                            memoryPrompt = memoryPrompt,
+                            reasoningMode = reasoningMode
+                        )
                     )
-                )
+                }
             }
         }
     }.catch { e ->
@@ -460,8 +488,8 @@ class ChatRepositoryImpl @Inject constructor(
         toolLoopOrchestrator.sourceMetadata(results)
             .dedupeMessageSources()
             .takeIf { it.isNotEmpty() }?.let { sources ->
-            emit(ApiState.SourcesUpdated(sources))
-        }
+                emit(ApiState.SourcesUpdated(sources))
+            }
 
         return openAICompatibleJsonToolAdapter.buildFinalAnswerPrompt(
             results = results,
@@ -500,13 +528,14 @@ class ChatRepositoryImpl @Inject constructor(
 
     private suspend fun collectProviderText(
         states: Flow<ApiState>,
+        maxChars: Int = Int.MAX_VALUE,
         onUsage: (TokenUsageRecord) -> Unit = {}
     ): Result<String> = runCatching {
         val text = StringBuilder()
         var errorMessage: String? = null
         states.collect { state ->
             when (state) {
-                is ApiState.Success -> text.append(state.textChunk)
+                is ApiState.Success -> text.appendToolProtocolFragment(state.textChunk, maxChars)
                 is ApiState.Error -> errorMessage = errorMessage ?: state.message
                 is ApiState.UsageUpdated -> onUsage(state.usage)
                 else -> {}
@@ -566,7 +595,8 @@ class ChatRepositoryImpl @Inject constructor(
         val continuationItems = mutableListOf<ResponseInputItem>()
         val allResults = mutableListOf<ToolResult>()
         val toolUsageRecords = mutableListOf<TokenUsageRecord>()
-        val maxRounds = config.maxToolRounds.coerceAtLeast(1)
+        val toolExecutionSession = toolLoopOrchestrator.createExecutionSession()
+        val maxRounds = config.maxToolRounds.coerceAtLeast(0)
 
         val searchDecisionPrompt = executeSearchDecisionIfNeeded(
             userMessages = userMessages,
@@ -597,7 +627,8 @@ class ChatRepositoryImpl @Inject constructor(
                 ),
                 timeoutSeconds = platform.timeout,
                 platform = platform,
-                label = "工具请求 ${roundIndex + 1}"
+                label = "工具请求 ${roundIndex + 1}",
+                config = config
             )
             if (round.errorMessage != null) {
                 if (allResults.isEmpty()) {
@@ -612,10 +643,9 @@ class ChatRepositoryImpl @Inject constructor(
             }
             round.usage?.let { toolUsageRecords += it }
 
-            val calls = openAIResponsesToolAdapter
-                .toolCallsFromEvents(round.events)
-                .distinctBy { call -> "${call.name}:${call.arguments}" }
-                .take(config.maxToolCallsPerRound.coerceAtLeast(0))
+            val calls = toolLoopOrchestrator.boundToolCalls(
+                openAIResponsesToolAdapter.toolCallsFromEvents(round.events, config)
+            )
             if (calls.isEmpty()) {
                 aggregateToolUsage(round.usage, toolUsageRecords, platform, "工具请求合计")?.let { usage ->
                     emit(ApiState.UsageUpdated(usage))
@@ -624,16 +654,17 @@ class ChatRepositoryImpl @Inject constructor(
                 return@flow
             }
 
-            val results = toolLoopOrchestrator.executeToolCalls(
+            val results = toolLoopOrchestrator.executeBoundedToolCalls(
                 calls = calls,
-                tools = activeToolDefinitions
+                tools = activeToolDefinitions,
+                executionSession = toolExecutionSession
             ) { progress -> emit(progress) }
             allResults += results
-            toolLoopOrchestrator.sourceMetadata(results)
+            toolLoopOrchestrator.sourceMetadata(allResults)
                 .dedupeMessageSources()
                 .takeIf { it.isNotEmpty() }?.let { sources ->
-                emit(ApiState.SourcesUpdated(sources))
-            }
+                    emit(ApiState.SourcesUpdated(sources))
+                }
             continuationItems += openAIResponsesToolAdapter.continuationInputItems(round.events, calls, results, config)
         }
 
@@ -653,7 +684,8 @@ class ChatRepositoryImpl @Inject constructor(
             ),
             timeoutSeconds = platform.timeout,
             platform = platform,
-            label = "工具最终回答"
+            label = "工具最终回答",
+            config = config
         )
         finalRound.usage?.let { toolUsageRecords += it }
         finalRound.errorMessage?.let { message ->
@@ -672,14 +704,27 @@ class ChatRepositoryImpl @Inject constructor(
         request: ResponsesRequest,
         timeoutSeconds: Int,
         platform: PlatformV2,
-        label: String
+        label: String,
+        config: ToolLoopConfig
     ): OpenAIResponsesNativeRound {
         val events = mutableListOf<ResponsesStreamEvent>()
+        val argumentLimiter = ToolArgumentStreamLimiter(
+            maxArgumentChars = config.maxToolArgumentChars,
+            maxCallIdentities = config.maxToolCallsPerRound
+        )
         var errorMessage: String? = null
         var emittedOutputTextDelta = false
         val outputText = StringBuilder()
 
         openAIAPI.streamResponses(request, timeoutSeconds).collect { event ->
+            when (event) {
+                is FunctionCallArgumentsDeltaEvent -> argumentLimiter.append(event.outputIndex, event.delta)
+                is FunctionCallArgumentsDoneEvent -> argumentLimiter.checkComplete(event.outputIndex, event.arguments)
+                is OutputItemDoneEvent -> if (event.item.type == OPENAI_FUNCTION_CALL_TYPE) {
+                    argumentLimiter.checkComplete(event.outputIndex, event.item.arguments ?: "{}")
+                }
+                else -> {}
+            }
             events += event
             when (event) {
                 is ReasoningSummaryTextDeltaEvent -> emit(ApiState.Thinking(event.delta))
@@ -788,7 +833,8 @@ class ChatRepositoryImpl @Inject constructor(
         val continuationMessages = mutableListOf<ChatMessage>()
         val allResults = mutableListOf<ToolResult>()
         val toolUsageRecords = mutableListOf<TokenUsageRecord>()
-        val maxRounds = config.maxToolRounds.coerceAtLeast(1)
+        val toolExecutionSession = toolLoopOrchestrator.createExecutionSession()
+        val maxRounds = config.maxToolRounds.coerceAtLeast(0)
 
         repeat(maxRounds) { roundIndex ->
             val round = collectOpenAIChatCompletionsNativeRound(
@@ -799,7 +845,8 @@ class ChatRepositoryImpl @Inject constructor(
                 ),
                 timeoutSeconds = platform.timeout,
                 platform = platform,
-                label = "工具请求 ${roundIndex + 1}"
+                label = "工具请求 ${roundIndex + 1}",
+                config = config
             )
             if (round.errorMessage != null) {
                 if (allResults.isEmpty()) {
@@ -814,10 +861,9 @@ class ChatRepositoryImpl @Inject constructor(
             }
             round.usage?.let { toolUsageRecords += it }
 
-            val calls = openAIChatCompletionsToolAdapter
-                .toolCallsFromChunks(round.chunks)
-                .distinctBy { call -> "${call.name}:${call.arguments}" }
-                .take(config.maxToolCallsPerRound.coerceAtLeast(0))
+            val calls = toolLoopOrchestrator.boundToolCalls(
+                openAIChatCompletionsToolAdapter.toolCallsFromChunks(round.chunks, config)
+            )
             if (calls.isEmpty()) {
                 aggregateToolUsage(round.usage, toolUsageRecords, platform, "工具请求合计")?.let { usage ->
                     emit(ApiState.UsageUpdated(usage))
@@ -826,16 +872,17 @@ class ChatRepositoryImpl @Inject constructor(
                 return@flow
             }
 
-            val results = toolLoopOrchestrator.executeToolCalls(
+            val results = toolLoopOrchestrator.executeBoundedToolCalls(
                 calls = calls,
-                tools = activeToolDefinitions
+                tools = activeToolDefinitions,
+                executionSession = toolExecutionSession
             ) { progress -> emit(progress) }
             allResults += results
-            toolLoopOrchestrator.sourceMetadata(results)
+            toolLoopOrchestrator.sourceMetadata(allResults)
                 .dedupeMessageSources()
                 .takeIf { it.isNotEmpty() }?.let { sources ->
-                emit(ApiState.SourcesUpdated(sources))
-            }
+                    emit(ApiState.SourcesUpdated(sources))
+                }
             continuationMessages += openAIChatCompletionsToolAdapter.continuationMessages(calls, results, config)
         }
 
@@ -855,7 +902,8 @@ class ChatRepositoryImpl @Inject constructor(
             ),
             timeoutSeconds = platform.timeout,
             platform = platform,
-            label = "工具最终回答"
+            label = "工具最终回答",
+            config = config
         )
         finalRound.usage?.let { toolUsageRecords += it }
         finalRound.errorMessage?.let { message ->
@@ -874,13 +922,26 @@ class ChatRepositoryImpl @Inject constructor(
         request: ChatCompletionRequest,
         timeoutSeconds: Int,
         platform: PlatformV2,
-        label: String
+        label: String,
+        config: ToolLoopConfig
     ): OpenAIChatCompletionsNativeRound {
         val chunks = mutableListOf<ChatCompletionChunk>()
+        val argumentLimiter = ToolArgumentStreamLimiter(
+            maxArgumentChars = config.maxToolArgumentChars,
+            maxCallIdentities = config.maxToolCallsPerRound
+        )
         var errorMessage: String? = null
         val outputText = StringBuilder()
 
         openAIAPI.streamChatCompletion(request, timeoutSeconds).collect { chunk ->
+            chunk.choices.orEmpty().forEach { choice ->
+                choice.delta.toolCalls.orEmpty().forEachIndexed { position, call ->
+                    argumentLimiter.register(choice.index to (call.index ?: position))
+                    call.function?.arguments?.let { fragment ->
+                        argumentLimiter.append(choice.index to (call.index ?: position), fragment)
+                    }
+                }
+            }
             chunks += chunk
             when {
                 chunk.error != null -> errorMessage = chunk.error.message
@@ -975,7 +1036,8 @@ class ChatRepositoryImpl @Inject constructor(
         val continuationMessages = mutableListOf<InputMessage>()
         val allResults = mutableListOf<ToolResult>()
         val toolUsageRecords = mutableListOf<TokenUsageRecord>()
-        val maxRounds = config.maxToolRounds.coerceAtLeast(1)
+        val toolExecutionSession = toolLoopOrchestrator.createExecutionSession()
+        val maxRounds = config.maxToolRounds.coerceAtLeast(0)
 
         repeat(maxRounds) { roundIndex ->
             val round = collectAnthropicNativeRound(
@@ -986,7 +1048,8 @@ class ChatRepositoryImpl @Inject constructor(
                 ),
                 timeoutSeconds = platform.timeout,
                 platform = platform,
-                label = "工具请求 ${roundIndex + 1}"
+                label = "工具请求 ${roundIndex + 1}",
+                config = config
             )
             if (round.errorMessage != null) {
                 if (allResults.isEmpty()) {
@@ -1001,10 +1064,9 @@ class ChatRepositoryImpl @Inject constructor(
             }
             round.usage?.let { toolUsageRecords += it }
 
-            val calls = anthropicNativeToolAdapter
-                .toolCallsFromChunks(round.chunks)
-                .distinctBy { call -> "${call.name}:${call.arguments}" }
-                .take(config.maxToolCallsPerRound.coerceAtLeast(0))
+            val calls = toolLoopOrchestrator.boundToolCalls(
+                anthropicNativeToolAdapter.toolCallsFromChunks(round.chunks, config)
+            )
             if (calls.isEmpty()) {
                 aggregateToolUsage(round.usage, toolUsageRecords, platform, "工具请求合计")?.let { usage ->
                     emit(ApiState.UsageUpdated(usage))
@@ -1013,16 +1075,17 @@ class ChatRepositoryImpl @Inject constructor(
                 return@flow
             }
 
-            val results = toolLoopOrchestrator.executeToolCalls(
+            val results = toolLoopOrchestrator.executeBoundedToolCalls(
                 calls = calls,
-                tools = activeToolDefinitions
+                tools = activeToolDefinitions,
+                executionSession = toolExecutionSession
             ) { progress -> emit(progress) }
             allResults += results
-            toolLoopOrchestrator.sourceMetadata(results)
+            toolLoopOrchestrator.sourceMetadata(allResults)
                 .dedupeMessageSources()
                 .takeIf { it.isNotEmpty() }?.let { sources ->
-                emit(ApiState.SourcesUpdated(sources))
-            }
+                    emit(ApiState.SourcesUpdated(sources))
+                }
             continuationMessages += anthropicNativeToolAdapter.continuationMessages(calls, results, config)
         }
 
@@ -1042,7 +1105,8 @@ class ChatRepositoryImpl @Inject constructor(
             ),
             timeoutSeconds = platform.timeout,
             platform = platform,
-            label = "工具最终回答"
+            label = "工具最终回答",
+            config = config
         )
         finalRound.usage?.let { toolUsageRecords += it }
         finalRound.errorMessage?.let { message ->
@@ -1061,13 +1125,29 @@ class ChatRepositoryImpl @Inject constructor(
         request: MessageRequest,
         timeoutSeconds: Int,
         platform: PlatformV2,
-        label: String
+        label: String,
+        config: ToolLoopConfig
     ): AnthropicNativeRound {
         val chunks = mutableListOf<MessageResponseChunk>()
+        val argumentLimiter = ToolArgumentStreamLimiter(
+            maxArgumentChars = config.maxToolArgumentChars,
+            maxCallIdentities = config.maxToolCallsPerRound
+        )
         var errorMessage: String? = null
         val outputText = StringBuilder()
 
         anthropicAPI.streamChatMessage(request, timeoutSeconds).collect { chunk ->
+            when (chunk) {
+                is ContentStartResponseChunk -> if (chunk.contentBlock.type == ContentBlockType.TOOL_USE) {
+                    argumentLimiter.checkComplete(chunk.index, chunk.contentBlock.input?.toString() ?: "{}")
+                }
+                is ContentDeltaResponseChunk -> if (chunk.delta.type == ContentBlockType.INPUT_JSON_DELTA) {
+                    chunk.delta.partialJson?.let { fragment ->
+                        argumentLimiter.append(chunk.index, fragment)
+                    }
+                }
+                else -> {}
+            }
             chunks += chunk
             when (chunk) {
                 is ContentDeltaResponseChunk -> {
@@ -1180,7 +1260,8 @@ class ChatRepositoryImpl @Inject constructor(
         val continuationContents = mutableListOf<Content>()
         val allResults = mutableListOf<ToolResult>()
         val toolUsageRecords = mutableListOf<TokenUsageRecord>()
-        val maxRounds = config.maxToolRounds.coerceAtLeast(1)
+        val toolExecutionSession = toolLoopOrchestrator.createExecutionSession()
+        val maxRounds = config.maxToolRounds.coerceAtLeast(0)
 
         repeat(maxRounds) { roundIndex ->
             val round = collectGoogleNativeRound(
@@ -1192,7 +1273,8 @@ class ChatRepositoryImpl @Inject constructor(
                 model = platform.model,
                 timeoutSeconds = platform.timeout,
                 platform = platform,
-                label = "工具请求 ${roundIndex + 1}"
+                label = "工具请求 ${roundIndex + 1}",
+                config = config
             )
             if (round.errorMessage != null) {
                 if (allResults.isEmpty()) {
@@ -1207,10 +1289,9 @@ class ChatRepositoryImpl @Inject constructor(
             }
             round.usage?.let { toolUsageRecords += it }
 
-            val calls = googleNativeToolAdapter
-                .toolCallsFromResponses(round.responses)
-                .distinctBy { call -> "${call.name}:${call.arguments}" }
-                .take(config.maxToolCallsPerRound.coerceAtLeast(0))
+            val calls = toolLoopOrchestrator.boundToolCalls(
+                googleNativeToolAdapter.toolCallsFromResponses(round.responses, config)
+            )
             if (calls.isEmpty()) {
                 aggregateToolUsage(round.usage, toolUsageRecords, platform, "工具请求合计")?.let { usage ->
                     emit(ApiState.UsageUpdated(usage))
@@ -1219,16 +1300,17 @@ class ChatRepositoryImpl @Inject constructor(
                 return@flow
             }
 
-            val results = toolLoopOrchestrator.executeToolCalls(
+            val results = toolLoopOrchestrator.executeBoundedToolCalls(
                 calls = calls,
-                tools = activeToolDefinitions
+                tools = activeToolDefinitions,
+                executionSession = toolExecutionSession
             ) { progress -> emit(progress) }
             allResults += results
-            toolLoopOrchestrator.sourceMetadata(results)
+            toolLoopOrchestrator.sourceMetadata(allResults)
                 .dedupeMessageSources()
                 .takeIf { it.isNotEmpty() }?.let { sources ->
-                emit(ApiState.SourcesUpdated(sources))
-            }
+                    emit(ApiState.SourcesUpdated(sources))
+                }
             continuationContents += googleNativeToolAdapter.continuationContents(calls, results, config)
         }
 
@@ -1249,7 +1331,8 @@ class ChatRepositoryImpl @Inject constructor(
             model = platform.model,
             timeoutSeconds = platform.timeout,
             platform = platform,
-            label = "工具最终回答"
+            label = "工具最终回答",
+            config = config
         )
         finalRound.usage?.let { toolUsageRecords += it }
         finalRound.errorMessage?.let { message ->
@@ -1269,13 +1352,27 @@ class ChatRepositoryImpl @Inject constructor(
         model: String,
         timeoutSeconds: Int,
         platform: PlatformV2,
-        label: String
+        label: String,
+        config: ToolLoopConfig
     ): GoogleNativeRound {
         val responses = mutableListOf<GenerateContentResponse>()
+        val argumentLimiter = ToolArgumentStreamLimiter(
+            maxArgumentChars = config.maxToolArgumentChars,
+            maxCallIdentities = config.maxToolCallsPerRound
+        )
         var errorMessage: String? = null
         val outputText = StringBuilder()
+        var functionCallIndex = 0
 
         googleAPI.streamGenerateContent(request, model, timeoutSeconds).collect { response ->
+            response.candidates.orEmpty().forEach { candidate ->
+                candidate.content.parts.forEach { part ->
+                    part.functionCall?.let { call ->
+                        argumentLimiter.checkComplete(functionCallIndex, call.args.toString())
+                        functionCallIndex += 1
+                    }
+                }
+            }
             responses += response
             when {
                 response.error != null -> errorMessage = response.error.message
@@ -1329,7 +1426,6 @@ class ChatRepositoryImpl @Inject constructor(
             prepare = {
                 val reasoningParameters = mapReasoningMode(platform, reasoningMode)
                 val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
-                val webSearchContext = prepareWebSearchContext(userMessages)
                 val inputMessages = buildResponsesInputMessages(conversationContext.turns, platform.uid)
 
                 ProviderRequestWithSources(
@@ -1337,7 +1433,7 @@ class ChatRepositoryImpl @Inject constructor(
                         model = platform.model,
                         input = inputMessages,
                         stream = true,
-                        instructions = mergePromptSections(platform.systemPrompt, currentRuntimeContextPrompt(), memoryPrompt, conversationContext.summary, webSearchContext.prompt, extraPrompt),
+                        instructions = mergePromptSections(platform.systemPrompt, currentRuntimeContextPrompt(), memoryPrompt, conversationContext.summary, extraPrompt),
                         temperature = if (reasoningParameters.hasExplicitReasoning) null else platform.temperature,
                         topP = if (reasoningParameters.hasExplicitReasoning) null else platform.topP,
                         reasoning = reasoningParameters.openAIEffort?.let { effort ->
@@ -1347,7 +1443,7 @@ class ChatRepositoryImpl @Inject constructor(
                             )
                         }
                     ),
-                    sources = webSearchContext.sources
+                    sources = emptyList()
                 )
             },
             stream = { prepared ->
@@ -1425,16 +1521,15 @@ class ChatRepositoryImpl @Inject constructor(
         streamPreparedApiState(
             prepare = {
                 val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
-                val webSearchContext = prepareWebSearchContext(userMessages)
                 validateInlineBudgetIfNeeded(conversationContext.turns, platform)
                 val messages = buildOpenAIChatMessages(
                     conversationContext.turns,
-                    mergePromptSections(platform.systemPrompt, currentRuntimeContextPrompt(), memoryPrompt, conversationContext.summary, webSearchContext.prompt, extraPrompt)
+                    mergePromptSections(platform.systemPrompt, currentRuntimeContextPrompt(), memoryPrompt, conversationContext.summary, extraPrompt)
                 )
 
                 ProviderRequestWithSources(
                     request = createGroqChatCompletionRequest(messages, platform, reasoningMode),
-                    sources = webSearchContext.sources
+                    sources = emptyList()
                 )
             },
             stream = { prepared ->
@@ -1518,11 +1613,10 @@ class ChatRepositoryImpl @Inject constructor(
             prepare = {
                 val reasoningParameters = mapReasoningMode(platform, reasoningMode)
                 val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
-                val webSearchContext = prepareWebSearchContext(userMessages)
                 validateInlineBudgetIfNeeded(conversationContext.turns, platform)
                 val messages = buildOpenAIChatMessages(
                     conversationContext.turns,
-                    mergePromptSections(platform.systemPrompt, currentRuntimeContextPrompt(), memoryPrompt, conversationContext.summary, webSearchContext.prompt, extraPrompt)
+                    mergePromptSections(platform.systemPrompt, currentRuntimeContextPrompt(), memoryPrompt, conversationContext.summary, extraPrompt)
                 )
 
                 ProviderRequestWithSources(
@@ -1535,7 +1629,7 @@ class ChatRepositoryImpl @Inject constructor(
                         reasoningEffort = reasoningParameters.openAICompatibleReasoningEffort,
                         streamOptions = chatCompletionStreamOptionsFor(platform)
                     ),
-                    sources = webSearchContext.sources
+                    sources = emptyList()
                 )
             },
             stream = { prepared ->
@@ -1615,41 +1709,6 @@ class ChatRepositoryImpl @Inject constructor(
         if (chatId <= 0 || lastUserMessageId <= 0) return
         scheduler.markCompactionUrgent(chatId, lastUserMessageId)
     }
-
-    private suspend fun prepareWebSearchContext(userMessages: List<MessageV2>): WebSearchContext {
-        val webSearchMode = runCatching { settingRepository.fetchWebSearchMode() }
-            .getOrNull()
-            ?: WebSearchMode.Off
-        val latestUserMessage = userMessages.lastOrNull()
-            ?.content
-            ?.trim()
-            ?.takeIf { it.isNotBlank() }
-            ?: return WebSearchContext()
-
-        val searchQueries = when (webSearchMode) {
-            WebSearchMode.Off -> return WebSearchContext()
-            WebSearchMode.Always -> listOf(latestUserMessage)
-            WebSearchMode.Auto -> return WebSearchContext()
-        }
-
-        val results = searchWebQueries(searchQueries)
-        return WebSearchContext(
-            prompt = webSearchPromptBuilder.build(results),
-            sources = results.toMessageSourceMetadata(ToolDefinition.WebSearch.name)
-        )
-    }
-
-    private suspend fun searchWebQueries(queries: List<String>): List<WebSearchResult> =
-        queries
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-            .take(MAX_SEARCH_QUERY_COUNT)
-            .flatMap { query ->
-                webSearchRepository.search(query, WEB_SEARCH_RESULT_LIMIT)
-                    .getOrDefault(emptyList())
-            }
-            .distinctBy { it.url }
-            .take(WEB_SEARCH_RESULT_LIMIT)
 
     private suspend fun ensureProviderReferencesForTurns(
         turns: List<ConversationTurn>,
@@ -1865,7 +1924,6 @@ class ChatRepositoryImpl @Inject constructor(
             prepare = {
                 val reasoningParameters = mapReasoningMode(platform, reasoningMode)
                 val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
-                val webSearchContext = prepareWebSearchContext(userMessages)
                 val messages = buildAnthropicInputMessages(conversationContext.turns, platform.uid)
 
                 ProviderRequestWithSources(
@@ -1874,7 +1932,7 @@ class ChatRepositoryImpl @Inject constructor(
                         messages = messages,
                         maxTokens = reasoningParameters.anthropicMaxTokens ?: 4096,
                         stream = platform.stream,
-                        systemPrompt = mergePromptSections(platform.systemPrompt, currentRuntimeContextPrompt(), memoryPrompt, conversationContext.summary, webSearchContext.prompt, extraPrompt),
+                        systemPrompt = mergePromptSections(platform.systemPrompt, currentRuntimeContextPrompt(), memoryPrompt, conversationContext.summary, extraPrompt),
                         temperature = if (reasoningParameters.hasExplicitReasoning) null else platform.temperature,
                         topP = if (reasoningParameters.hasExplicitReasoning) null else platform.topP,
                         thinking = reasoningParameters.anthropicBudgetTokens?.let { budgetTokens ->
@@ -1884,7 +1942,7 @@ class ChatRepositoryImpl @Inject constructor(
                             )
                         }
                     ),
-                    sources = webSearchContext.sources
+                    sources = emptyList()
                 )
             },
             stream = { prepared ->
@@ -2000,7 +2058,6 @@ class ChatRepositoryImpl @Inject constructor(
             prepare = {
                 val reasoningParameters = mapReasoningMode(platform, reasoningMode)
                 val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
-                val webSearchContext = prepareWebSearchContext(userMessages)
                 val contents = buildGoogleContents(conversationContext.turns, platform.uid)
 
                 ProviderRequestWithSources(
@@ -2016,13 +2073,13 @@ class ChatRepositoryImpl @Inject constructor(
                                 )
                             }
                         ),
-                        systemInstruction = mergePromptSections(platform.systemPrompt, currentRuntimeContextPrompt(), memoryPrompt, conversationContext.summary, webSearchContext.prompt, extraPrompt)?.let {
+                        systemInstruction = mergePromptSections(platform.systemPrompt, currentRuntimeContextPrompt(), memoryPrompt, conversationContext.summary, extraPrompt)?.let {
                             Content(
                                 parts = listOf(Part.text(it))
                             )
                         }
                     ),
-                    sources = webSearchContext.sources
+                    sources = emptyList()
                 )
             },
             stream = { prepared ->
@@ -2372,9 +2429,8 @@ internal fun createGroqChatCompletionRequest(
 
 internal fun isGroqGptOssModel(model: String): Boolean = isGptOssModel(model)
 
-private const val WEB_SEARCH_RESULT_LIMIT = 5
 private const val MAX_SEARCH_QUERY_COUNT = 2
-private const val MAX_SOURCE_SNIPPET_CHARS = 240
+private const val OPENAI_FUNCTION_CALL_TYPE = "function_call"
 private const val OPENAI_NATIVE_TOOL_INSTRUCTION =
     "Use the available tools only when the latest user request needs current web information or source inspection. " +
         "When calling web_search, rewrite the user's request into a concise search-engine query with the likely entity, topic, timeframe, geography/source scope, and official or primary-source terms when useful; do not merely copy the user's wording. " +
@@ -2387,11 +2443,6 @@ private const val OPENAI_NATIVE_GENERIC_TOOL_INSTRUCTION =
 private const val OPENAI_NATIVE_FINAL_TOOL_INSTRUCTION =
     "Do not call more tools. Use the available function_call_output items when relevant and provide the final answer. " +
         "If the user's request is broad or underspecified but the tool results are usable, answer with the most reasonable default scope, state that scope briefly, and avoid asking a clarifying question before giving useful content."
-
-private data class WebSearchContext(
-    val prompt: String? = null,
-    val sources: List<MessageSourceMetadata> = emptyList()
-)
 
 private data class ProviderRequestWithSources<T>(
     val request: T,
@@ -2546,18 +2597,6 @@ private fun Content?.withAdditionalText(extraInstruction: String?): Content? {
         ?: Content(parts = listOf(Part.text(instruction)))
 }
 
-private fun List<WebSearchResult>.toMessageSourceMetadata(sourceToolName: String): List<MessageSourceMetadata> =
-    mapNotNull { result ->
-        result.url.trim().takeIf { it.isNotBlank() }?.let { url ->
-            MessageSourceMetadata(
-                title = result.title.trim().ifBlank { url },
-                url = url,
-                snippet = result.snippet.toSourceSnippet(),
-                sourceToolName = sourceToolName
-            )
-        }
-    }.dedupeMessageSources()
-
 private fun SearchDecision.toWebSearchToolCalls(): List<ToolCall> = queries
     .map { it.trim() }
     .filter { it.isNotBlank() }
@@ -2576,12 +2615,9 @@ private fun SearchDecision.toWebSearchToolCalls(): List<ToolCall> = queries
     }
 
 private fun List<MessageSourceMetadata>.dedupeMessageSources(): List<MessageSourceMetadata> =
-    filter { source -> source.url.isNotBlank() }
-        .distinctBy { source -> source.url.trim().lowercase() }
-
-private fun String.toSourceSnippet(): String = trim()
-    .replace(Regex("\\s+"), " ")
-    .take(MAX_SOURCE_SNIPPET_CHARS)
+    mapNotNull { source -> source.safeDedupeKey()?.let { key -> key to source } }
+        .distinctBy { (key, _) -> key }
+        .map { (_, source) -> source }
 
 internal fun mergeSystemPrompt(basePrompt: String?, memoryPrompt: String?): String? = mergePromptSections(basePrompt, memoryPrompt)
 

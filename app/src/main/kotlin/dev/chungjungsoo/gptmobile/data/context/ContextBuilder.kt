@@ -7,7 +7,10 @@ import dev.chungjungsoo.gptmobile.data.database.entity.ACTIVE_REVISION_LATEST
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageSourceMetadata
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
+import dev.chungjungsoo.gptmobile.data.database.entity.SafeMessageSourceTarget
 import dev.chungjungsoo.gptmobile.data.database.entity.effectiveContent
+import dev.chungjungsoo.gptmobile.data.database.entity.safeDedupeKey
+import dev.chungjungsoo.gptmobile.data.database.entity.safeNavigationTarget
 import dev.chungjungsoo.gptmobile.data.model.ClientType
 import dev.chungjungsoo.gptmobile.util.isAssistantErrorMessage
 import dev.chungjungsoo.gptmobile.util.stripAssistantErrorNote
@@ -199,15 +202,23 @@ class ContextBuilder @Inject constructor() {
 
     private fun String.withSourceContext(sources: List<MessageSourceMetadata>): String {
         val sourceLines = sources
-            .filter { source -> source.url.isNotBlank() }
-            .distinctBy { source -> source.url.trim().lowercase() }
+            .mapNotNull { source -> source.safeDedupeKey()?.let { key -> key to source } }
+            .distinctBy { (key, _) -> key }
+            .map { (_, source) -> source }
             .take(MAX_CONTEXT_SOURCES)
             .mapIndexed { index, source ->
                 buildString {
+                    val target = source.safeNavigationTarget() ?: return@buildString
                     append("${index + 1}. ")
-                    append(source.title.trim().ifBlank { source.url.trim() })
+                    append(source.title.trim().ifBlank { source.sourceToolName })
                     append(" - ")
-                    append(source.url.trim())
+                    append(
+                        when (target) {
+                            is SafeMessageSourceTarget.PublicUrl -> target.url
+                            is SafeMessageSourceTarget.LocalApp ->
+                                "app:${target.navigationTarget.name.lowercase()}:${target.entityId}"
+                        }
+                    )
                     source.snippet.trim().takeIf { it.isNotBlank() }?.let { snippet ->
                         append(" | ")
                         append(snippet.replace(Regex("\\s+"), " ").take(MAX_SOURCE_SNIPPET_CHARS))
@@ -217,7 +228,7 @@ class ContextBuilder @Inject constructor() {
         if (sourceLines.isEmpty()) return this
 
         val sourceBlock = buildString {
-            appendLine("Referenced web sources from this answer:")
+            appendLine("Referenced sources from this answer:")
             sourceLines.forEach { line -> appendLine(line) }
         }.trim()
 

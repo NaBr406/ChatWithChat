@@ -5,48 +5,59 @@ import dev.chungjungsoo.gptmobile.data.dto.openai.request.ResponseFunctionCallOu
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ResponseInputItem
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ResponsePassthroughInputItem
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ResponseTool
+import dev.chungjungsoo.gptmobile.data.dto.openai.response.FunctionCallArgumentsDeltaEvent
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.FunctionCallArgumentsDoneEvent
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.OutputItem
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.OutputItemDoneEvent
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.ResponsesStreamEvent
+import dev.chungjungsoo.gptmobile.data.tool.ToolArgumentStreamLimiter
 import dev.chungjungsoo.gptmobile.data.tool.ToolCall
 import dev.chungjungsoo.gptmobile.data.tool.ToolDefinition
 import dev.chungjungsoo.gptmobile.data.tool.ToolLoopConfig
 import dev.chungjungsoo.gptmobile.data.tool.ToolResult
+import dev.chungjungsoo.gptmobile.data.tool.ToolSchemaDialect
+import dev.chungjungsoo.gptmobile.data.tool.ToolSource
+import dev.chungjungsoo.gptmobile.data.tool.isOpenAIStrictCompatible
+import dev.chungjungsoo.gptmobile.data.tool.requireWithinToolArgumentLimit
+import dev.chungjungsoo.gptmobile.data.tool.toSchemaJson
 import dev.chungjungsoo.gptmobile.data.tool.toolProtocolJson
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.encodeToJsonElement
-import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.JsonElement
 
 class OpenAIResponsesToolAdapter {
     fun toResponseTools(definitions: List<ToolDefinition>): List<ResponseTool> = definitions.map { definition ->
         ResponseTool(
             name = definition.name,
             description = definition.description,
-            parameters = definition.parameters.toOpenAISchema(),
-            strict = true
+            parameters = definition.parameters.toSchemaJson(ToolSchemaDialect.OPEN_AI),
+            strict = definition.parameters.isOpenAIStrictCompatible()
         )
     }
 
-    fun toolCallsFromEvents(events: List<ResponsesStreamEvent>): List<ToolCall> {
+    fun toolCallsFromEvents(
+        events: List<ResponsesStreamEvent>,
+        config: ToolLoopConfig = ToolLoopConfig.Default
+    ): List<ToolCall> {
+        events.requireArgumentsWithinLimit(config)
         val callsFromArgumentEvents = events
+            .asSequence()
             .filterIsInstance<FunctionCallArgumentsDoneEvent>()
             .mapNotNull { event ->
-                event.toToolCall()
+                event.toToolCall(config.maxToolArgumentChars)
             }
+            .boundedDistinctById(config.maxToolCallsPerRound)
 
         if (callsFromArgumentEvents.isNotEmpty()) {
-            return callsFromArgumentEvents.distinctBy { it.id }
+            return callsFromArgumentEvents
         }
 
         return events
+            .asSequence()
             .filterIsInstance<OutputItemDoneEvent>()
-            .mapNotNull { event -> event.item.toToolCall() }
-            .distinctBy { it.id }
+            .mapNotNull { event -> event.item.toToolCall(config.maxToolArgumentChars) }
+            .boundedDistinctById(config.maxToolCallsPerRound)
     }
 
     fun continuationInputItems(
@@ -72,18 +83,18 @@ class OpenAIResponsesToolAdapter {
         config: ToolLoopConfig = ToolLoopConfig.Default
     ): ResponseFunctionCallOutputItem = result.toResponseFunctionCallOutput(config)
 
-    private fun FunctionCallArgumentsDoneEvent.toToolCall(): ToolCall? {
+    private fun FunctionCallArgumentsDoneEvent.toToolCall(maxArgumentChars: Int): ToolCall? {
         val callId = callId.trim().ifBlank { itemId.trim() }
         val toolName = name.trim()
         if (callId.isBlank() || toolName.isBlank()) return null
         return ToolCall(
             id = callId,
             name = toolName,
-            arguments = arguments.ifBlank { "{}" }
+            arguments = arguments.ifBlank { "{}" }.requireWithinToolArgumentLimit(maxArgumentChars)
         )
     }
 
-    private fun OutputItem.toToolCall(): ToolCall? {
+    private fun OutputItem.toToolCall(maxArgumentChars: Int): ToolCall? {
         if (type != FUNCTION_CALL_OUTPUT_TYPE) return null
         val callId = callId?.trim()?.takeIf { it.isNotBlank() } ?: id.trim()
         val toolName = name?.trim().orEmpty()
@@ -91,8 +102,26 @@ class OpenAIResponsesToolAdapter {
         return ToolCall(
             id = callId,
             name = toolName,
-            arguments = arguments?.takeIf { it.isNotBlank() } ?: "{}"
+            arguments = (arguments?.takeIf { it.isNotBlank() } ?: "{}")
+                .requireWithinToolArgumentLimit(maxArgumentChars)
         )
+    }
+
+    private fun List<ResponsesStreamEvent>.requireArgumentsWithinLimit(config: ToolLoopConfig) {
+        val limiter = ToolArgumentStreamLimiter(
+            maxArgumentChars = config.maxToolArgumentChars,
+            maxCallIdentities = config.maxToolCallsPerRound
+        )
+        forEach { event ->
+            when (event) {
+                is FunctionCallArgumentsDeltaEvent -> limiter.append(event.outputIndex, event.delta)
+                is FunctionCallArgumentsDoneEvent -> limiter.checkComplete(event.outputIndex, event.arguments)
+                is OutputItemDoneEvent -> if (event.item.type == FUNCTION_CALL_OUTPUT_TYPE) {
+                    limiter.checkComplete(event.outputIndex, event.item.arguments ?: "{}")
+                }
+                else -> {}
+            }
+        }
     }
 
     private fun ToolCall.toResponseFunctionCallInput(events: List<ResponsesStreamEvent>): ResponseFunctionCallInputItem {
@@ -119,23 +148,29 @@ class OpenAIResponsesToolAdapter {
                 name = name,
                 ok = !isError,
                 content = content.clip(config.maxToolResultChars),
-                metadata = metadata
+                metadata = metadata,
+                structuredContent = structuredContent,
+                sources = sources
             )
         )
     )
-
-    private fun ToolDefinition.Parameters.toOpenAISchema(): JsonObject {
-        val schema = toolProtocolJson.encodeToJsonElement(this).jsonObject
-        return buildJsonObject {
-            schema.forEach { (key, value) -> put(key, value) }
-            put("additionalProperties", JsonPrimitive(false))
-        }
-    }
 
     private companion object {
         private const val FUNCTION_CALL_OUTPUT_TYPE = "function_call"
         private const val REASONING_OUTPUT_TYPE = "reasoning"
     }
+}
+
+private fun Sequence<ToolCall>.boundedDistinctById(maxCalls: Int): List<ToolCall> {
+    val limit = maxCalls.coerceAtLeast(0)
+    if (limit == 0) return emptyList()
+    val calls = ArrayList<ToolCall>(minOf(limit, MAX_PREALLOCATED_TOOL_CALLS))
+    val seenIds = mutableSetOf<String>()
+    for (call in this) {
+        if (seenIds.add(call.id)) calls += call
+        if (calls.size >= limit) break
+    }
+    return calls
 }
 
 private fun String.clip(maxChars: Int): String {
@@ -144,10 +179,15 @@ private fun String.clip(maxChars: Int): String {
     return take(boundedMax).trimEnd()
 }
 
+private const val MAX_PREALLOCATED_TOOL_CALLS = 16
+
 @Serializable
 private data class OpenAIToolResultPayload(
     val name: String,
     val ok: Boolean,
     val content: String,
-    val metadata: Map<String, String> = emptyMap()
+    val metadata: Map<String, String> = emptyMap(),
+    @SerialName("structured_content")
+    val structuredContent: JsonElement? = null,
+    val sources: List<ToolSource> = emptyList()
 )

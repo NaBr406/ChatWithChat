@@ -18,6 +18,7 @@ interface SettingDataSource {
     suspend fun updateMemoryEnabled(enabled: Boolean)
     suspend fun updateMemoryMaintenanceNotificationsEnabled(enabled: Boolean)
     suspend fun updateToolCallingMode(mode: String)
+    suspend fun updateToolEnabled(toolName: String, enabled: Boolean)
     suspend fun updateWebSearchMode(mode: String)
     suspend fun updateWebSearchSearxngBaseUrl(baseUrl: String)
     suspend fun getDynamicTheme(): DynamicTheme?
@@ -35,6 +36,8 @@ interface SettingDataSource {
     suspend fun getMemoryEnabled(): Boolean?
     suspend fun getMemoryMaintenanceNotificationsEnabled(): Boolean?
     suspend fun getToolCallingMode(): String?
+    suspend fun getEnabledToolNames(): Set<String>
+    suspend fun getDisabledToolNames(): Set<String>
     suspend fun getWebSearchMode(): String?
     suspend fun getWebSearchSearxngBaseUrl(): String?
 }

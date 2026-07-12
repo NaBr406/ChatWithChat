@@ -26,10 +26,12 @@ import dev.chungjungsoo.gptmobile.data.tool.ToolRegistry
 import dev.chungjungsoo.gptmobile.presentation.common.LocalDynamicTheme
 import dev.chungjungsoo.gptmobile.presentation.common.LocalNotificationPermissionRequester
 import dev.chungjungsoo.gptmobile.presentation.common.LocalThemeMode
+import dev.chungjungsoo.gptmobile.presentation.common.LocalToolPermissionRequester
 import dev.chungjungsoo.gptmobile.presentation.common.NotificationPermissionRequester
 import dev.chungjungsoo.gptmobile.presentation.common.Route
 import dev.chungjungsoo.gptmobile.presentation.common.SetupNavGraph
 import dev.chungjungsoo.gptmobile.presentation.common.ThemeSettingProvider
+import dev.chungjungsoo.gptmobile.presentation.common.ToolPermissionRequester
 import dev.chungjungsoo.gptmobile.presentation.theme.GPTMobileTheme
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -46,7 +48,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var notificationPermissionLauncher: ActivityResultLauncher<String>
     private val navigationRequests = MutableSharedFlow<String>(extraBufferCapacity = 1)
     private var pendingStartRoute: String? = null
-    private var didRequestToolRuntimePermissionsOnLaunch = false
+    private var pendingToolPermissionRequest: PendingToolPermissionRequest? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         pendingStartRoute = intent.startRoute()
@@ -60,7 +62,9 @@ class MainActivity : ComponentActivity() {
         toolPermissionLauncher = registerForActivityResult(
             ActivityResultContracts.RequestMultiplePermissions()
         ) {
-            // Permission denial is handled by ToolExecutor when a tool is invoked.
+            val pendingRequest = pendingToolPermissionRequest
+            pendingToolPermissionRequest = null
+            pendingRequest?.onResult?.invoke(areToolPermissionsGranted(pendingRequest.toolName))
         }
         notificationPermissionLauncher = registerForActivityResult(
             ActivityResultContracts.RequestPermission()
@@ -70,8 +74,6 @@ class MainActivity : ComponentActivity() {
 
         // Prevent keyboard from pushing the entire view up - composable handles insets via imePadding()
         window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
-        requestToolRuntimePermissionsOnLaunch()
-
         setContent {
             val navController = rememberNavController()
             navController.checkForExistingSettings()
@@ -81,7 +83,8 @@ class MainActivity : ComponentActivity() {
                 CompositionLocalProvider(
                     LocalNotificationPermissionRequester provides NotificationPermissionRequester(
                         ::requestPostNotificationsPermission
-                    )
+                    ),
+                    LocalToolPermissionRequester provides ToolPermissionRequester(::requestToolRuntimePermissions)
                 ) {
                     GPTMobileTheme(
                         dynamicTheme = LocalDynamicTheme.current,
@@ -100,26 +103,37 @@ class MainActivity : ComponentActivity() {
         intent.startRoute()?.let { route -> navigationRequests.tryEmit(route) }
     }
 
-    private fun requestToolRuntimePermissionsOnLaunch() {
-        lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                if (!didRequestToolRuntimePermissionsOnLaunch) {
-                    didRequestToolRuntimePermissionsOnLaunch = true
-                    requestMissingToolRuntimePermissions()
-                }
-            }
+    private fun requestToolRuntimePermissions(toolName: String, onResult: (Boolean) -> Unit) {
+        if (pendingToolPermissionRequest != null) {
+            onResult(false)
+            return
         }
-    }
+        val requirements = toolRegistry.permissionRequirementsFor(toolName)
+        if (requirements.isEmpty() || areToolPermissionsGranted(toolName)) {
+            onResult(true)
+            return
+        }
 
-    private fun requestMissingToolRuntimePermissions() {
-        val missingPermissions = toolRegistry.requestedRuntimePermissions()
+        val missingPermissions = requirements
+            .flatMap { requirement -> requirement.requestedPermissions() }
+            .distinct()
             .filter { permission ->
                 ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED
             }
         if (missingPermissions.isNotEmpty()) {
+            pendingToolPermissionRequest = PendingToolPermissionRequest(toolName, onResult)
             toolPermissionLauncher.launch(missingPermissions.toTypedArray())
+        } else {
+            onResult(areToolPermissionsGranted(toolName))
         }
     }
+
+    private fun areToolPermissionsGranted(toolName: String): Boolean =
+        toolRegistry.permissionRequirementsFor(toolName).all { requirement ->
+            requirement.isSatisfied { permission ->
+                ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+            }
+        }
 
     private fun requestPostNotificationsPermission() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
@@ -176,4 +190,9 @@ class MainActivity : ComponentActivity() {
     companion object {
         const val EXTRA_START_ROUTE = "dev.chungjungsoo.gptmobile.extra.START_ROUTE"
     }
+
+    private data class PendingToolPermissionRequest(
+        val toolName: String,
+        val onResult: (Boolean) -> Unit
+    )
 }

@@ -18,7 +18,7 @@ class ToolLoopOrchestratorTest {
         val executedCalls = mutableListOf<ToolCall>()
         val orchestrator = ToolLoopOrchestrator(recordingExecutor(executedCalls))
 
-        val result = orchestrator.runLoop { prompt ->
+        val result = orchestrator.runLoop(tools = orchestrator.toolDefinitions) { prompt ->
             assertTrue(prompt.contains("Available tools:"))
             Result.success("""{"type":"final_answer","content":"No tool needed."}""")
         }
@@ -37,6 +37,7 @@ class ToolLoopOrchestratorTest {
                 description = "A test tool.",
                 parameters = ToolDefinition.Parameters()
             )
+            override val securityPolicy: ToolSecurityPolicy = ToolSecurityPolicy.ReadOnlyPublic
 
             override fun progressLabel(call: ToolCall): String = "label:${call.id}"
 
@@ -49,6 +50,7 @@ class ToolLoopOrchestratorTest {
         )
 
         val result = orchestrator.runLoop(
+            tools = orchestrator.toolDefinitions,
             onProgress = { state -> progress += state }
         ) {
             Result.success("""{"type":"tool_calls","tool_calls":[{"id":"call_provider","name":"test_tool","arguments":{}}]}""")
@@ -75,7 +77,7 @@ class ToolLoopOrchestratorTest {
             config = ToolLoopConfig(maxToolRounds = 1)
         )
 
-        val result = orchestrator.runLoop {
+        val result = orchestrator.runLoop(tools = orchestrator.toolDefinitions) {
             Result.success("""{"type":"tool_calls","tool_calls":[{"id":"call_datetime","name":"current_datetime","arguments":{}}]}""")
         }
 
@@ -95,7 +97,7 @@ class ToolLoopOrchestratorTest {
             config = ToolLoopConfig(maxToolRounds = 1)
         )
 
-        val result = orchestrator.runLoop {
+        val result = orchestrator.runLoop(tools = orchestrator.toolDefinitions) {
             Result.success(
                 """{"type":"tool_calls","tool_calls":[{"id":"call_1","name":"web_search","arguments":{"query":"latest Android SDK"}}]}"""
             )
@@ -125,6 +127,9 @@ class ToolLoopOrchestratorTest {
                             isError = true
                         )
                     }
+                ),
+                securityPolicies = mapOf(
+                    ToolDefinition.WebSearch.name to ToolSecurityPolicy.ReadOnlyPublic
                 )
             )
         )
@@ -133,7 +138,7 @@ class ToolLoopOrchestratorTest {
             config = ToolLoopConfig(maxToolRounds = 1)
         )
 
-        val result = orchestrator.runLoop {
+        val result = orchestrator.runLoop(tools = orchestrator.toolDefinitions) {
             Result.success(
                 """{"type":"tool_calls","tool_calls":[{"id":"call_1","name":"web_search","arguments":{"query":"news"}}]}"""
             )
@@ -153,7 +158,7 @@ class ToolLoopOrchestratorTest {
             config = ToolLoopConfig(maxToolRounds = 1, maxToolCallsPerRound = 1)
         )
 
-        val result = orchestrator.runLoop {
+        val result = orchestrator.runLoop(tools = orchestrator.toolDefinitions) {
             Result.success(
                 """
                 {"type":"tool_calls","tool_calls":[
@@ -180,7 +185,7 @@ class ToolLoopOrchestratorTest {
         )
         val orchestrator = ToolLoopOrchestrator(recordingExecutor(executedCalls))
 
-        val result = orchestrator.runLoop { prompt ->
+        val result = orchestrator.runLoop(tools = orchestrator.toolDefinitions) { prompt ->
             prompts += prompt
             Result.success(responses.removeAt(0))
         }
@@ -203,7 +208,7 @@ class ToolLoopOrchestratorTest {
             config = ToolLoopConfig(maxToolRounds = 2)
         )
 
-        val result = orchestrator.runLoop {
+        val result = orchestrator.runLoop(tools = orchestrator.toolDefinitions) {
             Result.success(
                 """{"type":"tool_calls","tool_calls":[{"id":"call_1","name":"web_search","arguments":{"query":"again"}}]}"""
             )
@@ -222,7 +227,7 @@ class ToolLoopOrchestratorTest {
             config = ToolLoopConfig(maxToolRounds = 1, maxToolCallsPerRound = 4)
         )
 
-        val result = orchestrator.runLoop {
+        val result = orchestrator.runLoop(tools = orchestrator.toolDefinitions) {
             Result.success(
                 """
                 {"type":"tool_calls","tool_calls":[
@@ -255,7 +260,7 @@ class ToolLoopOrchestratorTest {
             )
         )
 
-        val result = orchestrator.runLoop {
+        val result = orchestrator.runLoop(tools = orchestrator.toolDefinitions) {
             Result.success(
                 """
                 {"type":"tool_calls","tool_calls":[
@@ -291,7 +296,7 @@ class ToolLoopOrchestratorTest {
             config = ToolLoopConfig(maxToolRounds = 1, maxToolCallsPerRound = 4)
         )
 
-        val result = orchestrator.runLoop {
+        val result = orchestrator.runLoop(tools = orchestrator.toolDefinitions) {
             Result.success(
                 """
                 {"type":"tool_calls","tool_calls":[
@@ -330,7 +335,7 @@ class ToolLoopOrchestratorTest {
             config = ToolLoopConfig(maxToolRounds = 2, maxToolCallsPerRound = 4)
         )
 
-        val result = orchestrator.runLoop {
+        val result = orchestrator.runLoop(tools = orchestrator.toolDefinitions) {
             Result.success(responses.removeAt(0))
         }
 
@@ -376,7 +381,7 @@ class ToolLoopOrchestratorTest {
             config = ToolLoopConfig(maxToolRounds = 2, maxToolCallsPerChat = 1)
         )
 
-        val result = orchestrator.runLoop {
+        val result = orchestrator.runLoop(tools = orchestrator.toolDefinitions) {
             Result.success(responses.removeAt(0))
         }
 
@@ -385,6 +390,78 @@ class ToolLoopOrchestratorTest {
         assertEquals(listOf("call_1"), executedCalls.map { it.id })
         assertTrue(toolResults.results.single { it.callId == "call_2" }.isError)
         assertTrue(toolResults.finalAnswerPrompt.orEmpty().contains("tool_budget_exceeded:max_tool_calls_per_chat"))
+    }
+
+    @Test
+    fun `native execution session enforces global call budget across rounds`() = runBlocking {
+        val executedCalls = mutableListOf<ToolCall>()
+        val orchestrator = ToolLoopOrchestrator(
+            toolExecutor = recordingExecutor(executedCalls),
+            config = ToolLoopConfig(maxToolCallsPerChat = 1)
+        )
+        val executionSession = orchestrator.createExecutionSession()
+
+        val firstRound = orchestrator.executeToolCalls(
+            calls = listOf(ToolCall("call_1", "web_search", """{"query":"one"}""")),
+            tools = orchestrator.toolDefinitions,
+            executionSession = executionSession
+        )
+        val secondRound = orchestrator.executeToolCalls(
+            calls = listOf(ToolCall("call_2", "fetch_url", """{"url":"https://example.com/two"}""")),
+            tools = orchestrator.toolDefinitions,
+            executionSession = executionSession
+        )
+
+        assertFalse(firstRound.single().isError)
+        assertEquals(listOf("call_1"), executedCalls.map { call -> call.id })
+        assertTrue(secondRound.single().isError)
+        assertTrue(secondRound.single().content.contains("tool_budget_exceeded:max_tool_calls_per_chat"))
+    }
+
+    @Test
+    fun `native execution session preserves later content before sources inside aggregate result budget`() = runBlocking {
+        val provider = object : ToolProvider {
+            override val definition = ToolDefinition("source_tool", "Returns a sourced result.", ToolDefinition.Parameters())
+            override val securityPolicy = ToolSecurityPolicy.ReadOnlyPublic
+
+            override suspend fun execute(call: ToolCall, config: ToolLoopConfig): ToolResult = ToolResult(
+                callId = call.id,
+                name = call.name,
+                content = "x".repeat(config.maxToolResultChars),
+                sources = listOf(
+                    ToolSource.PublicUrl(
+                        title = "Source ${call.id}",
+                        url = "https://example.com/${call.id}"
+                    )
+                )
+            )
+        }
+        val config = ToolLoopConfig(
+            maxToolResultChars = 1_000,
+            maxTotalToolResultChars = 1_500
+        )
+        val orchestrator = ToolLoopOrchestrator(
+            toolExecutor = ToolExecutor(ToolRegistry(listOf(provider))),
+            config = config
+        )
+        val executionSession = orchestrator.createExecutionSession()
+
+        val firstRound = orchestrator.executeToolCalls(
+            calls = listOf(ToolCall("call_1", provider.definition.name, "{}")),
+            tools = orchestrator.toolDefinitions,
+            executionSession = executionSession
+        )
+        val secondRound = orchestrator.executeToolCalls(
+            calls = listOf(ToolCall("call_2", provider.definition.name, "{}")),
+            tools = orchestrator.toolDefinitions,
+            executionSession = executionSession
+        )
+        val results = firstRound + secondRound
+
+        assertTrue(orchestrator.sourceMetadata(secondRound).isEmpty())
+        assertTrue(secondRound.single().content.isNotEmpty())
+        assertTrue(secondRound.single().content.length < firstRound.single().content.length)
+        assertTrue(results.sumOf { result -> result.payloadCharCount() } <= config.maxTotalToolResultChars)
     }
 
     @Test
@@ -400,6 +477,9 @@ class ToolLoopOrchestratorTest {
                             content = "Title: Example\nURL: https://example.com/source\nSnippet: useful source"
                         )
                     }
+                ),
+                securityPolicies = mapOf(
+                    ToolDefinition.WebSearch.name to ToolSecurityPolicy.ReadOnlyPublic
                 )
             )
         )
@@ -408,7 +488,7 @@ class ToolLoopOrchestratorTest {
             config = ToolLoopConfig(maxToolRounds = 1)
         )
 
-        val result = orchestrator.runLoop {
+        val result = orchestrator.runLoop(tools = orchestrator.toolDefinitions) {
             Result.success(
                 """{"type":"tool_calls","tool_calls":[{"id":"call_1","name":"web_search","arguments":{"query":"source"}}]}"""
             )
@@ -439,6 +519,7 @@ class ToolLoopOrchestratorTest {
         policy: ToolPolicy = ToolPolicy.default()
     ): ToolProvider = object : ToolProvider {
         override val definition: ToolDefinition = definition
+        override val securityPolicy: ToolSecurityPolicy = ToolSecurityPolicy.ReadOnlyPublic
         override val policy: ToolPolicy = policy
 
         override suspend fun execute(call: ToolCall, config: ToolLoopConfig): ToolResult {

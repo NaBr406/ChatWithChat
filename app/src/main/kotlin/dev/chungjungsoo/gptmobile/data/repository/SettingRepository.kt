@@ -1,14 +1,15 @@
 package dev.chungjungsoo.gptmobile.data.repository
 
+import dev.chungjungsoo.gptmobile.data.database.entity.PlatformModelV2
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
 import dev.chungjungsoo.gptmobile.data.dto.Platform
-import dev.chungjungsoo.gptmobile.data.database.entity.PlatformModelV2
 import dev.chungjungsoo.gptmobile.data.dto.ThemeSetting
 import dev.chungjungsoo.gptmobile.data.model.AvailableChatModel
 import dev.chungjungsoo.gptmobile.data.model.LastSelectedModel
 import dev.chungjungsoo.gptmobile.data.model.ModelRefreshResult
 import dev.chungjungsoo.gptmobile.data.model.ReasoningMode
 import dev.chungjungsoo.gptmobile.data.tool.ToolCallingMode
+import dev.chungjungsoo.gptmobile.data.tool.ToolEnablementOverrides
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchMode
 
 interface SettingRepository {
@@ -23,6 +24,10 @@ interface SettingRepository {
     suspend fun fetchMemoryEnabled(): Boolean
     suspend fun fetchMemoryMaintenanceNotificationsEnabled(): Boolean
     suspend fun fetchToolCallingMode(): ToolCallingMode
+    suspend fun fetchDisabledToolNames(): Set<String>
+    suspend fun fetchToolEnablementOverrides(): ToolEnablementOverrides = ToolEnablementOverrides(
+        disabledToolNames = fetchDisabledToolNames()
+    )
     suspend fun fetchWebSearchMode(): WebSearchMode
     suspend fun fetchWebSearchSearxngBaseUrl(): String
     suspend fun migrateToPlatformV2()
@@ -32,6 +37,7 @@ interface SettingRepository {
     suspend fun updateMemoryEnabled(enabled: Boolean)
     suspend fun updateMemoryMaintenanceNotificationsEnabled(enabled: Boolean)
     suspend fun updateToolCallingMode(mode: ToolCallingMode)
+    suspend fun updateToolEnabled(toolName: String, enabled: Boolean)
     suspend fun updateWebSearchMode(mode: WebSearchMode)
     suspend fun updateWebSearchSearxngBaseUrl(baseUrl: String)
     suspend fun refreshPlatformModels(platformUid: String): ModelRefreshResult

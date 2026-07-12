@@ -48,20 +48,27 @@ import dev.chungjungsoo.gptmobile.data.model.ReasoningMode
 import dev.chungjungsoo.gptmobile.data.network.AnthropicAPI
 import dev.chungjungsoo.gptmobile.data.network.GoogleAPI
 import dev.chungjungsoo.gptmobile.data.network.GroqAPI
-import dev.chungjungsoo.gptmobile.data.network.NetworkClient
 import dev.chungjungsoo.gptmobile.data.network.OpenAIAPI
 import dev.chungjungsoo.gptmobile.data.network.UploadedProviderFile
 import dev.chungjungsoo.gptmobile.data.tool.BuiltInTools
+import dev.chungjungsoo.gptmobile.data.tool.ToolCall
 import dev.chungjungsoo.gptmobile.data.tool.ToolCallingMode
+import dev.chungjungsoo.gptmobile.data.tool.ToolDefinition
+import dev.chungjungsoo.gptmobile.data.tool.ToolEnablementOverrides
 import dev.chungjungsoo.gptmobile.data.tool.ToolExecutor
+import dev.chungjungsoo.gptmobile.data.tool.ToolLoopConfig
 import dev.chungjungsoo.gptmobile.data.tool.ToolLoopOrchestrator
+import dev.chungjungsoo.gptmobile.data.tool.ToolProvider
+import dev.chungjungsoo.gptmobile.data.tool.ToolRegistry
+import dev.chungjungsoo.gptmobile.data.tool.ToolResult
+import dev.chungjungsoo.gptmobile.data.tool.ToolSecurityPolicy
+import dev.chungjungsoo.gptmobile.data.tool.ToolSource
 import dev.chungjungsoo.gptmobile.data.websearch.SearchDecisionModelClient
 import dev.chungjungsoo.gptmobile.data.websearch.SearchDecisionService
 import dev.chungjungsoo.gptmobile.data.websearch.WebPageExtractor
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchMode
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchRepository
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchResult
-import io.ktor.client.engine.cio.CIO
 import java.io.File
 import java.lang.reflect.InvocationHandler
 import java.lang.reflect.Proxy
@@ -348,95 +355,6 @@ class ChatRepositoryImplTest {
     }
 
     @Test
-    fun `web search always searches latest user message`() = runBlocking {
-        val webSearchRepository = RecordingWebSearchRepository(
-            Result.success(listOf(webSearchResult()))
-        )
-        val repository = createRepository(
-            settingRepository = settingRepository(WebSearchMode.Always),
-            webSearchRepository = webSearchRepository
-        )
-
-        repository.completeChat(
-            userMessages = listOf(
-                MessageV2(content = "old question", platformType = null),
-                MessageV2(content = "latest question", platformType = null)
-            ),
-            assistantMessages = listOf(emptyList(), emptyList()),
-            platform = customPlatform()
-        ).toList()
-
-        assertEquals(listOf("latest question"), webSearchRepository.queries)
-        assertEquals(listOf(5), webSearchRepository.limits)
-    }
-
-    @Test
-    fun `web search prompt merges with system memory and summary prompts`() = runBlocking {
-        val openAIAPI = RecordingOpenAIAPI()
-        val webSearchRepository = RecordingWebSearchRepository(
-            Result.success(listOf(webSearchResult()))
-        )
-        val repository = createRepository(
-            openAIAPI = openAIAPI,
-            settingRepository = settingRepository(WebSearchMode.Always),
-            webSearchRepository = webSearchRepository
-        )
-        val customPlatform = customPlatform()
-
-        repository.completeChat(
-            userMessages = (1..8).map { index ->
-                MessageV2(
-                    id = index,
-                    content = "topic-$index user detail",
-                    platformType = null
-                )
-            },
-            assistantMessages = (1..8).map { index ->
-                listOf(
-                    MessageV2(
-                        id = 100 + index,
-                        content = "topic-$index assistant detail",
-                        platformType = customPlatform.uid
-                    )
-                )
-            },
-            platform = customPlatform.copy(systemPrompt = "Base system prompt"),
-            memoryPrompt = "Relevant long-term user memories:\n- Memory item"
-        ).toList()
-
-        val systemText = systemText(openAIAPI)
-        assertTrue(systemText.contains("Base system prompt"))
-        assertTrue(systemText.contains("Relevant long-term user memories"))
-        assertTrue(systemText.contains("Earlier conversation summary"))
-        assertTrue(systemText.contains("Web search results"))
-        assertTrue(systemText.contains("https://example.com/source"))
-    }
-
-    @Test
-    fun `web search failure does not break normal chat completion`() = runBlocking {
-        val openAIAPI = RecordingOpenAIAPI()
-        val webSearchRepository = RecordingWebSearchRepository(
-            Result.failure(IllegalStateException("search unavailable"))
-        )
-        val repository = createRepository(
-            openAIAPI = openAIAPI,
-            settingRepository = settingRepository(WebSearchMode.Always),
-            webSearchRepository = webSearchRepository
-        )
-
-        val states = repository.completeChat(
-            userMessages = listOf(MessageV2(content = "latest question", platformType = null)),
-            assistantMessages = emptyList(),
-            platform = customPlatform(systemPrompt = "Base system prompt")
-        ).toList()
-
-        assertEquals(listOf(ApiState.Loading, ApiState.Done), states)
-        assertEquals(listOf("latest question"), webSearchRepository.queries)
-        assertEquals(1, openAIAPI.streamChatCompletionCalls)
-        assertFalse(systemText(openAIAPI).contains("Web search results"))
-    }
-
-    @Test
     fun `auto web search uses generic tool loop and injects tool results into final request`() = runBlocking {
         val openAIAPI = RecordingOpenAIAPI(
             chatCompletionResponses = mutableListOf(
@@ -574,6 +492,94 @@ class ChatRepositoryImplTest {
         assertTrue(toolPrompt.contains("device_location"))
         assertFalse(toolPrompt.contains("web_search"))
         assertFalse(toolPrompt.contains("fetch_url"))
+    }
+
+    @Test
+    fun `tool calling auto hides individually disabled tools`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatCompletionFlow("""{"type":"final_answer","content":"Normal answer"}""")
+            )
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Off,
+                toolCallingMode = ToolCallingMode.Auto,
+                disabledToolNames = setOf(ToolDefinition.CurrentDateTime.name)
+            )
+        )
+
+        repository.completeChat(
+            userMessages = listOf(MessageV2(content = "What time is it?", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform()
+        ).toList()
+
+        val toolPrompt = openAIAPI.chatCompletionRequests.single().systemText()
+        assertTrue(toolPrompt.contains("Available tools:"))
+        assertFalse(toolPrompt.contains(ToolDefinition.CurrentDateTime.name))
+        assertTrue(toolPrompt.contains(ToolDefinition.DeviceLocation.name))
+    }
+
+    @Test
+    fun `all individually disabled tools bypass tool loop`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(chatCompletionFlow("Normal answer"))
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Auto,
+                toolCallingMode = ToolCallingMode.Auto,
+                disabledToolNames = ToolDefinition.BuiltIns.map { definition -> definition.name }.toSet()
+            )
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "Hello", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform()
+        ).toList()
+
+        assertEquals(
+            listOf(ApiState.Loading, ApiState.Success("Normal answer"), ApiState.Done),
+            states.withoutUsageUpdates()
+        )
+        assertEquals(1, openAIAPI.streamChatCompletionCalls)
+        assertFalse(openAIAPI.chatCompletionRequests.single().systemText().contains("Available tools:"))
+    }
+
+    @Test
+    fun `tool preference read failure disables tools`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(chatCompletionFlow("Normal answer"))
+        )
+        val webSearchRepository = RecordingWebSearchRepository(
+            Result.success(listOf(webSearchResult()))
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Auto,
+                toolCallingMode = ToolCallingMode.Auto,
+                disabledToolNamesFailure = IllegalStateException("preferences unavailable")
+            ),
+            webSearchRepository = webSearchRepository
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "latest question", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform()
+        ).toList()
+
+        assertEquals(
+            listOf(ApiState.Loading, ApiState.Success("Normal answer"), ApiState.Done),
+            states.withoutUsageUpdates()
+        )
+        assertTrue(webSearchRepository.queries.isEmpty())
+        assertFalse(openAIAPI.chatCompletionRequests.single().systemText().contains("Available tools:"))
     }
 
     @Test
@@ -758,6 +764,117 @@ class ChatRepositoryImplTest {
     }
 
     @Test
+    fun `openai native tool loop with zero rounds falls back without a tool request`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            responsesResponses = mutableListOf(
+                flowOf(
+                    OutputTextDeltaEvent(
+                        itemId = "msg_1",
+                        outputIndex = 0,
+                        contentIndex = 0,
+                        delta = "Normal answer"
+                    )
+                )
+            )
+        )
+        val webSearchRepository = RecordingWebSearchRepository()
+        val toolLoopOrchestrator = ToolLoopOrchestrator(
+            toolExecutor = ToolExecutor(
+                BuiltInTools(
+                    webSearchRepository = webSearchRepository,
+                    webPageExtractor = WebPageExtractor()
+                ).registry()
+            ),
+            config = ToolLoopConfig(maxToolRounds = 0)
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Off,
+                toolCallingMode = ToolCallingMode.Auto
+            ),
+            webSearchRepository = webSearchRepository,
+            toolLoopOrchestrator = toolLoopOrchestrator
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "Hello", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = openAIPlatform()
+        ).toList()
+
+        assertTrue(states.contains(ApiState.Success("Normal answer")))
+        assertEquals(1, openAIAPI.streamResponsesCalls)
+        assertTrue(openAIAPI.responsesRequests.single().tools.orEmpty().isEmpty())
+    }
+
+    @Test
+    fun `openai native tool rounds retain sources from earlier rounds`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            responsesResponses = mutableListOf(
+                flowOf(
+                    FunctionCallArgumentsDoneEvent(
+                        itemId = "fc_1",
+                        outputIndex = 0,
+                        callId = "call_1",
+                        name = "current_datetime",
+                        arguments = "{}"
+                    )
+                ),
+                flowOf(
+                    FunctionCallArgumentsDoneEvent(
+                        itemId = "fc_2",
+                        outputIndex = 0,
+                        callId = "call_2",
+                        name = "device_location",
+                        arguments = "{}"
+                    )
+                ),
+                flowOf(
+                    OutputTextDeltaEvent(
+                        itemId = "msg_1",
+                        outputIndex = 0,
+                        contentIndex = 0,
+                        delta = "Final answer with two sources"
+                    )
+                )
+            )
+        )
+        val toolLoopOrchestrator = ToolLoopOrchestrator(
+            ToolExecutor(
+                ToolRegistry(
+                    listOf(
+                        sourceProvider(ToolDefinition.CurrentDateTime, "https://example.com/first"),
+                        sourceProvider(ToolDefinition.DeviceLocation, "https://example.com/second")
+                    )
+                )
+            )
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Off,
+                toolCallingMode = ToolCallingMode.Auto
+            ),
+            toolLoopOrchestrator = toolLoopOrchestrator
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "Use both tools", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = openAIPlatform()
+        ).toList()
+
+        val sourceUpdates = states.filterIsInstance<ApiState.SourcesUpdated>()
+        assertEquals(2, sourceUpdates.size)
+        assertEquals(listOf("https://example.com/first"), sourceUpdates[0].sources.map { source -> source.url })
+        assertEquals(
+            listOf("https://example.com/first", "https://example.com/second"),
+            sourceUpdates[1].sources.map { source -> source.url }
+        )
+    }
+
+    @Test
     fun `auto search decision executes web search before final provider request`() = runBlocking {
         val openAIAPI = RecordingOpenAIAPI(
             chatCompletionResponses = mutableListOf(
@@ -928,15 +1045,19 @@ class ChatRepositoryImplTest {
         assertTrue(openAIAPI.chatCompletionRequests[0].tools.orEmpty().any { tool -> tool.function.name == "web_search" })
         assertFalse(openAIAPI.chatCompletionRequests[0].systemText().contains("Available tools:"))
         assertEquals(ChatCompletionToolChoice.Auto, openAIAPI.chatCompletionRequests[1].toolChoice)
-        assertTrue(openAIAPI.chatCompletionRequests[1].messages.any { message ->
-            message.role == OpenAIRole.ASSISTANT &&
-                message.toolCalls.orEmpty().any { call -> call.id == "call_1" && call.function.name == "web_search" }
-        })
-        assertTrue(openAIAPI.chatCompletionRequests[1].messages.any { message ->
-            message.role == OpenAIRole.TOOL &&
-                message.toolCallId == "call_1" &&
-                message.contentText.orEmpty().contains("Example Source")
-        })
+        assertTrue(
+            openAIAPI.chatCompletionRequests[1].messages.any { message ->
+                message.role == OpenAIRole.ASSISTANT &&
+                    message.toolCalls.orEmpty().any { call -> call.id == "call_1" && call.function.name == "web_search" }
+            }
+        )
+        assertTrue(
+            openAIAPI.chatCompletionRequests[1].messages.any { message ->
+                message.role == OpenAIRole.TOOL &&
+                    message.toolCallId == "call_1" &&
+                    message.contentText.orEmpty().contains("Example Source")
+            }
+        )
     }
 
     @Test
@@ -1016,17 +1137,21 @@ class ChatRepositoryImplTest {
         assertTrue(anthropicAPI.requests[0].tools.orEmpty().any { tool -> tool.name == "web_search" })
         assertFalse(anthropicAPI.requests[0].systemPrompt.orEmpty().contains("Available tools:"))
         assertEquals(AnthropicToolChoice.Auto, anthropicAPI.requests[1].toolChoice)
-        assertTrue(anthropicAPI.requests[1].messages.any { message ->
-            message.role.name == "ASSISTANT" &&
-                message.content.filterIsInstance<ToolUseContent>().any { call -> call.id == "toolu_1" && call.name == "web_search" }
-        })
-        assertTrue(anthropicAPI.requests[1].messages.any { message ->
-            message.role.name == "USER" &&
-                message.content.filterIsInstance<ToolResultContent>().any { result ->
-                    result.toolUseId == "toolu_1" &&
-                        result.content.contains("Example Source")
-                }
-        })
+        assertTrue(
+            anthropicAPI.requests[1].messages.any { message ->
+                message.role.name == "ASSISTANT" &&
+                    message.content.filterIsInstance<ToolUseContent>().any { call -> call.id == "toolu_1" && call.name == "web_search" }
+            }
+        )
+        assertTrue(
+            anthropicAPI.requests[1].messages.any { message ->
+                message.role.name == "USER" &&
+                    message.content.filterIsInstance<ToolResultContent>().any { result ->
+                        result.toolUseId == "toolu_1" &&
+                            result.content.contains("Example Source")
+                    }
+            }
+        )
     }
 
     @Test
@@ -1111,17 +1236,21 @@ class ChatRepositoryImplTest {
         assertTrue(googleAPI.requests[0].tools.orEmpty().flatMap { tool -> tool.functionDeclarations }.any { declaration -> declaration.name == "web_search" })
         assertFalse(googleAPI.requests[0].systemInstruction?.parts.orEmpty().any { part -> part.text.orEmpty().contains("Available tools:") })
         assertEquals(GoogleToolConfig.Auto, googleAPI.requests[1].toolConfig)
-        assertTrue(googleAPI.requests[1].contents.any { content ->
-            content.role == GoogleRole.MODEL &&
-                content.parts.any { part -> part.functionCall?.id == "func_1" && part.functionCall.name == "web_search" }
-        })
-        assertTrue(googleAPI.requests[1].contents.any { content ->
-            content.role == GoogleRole.USER &&
-                content.parts.any { part ->
-                    part.functionResponse?.id == "func_1" &&
-                        part.functionResponse.response.toString().contains("Example Source")
-                }
-        })
+        assertTrue(
+            googleAPI.requests[1].contents.any { content ->
+                content.role == GoogleRole.MODEL &&
+                    content.parts.any { part -> part.functionCall?.id == "func_1" && part.functionCall.name == "web_search" }
+            }
+        )
+        assertTrue(
+            googleAPI.requests[1].contents.any { content ->
+                content.role == GoogleRole.USER &&
+                    content.parts.any { part ->
+                        part.functionResponse?.id == "func_1" &&
+                            part.functionResponse.response.toString().contains("Example Source")
+                    }
+            }
+        )
     }
 
     @Test
@@ -1163,6 +1292,47 @@ class ChatRepositoryImplTest {
     }
 
     @Test
+    fun `tool argument limit failure does not retry without tools`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatCompletionFlow(
+                    """{"type":"tool_calls","tool_calls":[{"name":"web_search","arguments":{"query":"oversized"}}]}"""
+                )
+            )
+        )
+        val webSearchRepository = RecordingWebSearchRepository()
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Auto,
+                toolCallingMode = ToolCallingMode.Auto
+            ),
+            webSearchRepository = webSearchRepository,
+            toolLoopOrchestrator = toolLoopOrchestrator(
+                webSearchRepository,
+                ToolLoopConfig(maxToolArgumentChars = 8)
+            )
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "What happened today?", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform()
+        ).toList()
+
+        assertEquals(
+            listOf(
+                ApiState.Loading,
+                ApiState.Error("tool_arguments_too_large"),
+                ApiState.Done
+            ),
+            states.withoutUsageUpdates()
+        )
+        assertEquals(1, openAIAPI.streamChatCompletionCalls)
+        assertTrue(webSearchRepository.queries.isEmpty())
+    }
+
+    @Test
     fun `auto tool failure emits progress and still completes final answer`() = runBlocking {
         val openAIAPI = RecordingOpenAIAPI(
             chatCompletionResponses = mutableListOf(
@@ -1193,11 +1363,13 @@ class ChatRepositoryImplTest {
 
         assertEquals(ApiState.Loading, states.first())
         assertTrue(states.contains(ApiState.ToolStarted("web_search", "current news")))
-        assertTrue(states.any { state ->
-            state is ApiState.ToolFailed &&
-                state.toolName == "web_search" &&
-                state.message.contains("web_search_failed")
-        })
+        assertTrue(
+            states.any { state ->
+                state is ApiState.ToolFailed &&
+                    state.toolName == "web_search" &&
+                    state.message.contains("web_search_failed")
+            }
+        )
         assertTrue(states.contains(ApiState.Success("Final answer despite tool failure")))
         assertEquals(ApiState.Done, states.last())
     }
@@ -1261,7 +1433,6 @@ class ChatRepositoryImplTest {
             googleAPI
         ),
         contextBuilder = ContextBuilder(),
-        webSearchRepository = webSearchRepository,
         toolLoopOrchestrator = toolLoopOrchestrator,
         searchDecisionService = searchDecisionService
     )
@@ -1351,15 +1522,43 @@ class ChatRepositoryImplTest {
         source = "searxng"
     )
 
+    private fun sourceProvider(
+        definition: ToolDefinition,
+        url: String
+    ): ToolProvider = object : ToolProvider {
+        override val definition: ToolDefinition = definition
+        override val securityPolicy: ToolSecurityPolicy = ToolSecurityPolicy.ReadOnlyPublic
+
+        override suspend fun execute(call: ToolCall, config: ToolLoopConfig): ToolResult = ToolResult(
+            callId = call.id,
+            name = call.name,
+            content = "Source result",
+            sources = listOf(ToolSource.PublicUrl(title = call.name, url = url))
+        )
+    }
+
     private fun settingRepository(
         webSearchMode: WebSearchMode,
         toolCallingMode: ToolCallingMode = ToolCallingMode.Off,
-        webSearchBaseUrl: String = if (webSearchMode == WebSearchMode.Off) "" else "https://search.example"
+        webSearchBaseUrl: String = if (webSearchMode == WebSearchMode.Off) "" else "https://search.example",
+        disabledToolNames: Set<String> = emptySet(),
+        disabledToolNamesFailure: Throwable? = null
     ): SettingRepository {
         val handler = InvocationHandler { _, method, _ ->
             when (method.name) {
                 "fetchToolCallingMode" -> toolCallingMode
                 "updateToolCallingMode" -> Unit
+                "fetchDisabledToolNames" -> disabledToolNamesFailure?.let { throwable -> throw throwable } ?: disabledToolNames
+                "fetchToolEnablementOverrides" -> {
+                    disabledToolNamesFailure?.let { throwable -> throw throwable }
+                    ToolEnablementOverrides(
+                        enabledToolNames = ToolDefinition.BuiltIns
+                            .map { definition -> definition.name }
+                            .toSet() - disabledToolNames,
+                        disabledToolNames = disabledToolNames
+                    )
+                }
+                "updateToolEnabled" -> Unit
                 "fetchWebSearchMode" -> webSearchMode
                 "updateWebSearchMode" -> Unit
                 "fetchWebSearchSearxngBaseUrl" -> webSearchBaseUrl
@@ -1375,14 +1574,18 @@ class ChatRepositoryImplTest {
         ) as SettingRepository
     }
 
-    private fun toolLoopOrchestrator(webSearchRepository: WebSearchRepository): ToolLoopOrchestrator =
+    private fun toolLoopOrchestrator(
+        webSearchRepository: WebSearchRepository,
+        config: ToolLoopConfig = ToolLoopConfig.Default
+    ): ToolLoopOrchestrator =
         ToolLoopOrchestrator(
             ToolExecutor(
                 BuiltInTools(
                     webSearchRepository = webSearchRepository,
-                    webPageExtractor = WebPageExtractor(NetworkClient(CIO))
+                    webPageExtractor = WebPageExtractor()
                 ).registry()
-            )
+            ),
+            config = config
         )
 
     private fun chatCompletionFlow(content: String): Flow<ChatCompletionChunk> = flowOf(

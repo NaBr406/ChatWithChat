@@ -1,5 +1,9 @@
 package dev.chungjungsoo.gptmobile.data.tool
 
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -28,8 +32,38 @@ class ToolPromptBuilderTest {
     }
 
     @Test
+    fun `fallback definitions include expanded canonical schema`() {
+        val prompt = ToolPromptBuilder().formatToolDefinitions(listOf(complexSchemaToolDefinition()))
+
+        assertTrue(prompt.contains(""""additionalProperties":false"""))
+        assertTrue(prompt.contains(""""enum":["safe","fast"]"""))
+        assertTrue(prompt.contains(""""items":{"type":"string"""))
+        assertTrue(prompt.contains(""""minimum":0.0"""))
+        assertTrue(prompt.contains(""""maximum":5.0"""))
+        assertTrue(prompt.contains(""""minLength":1"""))
+        assertTrue(prompt.contains(""""maxLength":20"""))
+        assertTrue(prompt.contains(""""format":"uri"""))
+    }
+
+    @Test
+    fun `fallback example uses schema compatible nested argument types`() {
+        val prompt = ToolPromptBuilder().buildJsonFallbackPrompt(
+            tools = listOf(complexSchemaToolDefinition())
+        )
+        val example = prompt.lineSequence().first { line -> line.startsWith("{\"type\":\"tool_calls\"") }
+        val output = JsonToolCallParser().parse(example).getOrThrow() as JsonToolModelOutput.ToolCalls
+        val arguments = output.calls.single().argumentsObject().getOrThrow()
+
+        assertEquals("safe", arguments.getValue("mode").jsonPrimitive.content)
+        assertEquals(false, arguments.getValue("options").jsonObject.getValue("enabled").jsonPrimitive.content.toBoolean())
+        assertEquals(0, arguments.getValue("retries").jsonPrimitive.int)
+        assertEquals("https://example.com", arguments.getValue("endpoint").jsonPrimitive.content)
+        assertEquals("value", arguments.getValue("tags").jsonArray.single().jsonPrimitive.content)
+    }
+
+    @Test
     fun `fallback prompt discourages web search for local device state`() {
-        val prompt = ToolPromptBuilder().buildJsonFallbackPrompt()
+        val prompt = ToolPromptBuilder().buildJsonFallbackPrompt(tools = listOf(ToolDefinition.WebSearch))
 
         assertTrue(prompt.contains("Do not call web_search for the user's local date, time, timezone, device state, or app settings."))
     }
@@ -44,7 +78,7 @@ class ToolPromptBuilderTest {
 
     @Test
     fun `fallback prompt requires structured search query planning`() {
-        val prompt = ToolPromptBuilder().buildJsonFallbackPrompt()
+        val prompt = ToolPromptBuilder().buildJsonFallbackPrompt(tools = listOf(ToolDefinition.WebSearch))
 
         assertTrue(prompt.contains("rewrite the user's request into a search-engine query"))
         assertTrue(prompt.contains("Resolve relative dates such as today, yesterday"))
@@ -85,6 +119,31 @@ class ToolPromptBuilderTest {
         assertEquals("web_search", calls.first().name)
         assertEquals("""{"query":"latest Android SDK"}""", calls.first().arguments)
         assertEquals("latest Android SDK", calls.first().argumentsObject().getOrThrow()["query"].toString().trim('"'))
+    }
+
+    @Test
+    fun `fallback parser preserves nested objects and array items`() {
+        val result = ToolCall.parseFallbackCalls(
+            """
+            {
+              "type":"tool_calls",
+              "tool_calls":[
+                {
+                  "id":"call_nested",
+                  "name":"complex_tool",
+                  "arguments":{"options":{"enabled":true},"tags":["one","two"]}
+                }
+              ]
+            }
+            """.trimIndent()
+        ).getOrThrow()
+
+        val arguments = result.single().argumentsObject().getOrThrow()
+        assertTrue(arguments.getValue("options").jsonObject.getValue("enabled").jsonPrimitive.content.toBoolean())
+        assertEquals(
+            listOf("one", "two"),
+            arguments.getValue("tags").jsonArray.map { value -> value.jsonPrimitive.content }
+        )
     }
 
     @Test

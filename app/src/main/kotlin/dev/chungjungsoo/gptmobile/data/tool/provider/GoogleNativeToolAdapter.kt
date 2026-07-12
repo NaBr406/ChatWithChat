@@ -6,10 +6,14 @@ import dev.chungjungsoo.gptmobile.data.dto.google.common.Role
 import dev.chungjungsoo.gptmobile.data.dto.google.request.GoogleFunctionDeclaration
 import dev.chungjungsoo.gptmobile.data.dto.google.request.GoogleTool
 import dev.chungjungsoo.gptmobile.data.dto.google.response.GenerateContentResponse
+import dev.chungjungsoo.gptmobile.data.tool.ToolArgumentStreamLimiter
 import dev.chungjungsoo.gptmobile.data.tool.ToolCall
 import dev.chungjungsoo.gptmobile.data.tool.ToolDefinition
 import dev.chungjungsoo.gptmobile.data.tool.ToolLoopConfig
 import dev.chungjungsoo.gptmobile.data.tool.ToolResult
+import dev.chungjungsoo.gptmobile.data.tool.ToolSchemaDialect
+import dev.chungjungsoo.gptmobile.data.tool.requireWithinToolArgumentLimit
+import dev.chungjungsoo.gptmobile.data.tool.toSchemaJson
 import dev.chungjungsoo.gptmobile.data.tool.toolProtocolJson
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -24,23 +28,36 @@ class GoogleNativeToolAdapter {
                 GoogleFunctionDeclaration(
                     name = definition.name,
                     description = definition.description,
-                    parameters = definition.parameters.toGoogleSchema()
+                    parameters = definition.parameters.toSchemaJson(ToolSchemaDialect.GOOGLE)
                 )
             }
         )
     )
 
-    fun toolCallsFromResponses(responses: List<GenerateContentResponse>): List<ToolCall> = responses
-        .flatMap { response -> response.candidates.orEmpty() }
-        .flatMap { candidate -> candidate.content.parts }
-        .mapNotNull { part -> part.functionCall }
-        .mapIndexed { index, functionCall ->
-            ToolCall(
-                id = functionCall.id?.takeIf { it.isNotBlank() } ?: "function_${index + 1}",
-                name = functionCall.name,
-                arguments = functionCall.args.toString().ifBlank { "{}" }
-            )
-        }
+    fun toolCallsFromResponses(
+        responses: List<GenerateContentResponse>,
+        config: ToolLoopConfig = ToolLoopConfig.Default
+    ): List<ToolCall> {
+        val argumentLimiter = ToolArgumentStreamLimiter(
+            maxArgumentChars = config.maxToolArgumentChars,
+            maxCallIdentities = config.maxToolCallsPerRound
+        )
+        return responses
+            .asSequence()
+            .flatMap { response -> response.candidates.orEmpty().asSequence() }
+            .flatMap { candidate -> candidate.content.parts.asSequence() }
+            .mapNotNull { part -> part.functionCall }
+            .mapIndexed { index, functionCall ->
+                val arguments = functionCall.args.toString().ifBlank { "{}" }
+                argumentLimiter.checkComplete(index, arguments)
+                ToolCall(
+                    id = functionCall.id?.takeIf { it.isNotBlank() } ?: "function_${index + 1}",
+                    name = functionCall.name,
+                    arguments = arguments.requireWithinToolArgumentLimit(config.maxToolArgumentChars)
+                )
+            }
+            .toList()
+    }
 
     fun continuationContents(
         calls: List<ToolCall>,
@@ -95,13 +112,9 @@ class GoogleNativeToolAdapter {
                 }
             }
         )
-    }
-
-    private fun ToolDefinition.Parameters.toGoogleSchema(): JsonObject {
-        val schema = toolProtocolJson.encodeToJsonElement(this).jsonObject
-        return buildJsonObject {
-            schema.forEach { (key, value) -> put(key, value) }
-            put("additionalProperties", JsonPrimitive(false))
+        structuredContent?.let { value -> put("structured_content", value) }
+        if (sources.isNotEmpty()) {
+            put("sources", toolProtocolJson.encodeToJsonElement(sources))
         }
     }
 }

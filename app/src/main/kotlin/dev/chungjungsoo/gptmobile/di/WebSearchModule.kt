@@ -31,8 +31,7 @@ object WebSearchModule {
 
     @Provides
     @Singleton
-    fun provideWebPageExtractor(networkClient: NetworkClient): WebPageExtractor =
-        WebPageExtractor(networkClient)
+    fun provideWebPageExtractor(): WebPageExtractor = WebPageExtractor()
 
     @Provides
     @Singleton
@@ -52,5 +51,4 @@ object WebSearchModule {
     @Singleton
     fun provideSearchDecisionService(modelClient: SearchDecisionModelClient): SearchDecisionService =
         SearchDecisionService(modelClient)
-
 }

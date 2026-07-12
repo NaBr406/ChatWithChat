@@ -18,7 +18,10 @@ interface ToolCallingAdapter {
         config: ToolLoopConfig
     ): String
 
-    fun parseModelOutput(rawText: String): Result<JsonToolModelOutput>
+    fun parseModelOutput(
+        rawText: String,
+        config: ToolLoopConfig = ToolLoopConfig.Default
+    ): Result<JsonToolModelOutput>
 
     fun renderToolResults(
         results: List<ToolResult>,

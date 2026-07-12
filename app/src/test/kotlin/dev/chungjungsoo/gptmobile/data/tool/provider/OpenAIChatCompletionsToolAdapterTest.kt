@@ -8,12 +8,25 @@ import dev.chungjungsoo.gptmobile.data.dto.openai.request.ChatMessage
 import dev.chungjungsoo.gptmobile.data.dto.openai.response.ChatCompletionChunk
 import dev.chungjungsoo.gptmobile.data.network.NetworkClient
 import dev.chungjungsoo.gptmobile.data.tool.CurrentDateTimeToolProvider
+import dev.chungjungsoo.gptmobile.data.tool.ToolArgumentsTooLargeException
 import dev.chungjungsoo.gptmobile.data.tool.ToolCall
+import dev.chungjungsoo.gptmobile.data.tool.ToolCallIdentityLimitExceededException
 import dev.chungjungsoo.gptmobile.data.tool.ToolDefinition
+import dev.chungjungsoo.gptmobile.data.tool.ToolLoopConfig
 import dev.chungjungsoo.gptmobile.data.tool.ToolResult
+import dev.chungjungsoo.gptmobile.data.tool.ToolSource
+import dev.chungjungsoo.gptmobile.data.tool.complexSchemaToolDefinition
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -52,6 +65,40 @@ class OpenAIChatCompletionsToolAdapterTest {
 
         assertTrue(payload.contains(""""name":"current_datetime""""))
         assertTrue(payload.contains(""""parameters":{"type":"object","properties":{},"required":[],"additionalProperties":false}"""))
+    }
+
+    @Test
+    fun `chat completion tools serialize complex supported schema`() {
+        val function = adapter.toChatCompletionTools(listOf(complexSchemaToolDefinition())).single().function
+        val schema = function.parameters
+        val properties = schema.getValue("properties").jsonObject
+
+        assertEquals(true, function.strict)
+        assertFalse(schema.getValue("additionalProperties").jsonPrimitive.boolean)
+        assertEquals(
+            listOf("mode", "options", "tags", "retries", "endpoint"),
+            schema.getValue("required").jsonArray.map { value -> value.jsonPrimitive.content }
+        )
+        assertEquals(
+            listOf("safe", "fast"),
+            properties.getValue("mode").jsonObject.getValue("enum").jsonArray.map { value -> value.jsonPrimitive.content }
+        )
+        assertEquals("object", properties.getValue("options").jsonObject.getValue("type").jsonPrimitive.content)
+        assertFalse(properties.getValue("options").jsonObject.getValue("additionalProperties").jsonPrimitive.boolean)
+        assertEquals(
+            "string",
+            properties.getValue("tags").jsonObject.getValue("items").jsonObject.getValue("type").jsonPrimitive.content
+        )
+        assertFalse(properties.getValue("endpoint").jsonObject.containsKey("format"))
+    }
+
+    @Test
+    fun `chat completion tool disables strict mode for optional properties`() {
+        val function = adapter.toChatCompletionTools(
+            listOf(complexSchemaToolDefinition(required = listOf("mode")))
+        ).single().function
+
+        assertEquals(false, function.strict)
     }
 
     @Test
@@ -112,6 +159,55 @@ class OpenAIChatCompletionsToolAdapterTest {
     }
 
     @Test
+    fun `streamed tool arguments stop accumulating at configured limit`() {
+        val chunk = NetworkClient.openAIJson.decodeFromString<ChatCompletionChunk>(
+            """
+            {
+              "choices": [{
+                "index": 0,
+                "delta": {
+                  "tool_calls": [{
+                    "index": 0,
+                    "id": "call_1",
+                    "function": {"name": "web_search", "arguments": "12345"}
+                  }]
+                }
+              }]
+            }
+            """.trimIndent()
+        )
+
+        val exception = assertThrows(ToolArgumentsTooLargeException::class.java) {
+            adapter.toolCallsFromChunks(listOf(chunk), ToolLoopConfig(maxToolArgumentChars = 4))
+        }
+
+        assertEquals("tool_arguments_too_large", exception.message)
+    }
+
+    @Test
+    fun `chat completions count tool calls without argument fragments`() {
+        val chunk = NetworkClient.openAIJson.decodeFromString<ChatCompletionChunk>(
+            """
+            {
+              "choices": [{
+                "index": 0,
+                "delta": {
+                  "tool_calls": [
+                    {"index": 0, "id": "call_1", "function": {"name": "current_datetime"}},
+                    {"index": 1, "id": "call_2", "function": {"name": "current_datetime"}}
+                  ]
+                }
+              }]
+            }
+            """.trimIndent()
+        )
+
+        assertThrows(ToolCallIdentityLimitExceededException::class.java) {
+            adapter.toolCallsFromChunks(listOf(chunk), ToolLoopConfig(maxToolCallsPerRound = 1))
+        }
+    }
+
+    @Test
     fun `continuation messages serialize assistant tool calls and tool result`() {
         val messages = adapter.continuationMessages(
             calls = listOf(
@@ -126,7 +222,9 @@ class OpenAIChatCompletionsToolAdapterTest {
                     callId = "call_1",
                     name = "web_search",
                     content = "Search result",
-                    metadata = mapOf("source_0_url" to "https://example.com/source")
+                    metadata = mapOf("source_0_url" to "https://example.com/source"),
+                    structuredContent = buildJsonObject { put("count", 1) },
+                    sources = listOf(ToolSource.PublicUrl("Example", "https://example.com/source"))
                 )
             )
         )
@@ -140,5 +238,7 @@ class OpenAIChatCompletionsToolAdapterTest {
         assertTrue(payload.contains(""""tool_call_id":"call_1""""))
         assertTrue(payload.contains("Search result"))
         assertTrue(payload.contains("https://example.com/source"))
+        assertTrue(payload.contains("structured_content"))
+        assertTrue(payload.contains("public_url"))
     }
 }

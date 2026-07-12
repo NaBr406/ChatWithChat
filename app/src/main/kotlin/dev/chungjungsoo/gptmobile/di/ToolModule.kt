@@ -3,13 +3,17 @@ package dev.chungjungsoo.gptmobile.di
 import android.content.Context
 import dagger.Module
 import dagger.Provides
-import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.InstallIn
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import dev.chungjungsoo.gptmobile.data.tool.AndroidDeviceLocationReader
 import dev.chungjungsoo.gptmobile.data.tool.AndroidToolPermissionChecker
 import dev.chungjungsoo.gptmobile.data.tool.BuiltInTools
 import dev.chungjungsoo.gptmobile.data.tool.JsonToolCallParser
+import dev.chungjungsoo.gptmobile.data.tool.NoOpToolAuditSink
+import dev.chungjungsoo.gptmobile.data.tool.ToolApprovalAuthority
+import dev.chungjungsoo.gptmobile.data.tool.ToolAuditSink
+import dev.chungjungsoo.gptmobile.data.tool.ToolExecutionContextFactory
 import dev.chungjungsoo.gptmobile.data.tool.ToolExecutor
 import dev.chungjungsoo.gptmobile.data.tool.ToolLoopOrchestrator
 import dev.chungjungsoo.gptmobile.data.tool.ToolPermissionChecker
@@ -48,12 +52,30 @@ object ToolModule {
 
     @Provides
     @Singleton
+    fun provideToolApprovalAuthority(): ToolApprovalAuthority = ToolApprovalAuthority()
+
+    @Provides
+    @Singleton
+    fun provideToolExecutionContextFactory(): ToolExecutionContextFactory = ToolExecutionContextFactory()
+
+    @Provides
+    @Singleton
+    fun provideToolAuditSink(): ToolAuditSink = NoOpToolAuditSink
+
+    @Provides
+    @Singleton
     fun provideToolExecutor(
         toolRegistry: ToolRegistry,
-        toolPermissionChecker: ToolPermissionChecker
+        toolPermissionChecker: ToolPermissionChecker,
+        toolApprovalAuthority: ToolApprovalAuthority,
+        toolExecutionContextFactory: ToolExecutionContextFactory,
+        toolAuditSink: ToolAuditSink
     ): ToolExecutor = ToolExecutor(
         toolRegistry = toolRegistry,
-        permissionChecker = toolPermissionChecker
+        permissionChecker = toolPermissionChecker,
+        approvalAuthority = toolApprovalAuthority,
+        executionContextFactory = toolExecutionContextFactory,
+        auditSink = toolAuditSink
     )
 
     @Provides

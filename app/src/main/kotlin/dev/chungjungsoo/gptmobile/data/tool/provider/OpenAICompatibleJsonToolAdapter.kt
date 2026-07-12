@@ -27,7 +27,10 @@ class OpenAICompatibleJsonToolAdapter(
         config = config
     )
 
-    override fun parseModelOutput(rawText: String): Result<JsonToolModelOutput> = jsonToolCallParser.parse(rawText)
+    override fun parseModelOutput(
+        rawText: String,
+        config: ToolLoopConfig
+    ): Result<JsonToolModelOutput> = jsonToolCallParser.parse(rawText, config)
 
     override fun renderToolResults(
         results: List<ToolResult>,

@@ -71,10 +71,25 @@ data class AssistantRevision(
 @Serializable
 data class MessageSourceMetadata(
     val title: String,
-    val url: String,
+    val url: String = "",
     val snippet: String = "",
-    val sourceToolName: String
+    val sourceToolName: String,
+    val sourceType: MessageSourceType = MessageSourceType.PUBLIC_URL,
+    val localEntityId: String? = null,
+    val appNavigationTarget: AppSourceNavigationTarget? = null
 )
+
+@Serializable
+enum class MessageSourceType {
+    PUBLIC_URL,
+    LOCAL_APP
+}
+
+@Serializable
+enum class AppSourceNavigationTarget {
+    CHAT_ROOM,
+    MEMORY
+}
 
 const val ACTIVE_REVISION_LATEST = -1
 

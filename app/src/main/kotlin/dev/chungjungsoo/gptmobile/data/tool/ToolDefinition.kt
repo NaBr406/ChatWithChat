@@ -1,7 +1,9 @@
 package dev.chungjungsoo.gptmobile.data.tool
 
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 internal val toolProtocolJson = Json {
@@ -21,20 +23,44 @@ data class ToolDefinition(
         appendLine("Name: $name")
         appendLine("Description: $description")
         append("Parameters: ")
-        append(toolProtocolJson.encodeToString(parameters))
+        append(parameters.toSchemaJson(ToolSchemaDialect.JSON_FALLBACK))
     }
 
     @Serializable
     data class Parameters(
         val type: String = "object",
         val properties: Map<String, Parameter> = emptyMap(),
-        val required: List<String> = emptyList()
+        val required: List<String> = emptyList(),
+        val additionalProperties: Boolean = false,
+        val description: String? = null
     )
 
+    @OptIn(ExperimentalSerializationApi::class)
     @Serializable
     data class Parameter(
         val type: String,
-        val description: String
+        val description: String? = null,
+        @EncodeDefault(EncodeDefault.Mode.NEVER)
+        val properties: Map<String, Parameter> = emptyMap(),
+        @EncodeDefault(EncodeDefault.Mode.NEVER)
+        val required: List<String> = emptyList(),
+        @EncodeDefault(EncodeDefault.Mode.NEVER)
+        val items: Parameter? = null,
+        @SerialName("enum")
+        @EncodeDefault(EncodeDefault.Mode.NEVER)
+        val enumValues: List<String> = emptyList(),
+        @EncodeDefault(EncodeDefault.Mode.NEVER)
+        val additionalProperties: Boolean? = null,
+        @EncodeDefault(EncodeDefault.Mode.NEVER)
+        val minimum: Double? = null,
+        @EncodeDefault(EncodeDefault.Mode.NEVER)
+        val maximum: Double? = null,
+        @EncodeDefault(EncodeDefault.Mode.NEVER)
+        val minLength: Int? = null,
+        @EncodeDefault(EncodeDefault.Mode.NEVER)
+        val maxLength: Int? = null,
+        @EncodeDefault(EncodeDefault.Mode.NEVER)
+        val format: String? = null
     )
 
     companion object {

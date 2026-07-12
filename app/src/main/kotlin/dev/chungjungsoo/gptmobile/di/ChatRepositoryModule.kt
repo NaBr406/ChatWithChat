@@ -22,7 +22,6 @@ import dev.chungjungsoo.gptmobile.data.repository.ChatRepositoryImpl
 import dev.chungjungsoo.gptmobile.data.repository.SettingRepository
 import dev.chungjungsoo.gptmobile.data.tool.ToolLoopOrchestrator
 import dev.chungjungsoo.gptmobile.data.websearch.SearchDecisionService
-import dev.chungjungsoo.gptmobile.data.websearch.WebSearchRepository
 import javax.inject.Singleton
 
 @Module
@@ -45,7 +44,6 @@ object ChatRepositoryModule {
         googleAPI: GoogleAPI,
         attachmentUploadCoordinator: dev.chungjungsoo.gptmobile.data.repository.AttachmentUploadCoordinator,
         contextBuilder: ContextBuilder,
-        webSearchRepository: WebSearchRepository,
         toolLoopOrchestrator: ToolLoopOrchestrator,
         searchDecisionService: SearchDecisionService,
         memoryTurnBatchScheduler: MemoryTurnBatchScheduler
@@ -63,7 +61,6 @@ object ChatRepositoryModule {
         googleAPI,
         attachmentUploadCoordinator,
         contextBuilder,
-        webSearchRepository,
         toolLoopOrchestrator,
         searchDecisionService = searchDecisionService,
         memoryTurnBatchScheduler = memoryTurnBatchScheduler

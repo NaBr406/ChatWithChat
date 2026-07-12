@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import dev.chungjungsoo.gptmobile.data.model.ApiType
 import dev.chungjungsoo.gptmobile.data.model.DynamicTheme
 import dev.chungjungsoo.gptmobile.data.model.ThemeMode
@@ -74,6 +75,8 @@ class SettingDataSourceImpl @Inject constructor(
     private val memoryEnabledKey = booleanPreferencesKey("memory_enabled")
     private val memoryMaintenanceNotificationsEnabledKey = booleanPreferencesKey("memory_maintenance_notifications_enabled")
     private val toolCallingModeKey = stringPreferencesKey("tool_calling_mode")
+    private val enabledToolNamesKey = stringSetPreferencesKey("enabled_tool_names")
+    private val disabledToolNamesKey = stringSetPreferencesKey("disabled_tool_names")
     private val webSearchModeKey = stringPreferencesKey("web_search_mode")
     private val webSearchSearxngBaseUrlKey = stringPreferencesKey("web_search_searxng_base_url")
 
@@ -157,6 +160,22 @@ class SettingDataSourceImpl @Inject constructor(
         }
     }
 
+    override suspend fun updateToolEnabled(toolName: String, enabled: Boolean) {
+        dataStore.edit { pref ->
+            val enabledToolNames = pref[enabledToolNamesKey].orEmpty().toMutableSet()
+            val disabledToolNames = pref[disabledToolNamesKey].orEmpty().toMutableSet()
+            if (enabled) {
+                enabledToolNames.add(toolName)
+                disabledToolNames.remove(toolName)
+            } else {
+                enabledToolNames.remove(toolName)
+                disabledToolNames.add(toolName)
+            }
+            pref[enabledToolNamesKey] = enabledToolNames
+            pref[disabledToolNamesKey] = disabledToolNames
+        }
+    }
+
     override suspend fun updateWebSearchMode(mode: String) {
         dataStore.edit { pref ->
             pref[webSearchModeKey] = mode
@@ -235,6 +254,14 @@ class SettingDataSourceImpl @Inject constructor(
 
     override suspend fun getToolCallingMode(): String? = dataStore.data.map { pref ->
         pref[toolCallingModeKey]
+    }.first()
+
+    override suspend fun getEnabledToolNames(): Set<String> = dataStore.data.map { pref ->
+        pref[enabledToolNamesKey].orEmpty()
+    }.first()
+
+    override suspend fun getDisabledToolNames(): Set<String> = dataStore.data.map { pref ->
+        pref[disabledToolNamesKey].orEmpty()
     }.first()
 
     override suspend fun getWebSearchMode(): String? = dataStore.data.map { pref ->

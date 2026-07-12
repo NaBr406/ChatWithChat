@@ -7,8 +7,8 @@ import dev.chungjungsoo.gptmobile.data.database.dao.PlatformV2Dao
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformModelRefreshStatus
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformModelV2
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
-import dev.chungjungsoo.gptmobile.data.dto.APIModel
 import dev.chungjungsoo.gptmobile.data.datastore.SettingDataSource
+import dev.chungjungsoo.gptmobile.data.dto.APIModel
 import dev.chungjungsoo.gptmobile.data.dto.Platform
 import dev.chungjungsoo.gptmobile.data.dto.ThemeSetting
 import dev.chungjungsoo.gptmobile.data.model.ApiType
@@ -18,9 +18,10 @@ import dev.chungjungsoo.gptmobile.data.model.DynamicTheme
 import dev.chungjungsoo.gptmobile.data.model.LastSelectedModel
 import dev.chungjungsoo.gptmobile.data.model.ModelRefreshResult
 import dev.chungjungsoo.gptmobile.data.model.ReasoningMode
-import dev.chungjungsoo.gptmobile.data.model.defaultReasoningMode
 import dev.chungjungsoo.gptmobile.data.model.ThemeMode
+import dev.chungjungsoo.gptmobile.data.model.defaultReasoningMode
 import dev.chungjungsoo.gptmobile.data.tool.ToolCallingMode
+import dev.chungjungsoo.gptmobile.data.tool.ToolEnablementOverrides
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchMode
 import javax.inject.Inject
 
@@ -131,6 +132,17 @@ class SettingRepositoryImpl @Inject constructor(
     override suspend fun fetchToolCallingMode(): ToolCallingMode =
         ToolCallingMode.fromStorageValue(settingDataSource.getToolCallingMode())
 
+    override suspend fun fetchDisabledToolNames(): Set<String> =
+        settingDataSource.getDisabledToolNames()
+            .map { toolName -> toolName.trim() }
+            .filter { toolName -> toolName.isNotBlank() }
+            .toSet()
+
+    override suspend fun fetchToolEnablementOverrides(): ToolEnablementOverrides = ToolEnablementOverrides(
+        enabledToolNames = settingDataSource.getEnabledToolNames().normalizedToolNames(),
+        disabledToolNames = settingDataSource.getDisabledToolNames().normalizedToolNames()
+    )
+
     override suspend fun fetchWebSearchMode(): WebSearchMode =
         WebSearchMode.fromStorageValue(settingDataSource.getWebSearchMode())
 
@@ -217,6 +229,12 @@ class SettingRepositoryImpl @Inject constructor(
 
     override suspend fun updateToolCallingMode(mode: ToolCallingMode) {
         settingDataSource.updateToolCallingMode(mode.storageValue)
+    }
+
+    override suspend fun updateToolEnabled(toolName: String, enabled: Boolean) {
+        val sanitizedToolName = toolName.trim()
+        if (sanitizedToolName.isBlank()) return
+        settingDataSource.updateToolEnabled(sanitizedToolName, enabled)
     }
 
     override suspend fun updateWebSearchMode(mode: WebSearchMode) {
@@ -406,3 +424,7 @@ class SettingRepositoryImpl @Inject constructor(
 
     override suspend fun getPlatformV2ById(id: Int): PlatformV2? = platformV2Dao.getPlatform(id)
 }
+
+private fun Set<String>.normalizedToolNames(): Set<String> = map { toolName -> toolName.trim() }
+    .filter { toolName -> toolName.isNotBlank() }
+    .toSet()

@@ -7,7 +7,11 @@ import dev.chungjungsoo.gptmobile.data.database.entity.PlatformModelV2
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
 import dev.chungjungsoo.gptmobile.data.repository.MemoryRepository
 import dev.chungjungsoo.gptmobile.data.repository.SettingRepository
+import dev.chungjungsoo.gptmobile.data.tool.ResolvedToolCatalogEntry
 import dev.chungjungsoo.gptmobile.data.tool.ToolCallingMode
+import dev.chungjungsoo.gptmobile.data.tool.ToolEnablementOverrides
+import dev.chungjungsoo.gptmobile.data.tool.ToolEnablementResolver
+import dev.chungjungsoo.gptmobile.data.tool.ToolRegistry
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchMode
 import java.net.URI
 import javax.inject.Inject
@@ -17,11 +21,15 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 @HiltViewModel
 class SettingViewModelV2 @Inject constructor(
     private val settingRepository: SettingRepository,
-    private val memoryRepository: MemoryRepository
+    private val memoryRepository: MemoryRepository,
+    private val toolRegistry: ToolRegistry,
+    private val toolEnablementResolver: ToolEnablementResolver
 ) : ViewModel() {
 
     private val _platformState = MutableStateFlow(listOf<PlatformV2>())
@@ -47,6 +55,7 @@ class SettingViewModelV2 @Inject constructor(
 
     private var lastAddedPlatformUid: String? = null
     private var webSearchBaseUrlSaveJob: Job? = null
+    private val toolSettingsMutex = Mutex()
 
     init {
         fetchPlatforms()
@@ -106,12 +115,17 @@ class SettingViewModelV2 @Inject constructor(
 
     fun fetchWebSearchSettings() {
         viewModelScope.launch {
-            _webSearchSettings.update {
-                WebSearchSettingsState(
-                    toolCallingMode = settingRepository.fetchToolCallingMode(),
-                    mode = settingRepository.fetchWebSearchMode(),
-                    searxngBaseUrl = settingRepository.fetchWebSearchSearxngBaseUrl()
-                )
+            toolSettingsMutex.withLock {
+                val toolEnablementOverrides = settingRepository.fetchToolEnablementOverrides()
+                _webSearchSettings.update {
+                    WebSearchSettingsState(
+                        toolCallingMode = settingRepository.fetchToolCallingMode(),
+                        toolEnablementOverrides = toolEnablementOverrides,
+                        tools = visibleTools(toolEnablementOverrides),
+                        mode = settingRepository.fetchWebSearchMode(),
+                        searxngBaseUrl = settingRepository.fetchWebSearchSearxngBaseUrl()
+                    )
+                }
             }
         }
     }
@@ -122,6 +136,26 @@ class SettingViewModelV2 @Inject constructor(
             settingRepository.updateToolCallingMode(mode)
         }
     }
+
+    fun updateToolEnabled(toolName: String, enabled: Boolean) {
+        if (toolRegistry.catalogEntryFor(toolName)?.settings?.userVisible != true) return
+        viewModelScope.launch {
+            toolSettingsMutex.withLock {
+                settingRepository.updateToolEnabled(toolName, enabled)
+                val overrides = settingRepository.fetchToolEnablementOverrides()
+                _webSearchSettings.update { currentState ->
+                    currentState.copy(
+                        toolEnablementOverrides = overrides,
+                        tools = visibleTools(overrides)
+                    )
+                }
+            }
+        }
+    }
+
+    private fun visibleTools(overrides: ToolEnablementOverrides): List<ResolvedToolCatalogEntry> =
+        toolEnablementResolver.resolve(toolRegistry.catalog, overrides)
+            .filter { entry -> entry.catalogEntry.settings.userVisible }
 
     fun updateWebSearchMode(mode: WebSearchMode) {
         _webSearchSettings.update { currentState -> currentState.copy(mode = mode) }
@@ -264,7 +298,9 @@ class SettingViewModelV2 @Inject constructor(
     )
 
     data class WebSearchSettingsState(
-        val toolCallingMode: ToolCallingMode = ToolCallingMode.Off,
+        val toolCallingMode: ToolCallingMode = ToolCallingMode.Auto,
+        val toolEnablementOverrides: ToolEnablementOverrides = ToolEnablementOverrides(),
+        val tools: List<ResolvedToolCatalogEntry> = emptyList(),
         val mode: WebSearchMode = WebSearchMode.Off,
         val searxngBaseUrl: String = "",
         val searxngBaseUrlError: Boolean = false

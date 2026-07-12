@@ -1,8 +1,10 @@
 package dev.chungjungsoo.gptmobile.util
 
 import dev.chungjungsoo.gptmobile.data.database.entity.ACTIVE_REVISION_LATEST
+import dev.chungjungsoo.gptmobile.data.database.entity.AppSourceNavigationTarget
 import dev.chungjungsoo.gptmobile.data.database.entity.AssistantRevision
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageSourceMetadata
+import dev.chungjungsoo.gptmobile.data.database.entity.MessageSourceType
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
 import dev.chungjungsoo.gptmobile.data.dto.ApiState
 import dev.chungjungsoo.gptmobile.presentation.ui.chat.ChatViewModel
@@ -186,6 +188,37 @@ class ApiStateFlowExtensionsTest {
         val assistantMessage = messageFlow.value.assistantMessages[0][0]
         assertEquals("Answer", assistantMessage.content)
         assertEquals(listOf(source), assistantMessage.sourceMetadata)
+    }
+
+    @Test
+    fun `handleStates keeps safe local sources and drops unsafe external schemes`() = runBlocking {
+        val localSource = MessageSourceMetadata(
+            title = "Project chat",
+            sourceToolName = "local_search",
+            sourceType = MessageSourceType.LOCAL_APP,
+            localEntityId = "chat:42",
+            appNavigationTarget = AppSourceNavigationTarget.CHAT_ROOM
+        )
+        val unsafeSource = MessageSourceMetadata(
+            title = "Private file",
+            url = "file:///private/chat.db",
+            sourceToolName = "local_search"
+        )
+        val messageFlow = MutableStateFlow(
+            ChatViewModel.GroupedMessages(
+                userMessages = listOf(MessageV2(content = "Hello", platformType = null)),
+                assistantMessages = listOf(listOf(MessageV2(content = "", platformType = "platform-1")))
+            )
+        )
+
+        flowOf(ApiState.SourcesUpdated(listOf(localSource, unsafeSource)), ApiState.Done).handleStates(
+            messageFlow = messageFlow,
+            turnIndex = 0,
+            platformIdx = 0,
+            onLoadingComplete = {}
+        )
+
+        assertEquals(listOf(localSource), messageFlow.value.assistantMessages[0][0].sourceMetadata)
     }
 
     @Test

@@ -11,7 +11,11 @@ sealed class ApiState {
     data class UsageUpdated(val usage: TokenUsageRecord) : ApiState()
     data class ToolStarted(val toolName: String, val label: String) : ApiState()
     data class ToolFinished(val toolName: String, val label: String) : ApiState()
-    data class ToolFailed(val toolName: String, val message: String) : ApiState()
+    data class ToolFailed(
+        val toolName: String,
+        val message: String,
+        val errorCode: String? = null
+    ) : ApiState()
     data class Error(val message: String) : ApiState()
     data object Done : ApiState()
 }

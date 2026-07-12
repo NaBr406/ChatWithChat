@@ -7,13 +7,26 @@ import dev.chungjungsoo.gptmobile.data.dto.anthropic.request.InputMessage
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.request.MessageRequest
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.response.MessageResponseChunk
 import dev.chungjungsoo.gptmobile.data.tool.CurrentDateTimeToolProvider
+import dev.chungjungsoo.gptmobile.data.tool.ToolArgumentsTooLargeException
 import dev.chungjungsoo.gptmobile.data.tool.ToolCall
+import dev.chungjungsoo.gptmobile.data.tool.ToolCallIdentityLimitExceededException
 import dev.chungjungsoo.gptmobile.data.tool.ToolDefinition
+import dev.chungjungsoo.gptmobile.data.tool.ToolLoopConfig
 import dev.chungjungsoo.gptmobile.data.tool.ToolResult
+import dev.chungjungsoo.gptmobile.data.tool.ToolSource
+import dev.chungjungsoo.gptmobile.data.tool.complexSchemaToolDefinition
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -59,6 +72,29 @@ class AnthropicNativeToolAdapterTest {
 
         assertTrue(payload.contains(""""name":"current_datetime""""))
         assertTrue(payload.contains(""""input_schema":{"type":"object","properties":{},"required":[],"additionalProperties":false}"""))
+    }
+
+    @Test
+    fun `anthropic tools serialize the complete canonical schema`() {
+        val schema = adapter.toAnthropicTools(listOf(complexSchemaToolDefinition())).single().inputSchema
+        val properties = schema.getValue("properties").jsonObject
+
+        assertFalse(schema.getValue("additionalProperties").jsonPrimitive.boolean)
+        assertEquals(
+            listOf("mode", "options", "tags", "retries", "endpoint"),
+            schema.getValue("required").jsonArray.map { value -> value.jsonPrimitive.content }
+        )
+        assertEquals(
+            listOf("safe", "fast"),
+            properties.getValue("mode").jsonObject.getValue("enum").jsonArray.map { value -> value.jsonPrimitive.content }
+        )
+        assertEquals("object", properties.getValue("options").jsonObject.getValue("type").jsonPrimitive.content)
+        assertFalse(properties.getValue("options").jsonObject.getValue("additionalProperties").jsonPrimitive.boolean)
+        assertEquals(
+            "string",
+            properties.getValue("tags").jsonObject.getValue("items").jsonObject.getValue("type").jsonPrimitive.content
+        )
+        assertEquals("uri", properties.getValue("endpoint").jsonObject.getValue("format").jsonPrimitive.content)
     }
 
     @Test
@@ -111,6 +147,48 @@ class AnthropicNativeToolAdapterTest {
     }
 
     @Test
+    fun `streamed anthropic arguments stop accumulating at configured limit`() {
+        val chunk = json.decodeFromString<MessageResponseChunk>(
+            """
+            {
+              "type": "content_block_delta",
+              "index": 0,
+              "delta": {"type": "input_json_delta", "partial_json": "12345"}
+            }
+            """.trimIndent()
+        )
+
+        val exception = assertThrows(ToolArgumentsTooLargeException::class.java) {
+            adapter.toolCallsFromChunks(listOf(chunk), ToolLoopConfig(maxToolArgumentChars = 4))
+        }
+
+        assertEquals("tool_arguments_too_large", exception.message)
+    }
+
+    @Test
+    fun `anthropic counts tool use blocks without input`() {
+        val chunks = (0..1).map { index ->
+            json.decodeFromString<MessageResponseChunk>(
+                """
+                {
+                  "type": "content_block_start",
+                  "index": $index,
+                  "content_block": {
+                    "type": "tool_use",
+                    "id": "toolu_$index",
+                    "name": "current_datetime"
+                  }
+                }
+                """.trimIndent()
+            )
+        }
+
+        assertThrows(ToolCallIdentityLimitExceededException::class.java) {
+            adapter.toolCallsFromChunks(chunks, ToolLoopConfig(maxToolCallsPerRound = 1))
+        }
+    }
+
+    @Test
     fun `continuation messages serialize tool use and tool result`() {
         val messages = adapter.continuationMessages(
             calls = listOf(
@@ -125,7 +203,9 @@ class AnthropicNativeToolAdapterTest {
                     callId = "toolu_1",
                     name = "web_search",
                     content = "Search result",
-                    metadata = mapOf("source_0_url" to "https://example.com/source")
+                    metadata = mapOf("source_0_url" to "https://example.com/source"),
+                    structuredContent = buildJsonObject { put("count", 1) },
+                    sources = listOf(ToolSource.PublicUrl("Example", "https://example.com/source"))
                 )
             )
         )
@@ -140,5 +220,7 @@ class AnthropicNativeToolAdapterTest {
         assertTrue(payload.contains(""""tool_use_id":"toolu_1""""))
         assertTrue(payload.contains("Search result"))
         assertTrue(payload.contains("https://example.com/source"))
+        assertTrue(payload.contains("structured_content"))
+        assertTrue(payload.contains("public_url"))
     }
 }

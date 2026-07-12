@@ -72,7 +72,8 @@ class ChatViewModel @Inject constructor(
         val toolName: String,
         val label: String,
         val status: ToolProgressStatus,
-        val message: String? = null
+        val message: String? = null,
+        val errorCode: String? = null
     )
 
     data class GroupedMessages(
@@ -138,7 +139,7 @@ class ChatViewModel @Inject constructor(
     private val _availableChatModels = MutableStateFlow(listOf<AvailableChatModel>())
     val availableChatModels = _availableChatModels.asStateFlow()
 
-    private val _memoryEnabled = MutableStateFlow(false)
+    private val memoryEnabledState = MutableStateFlow(false)
 
     // All platforms configured in app (including disabled)
     private val _platformsInApp = MutableStateFlow(listOf<PlatformV2>())
@@ -733,7 +734,7 @@ class ChatViewModel @Inject constructor(
 
     private suspend fun refreshMemoryEnabled(): Boolean {
         val enabled = settingRepository.fetchMemoryEnabled()
-        _memoryEnabled.update { enabled }
+        memoryEnabledState.update { enabled }
         return enabled
     }
 
@@ -1073,7 +1074,7 @@ class ChatViewModel @Inject constructor(
         val selectedModel = selectPersistedModel(availableModels, persistedModels)
             ?: selectInitialModel(availableModels)
 
-        _memoryEnabled.update { settingRepository.fetchMemoryEnabled() }
+        memoryEnabledState.update { settingRepository.fetchMemoryEnabled() }
         if (selectedModel == null) {
             _lastSelectedModel.update { null }
             _chatPlatformModels.update { emptyMap() }
@@ -1289,7 +1290,8 @@ internal fun List<ChatViewModel.ToolProgressState>.appendToolProgress(progress: 
             toolName = progress.toolName,
             label = lastRunningLabelFor(progress.toolName) ?: progress.toolName,
             status = ChatViewModel.ToolProgressStatus.Failed,
-            message = progress.message
+            message = progress.message,
+            errorCode = progress.errorCode
         )
         else -> return this
     }

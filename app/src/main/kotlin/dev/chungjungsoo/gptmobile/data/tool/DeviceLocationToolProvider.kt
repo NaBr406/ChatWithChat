@@ -9,15 +9,25 @@ import android.os.CancellationSignal
 import androidx.core.content.ContextCompat
 import java.time.Instant
 import java.util.Locale
+import kotlin.coroutines.resume
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlin.coroutines.resume
 
 class DeviceLocationToolProvider(
     private val locationReader: DeviceLocationReader
 ) : ToolProvider {
     override val definition: ToolDefinition = ToolDefinition.DeviceLocation
+
+    override val settingsMetadata: ToolSettingsMetadata = ToolSettingsMetadata(
+        category = ToolCategory.Device,
+        defaultEnabled = false,
+        isSensitive = true,
+        presentationKey = "device_location",
+        iconKey = "location"
+    )
+
+    override val securityPolicy: ToolSecurityPolicy = ToolSecurityPolicy.ReadOnlyPrivate
     override val permissionRequirements: List<ToolPermissionRequirement> = listOf(DeviceLocationPermissionRequirement)
 
     override val policy: ToolPolicy = ToolPolicy(

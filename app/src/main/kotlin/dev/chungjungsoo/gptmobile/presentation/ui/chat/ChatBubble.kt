@@ -54,7 +54,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import dev.chungjungsoo.gptmobile.R
+import dev.chungjungsoo.gptmobile.data.database.entity.AppSourceNavigationTarget
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageSourceMetadata
+import dev.chungjungsoo.gptmobile.data.database.entity.SafeMessageSourceTarget
+import dev.chungjungsoo.gptmobile.data.database.entity.safeDedupeKey
+import dev.chungjungsoo.gptmobile.data.database.entity.safeNavigationTarget
 import dev.chungjungsoo.gptmobile.presentation.theme.GPTMobileTheme
 import java.io.File
 
@@ -242,8 +246,9 @@ private fun SourceMetadataBlock(
     modifier: Modifier = Modifier
 ) {
     val visibleSources = sources
-        .filter { source -> source.url.isNotBlank() }
-        .distinctBy { source -> source.url.trim() }
+        .mapNotNull { source -> source.safeDedupeKey()?.let { key -> key to source } }
+        .distinctBy { (key, _) -> key }
+        .map { (_, source) -> source }
         .take(MAX_VISIBLE_SOURCES)
     if (visibleSources.isEmpty()) return
 
@@ -304,16 +309,27 @@ private fun SourceMetadataBlock(
 
 @Composable
 private fun SourceMetadataItem(source: MessageSourceMetadata) {
+    val target = source.safeNavigationTarget() ?: return
+    val detail = when (target) {
+        is SafeMessageSourceTarget.PublicUrl -> target.url
+        is SafeMessageSourceTarget.LocalApp -> {
+            val targetLabel = when (target.navigationTarget) {
+                AppSourceNavigationTarget.CHAT_ROOM -> stringResource(R.string.source_local_chat)
+                AppSourceNavigationTarget.MEMORY -> stringResource(R.string.source_local_memory)
+            }
+            "$targetLabel · ${target.entityId}"
+        }
+    }
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(
-            text = source.title.ifBlank { source.url },
+            text = source.title.ifBlank { detail },
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
         Text(
-            text = source.url,
+            text = detail,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.primary,
             maxLines = 1,
@@ -381,6 +397,7 @@ private fun CopyTextIcon(onCopyClick: () -> Unit) {
         )
     }
 }
+
 @Composable
 private fun SelectTextIcon(onSelectClick: () -> Unit) {
     IconButton(modifier = Modifier.size(36.dp), onClick = onSelectClick) {

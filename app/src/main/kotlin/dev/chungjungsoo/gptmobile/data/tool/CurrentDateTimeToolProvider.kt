@@ -11,6 +11,16 @@ class CurrentDateTimeToolProvider(
 ) : ToolProvider {
     override val definition: ToolDefinition = ToolDefinition.CurrentDateTime
 
+    override val settingsMetadata: ToolSettingsMetadata = ToolSettingsMetadata(
+        category = ToolCategory.Utility,
+        defaultEnabled = true,
+        isSensitive = false,
+        presentationKey = "current_datetime",
+        iconKey = "schedule"
+    )
+
+    override val securityPolicy: ToolSecurityPolicy = ToolSecurityPolicy.ReadOnlyPublic
+
     override val policy: ToolPolicy = ToolPolicy(
         maxCallsPerRequest = 1,
         maxCallsPerChat = 2,

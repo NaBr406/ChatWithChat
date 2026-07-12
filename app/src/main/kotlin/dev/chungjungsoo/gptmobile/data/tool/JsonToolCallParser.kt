@@ -5,7 +5,11 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 class JsonToolCallParser {
-    fun parse(rawText: String): Result<JsonToolModelOutput> = runCatching {
+    fun parse(
+        rawText: String,
+        config: ToolLoopConfig = ToolLoopConfig.Default
+    ): Result<JsonToolModelOutput> = runCatching {
+        rawText.requireWithinToolProtocolResponseLimit(config)
         val jsonText = rawText.extractJsonObject()
             ?: throw IllegalArgumentException("tool_response_json_not_found")
         val payload = toolProtocolJson.parseToJsonElement(jsonText).jsonObject
@@ -17,7 +21,7 @@ class JsonToolCallParser {
                     .orEmpty()
             )
             TOOL_CALLS_TYPE -> JsonToolModelOutput.ToolCalls(
-                calls = ToolCall.parseFallbackCalls(jsonText).getOrThrow()
+                calls = parseFallbackToolCalls(payload, config)
             )
             else -> throw IllegalArgumentException("tool_response_type_unknown")
         }

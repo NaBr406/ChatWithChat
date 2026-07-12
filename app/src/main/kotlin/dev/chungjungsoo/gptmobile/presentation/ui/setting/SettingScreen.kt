@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -25,8 +26,12 @@ import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.Schedule
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -45,11 +50,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -61,7 +70,9 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.chungjungsoo.gptmobile.R
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
+import dev.chungjungsoo.gptmobile.data.tool.ResolvedToolCatalogEntry
 import dev.chungjungsoo.gptmobile.data.tool.ToolCallingMode
+import dev.chungjungsoo.gptmobile.data.tool.ToolCatalogEntry
 import dev.chungjungsoo.gptmobile.data.websearch.WebSearchMode
 import dev.chungjungsoo.gptmobile.presentation.common.AppleBlue
 import dev.chungjungsoo.gptmobile.presentation.common.AppleGray
@@ -71,6 +82,7 @@ import dev.chungjungsoo.gptmobile.presentation.common.AppleOrange
 import dev.chungjungsoo.gptmobile.presentation.common.ApplePurple
 import dev.chungjungsoo.gptmobile.presentation.common.AppleRed
 import dev.chungjungsoo.gptmobile.presentation.common.LocalNotificationPermissionRequester
+import dev.chungjungsoo.gptmobile.presentation.common.LocalToolPermissionRequester
 import dev.chungjungsoo.gptmobile.presentation.common.SettingsMaterialGroup
 import dev.chungjungsoo.gptmobile.presentation.common.settingsMaterialColors
 import dev.chungjungsoo.gptmobile.presentation.common.settingsSwitchColors
@@ -233,6 +245,9 @@ fun ToolSettingsScreen(
     val scrollState = rememberScrollState()
     val lifecycleOwner = LocalLifecycleOwner.current
     val materialColors = settingsMaterialColors()
+    val toolPermissionRequester = LocalToolPermissionRequester.current
+    var pendingPermissionTool by remember { mutableStateOf<ResolvedToolCatalogEntry?>(null) }
+    var deniedPermissionToolNames by remember { mutableStateOf(emptySet<String>()) }
 
     LaunchedEffect(Unit) {
         settingViewModel.fetchWebSearchSettings()
@@ -297,6 +312,34 @@ fun ToolSettingsScreen(
                 )
             }
 
+            SettingsSection(title = stringResource(R.string.settings_section_callable_tools)) {
+                webSearchSettings.tools.forEachIndexed { index, resolvedEntry ->
+                    val entry = resolvedEntry.catalogEntry
+                    val toolName = entry.definition.name
+                    val description = if (toolName in deniedPermissionToolNames && !resolvedEntry.isEnabled) {
+                        stringResource(R.string.tool_permission_denied_settings_description)
+                    } else {
+                        entry.settingsDescription()
+                    }
+                    ToolEnabledItem(
+                        toolName = toolName,
+                        title = entry.settingsTitle(),
+                        description = description,
+                        icon = entry.settingsIcon(),
+                        iconContainerColor = entry.settingsIconColor(),
+                        enabled = resolvedEntry.isEnabled,
+                        showDivider = index != webSearchSettings.tools.lastIndex,
+                        onEnabledChange = { _, enabled ->
+                            when {
+                                !enabled -> settingViewModel.updateToolEnabled(toolName, false)
+                                entry.permissionRequirements.isEmpty() -> settingViewModel.updateToolEnabled(toolName, true)
+                                else -> pendingPermissionTool = resolvedEntry
+                            }
+                        }
+                    )
+                }
+            }
+
             SettingsSection(title = stringResource(R.string.settings_section_web_search)) {
                 WebSearchModeItem(
                     mode = WebSearchMode.Off,
@@ -312,13 +355,6 @@ fun ToolSettingsScreen(
                     description = stringResource(R.string.web_search_mode_auto_description),
                     onSelected = settingViewModel::updateWebSearchMode
                 )
-                WebSearchModeItem(
-                    mode = WebSearchMode.Always,
-                    selectedMode = webSearchSettings.mode,
-                    title = stringResource(R.string.web_search_mode_always),
-                    description = stringResource(R.string.web_search_mode_always_description),
-                    onSelected = settingViewModel::updateWebSearchMode
-                )
                 WebSearchBaseUrlItem(
                     baseUrl = webSearchSettings.searxngBaseUrl,
                     hasError = webSearchSettings.searxngBaseUrlError,
@@ -329,6 +365,72 @@ fun ToolSettingsScreen(
             Spacer(modifier = Modifier.height(24.dp))
         }
     }
+
+    pendingPermissionTool?.let { resolvedEntry ->
+        val entry = resolvedEntry.catalogEntry
+        val title = entry.settingsTitle()
+        AlertDialog(
+            onDismissRequest = { pendingPermissionTool = null },
+            title = { Text(stringResource(R.string.tool_permission_rationale_title, title)) },
+            text = { Text(stringResource(R.string.tool_permission_rationale_description, title)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingPermissionTool = null
+                        toolPermissionRequester.requestToolPermissions(entry.definition.name) { granted ->
+                            if (granted) {
+                                deniedPermissionToolNames -= entry.definition.name
+                                settingViewModel.updateToolEnabled(entry.definition.name, true)
+                            } else {
+                                deniedPermissionToolNames += entry.definition.name
+                            }
+                        }
+                    }
+                ) {
+                    Text(stringResource(R.string.grant_permission))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingPermissionTool = null }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun ToolCatalogEntry.settingsTitle(): String = when (settings.presentationKey) {
+    "web_search" -> stringResource(R.string.tool_web_search_title)
+    "fetch_url" -> stringResource(R.string.tool_fetch_url_title)
+    "current_datetime" -> stringResource(R.string.tool_current_datetime_title)
+    "device_location" -> stringResource(R.string.tool_device_location_title)
+    else -> definition.name.replace('_', ' ').ifBlank { stringResource(R.string.tool_generic_title) }
+}
+
+@Composable
+private fun ToolCatalogEntry.settingsDescription(): String = when (settings.presentationKey) {
+    "web_search" -> stringResource(R.string.tool_web_search_description)
+    "fetch_url" -> stringResource(R.string.tool_fetch_url_description)
+    "current_datetime" -> stringResource(R.string.tool_current_datetime_description)
+    "device_location" -> stringResource(R.string.tool_device_location_description)
+    else -> definition.description.ifBlank { stringResource(R.string.tool_generic_description) }
+}
+
+private fun ToolCatalogEntry.settingsIcon(): ImageVector = when (settings.iconKey) {
+    "search" -> Icons.Rounded.Search
+    "language" -> Icons.Rounded.Language
+    "schedule" -> Icons.Rounded.Schedule
+    "location" -> Icons.Rounded.LocationOn
+    else -> Icons.Rounded.Extension
+}
+
+private fun ToolCatalogEntry.settingsIconColor(): Color = when (settings.iconKey) {
+    "search" -> AppleBlue
+    "language" -> AppleIndigo
+    "schedule" -> AppleOrange
+    "location" -> AppleGreen
+    else -> AppleGray
 }
 
 @Composable
@@ -355,14 +457,25 @@ private fun SettingsRow(
     iconContainerColor: Color = AppleBlue,
     showNavigationIndicator: Boolean = true,
     showDivider: Boolean = true,
+    toggleValue: Boolean? = null,
+    descriptionMaxLines: Int = 2,
     trailingContent: (@Composable () -> Unit)? = null
 ) {
     val materialColors = settingsMaterialColors()
+    val interactionModifier = if (toggleValue == null) {
+        Modifier.clickable(onClick = onClick)
+    } else {
+        Modifier.toggleable(
+            value = toggleValue,
+            role = Role.Switch,
+            onValueChange = { onClick() }
+        )
+    }
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onClick)
+                .then(interactionModifier)
                 .defaultMinSize(minHeight = 56.dp)
                 .padding(horizontal = 16.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -397,7 +510,7 @@ private fun SettingsRow(
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = description,
-                        maxLines = 2,
+                        maxLines = descriptionMaxLines,
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.bodySmall,
                         color = materialColors.secondaryLabel
@@ -443,6 +556,37 @@ private fun ToolCallingModeItem(
         showDivider = showDivider,
         trailingContent = {
             SettingsSelectionCheckmark(selected = selectedMode == mode)
+        }
+    )
+}
+
+@Composable
+private fun ToolEnabledItem(
+    toolName: String,
+    title: String,
+    description: String,
+    icon: ImageVector,
+    iconContainerColor: Color,
+    enabled: Boolean,
+    showDivider: Boolean = true,
+    onEnabledChange: (String, Boolean) -> Unit
+) {
+    SettingsRow(
+        title = title,
+        description = description,
+        onClick = { onEnabledChange(toolName, !enabled) },
+        leadingIcon = icon,
+        iconContainerColor = iconContainerColor,
+        showNavigationIndicator = false,
+        showDivider = showDivider,
+        toggleValue = enabled,
+        descriptionMaxLines = 3,
+        trailingContent = {
+            Switch(
+                checked = enabled,
+                onCheckedChange = null,
+                colors = settingsSwitchColors()
+            )
         }
     )
 }
