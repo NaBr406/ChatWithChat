@@ -60,7 +60,8 @@ class InMemoryChatClassificationDao : ChatClassificationDao {
 }
 
 class FakeMemoryIntelligence(
-    var batchProposal: MemoryBatchConsolidationProposal? = null
+    var batchProposal: MemoryBatchConsolidationProposal? = null,
+    var onConsolidate: suspend () -> Unit = {}
 ) : MemoryIntelligence {
     var lastBatchRequest: MemoryBatchConsolidationRequest? = null
     var lastPreferredPlatform: PlatformV2? = null
@@ -73,6 +74,7 @@ class FakeMemoryIntelligence(
         consolidateCalls += 1
         lastBatchRequest = request
         lastPreferredPlatform = preferredPlatform
+        onConsolidate()
         return batchProposal
     }
 }

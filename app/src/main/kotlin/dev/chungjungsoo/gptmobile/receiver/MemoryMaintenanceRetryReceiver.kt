@@ -26,8 +26,8 @@ class MemoryMaintenanceRetryReceiver : BroadcastReceiver() {
         val pendingResult = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             runCatching {
-                if (maintenanceScheduler.retryManually(jobId) != null) {
-                    workEnqueuer.enqueueRepairWork()
+                maintenanceScheduler.retryManually(jobId)?.let { retriedJob ->
+                    workEnqueuer.enqueueWork(retriedJob.family)
                 }
             }
             pendingResult.finish()

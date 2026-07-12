@@ -61,18 +61,27 @@ class AppNotificationManager @Inject constructor(
         )
     }
 
-    fun showMemoryMaintenanceFailed(job: MemoryMaintenanceJob, terminal: Boolean) {
+    fun showMemoryMaintenanceFailed(
+        job: MemoryMaintenanceJob,
+        terminal: Boolean,
+        allowRetry: Boolean
+    ) {
         val title = if (terminal) {
             context.getString(R.string.notification_memory_maintenance_failed_terminal_title)
         } else {
             context.getString(R.string.notification_memory_maintenance_failed_title)
         }
+        val text = when {
+            allowRetry -> context.getString(R.string.notification_memory_maintenance_failed_terminal_text)
+            terminal -> context.getString(R.string.notification_memory_maintenance_blocked_text)
+            else -> context.getString(R.string.notification_memory_maintenance_failed_retryable_text)
+        }
         showMemoryMaintenanceNotification(
             job = job,
             title = title,
-            text = context.getString(R.string.notification_memory_maintenance_failed_text),
+            text = text,
             ongoing = false,
-            allowRetry = terminal
+            allowRetry = allowRetry
         )
     }
 

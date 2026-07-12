@@ -117,7 +117,9 @@
     <string name="notification_memory_maintenance_started_text">正在处理需要较长时间的维护任务。</string>
     <string name="notification_memory_maintenance_failed_title">记忆维护失败</string>
     <string name="notification_memory_maintenance_failed_terminal_title">记忆维护需要处理</string>
-    <string name="notification_memory_maintenance_failed_text">点按查看并重试维护任务。</string>
+    <string name="notification_memory_maintenance_failed_retryable_text">维护暂时失败，应用将在计划时间自动重试。</string>
+    <string name="notification_memory_maintenance_failed_terminal_text">维护已暂停，可点按重试。</string>
+    <string name="notification_memory_maintenance_blocked_text">所需本地依赖当前不可用，应用将在条件满足后继续。</string>
     <string name="dismiss">忽略</string>
     <string name="memory_reject">拒绝</string>
     <string name="memory_mark_resolved">标记为已解决</string>

@@ -25,6 +25,7 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexRepository
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIntelligence
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceCorpusReader
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceEventSink
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceLeaseWatchdog
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceNotificationEventSink
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceNotificationPolicy
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceScheduler
@@ -188,6 +189,12 @@ object MemoryRepositoryModule {
         workEnqueuer = memoryMaintenanceWorkScheduler,
         settingRepository = settingRepository
     )
+
+    @Provides
+    @Singleton
+    fun provideMemoryMaintenanceLeaseWatchdog(
+        memoryTurnBatchScheduler: MemoryTurnBatchScheduler
+    ): MemoryMaintenanceLeaseWatchdog = memoryTurnBatchScheduler
 
     @Provides
     @Singleton

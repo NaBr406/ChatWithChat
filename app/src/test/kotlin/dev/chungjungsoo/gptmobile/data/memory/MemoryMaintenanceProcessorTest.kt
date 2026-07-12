@@ -1,7 +1,6 @@
 package dev.chungjungsoo.gptmobile.data.memory
 
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryIndexDao
-import dev.chungjungsoo.gptmobile.data.database.dao.MemoryMaintenanceJobDao
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryChunk
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryDocument
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMaintenanceJob
@@ -22,6 +21,7 @@ import java.time.Instant
 import java.time.ZoneOffset
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -48,7 +48,7 @@ class MemoryMaintenanceProcessorTest {
             indexDao = indexDao
         )
 
-        val result = processor.processRunnableJobs()
+        val result = processor.processRunnableJobs(MemoryMaintenanceJobFamily.INDEX)
 
         assertEquals(1, result.succeededCount)
         assertEquals(MemoryMaintenanceJobStatus.SUCCEEDED, jobDao.jobs.single().status)
@@ -57,17 +57,17 @@ class MemoryMaintenanceProcessorTest {
     }
 
     @Test
-    fun `processor keeps unattended distillation jobs retryable`() = runBlocking {
+    fun `processor blocks distillation until its implementation is available`() = runBlocking {
         val jobDao = InMemoryMaintenanceJobDao(listOf(job(MemoryMaintenanceJobType.DISTILL_DAILY_NOTES)))
         val processor = createProcessor(jobDao = jobDao)
 
-        val result = processor.processRunnableJobs()
+        val result = processor.processRunnableJobs(MemoryMaintenanceJobFamily.SEMANTIC)
 
-        assertEquals(1, result.retryableCount)
-        assertEquals(MemoryMaintenanceJobStatus.FAILED_RETRYABLE, jobDao.jobs.single().status)
+        assertEquals(1, result.blockedCount)
+        assertEquals(MemoryMaintenanceJobStatus.BLOCKED_DEPENDENCY, jobDao.jobs.single().status)
         assertEquals(
-            "unsupported_memory_job_type:${MemoryMaintenanceJobType.DISTILL_DAILY_NOTES}",
-            jobDao.jobs.single().lastError
+            "daily_distillation_not_available",
+            jobDao.jobs.single().blockedReason
         )
     }
 
@@ -77,10 +77,10 @@ class MemoryMaintenanceProcessorTest {
         val processor = createProcessor(jobDao = jobDao)
 
         repeat(3) {
-            processor.processRunnableJobs()
+            processor.processRunnableJobs(MemoryMaintenanceJobFamily.SEMANTIC)
             val currentJob = jobDao.jobs.single()
             if (currentJob.status == MemoryMaintenanceJobStatus.FAILED_RETRYABLE) {
-                jobDao.update(currentJob.copy(nextRunAt = 1_000L))
+                jobDao.forceUpdate(currentJob.copy(nextRunAt = 1_000L))
             }
         }
 
@@ -88,7 +88,7 @@ class MemoryMaintenanceProcessorTest {
         assertEquals(3, terminalJob.attempts)
         assertEquals(MemoryMaintenanceJobStatus.FAILED_TERMINAL, terminalJob.status)
         assertEquals("batch_consolidation_pending", terminalJob.lastError)
-        assertEquals(0, processor.processRunnableJobs().processedCount)
+        assertEquals(0, processor.processRunnableJobs(MemoryMaintenanceJobFamily.SEMANTIC).processedCount)
     }
 
     @Test
@@ -96,12 +96,23 @@ class MemoryMaintenanceProcessorTest {
         val jobDao = InMemoryMaintenanceJobDao(listOf(job(MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH)))
         val processor = createProcessor(jobDao = jobDao, memoryEnabled = false)
 
-        val result = processor.processRunnableJobs()
+        val result = processor.processRunnableJobs(MemoryMaintenanceJobFamily.SEMANTIC)
 
         assertEquals(1, result.terminalCount)
         assertEquals(MemoryMaintenanceJobStatus.DISMISSED, jobDao.jobs.single().status)
-        assertEquals(0, jobDao.jobs.single().attempts)
-        assertEquals(0, processor.processRunnableJobs().processedCount)
+        assertTrue(jobDao.jobs.single().attempts > 0)
+        assertEquals(0, processor.processRunnableJobs(MemoryMaintenanceJobFamily.SEMANTIC).processedCount)
+    }
+
+    @Test
+    fun `claim schedules the required lease watchdog`() = runBlocking {
+        val jobDao = InMemoryMaintenanceJobDao(listOf(job(MemoryMaintenanceJobType.PROMOTE_LONG_TERM_CANDIDATE)))
+        val watchdog = RecordingLeaseWatchdog()
+        val processor = createProcessor(jobDao = jobDao, leaseWatchdog = watchdog)
+
+        processor.processRunnableJobs(MemoryMaintenanceJobFamily.SEMANTIC)
+
+        assertEquals(1, watchdog.scheduleCount)
     }
 
     @Test
@@ -124,9 +135,36 @@ class MemoryMaintenanceProcessorTest {
         val result = repairer.repairAndEnqueue()
 
         assertEquals(1, result.resetCount)
-        assertEquals(1, enqueuer.enqueueCalls)
-        assertEquals(listOf(0L), enqueuer.delays)
+        assertTrue(result.schedulingSucceeded)
+        assertEquals(
+            listOf(EnqueuedMemoryWork(MemoryMaintenanceJobFamily.INDEX, 0L)),
+            enqueuer.works
+        )
         assertEquals(MemoryMaintenanceJobStatus.FAILED_RETRYABLE, jobDao.jobs.single().status)
+    }
+
+    @Test
+    fun `repair scheduling failure keeps persisted retry truth without throwing`() = runBlocking {
+        val jobDao = InMemoryMaintenanceJobDao(
+            listOf(
+                job(
+                    type = MemoryMaintenanceJobType.REBUILD_MEMORY_INDEX,
+                    status = MemoryMaintenanceJobStatus.RUNNING,
+                    updatedAt = 1L
+                )
+            )
+        )
+        val repairer = MemoryMaintenanceRepairer(
+            maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK),
+            workScheduler = FailingRepairWorkEnqueuer
+        )
+
+        val result = repairer.repairAndEnqueue()
+
+        assertEquals(1, result.resetCount)
+        assertFalse(result.schedulingSucceeded)
+        assertEquals(MemoryMaintenanceJobStatus.FAILED_RETRYABLE, jobDao.jobs.single().status)
+        assertEquals(1_000L, jobDao.jobs.single().nextRunAt)
     }
 
     @Test
@@ -149,7 +187,10 @@ class MemoryMaintenanceProcessorTest {
 
         repairer.repairAndEnqueue()
 
-        assertEquals(listOf(0L, 120L), enqueuer.delays)
+        assertEquals(
+            listOf(EnqueuedMemoryWork(MemoryMaintenanceJobFamily.SEMANTIC, 120L)),
+            enqueuer.works
+        )
     }
 
     private fun job(
@@ -169,18 +210,21 @@ class MemoryMaintenanceProcessorTest {
         createdAt = 1L,
         startedAt = null,
         updatedAt = updatedAt,
-        nextRunAt = nextRunAt
+        nextRunAt = nextRunAt,
+        family = MemoryMaintenanceJobFamily.forType(type)
     )
 
     private fun createProcessor(
         jobDao: InMemoryMaintenanceJobDao,
         fileStore: MemoryFileStore = MemoryFileStore(MemoryFilePaths(Files.createTempDirectory("memory-maintenance-processor-default").toFile()), FIXED_CLOCK),
         indexDao: InMemoryProcessorMemoryIndexDao = InMemoryProcessorMemoryIndexDao(),
-        memoryEnabled: Boolean = true
+        memoryEnabled: Boolean = true,
+        leaseWatchdog: MemoryMaintenanceLeaseWatchdog = NoOpLeaseWatchdog
     ): MemoryMaintenanceProcessor = MemoryMaintenanceProcessor(
         maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK),
         memoryIndexRepository = MemoryIndexRepository(fileStore, indexDao, MemoryChunker(), FIXED_CLOCK),
-        settingRepository = FakeMaintenanceSettingRepository(memoryEnabled = memoryEnabled)
+        settingRepository = FakeMaintenanceSettingRepository(memoryEnabled = memoryEnabled),
+        leaseWatchdog = leaseWatchdog
     )
 
     private companion object {
@@ -188,81 +232,21 @@ class MemoryMaintenanceProcessorTest {
     }
 }
 
-internal class RecordingWorkEnqueuer : MemoryMaintenanceWorkEnqueuer {
-    var enqueueCalls = 0
-    val delays = mutableListOf<Long>()
+private data object NoOpLeaseWatchdog : MemoryMaintenanceLeaseWatchdog {
+    override suspend fun scheduleLeaseWatchdog() = Unit
+}
 
-    override fun enqueueRepairWork(delaySeconds: Long) {
-        enqueueCalls += 1
-        delays += delaySeconds
+private class RecordingLeaseWatchdog : MemoryMaintenanceLeaseWatchdog {
+    var scheduleCount = 0
+
+    override suspend fun scheduleLeaseWatchdog() {
+        scheduleCount += 1
     }
 }
 
-internal class InMemoryMaintenanceJobDao(
-    initialJobs: List<MemoryMaintenanceJob> = emptyList()
-) : MemoryMaintenanceJobDao {
-    val jobs = initialJobs.toMutableList()
-
-    override suspend fun getById(jobId: String): MemoryMaintenanceJob? =
-        jobs.firstOrNull { it.jobId == jobId }
-
-    override suspend fun getByIdempotencyKey(idempotencyKey: String): MemoryMaintenanceJob? =
-        jobs.firstOrNull { it.idempotencyKey == idempotencyKey }
-
-    override suspend fun getByTypeAndStatuses(type: String, statuses: List<String>): List<MemoryMaintenanceJob> =
-        jobs.filter { it.type == type && it.status in statuses }.sortedBy { it.createdAt }
-
-    override suspend fun getStaleJobs(status: String, before: Long): List<MemoryMaintenanceJob> =
-        jobs.filter { it.status == status && it.updatedAt < before }.sortedBy { it.updatedAt }
-
-    override suspend fun getVisibleJobs(limit: Int): List<MemoryMaintenanceJob> =
-        jobs.sortedByDescending { it.updatedAt }.take(limit)
-
-    override suspend fun getRunnableJobs(
-        statuses: List<String>,
-        now: Long,
-        limit: Int
-    ): List<MemoryMaintenanceJob> = jobs
-        .filter { job -> job.status in statuses && now >= (job.nextRunAt ?: 0L) }
-        .sortedBy { it.createdAt }
-        .take(limit)
-
-    override suspend fun getEarliestFutureRunAt(now: Long): Long? =
-        jobs
-            .filter { job -> job.status in listOf(MemoryMaintenanceJobStatus.PENDING, MemoryMaintenanceJobStatus.FAILED_RETRYABLE) }
-            .mapNotNull { job -> job.nextRunAt }
-            .filter { nextRunAt -> nextRunAt > now }
-            .minOrNull()
-
-    override suspend fun insertIgnore(job: MemoryMaintenanceJob): Long {
-        if (jobs.any { it.idempotencyKey == job.idempotencyKey }) return -1L
-        jobs += job
-        return jobs.size.toLong()
-    }
-
-    override suspend fun update(job: MemoryMaintenanceJob) {
-        val index = jobs.indexOfFirst { it.jobId == job.jobId }
-        if (index != -1) jobs[index] = job
-    }
-
-    override suspend fun moveStaleJobs(
-        fromStatus: String,
-        status: String,
-        before: Long,
-        lastError: String?,
-        updatedAt: Long,
-        nextRunAt: Long?
-    ): Int {
-        var changedCount = 0
-        jobs.replaceAll { job ->
-            if (job.status == fromStatus && job.updatedAt < before) {
-                changedCount += 1
-                job.copy(status = status, lastError = lastError, updatedAt = updatedAt, nextRunAt = nextRunAt)
-            } else {
-                job
-            }
-        }
-        return changedCount
+private data object FailingRepairWorkEnqueuer : MemoryMaintenanceWorkEnqueuer {
+    override fun enqueueWork(family: String, delaySeconds: Long) {
+        error("work scheduling unavailable")
     }
 }
 

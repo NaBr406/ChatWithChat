@@ -4,9 +4,8 @@ import android.app.Application
 import android.content.Context
 import dagger.hilt.android.HiltAndroidApp
 import dagger.hilt.android.qualifiers.ApplicationContext
-import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceRepairer
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceStartupCoordinator
 import dev.chungjungsoo.gptmobile.data.notification.AppNotificationManager
-import dev.chungjungsoo.gptmobile.data.repository.MemoryRepository
 import dev.chungjungsoo.gptmobile.di.ApplicationScope
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
@@ -20,10 +19,7 @@ class GPTMobileApp : Application() {
     lateinit var context: Context
 
     @Inject
-    lateinit var memoryMaintenanceRepairer: MemoryMaintenanceRepairer
-
-    @Inject
-    lateinit var memoryRepository: MemoryRepository
+    lateinit var memoryMaintenanceStartupCoordinator: MemoryMaintenanceStartupCoordinator
 
     @Inject
     lateinit var appNotificationManager: AppNotificationManager
@@ -36,8 +32,7 @@ class GPTMobileApp : Application() {
         super.onCreate()
         appNotificationManager.ensureChannels()
         applicationScope.launch {
-            memoryRepository.migrateActiveMemoriesToMarkdown()
-            memoryMaintenanceRepairer.repairAndEnqueue()
+            memoryMaintenanceStartupCoordinator.run()
         }
     }
 }

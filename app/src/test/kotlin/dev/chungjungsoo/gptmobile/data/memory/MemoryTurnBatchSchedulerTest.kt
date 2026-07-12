@@ -3,6 +3,7 @@ package dev.chungjungsoo.gptmobile.data.memory
 import dev.chungjungsoo.gptmobile.data.database.InMemoryMemoryTurnBatchDao
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatRoomV2
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
+import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMaintenanceJob
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
@@ -27,11 +28,17 @@ class MemoryTurnBatchSchedulerTest {
         val job = fixture.jobDao.jobs.single()
         val payload = Json.decodeFromString<MemoryTurnBatchJobPayload>(job.payloadJson)
         assertEquals(MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH, job.type)
+        assertEquals(MemoryMaintenanceJobFamily.SEMANTIC, job.family)
         assertEquals(MemoryTurnBatchTriggerReason.THRESHOLD, payload.triggerReason)
         assertEquals(5, payload.turns.size)
         assertEquals(5, fixture.turnDao.getTurnsClaimedByJob(job.jobId).size)
         assertEquals(0, fixture.turnDao.countUnclaimedTurns(CHAT_ONE))
-        assertEquals(1, fixture.enqueuer.delays.count { it == 0L })
+        assertEquals(
+            1,
+            fixture.enqueuer.works.count {
+                it == EnqueuedMemoryWork(MemoryMaintenanceJobFamily.SEMANTIC, 0L)
+            }
+        )
     }
 
     @Test
@@ -88,7 +95,7 @@ class MemoryTurnBatchSchedulerTest {
         assertEquals(5, fixture.turnDao.countUnclaimedTurns(CHAT_ONE))
 
         fixture.turnDao.completeClaimedBatch(firstJob.jobId, updatedAt = 2_000L)
-        fixture.jobDao.update(firstJob.copy(status = MemoryMaintenanceJobStatus.SUCCEEDED))
+        fixture.jobDao.forceUpdate(firstJob.copy(status = MemoryMaintenanceJobStatus.SUCCEEDED))
         val secondRepair = fixture.scheduler.repairAndSchedule()
 
         assertEquals(1, secondRepair.thresholdBatchCount)
@@ -104,7 +111,10 @@ class MemoryTurnBatchSchedulerTest {
         coordinator.recordCompletedTurn(input(CHAT_ONE, 1, userCreatedAt = 100L, completedAt = 120L))
         coordinator.recordCompletedTurn(input(CHAT_TWO, 1, userCreatedAt = 200L, completedAt = 220L))
 
-        assertEquals(900L, fixture.enqueuer.delays.last())
+        assertEquals(
+            EnqueuedMemoryWork(MemoryMaintenanceJobFamily.REPAIR, 900L),
+            fixture.enqueuer.works.last()
+        )
     }
 
     @Test
@@ -121,6 +131,70 @@ class MemoryTurnBatchSchedulerTest {
         assertEquals(
             MemoryTurnBatchTriggerReason.MANUAL_RETRY,
             Json.decodeFromString<MemoryTurnBatchJobPayload>(fixture.jobDao.jobs.single().payloadJson).triggerReason
+        )
+        assertEquals(MemoryMaintenanceJobFamily.SEMANTIC, fixture.jobDao.jobs.single().family)
+        assertTrue(fixture.enqueuer.works.none { it.family == MemoryMaintenanceJobFamily.INDEX })
+    }
+
+    @Test
+    fun `index retry cannot replace the semantic idle wake`() = runBlocking {
+        val fixture = fixture()
+        fixture.jobDao.insertIgnore(
+            MemoryMaintenanceJob(
+                jobId = "index-job",
+                type = MemoryMaintenanceJobType.REBUILD_MEMORY_INDEX,
+                status = MemoryMaintenanceJobStatus.FAILED_RETRYABLE,
+                idempotencyKey = "index-key",
+                payloadJson = "{}",
+                attempts = 1,
+                lastError = "temporary",
+                createdAt = 1L,
+                startedAt = null,
+                updatedAt = 1L,
+                nextRunAt = 1_050L,
+                family = MemoryMaintenanceJobFamily.INDEX
+            )
+        )
+        MemoryTurnBatchCoordinator(fixture.turnDao, fixture.scheduler).recordCompletedTurn(
+            input(CHAT_ONE, 1, userCreatedAt = 100L, completedAt = 120L)
+        )
+
+        assertTrue(fixture.enqueuer.works.none { it.family == MemoryMaintenanceJobFamily.INDEX })
+        assertEquals(
+            EnqueuedMemoryWork(MemoryMaintenanceJobFamily.REPAIR, 900L),
+            fixture.enqueuer.works.last()
+        )
+    }
+
+    @Test
+    fun `lease watchdog and idle deadline share the earliest repair wake`() = runBlocking {
+        val fixture = fixture()
+        fixture.jobDao.insertIgnore(
+            MemoryMaintenanceJob(
+                jobId = "running-index",
+                type = MemoryMaintenanceJobType.REBUILD_MEMORY_INDEX,
+                status = MemoryMaintenanceJobStatus.RUNNING,
+                idempotencyKey = "running-index-key",
+                payloadJson = "{}",
+                attempts = 1,
+                lastError = null,
+                createdAt = 1L,
+                startedAt = 1L,
+                updatedAt = 1L,
+                nextRunAt = null,
+                family = MemoryMaintenanceJobFamily.INDEX,
+                leaseOwner = "index-owner",
+                leaseExpiresAt = 1_050L
+            )
+        )
+
+        MemoryTurnBatchCoordinator(fixture.turnDao, fixture.scheduler).recordCompletedTurn(
+            input(CHAT_ONE, 1, userCreatedAt = 100L, completedAt = 120L)
+        )
+
+        assertEquals(
+            EnqueuedMemoryWork(MemoryMaintenanceJobFamily.REPAIR, 50L),
+            fixture.enqueuer.works.last()
         )
     }
 

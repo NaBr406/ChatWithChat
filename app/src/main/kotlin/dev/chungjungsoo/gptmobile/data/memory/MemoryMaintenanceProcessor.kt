@@ -2,131 +2,221 @@ package dev.chungjungsoo.gptmobile.data.memory
 
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMaintenanceJob
 import dev.chungjungsoo.gptmobile.data.repository.SettingRepository
+import java.util.UUID
 import javax.inject.Inject
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 class MemoryMaintenanceProcessor @Inject constructor(
     private val maintenanceScheduler: MemoryMaintenanceScheduler,
     private val memoryIndexRepository: MemoryIndexRepository,
     private val settingRepository: SettingRepository,
+    private val leaseWatchdog: MemoryMaintenanceLeaseWatchdog,
     private val memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null,
     private val memoryBatchConsolidationService: MemoryBatchConsolidationService? = null
 ) {
-    suspend fun processRunnableJobs(limit: Int = DEFAULT_LIMIT): MemoryMaintenanceProcessResult = PROCESS_MUTEX.withLock {
-        memoryTurnBatchScheduler?.promoteDueIdleBatches()
-        maintenanceScheduler.resetStaleRunningJobs()
-        val jobs = maintenanceScheduler.runnableJobs(limit = limit)
+    suspend fun processRunnableJobs(
+        family: String,
+        limit: Int = DEFAULT_LIMIT
+    ): MemoryMaintenanceProcessResult {
+        require(family in MemoryMaintenanceJobFamily.ALL) { "Unknown memory maintenance family: $family" }
+        val leaseOwner = "$family:${UUID.randomUUID()}"
+        var processedCount = 0
         var succeededCount = 0
         var retryableCount = 0
         var terminalCount = 0
+        var blockedCount = 0
 
-        jobs.forEach { job ->
-            if (job.type in LLM_JOB_TYPES) {
-                val result = processLlmJob(job)
-                when (result.status) {
-                    MemoryBatchProcessResult.STATUS_SUCCEEDED,
-                    MemoryBatchProcessResult.STATUS_DUPLICATE -> succeededCount += 1
-                    MemoryBatchProcessResult.STATUS_TERMINAL -> terminalCount += 1
-                    else -> retryableCount += 1
+        while (processedCount < limit) {
+            val job = maintenanceScheduler.claimNextRunnable(
+                family = family,
+                leaseOwner = leaseOwner
+            ) ?: break
+            leaseWatchdog.scheduleLeaseWatchdog()
+            processedCount += 1
+            val outcome = try {
+                runWithMemoryMaintenanceLeaseHeartbeat(
+                    job = job,
+                    maintenanceScheduler = maintenanceScheduler,
+                    heartbeatIntervalMillis = LEASE_HEARTBEAT_INTERVAL_MILLIS
+                ) {
+                    processClaimedJob(job)
                 }
-                return@forEach
+            } catch (_: MemoryMaintenanceLeaseLostException) {
+                MemoryMaintenanceOutcome.SKIPPED
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (throwable: Throwable) {
+                persistUnexpectedFailure(job, throwable)
             }
-
-            val runningJob = maintenanceScheduler.markRunning(job)
-            val result = runCatching { processJob(runningJob) }
-            result.onSuccess {
-                maintenanceScheduler.markSucceeded(runningJob)
-                succeededCount += 1
-            }.onFailure { throwable ->
-                if (throwable.message.orEmpty().startsWith("unknown_memory_maintenance_job_type")) {
-                    maintenanceScheduler.markFailedTerminal(runningJob, throwable.message ?: throwable.javaClass.simpleName)
-                    terminalCount += 1
-                } else {
-                    maintenanceScheduler.markFailedRetryable(runningJob, throwable.message ?: throwable.javaClass.simpleName)
-                    retryableCount += 1
-                }
+            when (outcome) {
+                MemoryMaintenanceOutcome.SUCCEEDED -> succeededCount += 1
+                MemoryMaintenanceOutcome.RETRYABLE -> retryableCount += 1
+                MemoryMaintenanceOutcome.TERMINAL -> terminalCount += 1
+                MemoryMaintenanceOutcome.BLOCKED -> blockedCount += 1
+                MemoryMaintenanceOutcome.SKIPPED -> Unit
             }
         }
 
-        MemoryMaintenanceProcessResult(
-            processedCount = jobs.size,
+        return MemoryMaintenanceProcessResult(
+            processedCount = processedCount,
             succeededCount = succeededCount,
             retryableCount = retryableCount,
-            terminalCount = terminalCount
+            terminalCount = terminalCount,
+            blockedCount = blockedCount
         )
     }
 
-    private suspend fun processLlmJob(job: MemoryMaintenanceJob): MemoryBatchProcessResult {
+    private suspend fun processClaimedJob(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome {
+        check(job.status == MemoryMaintenanceJobStatus.RUNNING)
+        check(job.leaseOwner != null)
+        return when (job.family) {
+            MemoryMaintenanceJobFamily.SEMANTIC -> processSemanticJob(job)
+            MemoryMaintenanceJobFamily.INDEX -> processIndexJob(job)
+            MemoryMaintenanceJobFamily.REPAIR -> processRepairJob(job)
+            else -> dismissUnknownJob(job)
+        }
+    }
+
+    private suspend fun processSemanticJob(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome {
         if (!settingRepository.fetchMemoryEnabled()) {
-            maintenanceScheduler.markDismissed(job)
+            maintenanceScheduler.markDismissed(job, "memory_disabled")
             memoryTurnBatchScheduler?.onMemoryEnabledChanged(false)
-            return MemoryBatchProcessResult(
-                status = MemoryBatchProcessResult.STATUS_TERMINAL,
-                jobId = job.jobId,
-                reason = "memory_disabled"
-            )
+            return MemoryMaintenanceOutcome.TERMINAL
         }
         return when (job.type) {
             MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH ->
-                memoryBatchConsolidationService?.process(job) ?: unavailableConsolidation(job)
+                memoryBatchConsolidationService?.process(job)?.toOutcome() ?: unavailableConsolidation(job)
             MemoryMaintenanceJobType.APPEND_DAILY_NOTE,
             MemoryMaintenanceJobType.COMPACTION_FLUSH ->
-                memoryBatchConsolidationService?.processLegacy(job) ?: unavailableConsolidation(job)
-            else -> unavailableConsolidation(job, "unsupported_memory_job_type:${job.type}")
-        }
-    }
-
-    private suspend fun unavailableConsolidation(
-        job: MemoryMaintenanceJob,
-        reason: String = "batch_consolidation_pending"
-    ): MemoryBatchProcessResult {
-        val runningJob = maintenanceScheduler.markRunning(job)
-        val failedJob = maintenanceScheduler.markFailedRetryable(runningJob, reason)
-        return MemoryBatchProcessResult(
-            status = if (failedJob.status == MemoryMaintenanceJobStatus.FAILED_TERMINAL) {
-                MemoryBatchProcessResult.STATUS_TERMINAL
-            } else {
-                MemoryBatchProcessResult.STATUS_RETRYABLE
-            },
-            jobId = job.jobId,
-            reason = reason
-        )
-    }
-
-    private suspend fun processJob(job: MemoryMaintenanceJob) {
-        when (job.type) {
-            MemoryMaintenanceJobType.REBUILD_MEMORY_INDEX,
-            MemoryMaintenanceJobType.REPAIR_MARKDOWN_METADATA -> {
-                memoryIndexRepository.rebuildAll().getOrThrow()
+                memoryBatchConsolidationService?.processLegacy(job)?.toOutcome() ?: unavailableConsolidation(job)
+            MemoryMaintenanceJobType.DISTILL_DAILY_NOTES -> {
+                maintenanceScheduler.markBlockedDependency(job, "daily_distillation_not_available")
+                MemoryMaintenanceOutcome.BLOCKED
             }
-            MemoryMaintenanceJobType.DISTILL_DAILY_NOTES,
             MemoryMaintenanceJobType.PROMOTE_LONG_TERM_CANDIDATE -> {
-                if (!settingRepository.fetchMemoryEnabled()) {
-                    error("memory_disabled")
-                }
-                error("llm_memory_worker_pending")
+                maintenanceScheduler.markDismissed(job, "superseded_by_daily_distillation")
+                MemoryMaintenanceOutcome.TERMINAL
             }
-            else -> error("unknown_memory_maintenance_job_type:${job.type}")
+            else -> dismissUnknownJob(job)
         }
+    }
+
+    private suspend fun processIndexJob(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome = when (job.type) {
+        MemoryMaintenanceJobType.REBUILD_MEMORY_INDEX -> rebuildLegacyRoomIndex(job)
+        MemoryMaintenanceJobType.SYNC_VECTOR_INDEX,
+        MemoryMaintenanceJobType.REBUILD_VECTOR_INDEX -> {
+            maintenanceScheduler.markBlockedDependency(job, "vector_index_synchronizer_not_available")
+            MemoryMaintenanceOutcome.BLOCKED
+        }
+        else -> dismissUnknownJob(job)
+    }
+
+    private suspend fun processRepairJob(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome = when (job.type) {
+        MemoryMaintenanceJobType.REPAIR_MARKDOWN_METADATA -> rebuildLegacyRoomIndex(job)
+        else -> dismissUnknownJob(job)
+    }
+
+    private suspend fun rebuildLegacyRoomIndex(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome = try {
+        maintenanceScheduler.renewClaimedLease(job)
+        memoryIndexRepository.rebuildAll().getOrThrow()
+        maintenanceScheduler.renewClaimedLease(job)
+        maintenanceScheduler.markSucceeded(job)
+        MemoryMaintenanceOutcome.SUCCEEDED
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (throwable: Throwable) {
+        persistUnexpectedFailure(job, throwable)
+    }
+
+    private suspend fun unavailableConsolidation(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome {
+        val failedJob = maintenanceScheduler.markFailedRetryable(job, "batch_consolidation_pending")
+        return failedJob.toFailureOutcome()
+    }
+
+    private suspend fun persistUnexpectedFailure(
+        job: MemoryMaintenanceJob,
+        throwable: Throwable
+    ): MemoryMaintenanceOutcome = try {
+        maintenanceScheduler.markFailedRetryable(
+            job = job,
+            error = throwable.message ?: throwable.javaClass.simpleName
+        ).toFailureOutcome()
+    } catch (_: MemoryMaintenanceLeaseLostException) {
+        MemoryMaintenanceOutcome.SKIPPED
+    }
+
+    private suspend fun dismissUnknownJob(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome {
+        maintenanceScheduler.markDismissed(job, "unsupported_memory_job_type:${job.type}")
+        return MemoryMaintenanceOutcome.TERMINAL
+    }
+
+    private fun MemoryBatchProcessResult.toOutcome(): MemoryMaintenanceOutcome = when (status) {
+        MemoryBatchProcessResult.STATUS_SUCCEEDED,
+        MemoryBatchProcessResult.STATUS_DUPLICATE -> MemoryMaintenanceOutcome.SUCCEEDED
+        MemoryBatchProcessResult.STATUS_TERMINAL -> MemoryMaintenanceOutcome.TERMINAL
+        else -> MemoryMaintenanceOutcome.RETRYABLE
+    }
+
+    private fun MemoryMaintenanceJob.toFailureOutcome(): MemoryMaintenanceOutcome = when (status) {
+        MemoryMaintenanceJobStatus.FAILED_RETRYABLE -> MemoryMaintenanceOutcome.RETRYABLE
+        MemoryMaintenanceJobStatus.BLOCKED_DEPENDENCY,
+        MemoryMaintenanceJobStatus.WAITING_REPAIR -> MemoryMaintenanceOutcome.BLOCKED
+        else -> MemoryMaintenanceOutcome.TERMINAL
     }
 
     companion object {
         private const val DEFAULT_LIMIT = 10
-        private val LLM_JOB_TYPES = setOf(
-            MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH,
-            MemoryMaintenanceJobType.APPEND_DAILY_NOTE,
-            MemoryMaintenanceJobType.COMPACTION_FLUSH,
-            MemoryMaintenanceJobType.DISTILL_DAILY_NOTES,
-            MemoryMaintenanceJobType.PROMOTE_LONG_TERM_CANDIDATE
-        )
-        private val PROCESS_MUTEX = Mutex()
+        private const val LEASE_HEARTBEAT_INTERVAL_MILLIS = 5 * 60 * 1_000L
     }
+}
+
+internal suspend fun <T> runWithMemoryMaintenanceLeaseHeartbeat(
+    job: MemoryMaintenanceJob,
+    maintenanceScheduler: MemoryMaintenanceScheduler,
+    heartbeatIntervalMillis: Long,
+    block: suspend () -> T
+): T {
+    require(heartbeatIntervalMillis > 0) { "Memory maintenance heartbeat interval must be positive" }
+    maintenanceScheduler.renewClaimedLease(job)
+    return coroutineScope {
+        val heartbeat = launch {
+            while (true) {
+                delay(heartbeatIntervalMillis)
+                try {
+                    maintenanceScheduler.renewClaimedLease(job)
+                } catch (_: MemoryMaintenanceLeaseLostException) {
+                    return@launch
+                }
+            }
+        }
+        try {
+            block()
+        } finally {
+            heartbeat.cancelAndJoin()
+        }
+    }
+}
+
+interface MemoryMaintenanceLeaseWatchdog {
+    suspend fun scheduleLeaseWatchdog()
+}
+
+private enum class MemoryMaintenanceOutcome {
+    SUCCEEDED,
+    RETRYABLE,
+    TERMINAL,
+    BLOCKED,
+    SKIPPED
 }
 
 data class MemoryMaintenanceProcessResult(
     val processedCount: Int,
     val succeededCount: Int,
     val retryableCount: Int,
-    val terminalCount: Int
+    val terminalCount: Int,
+    val blockedCount: Int
 )

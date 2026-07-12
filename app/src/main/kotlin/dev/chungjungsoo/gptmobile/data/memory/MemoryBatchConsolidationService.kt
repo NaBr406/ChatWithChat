@@ -66,12 +66,16 @@ class MemoryBatchConsolidationService(
             return terminal(job, "memory_disabled", dismiss = true)
         }
 
+        check(job.status == MemoryMaintenanceJobStatus.RUNNING) { "memory_job_not_claimed" }
+        check(!job.leaseOwner.isNullOrBlank()) { "memory_job_missing_lease" }
         val preferredPlatform = preferredMemoryPlatform()
-        val runningJob = maintenanceScheduler.markRunning(job)
+        val runningJob = job
+        maintenanceScheduler.renewClaimedLease(runningJob)
         val startedAt = System.currentTimeMillis()
         logBatch(runningJob, request, "started", proposalCount = null, elapsedMs = null)
 
         val proposal = memoryIntelligence.consolidateMemoryBatch(request, preferredPlatform)
+        maintenanceScheduler.renewClaimedLease(runningJob)
         if (proposal == null) {
             val organizationLogId = startOrganizationActivity(runningJob, request, preferredPlatform)
             finishOrganizationActivity(
@@ -104,9 +108,11 @@ class MemoryBatchConsolidationService(
                 batchId = request.batchId,
                 chatId = request.chatId,
                 existingMemories = request.existingMemories,
-                operations = validatedOperations
+                operations = validatedOperations,
+                beforeWrite = { maintenanceScheduler.renewClaimedLease(runningJob) }
             )
         }.getOrElse { throwable ->
+            if (throwable is MemoryMaintenanceLeaseLostException) throw throwable
             finishOrganizationActivity(
                 organizationLogId,
                 MemoryActivityStatus.FAILED,
@@ -122,6 +128,7 @@ class MemoryBatchConsolidationService(
             )
         }
 
+        maintenanceScheduler.renewClaimedLease(runningJob)
         if (!complete()) {
             applyResult.rollback()
             finishOrganizationActivity(
@@ -378,7 +385,8 @@ class MemoryBatchConsolidationService(
         batchId: String,
         chatId: Int,
         existingMemories: List<MemoryBatchExistingMemory>,
-        operations: List<MemoryBatchOperation>
+        operations: List<MemoryBatchOperation>,
+        beforeWrite: suspend () -> Unit
     ): AppliedMemoryBatch {
         val snapshot = memoryFileStore.ensureStore().getOrThrow()
         val filesByPath = memoryFileStore.listMemoryFiles().getOrThrow().associateBy { file ->
@@ -468,12 +476,17 @@ class MemoryBatchConsolidationService(
         val replacements = mutableListOf<MemoryFileReplacement>()
         try {
             changedMarkdown.toSortedMap().forEach { (sourcePath, markdown) ->
+                beforeWrite()
                 val file = checkNotNull(filesByPath[sourcePath])
                 replacements += memoryFileStore.replaceMemoryFile(file, markdown).getOrThrow()
             }
-            replacements.forEach { replacement -> memoryIndexRebuilder.rebuildFile(replacement.file).getOrThrow() }
+            replacements.forEach { replacement ->
+                beforeWrite()
+                memoryIndexRebuilder.rebuildFile(replacement.file).getOrThrow()
+            }
         } catch (throwable: Throwable) {
-            rollbackReplacements(replacements)
+            if (throwable is MemoryMaintenanceLeaseLostException) throw throwable
+            rollbackReplacements(replacements, beforeWrite)
             throw throwable
         }
         return AppliedMemoryBatch(
@@ -481,7 +494,8 @@ class MemoryBatchConsolidationService(
             dailyWriteCount = dailyWriteCount,
             longTermWriteCount = longTermWriteCount,
             memoryFileStore = memoryFileStore,
-            memoryIndexRebuilder = memoryIndexRebuilder
+            memoryIndexRebuilder = memoryIndexRebuilder,
+            beforeWrite = beforeWrite
         )
     }
 
@@ -592,9 +606,14 @@ class MemoryBatchConsolidationService(
         }
     }
 
-    private suspend fun rollbackReplacements(replacements: List<MemoryFileReplacement>) {
+    private suspend fun rollbackReplacements(
+        replacements: List<MemoryFileReplacement>,
+        beforeWrite: suspend () -> Unit
+    ) {
         replacements.asReversed().forEach { replacement ->
+            beforeWrite()
             memoryFileStore.restoreMemoryFile(replacement)
+            beforeWrite()
             memoryIndexRebuilder.rebuildFile(replacement.file)
         }
     }
@@ -674,11 +693,14 @@ private data class AppliedMemoryBatch(
     val dailyWriteCount: Int,
     val longTermWriteCount: Int,
     val memoryFileStore: MemoryFileStore,
-    val memoryIndexRebuilder: MemoryIndexRebuilder
+    val memoryIndexRebuilder: MemoryIndexRebuilder,
+    val beforeWrite: suspend () -> Unit
 ) {
     suspend fun rollback() {
         replacements.asReversed().forEach { replacement ->
+            beforeWrite()
             memoryFileStore.restoreMemoryFile(replacement)
+            beforeWrite()
             memoryIndexRebuilder.rebuildFile(replacement.file)
         }
     }

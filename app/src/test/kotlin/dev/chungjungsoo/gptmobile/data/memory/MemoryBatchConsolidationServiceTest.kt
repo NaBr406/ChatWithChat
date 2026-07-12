@@ -9,6 +9,7 @@ import java.nio.file.Files
 import java.security.MessageDigest
 import java.time.Clock
 import java.time.Instant
+import java.time.ZoneId
 import java.time.ZoneOffset
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -55,7 +56,7 @@ class MemoryBatchConsolidationServiceTest {
         assertEquals(0, fixture.intelligence.consolidateCalls)
         assertTrue(fixture.jobDao.jobs.isEmpty())
         assertEquals(1, fixture.turnBatchScheduler.promoteDueIdleBatches(now = 1_804L))
-        fixture.service.process(fixture.jobDao.jobs.single())
+        fixture.service.process(fixture.claim(fixture.jobDao.jobs.single()))
 
         assertEquals(1, fixture.intelligence.consolidateCalls)
         assertEquals(4, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
@@ -65,10 +66,10 @@ class MemoryBatchConsolidationServiceTest {
     fun `ten turns run as two sequential consolidation calls`() = runBlocking {
         val fixture = fixture(MemoryBatchConsolidationProposal())
         fixture.createTurns(10)
-        val firstJob = fixture.jobDao.jobs.single()
+        val firstJob = fixture.claim(fixture.jobDao.jobs.single())
 
         fixture.service.process(firstJob)
-        val secondJob = fixture.jobDao.jobs.single { it.jobId != firstJob.jobId }
+        val secondJob = fixture.claim(fixture.jobDao.jobs.single { it.jobId != firstJob.jobId })
         fixture.service.process(secondJob)
 
         assertEquals(2, fixture.intelligence.consolidateCalls)
@@ -192,6 +193,38 @@ class MemoryBatchConsolidationServiceTest {
     }
 
     @Test
+    fun `stale semantic response cannot write after repair reclaims its lease`() = runBlocking {
+        val clock = MutableBatchConsolidationClock(1_000L)
+        val fixture = fixture(
+            proposal = MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        text = "A stale worker must never commit this memory."
+                    )
+                )
+            ),
+            clock = clock
+        )
+        val beforeLongTerm = fixture.fileStore.readLongTermMemory().getOrThrow()
+        val beforeDaily = fixture.fileStore.readDailyMemory().getOrThrow()
+        val job = fixture.createFiveTurnBatch()
+        fixture.intelligence.onConsolidate = {
+            clock.setEpochSecond(checkNotNull(job.leaseExpiresAt) + 1L)
+            assertEquals(1, fixture.maintenanceScheduler.resetExpiredRunningJobs())
+        }
+
+        val failure = runCatching { fixture.service.process(job) }.exceptionOrNull()
+
+        assertTrue(failure is MemoryMaintenanceLeaseLostException)
+        assertEquals(1, fixture.intelligence.consolidateCalls)
+        assertEquals(beforeLongTerm, fixture.fileStore.readLongTermMemory().getOrThrow())
+        assertEquals(beforeDaily, fixture.fileStore.readDailyMemory().getOrThrow())
+        assertEquals(5, fixture.turnDao.getTurnsClaimedByJob(job.jobId).size)
+        assertEquals(MemoryMaintenanceJobStatus.FAILED_RETRYABLE, fixture.jobDao.getById(job.jobId)?.status)
+    }
+
+    @Test
     fun `replace updates one supplied id without creating a duplicate`() = runBlocking {
         val existingEntry = MarkdownMemoryEntry(
             id = "mem_project",
@@ -270,6 +303,40 @@ class MemoryBatchConsolidationServiceTest {
     }
 
     @Test
+    fun `worker that loses its lease during indexing cannot roll files back`() = runBlocking {
+        val clock = MutableBatchConsolidationClock(1_000L)
+        val rebuilder = ReclaimingFailingMemoryIndexRebuilder()
+        val fixture = fixture(
+            proposal = MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        text = "The owned write reached long-term memory before lease loss."
+                    ),
+                    operation(
+                        destination = MemoryBatchDestination.DAILY,
+                        text = "The owned write reached daily memory before lease loss."
+                    )
+                )
+            ),
+            clock = clock,
+            indexRebuilder = rebuilder
+        )
+        val job = fixture.createFiveTurnBatch()
+        rebuilder.onRebuild = {
+            clock.setEpochSecond(checkNotNull(job.leaseExpiresAt) + 1L)
+            assertEquals(1, fixture.maintenanceScheduler.resetExpiredRunningJobs())
+        }
+
+        val failure = runCatching { fixture.service.process(job) }.exceptionOrNull()
+
+        assertTrue(failure is MemoryMaintenanceLeaseLostException)
+        assertTrue(fixture.fileStore.readLongTermMemory().getOrThrow().contains("owned write reached long-term"))
+        assertTrue(fixture.fileStore.readDailyMemory().getOrThrow().contains("owned write reached daily"))
+        assertEquals(MemoryMaintenanceJobStatus.FAILED_RETRYABLE, fixture.jobDao.getById(job.jobId)?.status)
+    }
+
+    @Test
     fun `legacy learning and compaction jobs drain through the batch consolidation contract`() = runBlocking {
         val fixture = fixture(MemoryBatchConsolidationProposal())
         val jobs = listOf(
@@ -317,7 +384,7 @@ class MemoryBatchConsolidationServiceTest {
                 )
             )
 
-            val result = fixture.service.processLegacy(job)
+            val result = fixture.service.processLegacy(fixture.claim(job))
 
             assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
             assertEquals(MemoryMaintenanceJobStatus.SUCCEEDED, fixture.jobDao.getById(job.jobId)?.status)
@@ -337,28 +404,30 @@ class MemoryBatchConsolidationServiceTest {
     private fun fixture(
         proposal: MemoryBatchConsolidationProposal?,
         searchResults: List<MemoryIndexSearchResult> = emptyList(),
-        failIndexRebuild: Boolean = false
+        failIndexRebuild: Boolean = false,
+        clock: Clock = FIXED_CLOCK,
+        indexRebuilder: MemoryIndexRebuilder? = null
     ): Fixture {
         val turnDao = InMemoryMemoryTurnBatchDao()
         val jobDao = InMemoryMaintenanceJobDao()
         val enqueuer = RecordingWorkEnqueuer()
         val settingRepository = FakeMaintenanceSettingRepository(memoryEnabled = true)
-        val maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK)
+        val maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, clock)
         val turnBatchScheduler = MemoryTurnBatchScheduler(
             turnBatchDao = turnDao,
             maintenanceJobDao = jobDao,
             maintenanceScheduler = maintenanceScheduler,
             workEnqueuer = enqueuer,
             settingRepository = settingRepository,
-            clock = FIXED_CLOCK
+            clock = clock
         )
         val fileStore = MemoryFileStore(
             MemoryFilePaths(Files.createTempDirectory("memory-batch-consolidation").toFile()),
-            FIXED_CLOCK
+            clock
         )
         fileStore.ensureStore().getOrThrow()
         val indexDao = InMemoryProcessorMemoryIndexDao()
-        val indexRepository = MemoryIndexRepository(fileStore, indexDao, MemoryChunker(), FIXED_CLOCK)
+        val indexRepository = MemoryIndexRepository(fileStore, indexDao, MemoryChunker(), clock)
         val intelligence = FakeMemoryIntelligence(batchProposal = proposal)
         val activityLogger = RecordingOrganizationActivityLogger()
         val maintenanceCorpusReader = object : MemoryMaintenanceCorpusReader {
@@ -369,11 +438,7 @@ class MemoryBatchConsolidationServiceTest {
                     Result.failure(IllegalArgumentException("Expected maintenance working set"))
                 }
         }
-        val rebuilder = if (failIndexRebuild) {
-            FailingMemoryIndexRebuilder()
-        } else {
-            indexRepository
-        }
+        val rebuilder = indexRebuilder ?: if (failIndexRebuild) FailingMemoryIndexRebuilder() else indexRepository
         return Fixture(
             turnDao = turnDao,
             jobDao = jobDao,
@@ -381,6 +446,7 @@ class MemoryBatchConsolidationServiceTest {
             indexDao = indexDao,
             intelligence = intelligence,
             activityLogger = activityLogger,
+            maintenanceScheduler = maintenanceScheduler,
             coordinator = MemoryTurnBatchCoordinator(turnDao, turnBatchScheduler),
             turnBatchScheduler = turnBatchScheduler,
             service = MemoryBatchConsolidationService(
@@ -394,7 +460,7 @@ class MemoryBatchConsolidationServiceTest {
                 memoryMaintenanceCorpusReader = maintenanceCorpusReader,
                 memoryIndexRebuilder = rebuilder,
                 activityLogger = activityLogger,
-                clock = FIXED_CLOCK
+                clock = clock
             )
         )
     }
@@ -429,7 +495,8 @@ class MemoryBatchConsolidationServiceTest {
         createdAt = 100L,
         startedAt = null,
         updatedAt = 100L,
-        nextRunAt = null
+        nextRunAt = null,
+        family = MemoryMaintenanceJobFamily.forType(type)
     )
 
     private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
@@ -457,6 +524,7 @@ class MemoryBatchConsolidationServiceTest {
         val indexDao: InMemoryProcessorMemoryIndexDao,
         val intelligence: FakeMemoryIntelligence,
         val activityLogger: RecordingOrganizationActivityLogger,
+        val maintenanceScheduler: MemoryMaintenanceScheduler,
         val coordinator: MemoryTurnBatchCoordinator,
         val turnBatchScheduler: MemoryTurnBatchScheduler,
         val service: MemoryBatchConsolidationService
@@ -495,14 +563,35 @@ class MemoryBatchConsolidationServiceTest {
 
         suspend fun createFiveTurnBatch() = run {
             createTurns(5)
-            jobDao.jobs.single()
+            claim(jobDao.jobs.single())
         }
+
+        suspend fun claim(job: MemoryMaintenanceJob): MemoryMaintenanceJob = checkNotNull(
+            maintenanceScheduler.claimNextRunnable(
+                family = job.family,
+                leaseOwner = "test-owner:${job.jobId}"
+            )
+        )
     }
 
     companion object {
         private const val CHAT_ID = 7
         private val FIXED_CLOCK: Clock = Clock.fixed(Instant.ofEpochSecond(1_000L), ZoneOffset.UTC)
     }
+}
+
+private class MutableBatchConsolidationClock(epochSecond: Long) : Clock() {
+    private var currentInstant: Instant = Instant.ofEpochSecond(epochSecond)
+
+    fun setEpochSecond(epochSecond: Long) {
+        currentInstant = Instant.ofEpochSecond(epochSecond)
+    }
+
+    override fun getZone(): ZoneId = ZoneOffset.UTC
+
+    override fun withZone(zone: ZoneId): Clock = Clock.fixed(currentInstant, zone)
+
+    override fun instant(): Instant = currentInstant
 }
 
 private class RecordingOrganizationActivityLogger : MemoryActivityLogger {
@@ -525,4 +614,13 @@ private class RecordingOrganizationActivityLogger : MemoryActivityLogger {
 private class FailingMemoryIndexRebuilder : MemoryIndexRebuilder {
     override suspend fun rebuildFile(file: File): Result<MemoryIndexRebuildResult> =
         Result.failure(IllegalStateException("index failure"))
+}
+
+private class ReclaimingFailingMemoryIndexRebuilder : MemoryIndexRebuilder {
+    var onRebuild: suspend () -> Unit = {}
+
+    override suspend fun rebuildFile(file: File): Result<MemoryIndexRebuildResult> {
+        onRebuild()
+        return Result.failure(IllegalStateException("index failure after lease loss"))
+    }
 }

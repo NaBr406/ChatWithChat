@@ -22,7 +22,11 @@ class MemoryMaintenanceNotificationEventSink @Inject constructor(
                     appNotificationManager.showMemoryMaintenanceStarted(event.newJob)
                 }
                 is MemoryMaintenanceNotificationDecision.ShowFailed -> {
-                    appNotificationManager.showMemoryMaintenanceFailed(event.newJob, terminal = decision.terminal)
+                    appNotificationManager.showMemoryMaintenanceFailed(
+                        job = event.newJob,
+                        terminal = decision.terminal,
+                        allowRetry = decision.allowRetry
+                    )
                 }
                 is MemoryMaintenanceNotificationDecision.Cancel -> {
                     appNotificationManager.cancelMemoryMaintenance(event.newJob)

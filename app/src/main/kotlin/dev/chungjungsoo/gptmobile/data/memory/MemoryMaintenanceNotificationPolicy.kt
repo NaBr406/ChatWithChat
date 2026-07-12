@@ -14,7 +14,7 @@ class MemoryMaintenanceNotificationPolicy {
             event.newStatus == MemoryMaintenanceJobStatus.DISMISSED ||
             (
                 event.newStatus == MemoryMaintenanceJobStatus.PENDING &&
-                    event.oldStatus in RETRYABLE_NOTIFICATION_STATUSES
+                    event.oldStatus in FAILURE_NOTIFICATION_STATUSES
                 )
         ) {
             return MemoryMaintenanceNotificationDecision.Cancel(notificationKey)
@@ -33,10 +33,32 @@ class MemoryMaintenanceNotificationPolicy {
                 }
             }
             MemoryMaintenanceJobStatus.FAILED_RETRYABLE -> {
-                MemoryMaintenanceNotificationDecision.ShowFailed(notificationKey, terminal = false)
+                MemoryMaintenanceNotificationDecision.ShowFailed(
+                    notificationKey = notificationKey,
+                    terminal = false,
+                    allowRetry = false
+                )
             }
             MemoryMaintenanceJobStatus.FAILED_TERMINAL -> {
-                MemoryMaintenanceNotificationDecision.ShowFailed(notificationKey, terminal = true)
+                MemoryMaintenanceNotificationDecision.ShowFailed(
+                    notificationKey = notificationKey,
+                    terminal = true,
+                    allowRetry = true
+                )
+            }
+            MemoryMaintenanceJobStatus.WAITING_REPAIR -> {
+                MemoryMaintenanceNotificationDecision.ShowFailed(
+                    notificationKey = notificationKey,
+                    terminal = true,
+                    allowRetry = true
+                )
+            }
+            MemoryMaintenanceJobStatus.BLOCKED_DEPENDENCY -> {
+                MemoryMaintenanceNotificationDecision.ShowFailed(
+                    notificationKey = notificationKey,
+                    terminal = true,
+                    allowRetry = false
+                )
             }
             else -> MemoryMaintenanceNotificationDecision.None
         }
@@ -53,9 +75,11 @@ class MemoryMaintenanceNotificationPolicy {
             MemoryMaintenanceJobType.COMPACTION_FLUSH,
             MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH
         )
-        val RETRYABLE_NOTIFICATION_STATUSES = setOf(
+        val FAILURE_NOTIFICATION_STATUSES = setOf(
             MemoryMaintenanceJobStatus.FAILED_RETRYABLE,
-            MemoryMaintenanceJobStatus.FAILED_TERMINAL
+            MemoryMaintenanceJobStatus.FAILED_TERMINAL,
+            MemoryMaintenanceJobStatus.WAITING_REPAIR,
+            MemoryMaintenanceJobStatus.BLOCKED_DEPENDENCY
         )
     }
 }
@@ -63,6 +87,10 @@ class MemoryMaintenanceNotificationPolicy {
 sealed class MemoryMaintenanceNotificationDecision {
     data object None : MemoryMaintenanceNotificationDecision()
     data class ShowStarted(val notificationKey: String) : MemoryMaintenanceNotificationDecision()
-    data class ShowFailed(val notificationKey: String, val terminal: Boolean) : MemoryMaintenanceNotificationDecision()
+    data class ShowFailed(
+        val notificationKey: String,
+        val terminal: Boolean,
+        val allowRetry: Boolean
+    ) : MemoryMaintenanceNotificationDecision()
     data class Cancel(val notificationKey: String) : MemoryMaintenanceNotificationDecision()
 }

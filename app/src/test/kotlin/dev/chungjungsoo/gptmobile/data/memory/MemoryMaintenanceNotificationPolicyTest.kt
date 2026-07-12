@@ -38,7 +38,14 @@ class MemoryMaintenanceNotificationPolicyTest {
             systemPermissionGranted = true
         )
 
-        assertEquals(MemoryMaintenanceNotificationDecision.ShowFailed("key-1", terminal = false), decision)
+        assertEquals(
+            MemoryMaintenanceNotificationDecision.ShowFailed(
+                notificationKey = "key-1",
+                terminal = false,
+                allowRetry = false
+            ),
+            decision
+        )
     }
 
     @Test
@@ -49,7 +56,50 @@ class MemoryMaintenanceNotificationPolicyTest {
             systemPermissionGranted = true
         )
 
-        assertEquals(MemoryMaintenanceNotificationDecision.ShowFailed("key-1", terminal = true), decision)
+        assertEquals(
+            MemoryMaintenanceNotificationDecision.ShowFailed(
+                notificationKey = "key-1",
+                terminal = true,
+                allowRetry = true
+            ),
+            decision
+        )
+    }
+
+    @Test
+    fun `waiting repair exposes manual retry`() {
+        val decision = policy.decide(
+            event = event(job(status = MemoryMaintenanceJobStatus.WAITING_REPAIR)),
+            preferenceEnabled = true,
+            systemPermissionGranted = true
+        )
+
+        assertEquals(
+            MemoryMaintenanceNotificationDecision.ShowFailed(
+                notificationKey = "key-1",
+                terminal = true,
+                allowRetry = true
+            ),
+            decision
+        )
+    }
+
+    @Test
+    fun `dependency block does not expose a misleading retry`() {
+        val decision = policy.decide(
+            event = event(job(status = MemoryMaintenanceJobStatus.BLOCKED_DEPENDENCY)),
+            preferenceEnabled = true,
+            systemPermissionGranted = true
+        )
+
+        assertEquals(
+            MemoryMaintenanceNotificationDecision.ShowFailed(
+                notificationKey = "key-1",
+                terminal = true,
+                allowRetry = false
+            ),
+            decision
+        )
     }
 
     @Test
@@ -150,6 +200,7 @@ class MemoryMaintenanceNotificationPolicyTest {
         createdAt = 1L,
         startedAt = 10L,
         updatedAt = 100L,
-        nextRunAt = null
+        nextRunAt = null,
+        family = MemoryMaintenanceJobFamily.forType(type)
     )
 }

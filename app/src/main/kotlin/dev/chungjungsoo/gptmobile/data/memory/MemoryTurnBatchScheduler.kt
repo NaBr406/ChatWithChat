@@ -18,7 +18,7 @@ class MemoryTurnBatchScheduler(
     private val settingRepository: SettingRepository,
     private val clock: Clock = Clock.systemDefaultZone(),
     private val json: Json = Json { encodeDefaults = true }
-) : MemoryPendingTurnObserver {
+) : MemoryPendingTurnObserver, MemoryMaintenanceLeaseWatchdog {
     override suspend fun onPendingTurnStateChanged(state: MemoryPendingTurnState) {
         if (state.thresholdEligible) {
             enqueueBatchForChat(
@@ -128,11 +128,28 @@ class MemoryTurnBatchScheduler(
     }
 
     suspend fun scheduleNextWake(now: Long = now()) {
-        val nextRunAt = listOfNotNull(
+        listOfNotNull(
             turnBatchDao.getEarliestIdleDueAt(),
-            maintenanceScheduler.nextScheduledRunAt(now)
-        ).minOrNull() ?: return
-        workEnqueuer.enqueueRepairWork((nextRunAt - now).coerceAtLeast(0L))
+            maintenanceScheduler.nextRepairWakeAt(now)
+        ).minOrNull()?.let { repairRunAt ->
+            workEnqueuer.enqueueWork(
+                family = MemoryMaintenanceJobFamily.REPAIR,
+                delaySeconds = (repairRunAt - now).coerceAtLeast(0L)
+            )
+        }
+        maintenanceScheduler.nextScheduledRunAt(
+            family = MemoryMaintenanceJobFamily.SEMANTIC,
+            now = now
+        )?.let { semanticRunAt ->
+            workEnqueuer.enqueueWork(
+                family = MemoryMaintenanceJobFamily.SEMANTIC,
+                delaySeconds = (semanticRunAt - now).coerceAtLeast(0L)
+            )
+        }
+    }
+
+    override suspend fun scheduleLeaseWatchdog() {
+        scheduleNextWake()
     }
 
     suspend fun enqueueBatchForChat(
@@ -204,7 +221,7 @@ class MemoryTurnBatchScheduler(
             payloadJson = json.encodeToString(payload),
             jobId = jobId
         )
-        workEnqueuer.enqueueRepairWork()
+        workEnqueuer.enqueueWork(MemoryMaintenanceJobFamily.SEMANTIC)
         return job
     }
 
