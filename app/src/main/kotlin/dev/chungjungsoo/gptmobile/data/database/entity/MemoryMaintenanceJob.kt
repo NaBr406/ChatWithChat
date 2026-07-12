@@ -11,7 +11,10 @@ import androidx.room.PrimaryKey
         Index(value = ["idempotency_key"], unique = true),
         Index(value = ["status"]),
         Index(value = ["type"]),
-        Index(value = ["next_run_at"])
+        Index(value = ["next_run_at"]),
+        Index(value = ["family", "status", "next_run_at", "created_at"]),
+        Index(value = ["family", "status", "lease_expires_at"]),
+        Index(value = ["generation", "status"])
     ]
 )
 data class MemoryMaintenanceJob(
@@ -47,5 +50,26 @@ data class MemoryMaintenanceJob(
     val updatedAt: Long,
 
     @ColumnInfo(name = "next_run_at")
-    val nextRunAt: Long?
+    val nextRunAt: Long?,
+
+    @ColumnInfo(name = "family", defaultValue = "'semantic'")
+    val family: String = "semantic",
+
+    @ColumnInfo(name = "generation", defaultValue = "0")
+    val generation: Long = 0,
+
+    @ColumnInfo(name = "row_version", defaultValue = "0")
+    val rowVersion: Long = 0,
+
+    @ColumnInfo(name = "lease_owner")
+    val leaseOwner: String? = null,
+
+    @ColumnInfo(name = "lease_expires_at")
+    val leaseExpiresAt: Long? = null,
+
+    @ColumnInfo(name = "retry_cycle", defaultValue = "0")
+    val retryCycle: Int = 0,
+
+    @ColumnInfo(name = "blocked_reason")
+    val blockedReason: String? = null
 )

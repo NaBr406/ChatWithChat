@@ -211,6 +211,36 @@ class ChatDatabaseV2MigrationsTest {
         assertTrue(executedSql.all { it.contains("IF NOT EXISTS") })
     }
 
+    @Test
+    fun `migration 14 to 15 adds recovery state without dropping schema 14 tables`() {
+        val executedSql = mutableListOf<String>()
+        val db = recordingDatabase(executedSql)
+
+        ChatDatabaseV2Migrations.MIGRATION_14_15.migrate(db)
+
+        val migrationSql = executedSql.joinToString(separator = "\n")
+        assertTrue(migrationSql.contains("ADD COLUMN `family` TEXT NOT NULL DEFAULT 'semantic'"))
+        assertTrue(migrationSql.contains("ADD COLUMN `generation` INTEGER NOT NULL DEFAULT 0"))
+        assertTrue(migrationSql.contains("ADD COLUMN `row_version` INTEGER NOT NULL DEFAULT 0"))
+        assertTrue(migrationSql.contains("ADD COLUMN `lease_owner` TEXT"))
+        assertTrue(migrationSql.contains("ADD COLUMN `lease_expires_at` INTEGER"))
+        assertTrue(migrationSql.contains("ADD COLUMN `retry_cycle` INTEGER NOT NULL DEFAULT 0"))
+        assertTrue(migrationSql.contains("ADD COLUMN `blocked_reason` TEXT"))
+        assertTrue(migrationSql.contains("SET `family` = 'index' WHERE `type` = 'rebuild_memory_index'"))
+        assertTrue(migrationSql.contains("SET `family` = 'repair' WHERE `type` = 'repair_markdown_metadata'"))
+        assertTrue(migrationSql.contains("CREATE TABLE IF NOT EXISTS `memory_mutation_group`"))
+        assertTrue(migrationSql.contains("CREATE TABLE IF NOT EXISTS `memory_mutation_receipt`"))
+        assertTrue(migrationSql.contains("CREATE TABLE IF NOT EXISTS `memory_corpus_state`"))
+        assertTrue(migrationSql.contains("CREATE TABLE IF NOT EXISTS `memory_distillation_checkpoint`"))
+        assertTrue(migrationSql.contains("`batch_key` TEXT NOT NULL"))
+        assertTrue(migrationSql.contains("(`daily_source_path`, `daily_source_hash`, `batch_key`)"))
+        assertTrue(migrationSql.contains("`expected_receipt_count` INTEGER NOT NULL DEFAULT 0"))
+        assertTrue(migrationSql.contains("`row_version` INTEGER NOT NULL DEFAULT 0"))
+        assertTrue(migrationSql.contains("FOREIGN KEY(`group_id`) REFERENCES `memory_mutation_group`(`group_id`)"))
+        assertTrue(executedSql.none { it.trimStart().startsWith("DROP ", ignoreCase = true) })
+        assertTrue(executedSql.none { it.contains("SET `status` =", ignoreCase = true) })
+    }
+
     private fun recordingDatabase(executedSql: MutableList<String>): SupportSQLiteDatabase = Proxy.newProxyInstance(
         SupportSQLiteDatabase::class.java.classLoader,
         arrayOf(SupportSQLiteDatabase::class.java),

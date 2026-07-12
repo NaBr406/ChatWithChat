@@ -311,6 +311,13 @@ object ChatDatabaseV2Migrations {
         }
     }
 
+    val MIGRATION_14_15 = object : Migration(14, 15) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            extendMemoryMaintenanceJobTable(db)
+            ensureMemoryRecoveryTables(db)
+        }
+    }
+
     internal fun legacyFilesToAttachmentsJson(filesValue: String): String {
         val attachments = filesValue
             .split(",")
@@ -569,5 +576,153 @@ object ChatDatabaseV2Migrations {
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_activity_log_category` ON `memory_activity_log` (`category`)")
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_activity_log_status` ON `memory_activity_log` (`status`)")
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_activity_log_started_at` ON `memory_activity_log` (`started_at`)")
+    }
+
+    private fun extendMemoryMaintenanceJobTable(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `memory_maintenance_job` ADD COLUMN `family` TEXT NOT NULL DEFAULT 'semantic'")
+        db.execSQL("ALTER TABLE `memory_maintenance_job` ADD COLUMN `generation` INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE `memory_maintenance_job` ADD COLUMN `row_version` INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE `memory_maintenance_job` ADD COLUMN `lease_owner` TEXT")
+        db.execSQL("ALTER TABLE `memory_maintenance_job` ADD COLUMN `lease_expires_at` INTEGER")
+        db.execSQL("ALTER TABLE `memory_maintenance_job` ADD COLUMN `retry_cycle` INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE `memory_maintenance_job` ADD COLUMN `blocked_reason` TEXT")
+        db.execSQL(
+            "UPDATE `memory_maintenance_job` SET `family` = 'index' WHERE `type` = 'rebuild_memory_index'"
+        )
+        db.execSQL(
+            "UPDATE `memory_maintenance_job` SET `family` = 'repair' WHERE `type` = 'repair_markdown_metadata'"
+        )
+        db.execSQL(
+            """
+            UPDATE `memory_maintenance_job`
+            SET `family` = 'repair'
+            WHERE `type` NOT IN (
+                'append_daily_note',
+                'rebuild_memory_index',
+                'distill_daily_notes',
+                'promote_long_term_candidate',
+                'repair_markdown_metadata',
+                'compaction_flush',
+                'consolidate_turn_batch'
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_memory_maintenance_job_family_status_next_run_at_created_at` ON `memory_maintenance_job` (`family`, `status`, `next_run_at`, `created_at`)"
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_memory_maintenance_job_family_status_lease_expires_at` ON `memory_maintenance_job` (`family`, `status`, `lease_expires_at`)"
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_memory_maintenance_job_generation_status` ON `memory_maintenance_job` (`generation`, `status`)"
+        )
+    }
+
+    private fun ensureMemoryRecoveryTables(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `memory_mutation_group` (
+                `group_id` TEXT NOT NULL,
+                `generation` INTEGER NOT NULL,
+                `semantic_job_id` TEXT,
+                `semantic_batch_id` TEXT,
+                `state` TEXT NOT NULL,
+                `idempotency_key` TEXT NOT NULL,
+                `last_error` TEXT,
+                `created_at` INTEGER NOT NULL,
+                `updated_at` INTEGER NOT NULL,
+                `completed_at` INTEGER,
+                `expected_receipt_count` INTEGER NOT NULL DEFAULT 0,
+                `row_version` INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(`group_id`)
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_memory_mutation_group_idempotency_key` ON `memory_mutation_group` (`idempotency_key`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_mutation_group_semantic_job_id` ON `memory_mutation_group` (`semantic_job_id`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_mutation_group_semantic_batch_id` ON `memory_mutation_group` (`semantic_batch_id`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_mutation_group_generation` ON `memory_mutation_group` (`generation`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_mutation_group_state` ON `memory_mutation_group` (`state`)")
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `memory_mutation_receipt` (
+                `receipt_id` TEXT NOT NULL,
+                `group_id` TEXT NOT NULL,
+                `generation` INTEGER NOT NULL,
+                `source_path` TEXT NOT NULL,
+                `base_source_hash` TEXT NOT NULL,
+                `target_source_hash` TEXT NOT NULL,
+                `staged_target_path` TEXT NOT NULL,
+                `state` TEXT NOT NULL,
+                `idempotency_key` TEXT NOT NULL,
+                `target_index_fingerprint` TEXT,
+                `attempts` INTEGER NOT NULL,
+                `last_error` TEXT,
+                `created_at` INTEGER NOT NULL,
+                `updated_at` INTEGER NOT NULL,
+                `file_committed_at` INTEGER,
+                `indexed_at` INTEGER,
+                `row_version` INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(`receipt_id`),
+                FOREIGN KEY(`group_id`) REFERENCES `memory_mutation_group`(`group_id`) ON UPDATE NO ACTION ON DELETE CASCADE
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_memory_mutation_receipt_idempotency_key` ON `memory_mutation_receipt` (`idempotency_key`)")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_memory_mutation_receipt_group_id_source_path` ON `memory_mutation_receipt` (`group_id`, `source_path`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_mutation_receipt_generation` ON `memory_mutation_receipt` (`generation`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_mutation_receipt_state` ON `memory_mutation_receipt` (`state`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_mutation_receipt_source_path` ON `memory_mutation_receipt` (`source_path`)")
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `memory_corpus_state` (
+                `corpus` TEXT NOT NULL,
+                `source_path` TEXT NOT NULL,
+                `source_hash` TEXT NOT NULL,
+                `generation` INTEGER NOT NULL,
+                `target_index_fingerprint` TEXT,
+                `index_status` TEXT NOT NULL,
+                `indexed_generation` INTEGER,
+                `indexed_source_hash` TEXT,
+                `indexed_fingerprint` TEXT,
+                `latest_receipt_id` TEXT,
+                `last_error` TEXT,
+                `row_version` INTEGER NOT NULL DEFAULT 0,
+                `created_at` INTEGER NOT NULL,
+                `updated_at` INTEGER NOT NULL,
+                PRIMARY KEY(`corpus`)
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_corpus_state_source_path` ON `memory_corpus_state` (`source_path`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_corpus_state_generation` ON `memory_corpus_state` (`generation`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_corpus_state_index_status` ON `memory_corpus_state` (`index_status`)")
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `memory_distillation_checkpoint` (
+                `checkpoint_id` TEXT NOT NULL,
+                `daily_source_path` TEXT NOT NULL,
+                `daily_source_hash` TEXT NOT NULL,
+                `batch_key` TEXT NOT NULL,
+                `daily_date` TEXT NOT NULL,
+                `semantic_job_id` TEXT NOT NULL,
+                `target_source_path` TEXT NOT NULL,
+                `target_base_hash` TEXT NOT NULL,
+                `target_source_hash` TEXT NOT NULL,
+                `mutation_group_id` TEXT,
+                `status` TEXT NOT NULL,
+                `created_at` INTEGER NOT NULL,
+                `updated_at` INTEGER NOT NULL,
+                `processed_at` INTEGER,
+                `row_version` INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(`checkpoint_id`)
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_memory_distillation_checkpoint_source_batch` ON `memory_distillation_checkpoint` (`daily_source_path`, `daily_source_hash`, `batch_key`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_distillation_checkpoint_daily_date` ON `memory_distillation_checkpoint` (`daily_date`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_distillation_checkpoint_semantic_job_id` ON `memory_distillation_checkpoint` (`semantic_job_id`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_distillation_checkpoint_mutation_group_id` ON `memory_distillation_checkpoint` (`mutation_group_id`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_distillation_checkpoint_status` ON `memory_distillation_checkpoint` (`status`)")
     }
 }

@@ -14,12 +14,13 @@ import dev.chungjungsoo.gptmobile.data.database.dao.ChatClassificationDao
 import dev.chungjungsoo.gptmobile.data.database.dao.ChatPlatformModelV2Dao
 import dev.chungjungsoo.gptmobile.data.database.dao.ChatRoomDao
 import dev.chungjungsoo.gptmobile.data.database.dao.ChatRoomV2Dao
-import dev.chungjungsoo.gptmobile.data.database.dao.MessageDao
-import dev.chungjungsoo.gptmobile.data.database.dao.MessageV2Dao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryActivityLogDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryIndexDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryMaintenanceJobDao
+import dev.chungjungsoo.gptmobile.data.database.dao.MemoryRecoveryDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryTurnBatchDao
+import dev.chungjungsoo.gptmobile.data.database.dao.MessageDao
+import dev.chungjungsoo.gptmobile.data.database.dao.MessageV2Dao
 import dev.chungjungsoo.gptmobile.data.database.dao.PersonalMemoryDao
 import dev.chungjungsoo.gptmobile.data.database.dao.PlatformModelV2Dao
 import dev.chungjungsoo.gptmobile.data.database.dao.PlatformV2Dao
@@ -65,6 +66,9 @@ object DatabaseModule {
     fun provideMemoryMaintenanceJobDao(chatDatabaseV2: ChatDatabaseV2): MemoryMaintenanceJobDao = chatDatabaseV2.memoryMaintenanceJobDao()
 
     @Provides
+    fun provideMemoryRecoveryDao(chatDatabaseV2: ChatDatabaseV2): MemoryRecoveryDao = chatDatabaseV2.memoryRecoveryDao()
+
+    @Provides
     fun provideMemoryTurnBatchDao(chatDatabaseV2: ChatDatabaseV2): MemoryTurnBatchDao = chatDatabaseV2.memoryTurnBatchDao()
 
     @Provides
@@ -97,6 +101,7 @@ object DatabaseModule {
         ChatDatabaseV2Migrations.MIGRATION_10_11,
         ChatDatabaseV2Migrations.MIGRATION_11_12,
         ChatDatabaseV2Migrations.MIGRATION_12_13,
-        ChatDatabaseV2Migrations.MIGRATION_13_14
+        ChatDatabaseV2Migrations.MIGRATION_13_14,
+        ChatDatabaseV2Migrations.MIGRATION_14_15
     ).build()
 }
