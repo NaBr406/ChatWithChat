@@ -22,6 +22,8 @@ import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorPublishResult
 import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorQuery
 import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorQueryResult
 import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorSnapshot
+import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorSnapshotExpectation
+import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorSnapshotVerification
 import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorStore
 import java.nio.file.Files
 import java.time.Clock
@@ -526,6 +528,27 @@ class MemoryIndexSynchronizerTest {
         override fun readManifest(): MemoryVectorManifest? = manifest
 
         override fun countChunks(): Long = chunks.size.toLong()
+
+        override fun verifySnapshot(
+            expectation: MemoryVectorSnapshotExpectation
+        ): MemoryVectorSnapshotVerification {
+            val current = manifest ?: return MemoryVectorSnapshotVerification.Missing
+            val identity = current.identity
+            val matches = identity.corpus == expectation.corpus &&
+                identity.sourcePath == expectation.sourcePath &&
+                identity.sourceHash == expectation.sourceHash &&
+                identity.corpusGeneration == expectation.corpusGeneration &&
+                identity.indexFingerprint == expectation.indexFingerprint
+            if (!matches) return MemoryVectorSnapshotVerification.Stale(current)
+            return if (
+                chunks.size.toLong() == current.expectedChunkCount &&
+                chunks.map(MemoryEmbeddedChunk::chunk) == expectation.chunks
+            ) {
+                MemoryVectorSnapshotVerification.Ready(current)
+            } else {
+                MemoryVectorSnapshotVerification.RecoveredCorruption
+            }
+        }
 
         override fun replaceSnapshot(snapshot: MemoryVectorSnapshot): MemoryVectorPublishResult {
             publishCalls += 1

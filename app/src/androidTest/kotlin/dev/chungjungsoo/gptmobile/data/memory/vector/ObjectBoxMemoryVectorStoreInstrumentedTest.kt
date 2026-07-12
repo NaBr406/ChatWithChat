@@ -196,6 +196,59 @@ class ObjectBoxMemoryVectorStoreInstrumentedTest {
     }
 
     @Test
+    fun snapshotVerification_preservesStaleManifestAndRecoversCorruptIdentityChunks() {
+        val identity = identity(generation = 2, sourceHash = hash('b'))
+        val snapshot = snapshot(
+            identity = identity,
+            chunks = listOf(
+                embeddedChunk("target", "valid target", axis = 0, hashCharacter = '1'),
+                embeddedChunk("corrupt", "will be corrupted", axis = 1, hashCharacter = '2')
+            )
+        )
+        val store = openStore()
+        store.replaceSnapshot(snapshot)
+
+        val staleVerification = store.verifySnapshot(
+            expectation(
+                identity = identity(generation = 1, sourceHash = hash('a')),
+                chunks = snapshot.chunks.map(MemoryEmbeddedChunk::chunk)
+            )
+        )
+        assertTrue(staleVerification is MemoryVectorSnapshotVerification.Stale)
+        assertEquals(snapshot.manifest, store.readManifest())
+        assertEquals(2L, store.countChunks())
+
+        store.close()
+        MyObjectBox.builder()
+            .androidContext(context)
+            .directory(directory)
+            .build()
+            .use { rawStore ->
+                val chunkBox = rawStore.boxFor(MemoryVectorChunkEntity::class.java)
+                val corrupt = checkNotNull(
+                    chunkBox.query(MemoryVectorChunkEntity_.chunkId.equal("corrupt"))
+                        .build()
+                        .use { query -> query.findUnique() }
+                )
+                corrupt.text = "tampered without updating contentHash"
+                chunkBox.put(corrupt)
+            }
+
+        val reopenedStore = openStore()
+        assertEquals(
+            MemoryVectorSnapshotVerification.RecoveredCorruption,
+            reopenedStore.verifySnapshot(
+                expectation(
+                    identity = identity,
+                    chunks = snapshot.chunks.map(MemoryEmbeddedChunk::chunk)
+                )
+            )
+        )
+        assertNull(reopenedStore.readManifest())
+        assertEquals(0L, reopenedStore.countChunks())
+    }
+
+    @Test
     fun failedManifestPublish_rollsBackChunksAndManifestTogether() {
         val firstIdentity = identity(generation = 1, sourceHash = hash('a'))
         val firstSnapshot = snapshot(
@@ -342,6 +395,19 @@ class ObjectBoxMemoryVectorStoreInstrumentedTest {
         sourceHash = sourceHash,
         corpusGeneration = generation
     )
+
+    private fun expectation(
+        identity: MemoryVectorIndexIdentity,
+        chunks: List<MemoryCorpusChunk>
+    ): MemoryVectorSnapshotExpectation =
+        MemoryVectorSnapshotExpectation(
+            corpus = identity.corpus,
+            sourcePath = identity.sourcePath,
+            sourceHash = identity.sourceHash,
+            corpusGeneration = identity.corpusGeneration,
+            indexFingerprint = identity.indexFingerprint,
+            chunks = chunks
+        )
 
     private fun configuration(
         descriptor: MemoryEmbeddingDescriptor,

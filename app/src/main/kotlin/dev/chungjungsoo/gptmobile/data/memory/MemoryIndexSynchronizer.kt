@@ -14,6 +14,8 @@ import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorManifest
 import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorManifestState
 import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorPublishResult
 import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorSnapshot
+import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorSnapshotExpectation
+import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorSnapshotVerification
 import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorStore
 import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorStoreConflictException
 import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorStoreCorruptionException
@@ -60,26 +62,24 @@ class MemoryIndexSynchronizer(
             is CurrentSyncState.Retryable -> return MemoryIndexSyncResult.Retryable(state.reason)
             is CurrentSyncState.Conflict -> return MemoryIndexSyncResult.Terminal(state.reason)
         }
-        val currentManifest = vectorStore.readManifest()
         val snapshot = currentSnapshot(payload)
             ?: return MemoryIndexSyncResult.Retryable("canonical_memory_does_not_match_vector_job")
 
-        when (manifestStatus(currentManifest, payload)) {
-            ManifestStatus.MATCHING_READY -> {
-                if (vectorStore.countChunks() != currentManifest?.expectedChunkCount) {
-                    throw MemoryVectorStoreCorruptionException(
-                        "Vector manifest chunk count does not match the published store"
-                    )
-                }
+        when (val verification = vectorStore.verifySnapshot(payload.toExpectation(snapshot.chunks))) {
+            is MemoryVectorSnapshotVerification.Ready -> {
                 if (!snapshotSource.isCurrent(listOf(snapshot)).getOrThrow()) {
                     return latestGenerationResult(payload, "canonical_memory_changed_before_room_fast_forward")
                 }
                 return completeRoomPublication(payload, initialState.receipt)
             }
-            ManifestStatus.SUPERSEDED -> return MemoryIndexSyncResult.Superseded
-            ManifestStatus.CONFLICT ->
-                return MemoryIndexSyncResult.Terminal("same_generation_vector_manifest_conflict")
-            ManifestStatus.REBUILD -> Unit
+            is MemoryVectorSnapshotVerification.Stale -> when (manifestStatus(verification.manifest, payload)) {
+                ManifestStatus.SUPERSEDED -> return MemoryIndexSyncResult.Superseded
+                ManifestStatus.CONFLICT ->
+                    return MemoryIndexSyncResult.Terminal("same_generation_vector_manifest_conflict")
+                ManifestStatus.REBUILD -> Unit
+            }
+            MemoryVectorSnapshotVerification.Missing,
+            MemoryVectorSnapshotVerification.RecoveredCorruption -> Unit
         }
 
         val readyCapability = when (val capability = embeddingCapability) {
@@ -132,13 +132,16 @@ class MemoryIndexSynchronizer(
             MemoryVectorPublishResult.PUBLISHED,
             MemoryVectorPublishResult.ALREADY_READY -> Unit
         }
-        val publishedManifest = vectorStore.readManifest()
-        if (
-            manifestStatus(publishedManifest, payload) != ManifestStatus.MATCHING_READY ||
-            publishedManifest?.expectedChunkCount != snapshot.chunks.size.toLong() ||
-            vectorStore.countChunks() != snapshot.chunks.size.toLong()
-        ) {
-            throw MemoryVectorStoreCorruptionException("Published vector snapshot failed verification")
+        when (val verification = vectorStore.verifySnapshot(payload.toExpectation(snapshot.chunks))) {
+            is MemoryVectorSnapshotVerification.Ready -> {
+                if (verification.manifest.expectedChunkCount != snapshot.chunks.size.toLong()) {
+                    throw MemoryVectorStoreCorruptionException("Published vector snapshot failed verification")
+                }
+            }
+            is MemoryVectorSnapshotVerification.Stale,
+            MemoryVectorSnapshotVerification.Missing,
+            MemoryVectorSnapshotVerification.RecoveredCorruption ->
+                throw MemoryVectorStoreCorruptionException("Published vector snapshot failed verification")
         }
         return completeRoomPublication(payload, initialState.receipt)
     }
@@ -221,12 +224,20 @@ class MemoryIndexSynchronizer(
         ) {
             return ManifestStatus.CONFLICT
         }
-        return if (manifest.state == MemoryVectorManifestState.READY) {
-            ManifestStatus.MATCHING_READY
-        } else {
-            ManifestStatus.CONFLICT
-        }
+        return ManifestStatus.CONFLICT
     }
+
+    private fun MemoryIndexSyncJobPayload.toExpectation(
+        chunks: List<MemoryCorpusChunk>
+    ): MemoryVectorSnapshotExpectation =
+        MemoryVectorSnapshotExpectation(
+            corpus = MemoryCorpus.CHAT_RECALL_LONG_TERM,
+            sourcePath = sourcePath,
+            sourceHash = sourceHash,
+            corpusGeneration = generation,
+            indexFingerprint = targetIndexFingerprint,
+            chunks = chunks
+        )
 
     private suspend fun embedDocuments(
         snapshot: MemoryCorpusSnapshot,
@@ -356,7 +367,6 @@ class MemoryIndexSynchronizer(
     }
 
     private enum class ManifestStatus {
-        MATCHING_READY,
         REBUILD,
         SUPERSEDED,
         CONFLICT

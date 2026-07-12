@@ -9,6 +9,8 @@ interface MemoryVectorStore : AutoCloseable {
 
     fun countChunks(): Long
 
+    fun verifySnapshot(expectation: MemoryVectorSnapshotExpectation): MemoryVectorSnapshotVerification
+
     fun replaceSnapshot(snapshot: MemoryVectorSnapshot): MemoryVectorPublishResult
 
     fun query(request: MemoryVectorQuery): MemoryVectorQueryResult
@@ -37,6 +39,25 @@ data class MemoryVectorManifest(
     val completedAt: Long,
     val state: MemoryVectorManifestState
 )
+
+data class MemoryVectorSnapshotExpectation(
+    val corpus: MemoryCorpus,
+    val sourcePath: String,
+    val sourceHash: String,
+    val corpusGeneration: Long,
+    val indexFingerprint: String,
+    val chunks: List<MemoryCorpusChunk>
+)
+
+sealed interface MemoryVectorSnapshotVerification {
+    data class Ready(val manifest: MemoryVectorManifest) : MemoryVectorSnapshotVerification
+
+    data class Stale(val manifest: MemoryVectorManifest) : MemoryVectorSnapshotVerification
+
+    data object Missing : MemoryVectorSnapshotVerification
+
+    data object RecoveredCorruption : MemoryVectorSnapshotVerification
+}
 
 enum class MemoryVectorManifestState {
     BUILDING,

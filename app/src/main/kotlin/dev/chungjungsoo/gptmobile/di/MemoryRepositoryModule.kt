@@ -41,6 +41,7 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryPromptBuilder
 import dev.chungjungsoo.gptmobile.data.memory.MemoryRetriever
 import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnBatchCoordinator
 import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnBatchScheduler
+import dev.chungjungsoo.gptmobile.data.memory.MemoryVectorIndexRecoveryService
 import dev.chungjungsoo.gptmobile.data.memory.RoomMemoryActivityLogger
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingAvailability
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingCapability
@@ -127,6 +128,24 @@ object MemoryRepositoryModule {
         memoryFileStore = memoryFileStore,
         vectorStore = memoryVectorStore,
         embeddingCapability = memoryEmbeddingCapability
+    )
+
+    @Provides
+    @Singleton
+    fun provideMemoryVectorIndexRecoveryService(
+        memoryRecoveryDao: MemoryRecoveryDao,
+        memoryCorpusSnapshotter: MemoryCorpusSnapshotter,
+        memoryFileStore: MemoryFileStore,
+        memoryVectorStore: MemoryVectorStore,
+        memoryEmbeddingCapability: MemoryEmbeddingCapability,
+        memoryMaintenanceScheduler: MemoryMaintenanceScheduler
+    ): MemoryVectorIndexRecoveryService = MemoryVectorIndexRecoveryService(
+        recoveryDao = memoryRecoveryDao,
+        snapshotSource = memoryCorpusSnapshotter,
+        memoryFileStore = memoryFileStore,
+        vectorStore = memoryVectorStore,
+        embeddingCapability = memoryEmbeddingCapability,
+        maintenanceScheduler = memoryMaintenanceScheduler
     )
 
     @Provides

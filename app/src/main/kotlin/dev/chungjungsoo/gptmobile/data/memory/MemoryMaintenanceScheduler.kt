@@ -172,6 +172,40 @@ class MemoryMaintenanceScheduler(
         return MemoryRecoveredJobDisposition.SUCCEEDED
     }
 
+    suspend fun markGenerationAwareTerminal(
+        type: String,
+        idempotencyKey: String,
+        generation: Long,
+        reason: String
+    ): MemoryRecoveredJobDisposition {
+        val persistedKey = persistedIdempotencyKey(type, idempotencyKey, generation)
+        val job = jobDao.getByIdempotencyKey(persistedKey)
+            ?: return MemoryRecoveredJobDisposition.MISSING
+        return markRecoveredConflict(job.jobId, reason)
+    }
+
+    suspend fun markRecoveredConflict(
+        jobId: String,
+        reason: String
+    ): MemoryRecoveredJobDisposition {
+        val job = jobDao.getById(jobId) ?: return MemoryRecoveredJobDisposition.MISSING
+        if (job.status == MemoryMaintenanceJobStatus.RUNNING) return MemoryRecoveredJobDisposition.ACTIVE
+        if (
+            job.status == MemoryMaintenanceJobStatus.FAILED_TERMINAL &&
+            job.lastError == reason
+        ) {
+            return MemoryRecoveredJobDisposition.SUCCEEDED
+        }
+        transitionUnclaimed(
+            job = job,
+            status = MemoryMaintenanceJobStatus.FAILED_TERMINAL,
+            lastError = reason,
+            blockedReason = reason,
+            nextRunAt = null
+        )
+        return MemoryRecoveredJobDisposition.SUCCEEDED
+    }
+
     suspend fun markFailedRetryable(
         job: MemoryMaintenanceJob,
         error: String
@@ -259,6 +293,37 @@ class MemoryMaintenanceScheduler(
 
     suspend fun reopenWaitingRepairJobs(limit: Int = DEFAULT_VISIBLE_LIMIT): Int {
         return jobDao.getReopenableLocalJobs(limit).count { job -> retryManually(job.jobId) != null }
+    }
+
+    suspend fun reviveLocalJob(jobId: String): MemoryMaintenanceJob? {
+        val job = jobDao.getById(jobId) ?: return null
+        if (job.family !in setOf(MemoryMaintenanceJobFamily.INDEX, MemoryMaintenanceJobFamily.REPAIR)) return null
+        if (
+            job.status in setOf(
+                MemoryMaintenanceJobStatus.PENDING,
+                MemoryMaintenanceJobStatus.RUNNING,
+                MemoryMaintenanceJobStatus.FAILED_RETRYABLE
+            )
+        ) {
+            return job
+        }
+        val now = now()
+        val changed = jobDao.transitionUnclaimedJob(
+            jobId = job.jobId,
+            expectedStatus = job.status,
+            expectedRowVersion = job.rowVersion,
+            newStatus = MemoryMaintenanceJobStatus.PENDING,
+            attempts = 0,
+            retryCycle = job.retryCycle + 1,
+            lastError = null,
+            blockedReason = null,
+            updatedAt = now,
+            nextRunAt = now
+        )
+        if (changed != 1) return jobDao.getById(job.jobId)
+        val updated = checkNotNull(jobDao.getById(job.jobId))
+        emitStatusChanged(job, updated, now)
+        return updated
     }
 
     private suspend fun transition(

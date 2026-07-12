@@ -36,6 +36,23 @@ internal class ObjectBoxMemoryVectorStore(
         currentStore.callInReadTx(Callable { currentStore.chunkBox().count() })
     }
 
+    override fun verifySnapshot(
+        expectation: MemoryVectorSnapshotExpectation
+    ): MemoryVectorSnapshotVerification = synchronized(lock) {
+        check(!isClosed) { "Memory vector store is closed" }
+        try {
+            val currentStore = openStoreLocked()
+            currentStore.callInReadTx(
+                Callable { verifyCurrentSnapshot(currentStore, expectation) }
+            )
+        } catch (throwable: Throwable) {
+            if (!throwable.isRecoverableVectorStoreCorruption()) throw throwable
+            closeStoreLocked()
+            directory.deleteAll()
+            MemoryVectorSnapshotVerification.RecoveredCorruption
+        }
+    }
+
     override fun replaceSnapshot(snapshot: MemoryVectorSnapshot): MemoryVectorPublishResult {
         validateSnapshot(snapshot)
         val chunkEntities = snapshot.chunks.map { embeddedChunk ->
@@ -228,21 +245,113 @@ internal class ObjectBoxMemoryVectorStore(
             )
         }
 
-        val matchingChunkCount = currentStore.chunkBox()
-            .query(chunkIdentityCondition(currentManifest.identity))
+        validatePublishedSnapshot(currentStore, currentManifest)
+        return MemoryVectorPublishResult.ALREADY_READY
+    }
+
+    private fun verifyCurrentSnapshot(
+        currentStore: BoxStore,
+        expectation: MemoryVectorSnapshotExpectation
+    ): MemoryVectorSnapshotVerification {
+        validateExpectation(expectation)
+        val manifest = currentStore.manifestBox().findCurrentManifest()?.toDomain()
+            ?: return MemoryVectorSnapshotVerification.Missing
+        if (manifest.state != MemoryVectorManifestState.READY) {
+            throw MemoryVectorStoreCorruptionException("Published vector manifest is not READY")
+        }
+        if (!manifest.identity.matches(expectation)) {
+            return MemoryVectorSnapshotVerification.Stale(manifest)
+        }
+        validatePublishedSnapshot(currentStore, manifest, expectation.chunks)
+        return MemoryVectorSnapshotVerification.Ready(manifest)
+    }
+
+    private fun validatePublishedSnapshot(
+        currentStore: BoxStore,
+        manifest: MemoryVectorManifest,
+        expectedChunks: List<MemoryCorpusChunk>? = null
+    ) {
+        val chunkBox = currentStore.chunkBox()
+        val chunks = chunkBox
+            .query(chunkIdentityCondition(manifest.identity))
             .build()
-            .use { query -> query.count() }
-        val totalChunkCount = currentStore.chunkBox().count()
+            .use { query -> query.find() }
+        val totalChunkCount = chunkBox.count()
         if (
-            matchingChunkCount != currentManifest.expectedChunkCount ||
-            totalChunkCount != currentManifest.expectedChunkCount
+            chunks.size.toLong() != manifest.expectedChunkCount ||
+            totalChunkCount != manifest.expectedChunkCount
         ) {
             throw MemoryVectorStoreCorruptionException(
                 "Published vector snapshot does not match its manifest"
             )
         }
-        return MemoryVectorPublishResult.ALREADY_READY
+        chunks.forEach { chunk -> chunk.validateAgainst(manifest.identity) }
+        expectedChunks?.let { expected ->
+            val expectedById = expected.associateBy(MemoryCorpusChunk::chunkId)
+            if (
+                expectedById.size != expected.size ||
+                chunks.size != expected.size ||
+                chunks.any { chunk ->
+                    expectedById[chunk.chunkId]?.let { expectedChunk ->
+                        chunk.matches(expectedChunk)
+                    } != true
+                }
+            ) {
+                throw MemoryVectorStoreCorruptionException(
+                    "Published vector chunks do not match the current Markdown snapshot"
+                )
+            }
+        }
     }
+
+    private fun validateExpectation(expectation: MemoryVectorSnapshotExpectation) {
+        require(expectation.corpus == MemoryCorpus.CHAT_RECALL_LONG_TERM) {
+            "The first vector store only accepts CHAT_RECALL_LONG_TERM"
+        }
+        require(expectation.sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME) {
+            "The first vector store only accepts MEMORY.md"
+        }
+        require(expectation.sourceHash.matches(SHA_256_REGEX)) {
+            "sourceHash must be a lowercase SHA-256 value"
+        }
+        require(expectation.corpusGeneration >= 0) { "corpusGeneration must not be negative" }
+        require(expectation.indexFingerprint.matches(SHA_256_REGEX)) {
+            "indexFingerprint must be a lowercase SHA-256 value"
+        }
+        require(expectation.chunks.map(MemoryCorpusChunk::chunkId).distinct().size == expectation.chunks.size) {
+            "Expected chunk IDs must be unique"
+        }
+        expectation.chunks.forEach { chunk ->
+            require(chunk.sourcePath == expectation.sourcePath) {
+                "Expected chunks must belong to the expected source path"
+            }
+            require(chunk.contentHash.matches(SHA_256_REGEX)) {
+                "Expected chunk contentHash must be a lowercase SHA-256 value"
+            }
+        }
+    }
+
+    private fun MemoryVectorIndexIdentity.matches(expectation: MemoryVectorSnapshotExpectation): Boolean =
+        corpus == expectation.corpus &&
+            sourcePath == expectation.sourcePath &&
+            sourceHash == expectation.sourceHash &&
+            corpusGeneration == expectation.corpusGeneration &&
+            indexFingerprint == expectation.indexFingerprint
+
+    private fun MemoryVectorChunkEntity.matches(chunk: MemoryCorpusChunk): Boolean =
+        chunkId == chunk.chunkId &&
+            entryId == chunk.entryId &&
+            sourcePath == chunk.sourcePath &&
+            chunkIndex == chunk.chunkIndex &&
+            heading == chunk.heading &&
+            text == chunk.text &&
+            type == chunk.type &&
+            sensitivity == chunk.sensitivity &&
+            source == chunk.source &&
+            chatId == chunk.chatId &&
+            createdAt == chunk.createdAt &&
+            updatedAt == chunk.updatedAt &&
+            contentHash == chunk.contentHash
 
     private fun validateIdentity(identity: MemoryVectorIndexIdentity) {
         require(identity.corpus == MemoryCorpus.CHAT_RECALL_LONG_TERM) {
