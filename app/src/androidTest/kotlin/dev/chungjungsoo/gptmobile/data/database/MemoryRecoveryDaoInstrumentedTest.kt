@@ -16,6 +16,8 @@ import dev.chungjungsoo.gptmobile.data.database.dao.MemoryCorpusAdvanceRequest
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryMutationPrepareRequest
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryMutationReceiptDraft
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryRecoveryDao
+import dev.chungjungsoo.gptmobile.data.database.dao.MemoryVectorIndexPublicationOutcome
+import dev.chungjungsoo.gptmobile.data.database.dao.MemoryVectorIndexPublicationRequest
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -272,6 +274,165 @@ class MemoryRecoveryDaoInstrumentedTest {
         assertEquals(STATE_INDEXED, indexed.indexStatus)
     }
 
+    @Test
+    fun completeVectorIndexPublication_atomicallyMarksCorpusReceiptAndGroupComplete() = runBlocking {
+        val request = preparePendingPublication(index = 1)
+
+        assertEquals(
+            MemoryVectorIndexPublicationOutcome.COMPLETED,
+            dao.completeVectorIndexPublication(request)
+        )
+
+        val corpus = checkNotNull(dao.getCorpusState(request.corpus))
+        assertEquals(STATE_CORPUS_READY, corpus.indexStatus)
+        assertEquals(request.generation, corpus.indexedGeneration)
+        assertEquals(request.sourceHash, corpus.indexedSourceHash)
+        assertEquals(request.targetIndexFingerprint, corpus.indexedFingerprint)
+
+        val receipt = checkNotNull(dao.getMutationReceipt(request.receiptId))
+        assertEquals(STATE_INDEXED, receipt.state)
+        assertEquals(request.completedAt, receipt.indexedAt)
+
+        val group = checkNotNull(dao.getMutationGroup(request.mutationGroupId))
+        assertEquals(STATE_INDEXED, group.state)
+        assertEquals(request.completedAt, group.completedAt)
+    }
+
+    @Test
+    fun completeVectorIndexPublication_replayIsIdempotent() = runBlocking {
+        val request = preparePendingPublication(index = 1)
+        assertEquals(
+            MemoryVectorIndexPublicationOutcome.COMPLETED,
+            dao.completeVectorIndexPublication(request)
+        )
+        val completedCorpus = checkNotNull(dao.getCorpusState(request.corpus))
+        val completedReceipt = checkNotNull(dao.getMutationReceipt(request.receiptId))
+        val completedGroup = checkNotNull(dao.getMutationGroup(request.mutationGroupId))
+
+        assertEquals(
+            MemoryVectorIndexPublicationOutcome.ALREADY_COMPLETE,
+            dao.completeVectorIndexPublication(request.copy(completedAt = request.completedAt + 10))
+        )
+        assertEquals(completedCorpus, dao.getCorpusState(request.corpus))
+        assertEquals(completedReceipt, dao.getMutationReceipt(request.receiptId))
+        assertEquals(completedGroup, dao.getMutationGroup(request.mutationGroupId))
+    }
+
+    @Test
+    fun completeVectorIndexPublication_keepsSemanticAcknowledgementPendingGroup() = runBlocking {
+        val request = preparePendingPublication(
+            index = 1,
+            groupState = STATE_SEMANTIC_ACK_PENDING
+        )
+        val pendingGroup = checkNotNull(dao.getMutationGroup(request.mutationGroupId))
+
+        assertEquals(
+            MemoryVectorIndexPublicationOutcome.COMPLETED,
+            dao.completeVectorIndexPublication(request)
+        )
+
+        assertEquals(STATE_CORPUS_READY, dao.getCorpusState(request.corpus)?.indexStatus)
+        assertEquals(STATE_INDEXED, dao.getMutationReceipt(request.receiptId)?.state)
+        assertEquals(pendingGroup, dao.getMutationGroup(request.mutationGroupId))
+    }
+
+    @Test
+    fun completeVectorIndexPublication_olderGenerationCannotChangeNewerState() = runBlocking {
+        val olderRequest = preparePendingPublication(index = 1)
+        val newerRequest = preparePendingPublication(index = 2)
+        val newerCorpus = checkNotNull(dao.getCorpusState(newerRequest.corpus))
+        val newerReceipt = checkNotNull(dao.getMutationReceipt(newerRequest.receiptId))
+        val newerGroup = checkNotNull(dao.getMutationGroup(newerRequest.mutationGroupId))
+        val olderReceipt = checkNotNull(dao.getMutationReceipt(olderRequest.receiptId))
+        val olderGroup = checkNotNull(dao.getMutationGroup(olderRequest.mutationGroupId))
+
+        assertEquals(
+            MemoryVectorIndexPublicationOutcome.SUPERSEDED,
+            dao.completeVectorIndexPublication(olderRequest)
+        )
+        assertEquals(newerCorpus, dao.getCorpusState(newerRequest.corpus))
+        assertEquals(newerReceipt, dao.getMutationReceipt(newerRequest.receiptId))
+        assertEquals(newerGroup, dao.getMutationGroup(newerRequest.mutationGroupId))
+        assertEquals(olderReceipt, dao.getMutationReceipt(olderRequest.receiptId))
+        assertEquals(olderGroup, dao.getMutationGroup(olderRequest.mutationGroupId))
+    }
+
+    @Test
+    fun completeVectorIndexPublication_sameGenerationIdentityConflictChangesNothing() = runBlocking {
+        val request = preparePendingPublication(index = 1)
+        val pendingCorpus = checkNotNull(dao.getCorpusState(request.corpus))
+        val pendingReceipt = checkNotNull(dao.getMutationReceipt(request.receiptId))
+        val pendingGroup = checkNotNull(dao.getMutationGroup(request.mutationGroupId))
+
+        assertEquals(
+            MemoryVectorIndexPublicationOutcome.CONFLICT,
+            dao.completeVectorIndexPublication(request.copy(sourceHash = "conflicting-hash"))
+        )
+        assertEquals(pendingCorpus, dao.getCorpusState(request.corpus))
+        assertEquals(pendingReceipt, dao.getMutationReceipt(request.receiptId))
+        assertEquals(pendingGroup, dao.getMutationGroup(request.mutationGroupId))
+    }
+
+    private suspend fun preparePendingPublication(
+        index: Int,
+        groupState: String = STATE_INDEX_PENDING
+    ): MemoryVectorIndexPublicationRequest {
+        val prepared = dao.prepareMutation(prepareRequest(index))
+        val receipt = prepared.receipts.single()
+        assertEquals(
+            1,
+            dao.transitionMutationReceiptCas(
+                receiptId = receipt.receiptId,
+                groupId = receipt.groupId,
+                expectedGeneration = receipt.generation,
+                expectedState = receipt.state,
+                expectedRowVersion = receipt.rowVersion,
+                expectedTargetSourceHash = receipt.targetSourceHash,
+                expectedTargetIndexFingerprint = receipt.targetIndexFingerprint,
+                newState = STATE_INDEX_PENDING,
+                attemptIncrement = 0,
+                lastError = null,
+                updatedAt = index.toLong() + 10,
+                fileCommittedAt = index.toLong() + 10,
+                indexedAt = null
+            )
+        )
+        assertEquals(
+            1,
+            dao.transitionMutationGroupCas(
+                groupId = prepared.group.groupId,
+                expectedGeneration = prepared.group.generation,
+                expectedState = prepared.group.state,
+                expectedRowVersion = prepared.group.rowVersion,
+                newState = groupState,
+                lastError = null,
+                updatedAt = index.toLong() + 10,
+                completedAt = null
+            )
+        )
+        assertEquals(
+            MemoryCorpusAdvanceOutcome.ADVANCED,
+            dao.advanceCorpusGeneration(
+                corpusRequest(
+                    generation = prepared.group.generation,
+                    sourceHash = receipt.targetSourceHash,
+                    receiptId = receipt.receiptId,
+                    updatedAt = index.toLong() + 20
+                ).copy(indexStatus = STATE_CORPUS_PENDING)
+            ).outcome
+        )
+        return MemoryVectorIndexPublicationRequest(
+            corpus = CORPUS_LONG_TERM,
+            mutationGroupId = prepared.group.groupId,
+            receiptId = receipt.receiptId,
+            generation = prepared.group.generation,
+            sourcePath = receipt.sourcePath,
+            sourceHash = receipt.targetSourceHash,
+            targetIndexFingerprint = checkNotNull(receipt.targetIndexFingerprint),
+            completedAt = index.toLong() + 30
+        )
+    }
+
     private suspend fun commitReceipt(receiptId: String): Int {
         val receipt = checkNotNull(dao.getMutationReceipt(receiptId))
         return dao.transitionMutationReceiptCas(
@@ -342,8 +503,11 @@ class MemoryRecoveryDaoInstrumentedTest {
         private const val FINGERPRINT = "index-fingerprint"
         private const val STATE_PREPARED = "prepared"
         private const val STATE_FILE_COMMITTED = "file_committed"
+        private const val STATE_SEMANTIC_ACK_PENDING = "semantic_ack_pending"
         private const val STATE_INDEX_PENDING = "index_pending"
         private const val STATE_INDEXED = "indexed"
+        private const val STATE_CORPUS_PENDING = "pending"
+        private const val STATE_CORPUS_READY = "ready"
         private val COMMITTED_RECEIPT_STATES = listOf(
             STATE_FILE_COMMITTED,
             STATE_INDEX_PENDING,

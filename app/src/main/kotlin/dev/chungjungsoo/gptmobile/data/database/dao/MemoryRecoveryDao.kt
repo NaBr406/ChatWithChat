@@ -10,6 +10,8 @@ import dev.chungjungsoo.gptmobile.data.database.entity.MemoryCorpusState
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryDistillationCheckpoint
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMutationGroup
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMutationReceipt
+import dev.chungjungsoo.gptmobile.data.memory.MemoryCorpusIndexStatus
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMutationState
 
 @Dao
 interface MemoryRecoveryDao {
@@ -392,6 +394,99 @@ interface MemoryRecoveryDao {
         )
     }
 
+    @Transaction
+    suspend fun completeVectorIndexPublication(
+        request: MemoryVectorIndexPublicationRequest
+    ): MemoryVectorIndexPublicationOutcome {
+        request.validate()
+        val corpus = getCorpusState(request.corpus)
+            ?: return MemoryVectorIndexPublicationOutcome.CONFLICT
+        if (corpus.generation > request.generation) {
+            return MemoryVectorIndexPublicationOutcome.SUPERSEDED
+        }
+        if (!corpus.matches(request)) {
+            return MemoryVectorIndexPublicationOutcome.CONFLICT
+        }
+
+        val receipt = getMutationReceipt(request.receiptId)
+            ?: return MemoryVectorIndexPublicationOutcome.CONFLICT
+        val group = getMutationGroup(request.mutationGroupId)
+            ?: return MemoryVectorIndexPublicationOutcome.CONFLICT
+        if (!receipt.matches(request) || !group.matches(request)) {
+            return MemoryVectorIndexPublicationOutcome.CONFLICT
+        }
+        if (receipt.state == MemoryMutationState.SUPERSEDED) {
+            return MemoryVectorIndexPublicationOutcome.SUPERSEDED
+        }
+        if (receipt.state !in setOf(MemoryMutationState.INDEX_PENDING, MemoryMutationState.INDEXED)) {
+            return MemoryVectorIndexPublicationOutcome.CONFLICT
+        }
+        if (
+            group.state !in setOf(
+                MemoryMutationState.SEMANTIC_ACK_PENDING,
+                MemoryMutationState.INDEX_PENDING,
+                MemoryMutationState.INDEXED
+            )
+        ) {
+            return MemoryVectorIndexPublicationOutcome.CONFLICT
+        }
+
+        val wasAlreadyComplete = corpus.isIndexedFor(request) && receipt.state == MemoryMutationState.INDEXED
+        if (!corpus.isIndexedFor(request)) {
+            check(
+                markCorpusIndexedCas(
+                    corpus = request.corpus,
+                    expectedGeneration = request.generation,
+                    expectedSourceHash = request.sourceHash,
+                    expectedTargetIndexFingerprint = request.targetIndexFingerprint,
+                    expectedRowVersion = corpus.rowVersion,
+                    indexedStatus = MemoryCorpusIndexStatus.READY,
+                    updatedAt = request.completedAt
+                ) == 1
+            ) { "Corpus state changed before vector publication could be recorded" }
+        }
+
+        if (receipt.state == MemoryMutationState.INDEX_PENDING) {
+            check(
+                transitionMutationReceiptCas(
+                    receiptId = receipt.receiptId,
+                    groupId = receipt.groupId,
+                    expectedGeneration = receipt.generation,
+                    expectedState = receipt.state,
+                    expectedRowVersion = receipt.rowVersion,
+                    expectedTargetSourceHash = receipt.targetSourceHash,
+                    expectedTargetIndexFingerprint = receipt.targetIndexFingerprint,
+                    newState = MemoryMutationState.INDEXED,
+                    attemptIncrement = 0,
+                    lastError = null,
+                    updatedAt = request.completedAt,
+                    fileCommittedAt = null,
+                    indexedAt = request.completedAt
+                ) == 1
+            ) { "Mutation receipt changed before vector publication could be recorded" }
+        }
+
+        if (group.state == MemoryMutationState.INDEX_PENDING) {
+            check(
+                completeMutationGroupIfReceiptsCommitted(
+                    groupId = group.groupId,
+                    expectedGeneration = group.generation,
+                    expectedState = group.state,
+                    expectedRowVersion = group.rowVersion,
+                    committedReceiptStates = listOf(MemoryMutationState.INDEXED),
+                    newState = MemoryMutationState.INDEXED,
+                    completedAt = request.completedAt
+                ) == 1
+            ) { "Mutation group changed before vector publication could be recorded" }
+        }
+
+        return if (wasAlreadyComplete) {
+            MemoryVectorIndexPublicationOutcome.ALREADY_COMPLETE
+        } else {
+            MemoryVectorIndexPublicationOutcome.COMPLETED
+        }
+    }
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertDistillationCheckpointIgnore(checkpoint: MemoryDistillationCheckpoint): Long
 
@@ -480,6 +575,42 @@ interface MemoryRecoveryDao {
         require(indexStatus.isNotBlank()) { "Corpus index status must not be blank" }
         require(updatedAt >= 0) { "Corpus update time must not be negative" }
     }
+
+    private fun MemoryVectorIndexPublicationRequest.validate() {
+        require(corpus.isNotBlank()) { "Corpus must not be blank" }
+        require(mutationGroupId.isNotBlank()) { "Mutation group ID must not be blank" }
+        require(receiptId.isNotBlank()) { "Mutation receipt ID must not be blank" }
+        require(sourcePath.isNotBlank()) { "Source path must not be blank" }
+        require(sourceHash.isNotBlank()) { "Source hash must not be blank" }
+        require(generation > 0) { "Corpus generation must be positive" }
+        require(targetIndexFingerprint.isNotBlank()) { "Index fingerprint must not be blank" }
+        require(completedAt >= 0) { "Index completion time must not be negative" }
+    }
+
+    private fun MemoryCorpusState.matches(request: MemoryVectorIndexPublicationRequest): Boolean =
+        generation == request.generation &&
+            sourcePath == request.sourcePath &&
+            sourceHash == request.sourceHash &&
+            targetIndexFingerprint == request.targetIndexFingerprint &&
+            latestReceiptId == request.receiptId
+
+    private fun MemoryCorpusState.isIndexedFor(request: MemoryVectorIndexPublicationRequest): Boolean =
+        matches(request) &&
+            indexStatus == MemoryCorpusIndexStatus.READY &&
+            indexedGeneration == request.generation &&
+            indexedSourceHash == request.sourceHash &&
+            indexedFingerprint == request.targetIndexFingerprint
+
+    private fun MemoryMutationReceipt.matches(request: MemoryVectorIndexPublicationRequest): Boolean =
+        receiptId == request.receiptId &&
+            groupId == request.mutationGroupId &&
+            generation == request.generation &&
+            sourcePath == request.sourcePath &&
+            targetSourceHash == request.sourceHash &&
+            targetIndexFingerprint == request.targetIndexFingerprint
+
+    private fun MemoryMutationGroup.matches(request: MemoryVectorIndexPublicationRequest): Boolean =
+        groupId == request.mutationGroupId && generation == request.generation
 
     private fun MemoryCorpusAdvanceRequest.toInitialState(): MemoryCorpusState = MemoryCorpusState(
         corpus = corpus,
@@ -573,4 +704,22 @@ enum class MemoryCorpusAdvanceOutcome {
     ADVANCED,
     ALREADY_CURRENT,
     STALE
+}
+
+data class MemoryVectorIndexPublicationRequest(
+    val corpus: String,
+    val mutationGroupId: String,
+    val receiptId: String,
+    val generation: Long,
+    val sourcePath: String,
+    val sourceHash: String,
+    val targetIndexFingerprint: String,
+    val completedAt: Long
+)
+
+enum class MemoryVectorIndexPublicationOutcome {
+    COMPLETED,
+    ALREADY_COMPLETE,
+    SUPERSEDED,
+    CONFLICT
 }

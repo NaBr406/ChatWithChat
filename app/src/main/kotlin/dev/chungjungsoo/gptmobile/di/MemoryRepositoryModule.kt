@@ -40,6 +40,8 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryRetriever
 import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnBatchCoordinator
 import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnBatchScheduler
 import dev.chungjungsoo.gptmobile.data.memory.RoomMemoryActivityLogger
+import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingAvailability
+import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingCapability
 import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorStore
 import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorStoreFactory
 import dev.chungjungsoo.gptmobile.data.network.AnthropicAPI
@@ -87,6 +89,16 @@ object MemoryRepositoryModule {
     fun provideMemoryVectorStore(
         @ApplicationContext context: Context
     ): MemoryVectorStore = MemoryVectorStoreFactory(context).create()
+
+    @Provides
+    @Singleton
+    fun provideMemoryEmbeddingCapability(): MemoryEmbeddingCapability =
+        MemoryEmbeddingCapability.Unavailable(
+            MemoryEmbeddingAvailability.Unavailable(
+                reason = MemoryEmbeddingAvailability.Reason.NOT_PROVISIONED,
+                detail = "On-device embedding model and device validation gates have not passed"
+            )
+        )
 
     @Provides
     @Singleton
