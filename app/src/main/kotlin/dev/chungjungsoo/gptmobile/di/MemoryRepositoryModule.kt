@@ -9,6 +9,7 @@ import dagger.hilt.components.SingletonComponent
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryActivityLogDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryIndexDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryMaintenanceJobDao
+import dev.chungjungsoo.gptmobile.data.database.dao.MemoryRecoveryDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryTurnBatchDao
 import dev.chungjungsoo.gptmobile.data.database.dao.PersonalMemoryDao
 import dev.chungjungsoo.gptmobile.data.memory.LlmMemoryIntelligence
@@ -32,6 +33,8 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceScheduler
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceWorkEnqueuer
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceWorkScheduler
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMarkdownCodec
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMutationCoordinator
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMutationRecoveryService
 import dev.chungjungsoo.gptmobile.data.memory.MemoryPromptBuilder
 import dev.chungjungsoo.gptmobile.data.memory.MemoryRetriever
 import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnBatchCoordinator
@@ -166,6 +169,32 @@ object MemoryRepositoryModule {
 
     @Provides
     @Singleton
+    fun provideMemoryMutationCoordinator(
+        memoryRecoveryDao: MemoryRecoveryDao,
+        memoryFileStore: MemoryFileStore,
+        memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
+        memoryMaintenanceWorkEnqueuer: MemoryMaintenanceWorkEnqueuer
+    ): MemoryMutationCoordinator = MemoryMutationCoordinator(
+        recoveryDao = memoryRecoveryDao,
+        memoryFileStore = memoryFileStore,
+        maintenanceScheduler = memoryMaintenanceScheduler,
+        workEnqueuer = memoryMaintenanceWorkEnqueuer
+    )
+
+    @Provides
+    @Singleton
+    fun provideMemoryMutationRecoveryService(
+        memoryMutationCoordinator: MemoryMutationCoordinator,
+        memoryTurnBatchDao: MemoryTurnBatchDao,
+        memoryMaintenanceScheduler: MemoryMaintenanceScheduler
+    ): MemoryMutationRecoveryService = MemoryMutationRecoveryService(
+        memoryMutationCoordinator = memoryMutationCoordinator,
+        turnBatchDao = memoryTurnBatchDao,
+        maintenanceScheduler = memoryMaintenanceScheduler
+    )
+
+    @Provides
+    @Singleton
     fun provideMemoryTurnBatchCoordinator(
         memoryTurnBatchDao: MemoryTurnBatchDao,
         memoryTurnBatchScheduler: MemoryTurnBatchScheduler
@@ -207,7 +236,7 @@ object MemoryRepositoryModule {
         memoryFileStore: MemoryFileStore,
         markdownMemoryCodec: MarkdownMemoryCodec,
         memoryMaintenanceCorpusReader: MemoryMaintenanceCorpusReader,
-        memoryIndexRepository: MemoryIndexRepository,
+        memoryMutationCoordinator: MemoryMutationCoordinator,
         memoryActivityLogger: MemoryActivityLogger
     ): MemoryBatchConsolidationService = MemoryBatchConsolidationService(
         turnBatchDao = memoryTurnBatchDao,
@@ -218,7 +247,7 @@ object MemoryRepositoryModule {
         memoryFileStore = memoryFileStore,
         markdownMemoryCodec = markdownMemoryCodec,
         memoryMaintenanceCorpusReader = memoryMaintenanceCorpusReader,
-        memoryIndexRebuilder = memoryIndexRepository,
+        memoryMutationCoordinator = memoryMutationCoordinator,
         activityLogger = memoryActivityLogger
     )
 

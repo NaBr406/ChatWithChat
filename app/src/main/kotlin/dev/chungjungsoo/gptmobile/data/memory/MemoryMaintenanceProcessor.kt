@@ -16,7 +16,8 @@ class MemoryMaintenanceProcessor @Inject constructor(
     private val settingRepository: SettingRepository,
     private val leaseWatchdog: MemoryMaintenanceLeaseWatchdog,
     private val memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null,
-    private val memoryBatchConsolidationService: MemoryBatchConsolidationService? = null
+    private val memoryBatchConsolidationService: MemoryBatchConsolidationService? = null,
+    private val memoryMutationRecoveryService: MemoryMutationRecoveryService? = null
 ) {
     suspend fun processRunnableJobs(
         family: String,
@@ -117,7 +118,31 @@ class MemoryMaintenanceProcessor @Inject constructor(
 
     private suspend fun processRepairJob(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome = when (job.type) {
         MemoryMaintenanceJobType.REPAIR_MARKDOWN_METADATA -> rebuildLegacyRoomIndex(job)
+        MemoryMaintenanceJobType.RECONCILE_MEMORY_MUTATIONS -> reconcileMemoryMutations(job)
         else -> dismissUnknownJob(job)
+    }
+
+    private suspend fun reconcileMemoryMutations(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome {
+        val recoveryService = memoryMutationRecoveryService
+            ?: return unavailableMutationRecovery(job)
+        return try {
+            maintenanceScheduler.renewClaimedLease(job)
+            val result = recoveryService.recoverIncomplete(scheduleRetry = false)
+            maintenanceScheduler.renewClaimedLease(job)
+            if (result.failedCount > 0 || result.hasMore) {
+                maintenanceScheduler.markFailedRetryable(
+                    job,
+                    "memory_mutation_reconciliation_incomplete:${result.failedCount}:has_more=${result.hasMore}"
+                ).toFailureOutcome()
+            } else {
+                maintenanceScheduler.markSucceeded(job)
+                MemoryMaintenanceOutcome.SUCCEEDED
+            }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (throwable: Throwable) {
+            persistUnexpectedFailure(job, throwable)
+        }
     }
 
     private suspend fun rebuildLegacyRoomIndex(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome = try {
@@ -134,6 +159,11 @@ class MemoryMaintenanceProcessor @Inject constructor(
 
     private suspend fun unavailableConsolidation(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome {
         val failedJob = maintenanceScheduler.markFailedRetryable(job, "batch_consolidation_pending")
+        return failedJob.toFailureOutcome()
+    }
+
+    private suspend fun unavailableMutationRecovery(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome {
+        val failedJob = maintenanceScheduler.markFailedRetryable(job, "memory_mutation_recovery_not_available")
         return failedJob.toFailureOutcome()
     }
 

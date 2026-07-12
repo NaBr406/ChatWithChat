@@ -136,6 +136,42 @@ class MemoryMaintenanceScheduler(
             nextRunAt = null
         )
 
+    suspend fun markRecoveredSucceeded(jobId: String): MemoryRecoveredJobDisposition {
+        val job = jobDao.getById(jobId) ?: return MemoryRecoveredJobDisposition.MISSING
+        if (job.status == MemoryMaintenanceJobStatus.SUCCEEDED) return MemoryRecoveredJobDisposition.SUCCEEDED
+        if (job.status == MemoryMaintenanceJobStatus.RUNNING) return MemoryRecoveredJobDisposition.ACTIVE
+        transitionUnclaimed(
+            job = job,
+            status = MemoryMaintenanceJobStatus.SUCCEEDED,
+            lastError = null,
+            blockedReason = null,
+            nextRunAt = null
+        )
+        return MemoryRecoveredJobDisposition.SUCCEEDED
+    }
+
+    suspend fun markRecoveredTerminal(
+        jobId: String,
+        reason: String
+    ): MemoryRecoveredJobDisposition {
+        val job = jobDao.getById(jobId) ?: return MemoryRecoveredJobDisposition.MISSING
+        if (job.status == MemoryMaintenanceJobStatus.RUNNING) return MemoryRecoveredJobDisposition.ACTIVE
+        if (
+            job.status == MemoryMaintenanceJobStatus.SUCCEEDED ||
+            job.status == MemoryMaintenanceJobStatus.FAILED_TERMINAL
+        ) {
+            return MemoryRecoveredJobDisposition.SUCCEEDED
+        }
+        transitionUnclaimed(
+            job = job,
+            status = MemoryMaintenanceJobStatus.FAILED_TERMINAL,
+            lastError = reason,
+            blockedReason = reason,
+            nextRunAt = null
+        )
+        return MemoryRecoveredJobDisposition.SUCCEEDED
+    }
+
     suspend fun markFailedRetryable(
         job: MemoryMaintenanceJob,
         error: String
@@ -334,7 +370,8 @@ class MemoryMaintenanceScheduler(
         private const val LOCAL_LEASE_SECONDS = 15 * 60L
         private val GENERATION_AWARE_TYPES = setOf(
             MemoryMaintenanceJobType.SYNC_VECTOR_INDEX,
-            MemoryMaintenanceJobType.REBUILD_VECTOR_INDEX
+            MemoryMaintenanceJobType.REBUILD_VECTOR_INDEX,
+            MemoryMaintenanceJobType.RECONCILE_MEMORY_MUTATIONS
         )
         private val MANUALLY_RETRYABLE_STATUSES = setOf(
             MemoryMaintenanceJobStatus.FAILED_RETRYABLE,
@@ -366,6 +403,12 @@ private data class MemoryMaintenanceRetryPolicy(
 class MemoryMaintenanceLeaseLostException(jobId: String) :
     IllegalStateException("Memory maintenance lease lost for job $jobId")
 
+enum class MemoryRecoveredJobDisposition {
+    SUCCEEDED,
+    ACTIVE,
+    MISSING
+}
+
 object MemoryMaintenanceJobFamily {
     const val SEMANTIC = "semantic"
     const val INDEX = "index"
@@ -378,6 +421,7 @@ object MemoryMaintenanceJobFamily {
         MemoryMaintenanceJobType.SYNC_VECTOR_INDEX,
         MemoryMaintenanceJobType.REBUILD_VECTOR_INDEX -> INDEX
         MemoryMaintenanceJobType.REPAIR_MARKDOWN_METADATA -> REPAIR
+        MemoryMaintenanceJobType.RECONCILE_MEMORY_MUTATIONS -> REPAIR
         MemoryMaintenanceJobType.APPEND_DAILY_NOTE,
         MemoryMaintenanceJobType.DISTILL_DAILY_NOTES,
         MemoryMaintenanceJobType.PROMOTE_LONG_TERM_CANDIDATE,
@@ -395,6 +439,7 @@ object MemoryMaintenanceJobType {
     const val DISTILL_DAILY_NOTES = "distill_daily_notes"
     const val PROMOTE_LONG_TERM_CANDIDATE = "promote_long_term_candidate"
     const val REPAIR_MARKDOWN_METADATA = "repair_markdown_metadata"
+    const val RECONCILE_MEMORY_MUTATIONS = "reconcile_memory_mutations"
     const val COMPACTION_FLUSH = "compaction_flush"
     const val CONSOLIDATE_TURN_BATCH = "consolidate_turn_batch"
 }

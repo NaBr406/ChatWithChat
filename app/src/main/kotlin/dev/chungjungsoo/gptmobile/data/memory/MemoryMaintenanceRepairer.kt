@@ -6,6 +6,7 @@ import kotlinx.coroutines.CancellationException
 class MemoryMaintenanceRepairer @Inject constructor(
     private val maintenanceScheduler: MemoryMaintenanceScheduler,
     private val workScheduler: MemoryMaintenanceWorkEnqueuer,
+    private val memoryMutationRecoveryService: MemoryMutationRecoveryService? = null,
     private val memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null
 ) {
     suspend fun repairAndEnqueue(
@@ -18,6 +19,12 @@ class MemoryMaintenanceRepairer @Inject constructor(
             0
         }
         var schedulingSucceeded = true
+        if (
+            memoryMutationRecoveryService != null &&
+            !runSchedulingStep { memoryMutationRecoveryService.recoverIncomplete() }
+        ) {
+            schedulingSucceeded = false
+        }
         val turnBatchSchedulingSucceeded = memoryTurnBatchScheduler?.let { scheduler ->
             runSchedulingStep { scheduler.repairAndSchedule() }
         } ?: false

@@ -1,5 +1,7 @@
 package dev.chungjungsoo.gptmobile.data.memory
 
+import dev.chungjungsoo.gptmobile.data.database.InMemoryMemoryRecoveryDao
+import dev.chungjungsoo.gptmobile.data.database.InMemoryMemoryTurnBatchDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryIndexDao
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryChunk
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryDocument
@@ -116,6 +118,42 @@ class MemoryMaintenanceProcessorTest {
     }
 
     @Test
+    fun `processor completes persisted mutation reconciliation jobs`() = runBlocking {
+        val jobDao = InMemoryMaintenanceJobDao(
+            listOf(job(MemoryMaintenanceJobType.RECONCILE_MEMORY_MUTATIONS))
+        )
+        val scheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK)
+        val fileStore = MemoryFileStore(
+            MemoryFilePaths(Files.createTempDirectory("memory-mutation-repair-processor").toFile()),
+            FIXED_CLOCK
+        )
+        fileStore.ensureStore().getOrThrow()
+        val coordinator = MemoryMutationCoordinator(
+            recoveryDao = InMemoryMemoryRecoveryDao(),
+            memoryFileStore = fileStore,
+            maintenanceScheduler = scheduler,
+            workEnqueuer = RecordingWorkEnqueuer(),
+            clock = FIXED_CLOCK
+        )
+        val recoveryService = MemoryMutationRecoveryService(
+            memoryMutationCoordinator = coordinator,
+            turnBatchDao = InMemoryMemoryTurnBatchDao(),
+            maintenanceScheduler = scheduler,
+            clock = FIXED_CLOCK
+        )
+        val processor = createProcessor(
+            jobDao = jobDao,
+            fileStore = fileStore,
+            memoryMutationRecoveryService = recoveryService
+        )
+
+        val result = processor.processRunnableJobs(MemoryMaintenanceJobFamily.REPAIR)
+
+        assertEquals(1, result.succeededCount)
+        assertEquals(MemoryMaintenanceJobStatus.SUCCEEDED, jobDao.jobs.single().status)
+    }
+
+    @Test
     fun `repairer resets stale running jobs and enqueues work`() = runBlocking {
         val jobDao = InMemoryMaintenanceJobDao(
             listOf(
@@ -219,12 +257,14 @@ class MemoryMaintenanceProcessorTest {
         fileStore: MemoryFileStore = MemoryFileStore(MemoryFilePaths(Files.createTempDirectory("memory-maintenance-processor-default").toFile()), FIXED_CLOCK),
         indexDao: InMemoryProcessorMemoryIndexDao = InMemoryProcessorMemoryIndexDao(),
         memoryEnabled: Boolean = true,
-        leaseWatchdog: MemoryMaintenanceLeaseWatchdog = NoOpLeaseWatchdog
+        leaseWatchdog: MemoryMaintenanceLeaseWatchdog = NoOpLeaseWatchdog,
+        memoryMutationRecoveryService: MemoryMutationRecoveryService? = null
     ): MemoryMaintenanceProcessor = MemoryMaintenanceProcessor(
         maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK),
         memoryIndexRepository = MemoryIndexRepository(fileStore, indexDao, MemoryChunker(), FIXED_CLOCK),
         settingRepository = FakeMaintenanceSettingRepository(memoryEnabled = memoryEnabled),
-        leaseWatchdog = leaseWatchdog
+        leaseWatchdog = leaseWatchdog,
+        memoryMutationRecoveryService = memoryMutationRecoveryService
     )
 
     private companion object {

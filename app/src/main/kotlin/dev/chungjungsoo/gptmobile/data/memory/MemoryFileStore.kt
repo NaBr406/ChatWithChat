@@ -1,10 +1,12 @@
 package dev.chungjungsoo.gptmobile.data.memory
 
 import java.io.File
+import java.io.FileOutputStream
 import java.nio.charset.StandardCharsets
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
 import java.time.Clock
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -77,6 +79,17 @@ class MemoryFileStore(
         paths.relativePath(file)
     }
 
+    fun currentMemoryFileHash(sourcePath: String): Result<String> = runCatching {
+        synchronized(revisionGate) {
+            ensureDirectories()
+            val sourceFile = paths.memoryFile(sourcePath)
+            if (!sourceFile.isFile) {
+                error("Memory file does not exist: ${sourceFile.absolutePath}")
+            }
+            sha256(Files.readAllBytes(sourceFile.toPath()))
+        }
+    }
+
     fun appendDailyNote(
         text: String,
         date: LocalDate = LocalDate.now(clock)
@@ -123,6 +136,118 @@ class MemoryFileStore(
         }
     }
 
+    fun stageMemoryFile(
+        sourcePath: String,
+        content: String,
+        stagingId: String
+    ): Result<StagedMemoryFile> = runCatching {
+        synchronized(revisionGate) {
+            ensureDirectories()
+            val sourceFile = paths.memoryFile(sourcePath)
+            if (!sourceFile.isFile) {
+                error("Memory file does not exist: ${sourceFile.absolutePath}")
+            }
+            val targetBytes = normalizeFullFileContent(content).toByteArray(StandardCharsets.UTF_8)
+            val targetHash = sha256(targetBytes)
+            val stagedTargetFile = paths.stagedTargetFile(stagingId)
+            if (stagedTargetFile.exists()) {
+                if (!stagedTargetFile.isFile) {
+                    error("Expected staged target file: ${stagedTargetFile.absolutePath}")
+                }
+                check(sha256(Files.readAllBytes(stagedTargetFile.toPath())) == targetHash) {
+                    "Staging ID already contains a different target"
+                }
+            } else {
+                writeBytesAtomically(stagedTargetFile, targetBytes)
+            }
+            check(sha256(Files.readAllBytes(stagedTargetFile.toPath())) == targetHash) {
+                "Staged target hash verification failed"
+            }
+            StagedMemoryFile(
+                sourcePath = sourcePath,
+                stagedTargetPath = paths.relativePath(stagedTargetFile),
+                baseSourceHash = sha256(Files.readAllBytes(sourceFile.toPath())),
+                targetSourceHash = targetHash
+            )
+        }
+    }
+
+    fun commitStagedMemoryFile(stagedMemoryFile: StagedMemoryFile): Result<MemoryFileCommitOutcome> =
+        commitStagedMemoryFile(
+            sourcePath = stagedMemoryFile.sourcePath,
+            stagedTargetPath = stagedMemoryFile.stagedTargetPath,
+            baseSourceHash = stagedMemoryFile.baseSourceHash,
+            targetSourceHash = stagedMemoryFile.targetSourceHash
+        )
+
+    fun commitStagedMemoryFile(
+        sourcePath: String,
+        stagedTargetPath: String,
+        baseSourceHash: String,
+        targetSourceHash: String
+    ): Result<MemoryFileCommitOutcome> = runCatching {
+        synchronized(revisionGate) {
+            ensureDirectories()
+            val expectedBaseHash = requireSha256(baseSourceHash)
+            val expectedTargetHash = requireSha256(targetSourceHash)
+            val target = paths.memoryFile(sourcePath)
+            val stagedTarget = paths.stagedTargetFileFromPath(stagedTargetPath)
+            if (!target.isFile) {
+                error("Memory file does not exist: ${target.absolutePath}")
+            }
+            val currentHash = sha256(Files.readAllBytes(target.toPath()))
+            when {
+                currentHash == expectedTargetHash -> MemoryFileCommitOutcome.AlreadyCommitted(
+                    file = target,
+                    currentSourceHash = currentHash
+                )
+                currentHash != expectedBaseHash -> MemoryFileCommitOutcome.Conflict(
+                    file = target,
+                    currentSourceHash = currentHash,
+                    expectedBaseSourceHash = expectedBaseHash,
+                    targetSourceHash = expectedTargetHash
+                )
+                else -> {
+                    if (!stagedTarget.isFile) {
+                        error("Staged target does not exist: ${stagedTarget.absolutePath}")
+                    }
+                    val stagedBytes = Files.readAllBytes(stagedTarget.toPath())
+                    check(sha256(stagedBytes) == expectedTargetHash) {
+                        "Staged target hash does not match its receipt"
+                    }
+                    val backup = backupMemoryFile(target)
+                    writeBytesAtomically(target, stagedBytes)
+                    val committedHash = sha256(Files.readAllBytes(target.toPath()))
+                    check(committedHash == expectedTargetHash) {
+                        "Committed memory file hash verification failed"
+                    }
+                    advanceRevisionFor(target)
+                    MemoryFileCommitOutcome.Committed(
+                        file = target,
+                        currentSourceHash = committedHash,
+                        backupFile = backup
+                    )
+                }
+            }
+        }
+    }
+
+    fun cleanupStagedTarget(stagedTargetPath: String): Result<Boolean> = runCatching {
+        synchronized(revisionGate) {
+            ensureDirectories()
+            Files.deleteIfExists(paths.stagedTargetFileFromPath(stagedTargetPath).toPath())
+        }
+    }
+
+    fun cleanupStagedTargets(stagingIdPrefix: String): Result<Int> = runCatching {
+        synchronized(revisionGate) {
+            ensureDirectories()
+            paths.stagedTargetFiles(stagingIdPrefix).count { stagedTarget ->
+                Files.deleteIfExists(stagedTarget.toPath())
+            }
+        }
+    }
+
     fun restoreMemoryFile(replacement: MemoryFileReplacement): Result<File> = runCatching {
         synchronized(revisionGate) {
             ensureDirectories()
@@ -165,6 +290,7 @@ class MemoryFileStore(
         paths.rootDirectory.mkdirsOrThrow()
         paths.dailyMemoryDirectory.mkdirsOrThrow()
         paths.backupDirectory.mkdirsOrThrow()
+        paths.stagingDirectory.mkdirsOrThrow()
     }
 
     private fun ensureLongTermMemoryFile(): File {
@@ -222,9 +348,17 @@ class MemoryFileStore(
     }
 
     private fun writeAtomically(file: File, content: String) {
+        writeBytesAtomically(file, content.toByteArray(StandardCharsets.UTF_8))
+    }
+
+    private fun writeBytesAtomically(file: File, content: ByteArray) {
         file.parentFile?.mkdirsOrThrow()
         val tempFile = File(file.parentFile, ".${file.name}.${System.nanoTime()}.tmp")
-        tempFile.writeText(content, StandardCharsets.UTF_8)
+        FileOutputStream(tempFile).use { output ->
+            output.write(content)
+            output.flush()
+            output.fd.sync()
+        }
         try {
             try {
                 Files.move(
@@ -265,12 +399,26 @@ class MemoryFileStore(
     private fun normalizeFullFileContent(content: String): String =
         content.trimEnd() + "\n"
 
+    private fun requireSha256(value: String): String {
+        require(SHA_256_REGEX.matches(value)) {
+            "Expected a SHA-256 hash"
+        }
+        return value.lowercase()
+    }
+
+    private fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256")
+        .digest(bytes)
+        .joinToString(separator = "") { byte ->
+            (byte.toInt() and 0xff).toString(16).padStart(2, '0')
+        }
+
     private fun dailyMemoryHeader(date: LocalDate): String =
         "# ${date.format(DateTimeFormatter.ISO_LOCAL_DATE)}\n\n"
 
     companion object {
         const val LONG_TERM_MEMORY_HEADER = "# ChatWithChat Memory\n\n"
         private val BACKUP_TIMESTAMP_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")
+        private val SHA_256_REGEX = Regex("[0-9a-fA-F]{64}")
     }
 }
 
@@ -284,6 +432,36 @@ data class MemoryFileReplacement(
     val file: File,
     val backupFile: File
 )
+
+data class StagedMemoryFile(
+    val sourcePath: String,
+    val stagedTargetPath: String,
+    val baseSourceHash: String,
+    val targetSourceHash: String
+)
+
+sealed interface MemoryFileCommitOutcome {
+    val file: File
+    val currentSourceHash: String
+
+    data class Committed(
+        override val file: File,
+        override val currentSourceHash: String,
+        val backupFile: File
+    ) : MemoryFileCommitOutcome
+
+    data class AlreadyCommitted(
+        override val file: File,
+        override val currentSourceHash: String
+    ) : MemoryFileCommitOutcome
+
+    data class Conflict(
+        override val file: File,
+        override val currentSourceHash: String,
+        val expectedBaseSourceHash: String,
+        val targetSourceHash: String
+    ) : MemoryFileCommitOutcome
+}
 
 internal data class MemoryFileCorpusRead(
     val revision: Long,

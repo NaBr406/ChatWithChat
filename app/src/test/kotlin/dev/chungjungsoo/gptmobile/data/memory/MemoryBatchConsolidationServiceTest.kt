@@ -1,10 +1,10 @@
 package dev.chungjungsoo.gptmobile.data.memory
 
+import dev.chungjungsoo.gptmobile.data.database.InMemoryMemoryRecoveryDao
 import dev.chungjungsoo.gptmobile.data.database.InMemoryMemoryTurnBatchDao
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatRoomV2
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMaintenanceJob
-import java.io.File
 import java.nio.file.Files
 import java.security.MessageDigest
 import java.time.Clock
@@ -43,8 +43,12 @@ class MemoryBatchConsolidationServiceTest {
         assertTrue(fixture.fileStore.readLongTermMemory().getOrThrow().contains("durable batch-based memory updates"))
         assertTrue(fixture.turnDao.getPendingTurnsForChat(CHAT_ID).isEmpty())
         assertEquals(5, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
-        assertEquals(MemoryMaintenanceJobStatus.SUCCEEDED, fixture.jobDao.jobs.single().status)
-        assertTrue(fixture.indexDao.chunks.isNotEmpty())
+        assertEquals(MemoryMaintenanceJobStatus.SUCCEEDED, fixture.jobDao.getById(job.jobId)?.status)
+        assertEquals(
+            MemoryCorpusIndexStatus.PENDING,
+            fixture.recoveryDao.getCorpusState(MemoryCorpus.CHAT_RECALL_LONG_TERM.name.lowercase())?.indexStatus
+        )
+        assertTrue(fixture.jobDao.jobs.any { it.family == MemoryMaintenanceJobFamily.INDEX })
         assertEquals(MemoryActivityStatus.SUCCEEDED, fixture.activityLogger.lastStatus)
     }
 
@@ -279,61 +283,268 @@ class MemoryBatchConsolidationServiceTest {
     }
 
     @Test
-    fun `index failure restores markdown and does not advance checkpoint`() = runBlocking {
+    fun `index scheduling failure keeps committed markdown and advances checkpoint`() = runBlocking {
         val fixture = fixture(
             proposal = MemoryBatchConsolidationProposal(
                 operations = listOf(
                     operation(
                         destination = MemoryBatchDestination.LONG_TERM,
-                        text = "This write must be rolled back."
+                        text = "This canonical write survives index scheduling failure."
                     )
                 )
             ),
-            failIndexRebuild = true
+            failIndexScheduling = true
         )
-        val before = fixture.fileStore.readLongTermMemory().getOrThrow()
         val job = fixture.createFiveTurnBatch()
 
         val result = fixture.service.process(job)
 
-        assertEquals(MemoryBatchProcessResult.STATUS_RETRYABLE, result.status)
-        assertEquals(before, fixture.fileStore.readLongTermMemory().getOrThrow())
-        assertEquals(0, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
-        assertEquals(5, fixture.turnDao.getTurnsClaimedByJob(job.jobId).size)
+        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertTrue(fixture.fileStore.readLongTermMemory().getOrThrow().contains("survives index scheduling failure"))
+        assertEquals(5, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
+        assertTrue(fixture.turnDao.getTurnsClaimedByJob(job.jobId).isEmpty())
+        assertEquals(MemoryMaintenanceJobStatus.SUCCEEDED, fixture.jobDao.getById(job.jobId)?.status)
+        assertTrue(fixture.jobDao.jobs.any { it.family == MemoryMaintenanceJobFamily.INDEX })
     }
 
     @Test
-    fun `worker that loses its lease during indexing cannot roll files back`() = runBlocking {
+    fun `process death after prepared receipt resumes without another semantic call`() = runBlocking {
         val clock = MutableBatchConsolidationClock(1_000L)
-        val rebuilder = ReclaimingFailingMemoryIndexRebuilder()
+        val observer = OneShotCommitObserver(CommitInterruptionPoint.AFTER_PREPARED)
         val fixture = fixture(
             proposal = MemoryBatchConsolidationProposal(
                 operations = listOf(
                     operation(
                         destination = MemoryBatchDestination.LONG_TERM,
-                        text = "The owned write reached long-term memory before lease loss."
-                    ),
-                    operation(
-                        destination = MemoryBatchDestination.DAILY,
-                        text = "The owned write reached daily memory before lease loss."
+                        text = "Prepared targets resume without a second semantic call."
                     )
                 )
             ),
             clock = clock,
-            indexRebuilder = rebuilder
+            commitObserver = observer
         )
         val job = fixture.createFiveTurnBatch()
-        rebuilder.onRebuild = {
-            clock.setEpochSecond(checkNotNull(job.leaseExpiresAt) + 1L)
-            assertEquals(1, fixture.maintenanceScheduler.resetExpiredRunningJobs())
-        }
 
         val failure = runCatching { fixture.service.process(job) }.exceptionOrNull()
 
-        assertTrue(failure is MemoryMaintenanceLeaseLostException)
-        assertTrue(fixture.fileStore.readLongTermMemory().getOrThrow().contains("owned write reached long-term"))
-        assertTrue(fixture.fileStore.readDailyMemory().getOrThrow().contains("owned write reached daily"))
-        assertEquals(MemoryMaintenanceJobStatus.FAILED_RETRYABLE, fixture.jobDao.getById(job.jobId)?.status)
+        assertTrue(failure is MemoryBatchCommitInterruptedException)
+        assertEquals(1, fixture.intelligence.consolidateCalls)
+        assertFalse(fixture.fileStore.readLongTermMemory().getOrThrow().contains("Prepared targets resume"))
+
+        val replay = fixture.reclaim(job, clock)
+        val result = fixture.service.process(replay)
+
+        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(1, fixture.intelligence.consolidateCalls)
+        assertTrue(fixture.fileStore.readLongTermMemory().getOrThrow().contains("Prepared targets resume"))
+    }
+
+    @Test
+    fun `process death after canonical commit resumes without another semantic call`() = runBlocking {
+        val clock = MutableBatchConsolidationClock(1_000L)
+        val fixture = fixture(
+            proposal = MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        text = "Canonical commit is durable across process death."
+                    )
+                )
+            ),
+            clock = clock,
+            commitObserver = OneShotCommitObserver(CommitInterruptionPoint.AFTER_CANONICAL_COMMIT)
+        )
+        val job = fixture.createFiveTurnBatch()
+
+        val failure = runCatching { fixture.service.process(job) }.exceptionOrNull()
+
+        assertTrue(failure is MemoryBatchCommitInterruptedException)
+        assertTrue(fixture.fileStore.readLongTermMemory().getOrThrow().contains("durable across process death"))
+        assertEquals(1, fixture.intelligence.consolidateCalls)
+
+        val result = fixture.service.process(fixture.reclaim(job, clock))
+
+        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(1, fixture.intelligence.consolidateCalls)
+        assertEquals(5, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
+    }
+
+    @Test
+    fun `empty batch replay after completion uses checkpoint evidence without another semantic call`() = runBlocking {
+        val clock = MutableBatchConsolidationClock(1_000L)
+        val fixture = fixture(
+            proposal = MemoryBatchConsolidationProposal(),
+            clock = clock,
+            commitObserver = OneShotCommitObserver(CommitInterruptionPoint.AFTER_BATCH_COMPLETION)
+        )
+        val job = fixture.createFiveTurnBatch()
+
+        val failure = runCatching { fixture.service.process(job) }.exceptionOrNull()
+
+        assertTrue(failure is MemoryBatchCommitInterruptedException)
+        assertTrue(fixture.turnDao.getTurnsClaimedByJob(job.jobId).isEmpty())
+        assertEquals(5, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
+        assertEquals(1, fixture.intelligence.consolidateCalls)
+
+        val result = fixture.service.process(fixture.reclaim(job, clock))
+
+        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(1, fixture.intelligence.consolidateCalls)
+        assertEquals(0, result.dailyWriteCount + result.longTermWriteCount)
+    }
+
+    @Test
+    fun `empty semantic marker survives process death before batch completion`() = runBlocking {
+        val clock = MutableBatchConsolidationClock(1_000L)
+        val fixture = fixture(
+            proposal = MemoryBatchConsolidationProposal(),
+            clock = clock,
+            commitObserver = OneShotCommitObserver(CommitInterruptionPoint.AFTER_CANONICAL_COMMIT)
+        )
+        val job = fixture.createFiveTurnBatch()
+
+        val failure = runCatching { fixture.service.process(job) }.exceptionOrNull()
+
+        assertTrue(failure is MemoryBatchCommitInterruptedException)
+        assertEquals(1, fixture.intelligence.consolidateCalls)
+        assertEquals(
+            MemoryMutationState.SEMANTIC_ACK_PENDING,
+            fixture.recoveryDao.getMutationGroupBySemanticJobId(job.jobId)?.state
+        )
+
+        val result = fixture.service.process(fixture.reclaim(job, clock))
+
+        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(1, fixture.intelligence.consolidateCalls)
+        assertEquals(
+            MemoryMutationState.INDEXED,
+            fixture.recoveryDao.getMutationGroupBySemanticJobId(job.jobId)?.state
+        )
+    }
+
+    @Test
+    fun `local recovery releases a terminal semantic batch after prepared`() = runBlocking {
+        val fixture = fixture(
+            proposal = MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        text = "Terminal semantic work is finalized by local recovery."
+                    )
+                )
+            ),
+            commitObserver = OneShotCommitObserver(CommitInterruptionPoint.AFTER_PREPARED)
+        )
+        val job = fixture.createFiveTurnBatch()
+        val failure = runCatching { fixture.service.process(job) }.exceptionOrNull()
+        assertTrue(failure is MemoryBatchCommitInterruptedException)
+        fixture.maintenanceScheduler.markFailedTerminal(job, "simulated_semantic_exhaustion")
+
+        val recovery = MemoryMutationRecoveryService(
+            memoryMutationCoordinator = fixture.mutationCoordinator,
+            turnBatchDao = fixture.turnDao,
+            maintenanceScheduler = fixture.maintenanceScheduler,
+            clock = FIXED_CLOCK
+        ).recoverIncomplete()
+
+        assertEquals(1, recovery.recoveredSemanticCount)
+        assertEquals(0, recovery.failedCount)
+        assertEquals(1, fixture.intelligence.consolidateCalls)
+        assertTrue(fixture.fileStore.readLongTermMemory().getOrThrow().contains("finalized by local recovery"))
+        assertTrue(fixture.turnDao.getTurnsClaimedByJob(job.jobId).isEmpty())
+        assertEquals(5, fixture.turnDao.getCheckpoint(CHAT_ID)?.lastProcessedUserMessageId)
+        assertEquals(MemoryMaintenanceJobStatus.SUCCEEDED, fixture.jobDao.getById(job.jobId)?.status)
+        assertEquals(
+            MemoryMutationState.INDEX_PENDING,
+            fixture.recoveryDao.getMutationGroupBySemanticJobId(job.jobId)?.state
+        )
+    }
+
+    @Test
+    fun `local recovery releases terminal batch when canonical content conflicts`() = runBlocking {
+        val fixture = fixture(
+            proposal = MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        text = "This stale target must not overwrite newer canonical content."
+                    )
+                )
+            ),
+            commitObserver = OneShotCommitObserver(CommitInterruptionPoint.AFTER_PREPARED)
+        )
+        val job = fixture.createFiveTurnBatch()
+        val failure = runCatching { fixture.service.process(job) }.exceptionOrNull()
+        assertTrue(failure is MemoryBatchCommitInterruptedException)
+        fixture.fileStore.replaceLongTermMemory(
+            "# ChatWithChat Memory\n\n- Newer canonical content wins\n"
+        ).getOrThrow()
+        fixture.maintenanceScheduler.markFailedTerminal(job, "simulated_semantic_exhaustion")
+
+        val recovery = MemoryMutationRecoveryService(
+            memoryMutationCoordinator = fixture.mutationCoordinator,
+            turnBatchDao = fixture.turnDao,
+            maintenanceScheduler = fixture.maintenanceScheduler,
+            clock = FIXED_CLOCK
+        ).recoverIncomplete()
+
+        assertEquals(1, recovery.conflictCount)
+        assertEquals(1, recovery.recoveredSemanticCount)
+        assertTrue(fixture.turnDao.getTurnsClaimedByJob(job.jobId).isEmpty())
+        assertEquals(MemoryMaintenanceJobStatus.FAILED_TERMINAL, fixture.jobDao.getById(job.jobId)?.status)
+        assertEquals(
+            MemoryMutationState.CONFLICT,
+            fixture.recoveryDao.getMutationGroupBySemanticJobId(job.jobId)?.state
+        )
+        assertTrue(fixture.fileStore.readLongTermMemory().getOrThrow().contains("Newer canonical content wins"))
+    }
+
+    @Test
+    fun `local recovery finalizes terminal batch superseded by a newer generation`() = runBlocking {
+        val fixture = fixture(
+            proposal = MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        text = "Older canonical generation."
+                    )
+                )
+            ),
+            commitObserver = OneShotCommitObserver(CommitInterruptionPoint.AFTER_CANONICAL_COMMIT)
+        )
+        val job = fixture.createFiveTurnBatch()
+        val failure = runCatching { fixture.service.process(job) }.exceptionOrNull()
+        assertTrue(failure is MemoryBatchCommitInterruptedException)
+        fixture.maintenanceScheduler.markFailedTerminal(job, "simulated_semantic_exhaustion")
+        val olderGroup = checkNotNull(fixture.recoveryDao.getMutationGroupBySemanticJobId(job.jobId))
+        val currentContent = fixture.fileStore.readLongTermMemory().getOrThrow()
+        val newerMutation = fixture.mutationCoordinator.prepare(
+            semanticJobId = "newer-semantic-without-source-job",
+            semanticBatchId = "newer-batch",
+            targets = listOf(
+                MemoryMutationTarget(
+                    sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+                    baseContent = currentContent,
+                    targetContent = "# ChatWithChat Memory\n\n- Newer canonical generation.\n",
+                    targetIndexFingerprint = "newer-fingerprint"
+                )
+            )
+        )
+        fixture.mutationCoordinator.reconcile(newerMutation)
+        fixture.mutationCoordinator.acknowledgeSemanticCompletion(newerMutation.group.groupId)
+
+        val recovery = MemoryMutationRecoveryService(
+            memoryMutationCoordinator = fixture.mutationCoordinator,
+            turnBatchDao = fixture.turnDao,
+            maintenanceScheduler = fixture.maintenanceScheduler,
+            clock = FIXED_CLOCK
+        ).recoverIncomplete()
+
+        assertEquals(1, recovery.recoveredSemanticCount)
+        assertTrue(fixture.turnDao.getTurnsClaimedByJob(job.jobId).isEmpty())
+        assertEquals(MemoryMaintenanceJobStatus.SUCCEEDED, fixture.jobDao.getById(job.jobId)?.status)
+        assertEquals(MemoryMutationState.SUPERSEDED, fixture.recoveryDao.getMutationGroup(olderGroup.groupId)?.state)
+        assertTrue(fixture.fileStore.readLongTermMemory().getOrThrow().contains("Newer canonical generation"))
     }
 
     @Test
@@ -404,13 +615,17 @@ class MemoryBatchConsolidationServiceTest {
     private fun fixture(
         proposal: MemoryBatchConsolidationProposal?,
         searchResults: List<MemoryIndexSearchResult> = emptyList(),
-        failIndexRebuild: Boolean = false,
+        failIndexScheduling: Boolean = false,
         clock: Clock = FIXED_CLOCK,
-        indexRebuilder: MemoryIndexRebuilder? = null
+        commitObserver: MemoryBatchCommitObserver = MemoryBatchCommitObserver.None
     ): Fixture {
         val turnDao = InMemoryMemoryTurnBatchDao()
         val jobDao = InMemoryMaintenanceJobDao()
-        val enqueuer = RecordingWorkEnqueuer()
+        val enqueuer: MemoryMaintenanceWorkEnqueuer = if (failIndexScheduling) {
+            IndexFailingWorkEnqueuer()
+        } else {
+            RecordingWorkEnqueuer()
+        }
         val settingRepository = FakeMaintenanceSettingRepository(memoryEnabled = true)
         val maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, clock)
         val turnBatchScheduler = MemoryTurnBatchScheduler(
@@ -426,8 +641,14 @@ class MemoryBatchConsolidationServiceTest {
             clock
         )
         fileStore.ensureStore().getOrThrow()
-        val indexDao = InMemoryProcessorMemoryIndexDao()
-        val indexRepository = MemoryIndexRepository(fileStore, indexDao, MemoryChunker(), clock)
+        val recoveryDao = InMemoryMemoryRecoveryDao()
+        val mutationCoordinator = MemoryMutationCoordinator(
+            recoveryDao = recoveryDao,
+            memoryFileStore = fileStore,
+            maintenanceScheduler = maintenanceScheduler,
+            workEnqueuer = enqueuer,
+            clock = clock
+        )
         val intelligence = FakeMemoryIntelligence(batchProposal = proposal)
         val activityLogger = RecordingOrganizationActivityLogger()
         val maintenanceCorpusReader = object : MemoryMaintenanceCorpusReader {
@@ -438,15 +659,15 @@ class MemoryBatchConsolidationServiceTest {
                     Result.failure(IllegalArgumentException("Expected maintenance working set"))
                 }
         }
-        val rebuilder = indexRebuilder ?: if (failIndexRebuild) FailingMemoryIndexRebuilder() else indexRepository
         return Fixture(
             turnDao = turnDao,
             jobDao = jobDao,
             fileStore = fileStore,
-            indexDao = indexDao,
+            recoveryDao = recoveryDao,
             intelligence = intelligence,
             activityLogger = activityLogger,
             maintenanceScheduler = maintenanceScheduler,
+            mutationCoordinator = mutationCoordinator,
             coordinator = MemoryTurnBatchCoordinator(turnDao, turnBatchScheduler),
             turnBatchScheduler = turnBatchScheduler,
             service = MemoryBatchConsolidationService(
@@ -458,8 +679,9 @@ class MemoryBatchConsolidationServiceTest {
                 memoryFileStore = fileStore,
                 markdownMemoryCodec = MarkdownMemoryCodec(),
                 memoryMaintenanceCorpusReader = maintenanceCorpusReader,
-                memoryIndexRebuilder = rebuilder,
+                memoryMutationCoordinator = mutationCoordinator,
                 activityLogger = activityLogger,
+                commitObserver = commitObserver,
                 clock = clock
             )
         )
@@ -521,10 +743,11 @@ class MemoryBatchConsolidationServiceTest {
         val turnDao: InMemoryMemoryTurnBatchDao,
         val jobDao: InMemoryMaintenanceJobDao,
         val fileStore: MemoryFileStore,
-        val indexDao: InMemoryProcessorMemoryIndexDao,
+        val recoveryDao: InMemoryMemoryRecoveryDao,
         val intelligence: FakeMemoryIntelligence,
         val activityLogger: RecordingOrganizationActivityLogger,
         val maintenanceScheduler: MemoryMaintenanceScheduler,
+        val mutationCoordinator: MemoryMutationCoordinator,
         val coordinator: MemoryTurnBatchCoordinator,
         val turnBatchScheduler: MemoryTurnBatchScheduler,
         val service: MemoryBatchConsolidationService
@@ -572,6 +795,15 @@ class MemoryBatchConsolidationServiceTest {
                 leaseOwner = "test-owner:${job.jobId}"
             )
         )
+
+        suspend fun reclaim(
+            job: MemoryMaintenanceJob,
+            clock: MutableBatchConsolidationClock
+        ): MemoryMaintenanceJob {
+            clock.setEpochSecond(checkNotNull(job.leaseExpiresAt) + 1L)
+            check(maintenanceScheduler.resetExpiredRunningJobs() == 1)
+            return claim(checkNotNull(jobDao.getById(job.jobId)))
+        }
     }
 
     companion object {
@@ -611,16 +843,41 @@ private class RecordingOrganizationActivityLogger : MemoryActivityLogger {
     }
 }
 
-private class FailingMemoryIndexRebuilder : MemoryIndexRebuilder {
-    override suspend fun rebuildFile(file: File): Result<MemoryIndexRebuildResult> =
-        Result.failure(IllegalStateException("index failure"))
+private enum class CommitInterruptionPoint {
+    AFTER_PREPARED,
+    AFTER_CANONICAL_COMMIT,
+    AFTER_BATCH_COMPLETION
 }
 
-private class ReclaimingFailingMemoryIndexRebuilder : MemoryIndexRebuilder {
-    var onRebuild: suspend () -> Unit = {}
+private class OneShotCommitObserver(
+    private val interruptionPoint: CommitInterruptionPoint
+) : MemoryBatchCommitObserver {
+    private var interrupted = false
 
-    override suspend fun rebuildFile(file: File): Result<MemoryIndexRebuildResult> {
-        onRebuild()
-        return Result.failure(IllegalStateException("index failure after lease loss"))
+    override suspend fun afterPrepared(mutation: MemoryPreparedMutation) {
+        interruptAt(CommitInterruptionPoint.AFTER_PREPARED)
+    }
+
+    override suspend fun afterCanonicalFileCommit(mutation: MemoryPreparedMutation) {
+        interruptAt(CommitInterruptionPoint.AFTER_CANONICAL_COMMIT)
+    }
+
+    override suspend fun afterBatchCompletion(jobId: String) {
+        interruptAt(CommitInterruptionPoint.AFTER_BATCH_COMPLETION)
+    }
+
+    private fun interruptAt(point: CommitInterruptionPoint) {
+        if (!interrupted && interruptionPoint == point) {
+            interrupted = true
+            throw MemoryBatchCommitInterruptedException("Simulated process death at $point")
+        }
+    }
+}
+
+private class IndexFailingWorkEnqueuer : MemoryMaintenanceWorkEnqueuer {
+    override fun enqueueWork(family: String, delaySeconds: Long) {
+        if (family == MemoryMaintenanceJobFamily.INDEX) {
+            error("Simulated index scheduling failure")
+        }
     }
 }

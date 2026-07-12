@@ -1,0 +1,484 @@
+package dev.chungjungsoo.gptmobile.data.memory
+
+import dev.chungjungsoo.gptmobile.data.database.InMemoryMemoryRecoveryDao
+import dev.chungjungsoo.gptmobile.data.database.InMemoryMemoryTurnBatchDao
+import java.io.File
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.time.Clock
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneOffset
+import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class MemoryMutationCoordinatorTest {
+
+    @Test
+    fun `prepared receipt commits base to target and advances durable state`() = runBlocking {
+        val fixture = Fixture()
+        val baseContent = fixture.fileStore.readLongTermMemory().getOrThrow()
+        val targetContent = "# ChatWithChat Memory\n\n## Preferences\n- Prefer exact recovery"
+
+        val prepared = fixture.coordinator.prepare(
+            semanticJobId = "semantic-job-1",
+            semanticBatchId = "batch-1",
+            targets = listOf(fixture.longTermTarget(baseContent, targetContent))
+        )
+
+        assertEquals(MemoryMutationState.PREPARED, prepared.group.state)
+        assertEquals(1L, prepared.group.generation)
+        assertTrue(fixture.root.resolve(prepared.receipts.single().stagedTargetPath).isFile)
+
+        val result = fixture.coordinator.reconcile(prepared)
+
+        assertTrue(result is MemoryMutationCommitResult.CanonicalCommitted)
+        result as MemoryMutationCommitResult.CanonicalCommitted
+        assertTrue(result.hasPendingIndex)
+        assertTrue(result.requiresSemanticAcknowledgement)
+        assertEquals(targetContent + "\n", fixture.fileStore.readLongTermMemory().getOrThrow())
+        val receipt = fixture.recoveryDao.getMutationReceipt(prepared.receipts.single().receiptId)
+        assertNotNull(receipt)
+        assertEquals(MemoryMutationState.INDEX_PENDING, receipt?.state)
+        assertNotNull(receipt?.fileCommittedAt)
+        val group = fixture.recoveryDao.getMutationGroup(prepared.group.groupId)
+        assertEquals(MemoryMutationState.SEMANTIC_ACK_PENDING, group?.state)
+        assertNotNull(group?.completedAt)
+        val corpus = fixture.recoveryDao.getCorpusState(CHAT_RECALL_CORPUS_KEY)
+        assertEquals(prepared.group.generation, corpus?.generation)
+        assertEquals(receipt?.targetSourceHash, corpus?.sourceHash)
+        assertEquals(MemoryCorpusIndexStatus.PENDING, corpus?.indexStatus)
+        assertEquals(listOf(prepared.group.generation), fixture.jobDao.jobs.map { it.generation })
+        assertEquals(listOf(MemoryMaintenanceJobFamily.INDEX), fixture.workEnqueuer.works.map { it.family })
+
+        val acknowledged = fixture.coordinator.acknowledgeSemanticCompletion(prepared.group.groupId)
+
+        assertEquals(MemoryMutationState.INDEX_PENDING, acknowledged.group.state)
+    }
+
+    @Test
+    fun `current target fast forwards a prepared receipt after process restart`() = runBlocking {
+        val fixture = Fixture()
+        val prepared = fixture.coordinator.prepare(
+            semanticJobId = "semantic-job-fast-forward",
+            semanticBatchId = "batch-fast-forward",
+            targets = listOf(
+                fixture.longTermTarget(
+                    baseContent = fixture.fileStore.readLongTermMemory().getOrThrow(),
+                    targetContent = "# ChatWithChat Memory\n\n- Canonical target already replaced"
+                )
+            )
+        )
+        val receipt = prepared.receipts.single()
+        val externalCommit = fixture.fileStore.commitStagedMemoryFile(
+            sourcePath = receipt.sourcePath,
+            stagedTargetPath = receipt.stagedTargetPath,
+            baseSourceHash = receipt.baseSourceHash,
+            targetSourceHash = receipt.targetSourceHash
+        ).getOrThrow()
+        assertTrue(externalCommit is MemoryFileCommitOutcome.Committed)
+        assertEquals(1, fixture.paths.backupDirectory.listFiles().orEmpty().size)
+
+        val restartedCoordinator = fixture.newCoordinator(MemoryFileStore(fixture.paths, FIXED_CLOCK))
+        val result = restartedCoordinator.reconcile(prepared)
+
+        assertTrue(result is MemoryMutationCommitResult.CanonicalCommitted)
+        assertEquals(MemoryMutationState.INDEX_PENDING, fixture.recoveryDao.getMutationReceipt(receipt.receiptId)?.state)
+        assertEquals(receipt.targetSourceHash, fixture.fileStore.currentMemoryFileHash(receipt.sourcePath).getOrThrow())
+        assertEquals(1, fixture.paths.backupDirectory.listFiles().orEmpty().size)
+        assertEquals(1, fixture.jobDao.jobs.size)
+    }
+
+    @Test
+    fun `current hash outside base and target records conflict without overwrite`() = runBlocking {
+        val fixture = Fixture()
+        val prepared = fixture.coordinator.prepare(
+            semanticJobId = "semantic-job-conflict",
+            semanticBatchId = "batch-conflict",
+            targets = listOf(
+                fixture.longTermTarget(
+                    baseContent = fixture.fileStore.readLongTermMemory().getOrThrow(),
+                    targetContent = "# ChatWithChat Memory\n\n- Approved target"
+                )
+            )
+        )
+        val newerContent = "# ChatWithChat Memory\n\n- Newer canonical content\n"
+        fixture.paths.longTermMemoryFile.writeText(newerContent, StandardCharsets.UTF_8)
+
+        val result = fixture.coordinator.reconcile(prepared)
+
+        assertTrue(result is MemoryMutationCommitResult.Conflict)
+        result as MemoryMutationCommitResult.Conflict
+        assertEquals(MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME, result.sourcePath)
+        assertEquals(newerContent, fixture.paths.longTermMemoryFile.readText(StandardCharsets.UTF_8))
+        val receipt = fixture.recoveryDao.getMutationReceipt(prepared.receipts.single().receiptId)
+        assertEquals(MemoryMutationState.CONFLICT, receipt?.state)
+        assertEquals("canonical_source_hash_conflict", receipt?.lastError)
+        assertEquals(MemoryMutationState.CONFLICT, fixture.recoveryDao.getMutationGroup(prepared.group.groupId)?.state)
+        assertTrue(fixture.root.resolve(prepared.receipts.single().stagedTargetPath).isFile)
+        assertTrue(fixture.jobDao.jobs.isEmpty())
+        assertTrue(fixture.paths.backupDirectory.listFiles().orEmpty().isEmpty())
+    }
+
+    @Test
+    fun `partial multi file commit is completed by incomplete receipt recovery`() = runBlocking {
+        val fixture = Fixture()
+        val dailySourcePath = "${MemoryFilePaths.DAILY_MEMORY_DIRECTORY_NAME}/${FIXED_DATE}.md"
+        val longTermTarget = "# ChatWithChat Memory\n\n- Durable long-term target"
+        val dailyTarget = "# $FIXED_DATE\n\n- Durable daily target"
+        val prepared = fixture.coordinator.prepare(
+            semanticJobId = "semantic-job-multi-file",
+            semanticBatchId = "batch-multi-file",
+            targets = listOf(
+                fixture.longTermTarget(
+                    baseContent = fixture.fileStore.readLongTermMemory().getOrThrow(),
+                    targetContent = longTermTarget
+                ),
+                MemoryMutationTarget(
+                    sourcePath = dailySourcePath,
+                    baseContent = fixture.fileStore.readDailyMemory(FIXED_DATE).getOrThrow(),
+                    targetContent = dailyTarget,
+                    targetIndexFingerprint = null
+                )
+            )
+        )
+        val dailyReceipt = prepared.receipts.single { receipt -> receipt.sourcePath == dailySourcePath }
+        fixture.fileStore.commitStagedMemoryFile(
+            sourcePath = dailyReceipt.sourcePath,
+            stagedTargetPath = dailyReceipt.stagedTargetPath,
+            baseSourceHash = dailyReceipt.baseSourceHash,
+            targetSourceHash = dailyReceipt.targetSourceHash
+        ).getOrThrow()
+        assertEquals(MemoryMutationState.PREPARED, fixture.recoveryDao.getMutationReceipt(dailyReceipt.receiptId)?.state)
+
+        val repairResult = fixture.newCoordinator(MemoryFileStore(fixture.paths, FIXED_CLOCK)).reconcileIncomplete()
+
+        assertEquals(1, repairResult.committedCount)
+        assertEquals(0, repairResult.conflictCount)
+        assertEquals(0, repairResult.failedCount)
+        assertEquals(
+            setOf(
+                MemoryRecoveredSemanticMutation(
+                    groupId = prepared.group.groupId,
+                    semanticJobId = "semantic-job-multi-file",
+                    generation = prepared.group.generation
+                )
+            ),
+            repairResult.recoveredSemanticMutations
+        )
+        assertEquals(longTermTarget + "\n", fixture.paths.longTermMemoryFile.readText(StandardCharsets.UTF_8))
+        assertEquals(dailyTarget + "\n", fixture.paths.dailyMemoryFile(FIXED_DATE).readText(StandardCharsets.UTF_8))
+        val repairedReceipts = fixture.recoveryDao.getMutationReceipts(prepared.group.groupId)
+        assertEquals(
+            MemoryMutationState.INDEX_PENDING,
+            repairedReceipts.single { receipt -> receipt.sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME }.state
+        )
+        assertEquals(MemoryMutationState.INDEXED, repairedReceipts.single { it.sourcePath == dailySourcePath }.state)
+        assertEquals(
+            MemoryMutationState.SEMANTIC_ACK_PENDING,
+            fixture.recoveryDao.getMutationGroup(prepared.group.groupId)?.state
+        )
+        assertFalse(fixture.root.resolve(dailyReceipt.stagedTargetPath).exists())
+        assertEquals(1, fixture.jobDao.jobs.size)
+    }
+
+    @Test
+    fun `A to B to A allocates a distinct persistent generation`() = runBlocking {
+        val fixture = Fixture()
+        val contentA = "# ChatWithChat Memory\n\n- Revision A\n"
+        val contentB = "# ChatWithChat Memory\n\n- Revision B\n"
+        fixture.paths.longTermMemoryFile.writeText(contentA, StandardCharsets.UTF_8)
+        val hashA = fixture.fileStore.currentMemoryFileHash(MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME).getOrThrow()
+
+        val mutationB = fixture.coordinator.prepare(
+            semanticJobId = "semantic-job-B",
+            semanticBatchId = "batch-B",
+            targets = listOf(fixture.longTermTarget(contentA, contentB))
+        )
+        fixture.coordinator.reconcile(mutationB)
+        fixture.coordinator.acknowledgeSemanticCompletion(mutationB.group.groupId)
+        val mutationA = fixture.coordinator.prepare(
+            semanticJobId = "semantic-job-A-again",
+            semanticBatchId = "batch-A-again",
+            targets = listOf(fixture.longTermTarget(contentB, contentA))
+        )
+
+        assertTrue(mutationA.group.generation > mutationB.group.generation)
+        assertNotEquals(mutationB.group.idempotencyKey, mutationA.group.idempotencyKey)
+        assertNotEquals(mutationB.receipts.single().idempotencyKey, mutationA.receipts.single().idempotencyKey)
+
+        fixture.coordinator.reconcile(mutationA)
+        fixture.coordinator.acknowledgeSemanticCompletion(mutationA.group.groupId)
+
+        val finalHash = fixture.fileStore.currentMemoryFileHash(MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME).getOrThrow()
+        assertEquals(hashA, finalHash)
+        assertEquals(contentA, fixture.fileStore.readLongTermMemory().getOrThrow())
+        assertEquals(mutationA.group.generation, fixture.recoveryDao.getCorpusState(CHAT_RECALL_CORPUS_KEY)?.generation)
+        assertEquals(
+            listOf(mutationB.group.generation, mutationA.group.generation),
+            fixture.jobDao.jobs.map { job -> job.generation }.sorted()
+        )
+    }
+
+    @Test
+    fun `older index pending generation becomes superseded without conflict`() = runBlocking {
+        val fixture = Fixture()
+        val contentA = fixture.fileStore.readLongTermMemory().getOrThrow()
+        val contentB = "# ChatWithChat Memory\n\n- Revision B\n"
+        val contentC = "# ChatWithChat Memory\n\n- Revision C\n"
+        val olderMutation = fixture.coordinator.prepare(
+            semanticJobId = "semantic-job-older",
+            semanticBatchId = "batch-older",
+            targets = listOf(fixture.longTermTarget(contentA, contentB))
+        )
+        fixture.coordinator.reconcile(olderMutation)
+        fixture.coordinator.acknowledgeSemanticCompletion(olderMutation.group.groupId)
+        assertEquals(
+            MemoryMutationState.INDEX_PENDING,
+            fixture.recoveryDao.getMutationReceipt(olderMutation.receipts.single().receiptId)?.state
+        )
+        val newerMutation = fixture.coordinator.prepare(
+            semanticJobId = "semantic-job-newer",
+            semanticBatchId = "batch-newer",
+            targets = listOf(fixture.longTermTarget(contentB, contentC))
+        )
+        fixture.coordinator.reconcile(newerMutation)
+        val scheduledJobCount = fixture.jobDao.jobs.size
+        val enqueuedWorkCount = fixture.workEnqueuer.works.size
+
+        val replayResult = fixture.coordinator.reconcile(olderMutation)
+
+        assertTrue(replayResult is MemoryMutationCommitResult.CanonicalCommitted)
+        replayResult as MemoryMutationCommitResult.CanonicalCommitted
+        assertFalse(replayResult.hasPendingIndex)
+        assertEquals(MemoryMutationState.SUPERSEDED, replayResult.mutation.group.state)
+        assertEquals(MemoryMutationState.SUPERSEDED, replayResult.mutation.receipts.single().state)
+        assertEquals(
+            "superseded_by_newer_corpus_generation",
+            fixture.recoveryDao.getMutationGroup(olderMutation.group.groupId)?.lastError
+        )
+        assertEquals(contentC, fixture.fileStore.readLongTermMemory().getOrThrow())
+        assertEquals(
+            newerMutation.group.generation,
+            fixture.recoveryDao.getCorpusState(CHAT_RECALL_CORPUS_KEY)?.generation
+        )
+        assertFalse(fixture.root.resolve(olderMutation.receipts.single().stagedTargetPath).exists())
+        assertEquals(scheduledJobCount, fixture.jobDao.jobs.size)
+        assertEquals(enqueuedWorkCount, fixture.workEnqueuer.works.size)
+    }
+
+    @Test
+    fun `superseded acknowledgement remains recoverable across a second process death`() = runBlocking {
+        val fixture = Fixture()
+        val contentA = fixture.fileStore.readLongTermMemory().getOrThrow()
+        val contentB = "# ChatWithChat Memory\n\n- Revision B\n"
+        val contentC = "# ChatWithChat Memory\n\n- Revision C\n"
+        val olderMutation = fixture.coordinator.prepare(
+            semanticJobId = "semantic-job-ack-pending-older",
+            semanticBatchId = "batch-ack-pending-older",
+            targets = listOf(fixture.longTermTarget(contentA, contentB))
+        )
+        fixture.coordinator.reconcile(olderMutation)
+        val newerMutation = fixture.coordinator.prepare(
+            semanticJobId = "semantic-job-ack-pending-newer",
+            semanticBatchId = "batch-ack-pending-newer",
+            targets = listOf(fixture.longTermTarget(contentB, contentC))
+        )
+        fixture.coordinator.reconcile(newerMutation)
+        fixture.coordinator.acknowledgeSemanticCompletion(newerMutation.group.groupId)
+
+        val firstReplay = fixture.coordinator.reconcile(olderMutation)
+        assertEquals(
+            MemoryMutationState.SEMANTIC_ACK_PENDING,
+            fixture.recoveryDao.getMutationGroup(olderMutation.group.groupId)?.state
+        )
+        assertEquals(
+            MemoryMutationState.SUPERSEDED,
+            fixture.recoveryDao.getMutationReceipts(olderMutation.group.groupId).single().state
+        )
+        val secondReplay = fixture.coordinator.reconcile(olderMutation)
+
+        assertTrue(firstReplay is MemoryMutationCommitResult.CanonicalCommitted)
+        assertTrue(
+            "second=${secondReplay::class.simpleName} group=${fixture.recoveryDao.getMutationGroup(olderMutation.group.groupId)?.state} " +
+                "receipt=${fixture.recoveryDao.getMutationReceipts(olderMutation.group.groupId).single().state}",
+            secondReplay is MemoryMutationCommitResult.CanonicalCommitted
+        )
+        firstReplay as MemoryMutationCommitResult.CanonicalCommitted
+        secondReplay as MemoryMutationCommitResult.CanonicalCommitted
+        assertTrue(firstReplay.requiresSemanticAcknowledgement)
+        assertTrue(secondReplay.requiresSemanticAcknowledgement)
+        assertEquals(MemoryMutationState.SEMANTIC_ACK_PENDING, secondReplay.mutation.group.state)
+        assertEquals(MemoryMutationState.SUPERSEDED, secondReplay.mutation.receipts.single().state)
+
+        val acknowledged = fixture.coordinator.acknowledgeSemanticCompletion(olderMutation.group.groupId)
+
+        assertEquals(MemoryMutationState.SUPERSEDED, acknowledged.group.state)
+        assertEquals(contentC, fixture.fileStore.readLongTermMemory().getOrThrow())
+    }
+
+    @Test
+    fun `empty semantic result persists an acknowledgement marker without file receipts`() = runBlocking {
+        val fixture = Fixture()
+
+        val prepared = fixture.coordinator.prepare(
+            semanticJobId = "semantic-job-empty",
+            semanticBatchId = "batch-empty",
+            targets = emptyList()
+        )
+        val result = fixture.coordinator.reconcile(prepared)
+
+        assertTrue(prepared.receipts.isEmpty())
+        assertTrue(result is MemoryMutationCommitResult.CanonicalCommitted)
+        result as MemoryMutationCommitResult.CanonicalCommitted
+        assertFalse(result.hasPendingIndex)
+        assertTrue(result.requiresSemanticAcknowledgement)
+        assertEquals(MemoryMutationState.SEMANTIC_ACK_PENDING, result.mutation.group.state)
+        assertTrue(fixture.jobDao.jobs.isEmpty())
+
+        val acknowledged = fixture.coordinator.acknowledgeSemanticCompletion(prepared.group.groupId)
+
+        assertEquals(MemoryMutationState.INDEXED, acknowledged.group.state)
+    }
+
+    @Test
+    fun `orphan stage from a crash before prepared is replaced by the next attempt`() = runBlocking {
+        val fixture = Fixture()
+        val semanticJobId = "semantic-job-orphan-stage"
+        val semanticBatchId = "batch-orphan-stage"
+        val sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME
+        val groupId = "mutation_${"$semanticJobId|$semanticBatchId".sha256Utf8().take(24)}"
+        val receiptId = "${groupId}_receipt_${sourcePath.sha256Utf8().take(16)}"
+        val baseContent = fixture.fileStore.readLongTermMemory().getOrThrow()
+        val orphan = fixture.fileStore.stageMemoryFile(
+            sourcePath = sourcePath,
+            content = "# ChatWithChat Memory\n\n- Orphan target",
+            stagingId = receiptId
+        ).getOrThrow()
+
+        val prepared = fixture.coordinator.prepare(
+            semanticJobId = semanticJobId,
+            semanticBatchId = semanticBatchId,
+            targets = listOf(
+                fixture.longTermTarget(
+                    baseContent = baseContent,
+                    targetContent = "# ChatWithChat Memory\n\n- Retried approved target"
+                )
+            )
+        )
+
+        assertEquals(receiptId, prepared.receipts.single().receiptId)
+        assertNotEquals(orphan.targetSourceHash, prepared.receipts.single().targetSourceHash)
+        assertTrue(fixture.root.resolve(prepared.receipts.single().stagedTargetPath).isFile)
+    }
+
+    @Test
+    fun `failed local reconciliation persists a generation scoped repair job`() = runBlocking {
+        val fixture = Fixture()
+        val prepared = fixture.coordinator.prepare(
+            semanticJobId = "semantic-job-repair-retry",
+            semanticBatchId = "batch-repair-retry",
+            targets = listOf(
+                fixture.longTermTarget(
+                    baseContent = fixture.fileStore.readLongTermMemory().getOrThrow(),
+                    targetContent = "# ChatWithChat Memory\n\n- Repair retry target"
+                )
+            )
+        )
+        Files.delete(fixture.root.resolve(prepared.receipts.single().stagedTargetPath).toPath())
+        val service = MemoryMutationRecoveryService(
+            memoryMutationCoordinator = fixture.coordinator,
+            turnBatchDao = InMemoryMemoryTurnBatchDao(),
+            maintenanceScheduler = MemoryMaintenanceScheduler(fixture.jobDao, FIXED_CLOCK),
+            clock = FIXED_CLOCK
+        )
+
+        val recovery = service.recoverIncomplete()
+
+        assertEquals(1, recovery.failedCount)
+        assertEquals(setOf(prepared.group.generation), recovery.retryGenerations)
+        val repairJob = fixture.jobDao.jobs.single()
+        assertEquals(MemoryMaintenanceJobType.RECONCILE_MEMORY_MUTATIONS, repairJob.type)
+        assertEquals(MemoryMaintenanceJobFamily.REPAIR, repairJob.family)
+        assertEquals(prepared.group.generation, repairJob.generation)
+        assertEquals(MemoryMaintenanceJobStatus.PENDING, repairJob.status)
+    }
+
+    @Test
+    fun `recovery persists continuation and drains more than one repair page`() = runBlocking {
+        val fixture = Fixture()
+        repeat(101) { index ->
+            fixture.coordinator.prepare(
+                semanticJobId = "semantic-job-page-$index",
+                semanticBatchId = "batch-page-$index",
+                targets = emptyList()
+            )
+        }
+        val service = MemoryMutationRecoveryService(
+            memoryMutationCoordinator = fixture.coordinator,
+            turnBatchDao = InMemoryMemoryTurnBatchDao(),
+            maintenanceScheduler = MemoryMaintenanceScheduler(fixture.jobDao, FIXED_CLOCK),
+            clock = FIXED_CLOCK
+        )
+
+        val firstPage = service.recoverIncomplete()
+
+        assertTrue(firstPage.hasMore)
+        assertEquals(100, firstPage.recoveredSemanticCount)
+        assertEquals(setOf(101L), firstPage.retryGenerations)
+        assertEquals(
+            1,
+            fixture.jobDao.jobs.count { job ->
+                job.type == MemoryMaintenanceJobType.RECONCILE_MEMORY_MUTATIONS && job.generation == 101L
+            }
+        )
+
+        val secondPage = service.recoverIncomplete()
+
+        assertFalse(secondPage.hasMore)
+        assertEquals(1, secondPage.recoveredSemanticCount)
+        assertEquals(0, secondPage.failedCount)
+    }
+
+    private class Fixture {
+        val root: File = Files.createTempDirectory("memory-mutation-coordinator-test").toFile()
+        val paths = MemoryFilePaths(root)
+        val fileStore = MemoryFileStore(paths, FIXED_CLOCK)
+        val recoveryDao = InMemoryMemoryRecoveryDao()
+        val jobDao = InMemoryMaintenanceJobDao()
+        val workEnqueuer = RecordingWorkEnqueuer()
+        val coordinator = newCoordinator(fileStore)
+
+        init {
+            fileStore.ensureStore().getOrThrow()
+        }
+
+        fun longTermTarget(baseContent: String, targetContent: String): MemoryMutationTarget =
+            MemoryMutationTarget(
+                sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+                baseContent = baseContent,
+                targetContent = targetContent,
+                targetIndexFingerprint = "fingerprint-v1"
+            )
+
+        fun newCoordinator(store: MemoryFileStore): MemoryMutationCoordinator =
+            MemoryMutationCoordinator(
+                recoveryDao = recoveryDao,
+                memoryFileStore = store,
+                maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK),
+                workEnqueuer = workEnqueuer,
+                clock = FIXED_CLOCK
+            )
+    }
+
+    private companion object {
+        val FIXED_DATE: LocalDate = LocalDate.parse("2026-07-09")
+        val FIXED_CLOCK: Clock = Clock.fixed(Instant.parse("2026-07-09T10:20:30Z"), ZoneOffset.UTC)
+        val CHAT_RECALL_CORPUS_KEY: String = MemoryCorpus.CHAT_RECALL_LONG_TERM.name.lowercase()
+    }
+}
