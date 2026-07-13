@@ -15,6 +15,14 @@
 -dontwarn org.apache.log4j.**
 -dontwarn org.apache.logging.log4j.**
 
+# The release compatibility harness calls this stable entry point after R8.
+-keep class dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorReleaseCompatibilityProbe {
+    public static *;
+}
+
+# ObjectBox JNI constructs scored query results by their binary class name.
+-keep class io.objectbox.query.ObjectWithScore { *; }
+
 # If your project uses WebView with JS, uncomment the following
 # and specify the fully qualified class name to the JavaScript interface
 # class:

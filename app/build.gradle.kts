@@ -16,6 +16,16 @@ plugins {
     alias(libs.plugins.objectbox)
 }
 
+val memoryTestBuildType = providers.gradleProperty("memoryTestBuildType").orElse("debug").get()
+require(memoryTestBuildType == "debug" || memoryTestBuildType == "release") {
+    "memoryTestBuildType must be either debug or release"
+}
+val memoryTestInstrumentationRunner = if (memoryTestBuildType == "release") {
+    "dev.chungjungsoo.gptmobile.data.memory.vector.Memory16KbReleaseCompatibilityInstrumentedTest"
+} else {
+    "androidx.test.runner.AndroidJUnitRunner"
+}
+
 extensions.configure<ApplicationExtension> {
     namespace = "dev.chungjungsoo.gptmobile"
     compileSdk = 36
@@ -27,7 +37,7 @@ extensions.configure<ApplicationExtension> {
         versionCode = 21
         versionName = "0.7.5"
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = memoryTestInstrumentationRunner
         vectorDrawables {
             useSupportLibrary = true
         }
@@ -41,12 +51,14 @@ extensions.configure<ApplicationExtension> {
         release {
             isMinifyEnabled = true
             vcsInfo.include = false
+            testProguardFiles("proguard-android-test-rules.pro")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
         }
     }
+    testBuildType = memoryTestBuildType
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

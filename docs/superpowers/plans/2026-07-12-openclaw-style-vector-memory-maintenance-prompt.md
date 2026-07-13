@@ -327,7 +327,7 @@ The candidate must also pass:
 
 - INT8 versus trusted FP32 golden-corpus `Recall@5 >= 0.90`;
 - real memory-recall questions, not only pairwise sentence-similarity examples;
-- API 31+ arm64 physical-device session creation, cancellation, concurrency, background execution, close/reopen, and process-restart tests;
+- API 31+ ARM64 physical-device performance/OEM tests for session creation, cancellation, concurrency, background execution, close/reopen, and process restart; this is independent of the 16 KB emulator compatibility gate;
 - suggested target-device budgets of hot-query p95 at or below 250 ms, cold initialization at or below 2 seconds, and incremental peak RSS at or below 200 MB, with actual measurements reported even when a budget is missed.
 
 If this candidate fails a gate, preserve the provider/store boundaries and lexical production fallback, document the exact failure, and stop before selecting another production model/runtime without user direction.
@@ -340,7 +340,7 @@ Before hybrid cutover, pin and document one actual model/runtime after validatin
 - model license permits app distribution or the model uses an explicit user-initiated download;
 - model checksum, tokenizer/runtime version, install location, deletion behavior, and warm-up behavior are defined;
 - no silent network fallback when the model is absent;
-- one real-device semantic fixture proves a paraphrase can be found when lexical tokens do not overlap;
+- one real-device semantic fixture proves a paraphrase can be found when lexical tokens do not overlap before production hybrid cutover; this is not a page-size compatibility requirement;
 - query embedding and peak-memory measurements are reported rather than guessed;
 - the app remains usable with lexical recall while the model is absent, loading, incompatible, or deleted.
 
@@ -350,7 +350,7 @@ Target engineering budgets to evaluate, not claims to fake:
 - exclude model files from the base APK when they would add more than roughly 100 MB compressed;
 - batch document embedding in bounded chunks and avoid holding the full corpus plus duplicate model outputs in memory;
 - keep the non-model ObjectBox/runtime APK increase measured and justified;
-- do not enable hybrid production DI until one physical device passes the semantic, process-restart, and release-package checks.
+- do not enable hybrid production DI until one physical ARM64 device passes the semantic and performance/OEM checks; this production gate does not block or reopen a passing 16 KB emulator compatibility gate.
 
 If no model/runtime satisfies this gate during the implementation run, it is acceptable to land the ObjectBox shadow store, manifest/outbox, provider interface, and lexical production fallback. It is not acceptable to label vector recall complete or switch `HYBRID` on with fake embeddings.
 
@@ -879,8 +879,9 @@ Acceptance:
 - [ ] Verify startup recovery after killing the process at each point.
 - [ ] Verify offline lexical recall, offline local index repair with an installed model, and no cloud fallback.
 - [ ] Verify app-data backup/restore behavior: Markdown/Room may restore, ObjectBox under `noBackupFilesDir` rebuilds.
-- [ ] Run release R8 packaging and ABI inspection. Check both APK ZIP alignment and every packaged ObjectBox/ONNX native library's ELF LOAD-segment alignment with the Android NDK `check_elf_alignment.sh` (or equivalent `llvm-objdump -p` evidence).
-- [ ] On a real 16 KB page device, record `adb shell getconf PAGE_SIZE` as `16384`, then open, write, close/reopen, and query the release `BoxStore`; ZIP alignment alone is not sufficient evidence.
+- [x] Run release R8 packaging and ABI inspection. Check both APK ZIP alignment and every packaged native library under arm64-v8a and x86_64 with the Android NDK `check_elf_alignment.sh`, `llvm-readelf`, or equivalent LOAD-segment evidence.
+- [x] Run the release lifecycle on an Android 15+ Experimental 16 KB emulator, preferring ARM64 and allowing x86_64 fallback when the current host cannot run ARM64. Require `adb shell getconf PAGE_SIZE` to return exactly `16384`, then initialize, write, query, close/reopen, kill, restart, and reopen ObjectBox and ONNX Runtime.
+- [ ] Run final physical ARM64 performance and OEM-environment validation. This is a separate production gate and does not block or reopen 16 KB page-size compatibility after the emulator gate passes.
 - [ ] Record before/after APK size, model size/location, query latency, indexing time, and peak memory.
 - [ ] Run the full focused suite and inspect content-free logs for duplicate calls/jobs.
 
@@ -979,9 +980,10 @@ zipalign -c -P 16 -v 4 <apk>
 adb shell getprop ro.product.cpu.abilist
 adb shell getconf PAGE_SIZE
 Get-FileHash <apk> -Algorithm SHA256
+tools/memory-vector/run-16kb-release-compatibility.ps1 -Serial <16-kb-emulator-serial>
 ```
 
-`zipalign -P 16` checks APK ZIP placement for uncompressed native libraries; it does not prove ELF LOAD segments are 16 KB compatible. Preserve the NDK script or per-ABI `llvm-objdump -p` output and the real-device `PAGE_SIZE=16384` BoxStore smoke test as separate evidence.
+`zipalign -P 16` checks APK ZIP placement for uncompressed native libraries; it does not prove ELF LOAD segments are 16 KB compatible. Preserve four independent evidence classes: ZIP alignment, every arm64-v8a/x86_64 ELF LOAD alignment, the Android 15+ 16 KB emulator release lifecycle with `PAGE_SIZE=16384`, and final physical ARM64 performance/OEM measurements. The last gate does not block or reopen the page-size compatibility gate.
 
 Do not claim device/process-death/native behavior was verified if no device was connected. Report that gap explicitly.
 

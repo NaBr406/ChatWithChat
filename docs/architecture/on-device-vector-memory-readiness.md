@@ -1,8 +1,9 @@
 # On-Device Vector Memory Readiness
 
-Status captured on 2026-07-12 for schema 15 on branch
+Status updated on 2026-07-13 for schema 15 on branch
 `codex/openclaw-vector-memory-maintenance`. The implementation baseline before
-the Task 7 evidence slice is `b267b269f1651286d6d06a1dcb5fb89ce2ad87fd`.
+the Task 7 evidence slice is `b267b269f1651286d6d06a1dcb5fb89ce2ad87fd`;
+the 16 KB extension started from `dbc1148`.
 
 ## Current Ownership
 
@@ -55,18 +56,45 @@ installed and observed.
 | `:app:compileDebugKotlin` / AndroidTest compilation | passed |
 | `:app:assembleRelease` with R8/lint vital | passed |
 | Debug-key-signed release install and cold launch | passed; process remained resumed with no `AndroidRuntime` error |
+| Android 15 Experimental 16 KB emulator compatibility | passed on API 35 x86_64 `google_apis_ps16k`; `PAGE_SIZE=16384` |
+| Release ObjectBox and companion ONNX lifecycle | passed: initialize, infer, write, HNSW query, close/reopen, intentional process kill, new-process reopen, and persisted query |
+| Physical ARM64 performance/OEM validation | pending as a separate final gate; it does not block 16 KB page-size compatibility |
 
-The connected target was an API 35 x86_64 emulator reporting ABI list
-`x86_64,arm64-v8a` and `PAGE_SIZE=4096`. These results are not physical arm64
-or 16 KB page-size evidence.
+The earlier debug/device suites used an API 35 x86_64 emulator reporting ABI
+list `x86_64,arm64-v8a` and `PAGE_SIZE=4096`; those results are not 16 KB
+evidence. For the dedicated gate, the ARM64 16 KB AVD was attempted first, but
+QEMU2 reported that an `arm64` AVD is unsupported on this x86_64 Windows host.
+The permitted fallback used the API 35 x86_64
+`system-images;android-35;google_apis_ps16k;x86_64` image on `emulator-5560`.
+`adb shell getconf PAGE_SIZE` returned exactly `16384`, with runtime ABI
+`x86_64` and ABI list `x86_64,arm64-v8a`.
+
+| Runtime component | APK owner | Evidence meaning |
+| --- | --- | --- |
+| ObjectBox 5.4.2 | Installed, non-debuggable release target APK | Production release R8, Java/JNI, persistence, and HNSW runtime evidence |
+| ONNX Runtime 1.27.0 and checksum-verified canary model | Release AndroidTest instrumentation companion, loaded in the same target process | Test-only 16 KB runtime evidence; not production model provisioning |
+
+The release target and companion loaded their native runtimes again in the
+second process. Android `nativeloader` evidence identified
+`libobjectbox-jni.so` under the release target APK and
+`libonnxruntime4j_jni.so` under the companion APK in both invocations.
 
 ### APK And Native Packaging
+
+The earlier Task 7 debug size baseline remains:
 
 | Artifact | Bytes | SHA-256 |
 | --- | ---: | --- |
 | Debug APK | 97,030,068 | `d68c012b1213c80399d22a8ac466960ec20eea6062811a0d38198c4412ae3462` |
-| Release unsigned APK | 20,997,578 | `9c9f8caa901e2b3e7e1fc18793d9340af483c30b94529226bd03bac3df72f896` |
-| AndroidTest APK | 136,066,348 | `e1059aed0616192ea35ad1ed272681f1fa8fdf94e5749fc98b310df0f1d69434` |
+
+The 16 KB gate installed these exact signed artifacts:
+
+| Artifact | Bytes | SHA-256 |
+| --- | ---: | --- |
+| Release unsigned build input | 20,997,578 | `04e3c27d290d057c3ee7ae6ef6f029182ea686ec9d2685daf73d3a2b30c3421b` |
+| Installed signed release target | 21,022,625 | `f06297cca457d4914d13e5606b2420bd312566506588361b586a640f9a38d88e` |
+| Release AndroidTest build input | 134,867,195 | `0b1c8ef248a51eec793d5307d86c87c43fc22a5177dc3a093d6050fb172ba7c2` |
+| Installed signed instrumentation companion | 134,881,735 | `b641b056f5990bcef5547d482283175a2be9ade7a894a9842c93ee1be90a0146` |
 
 Compared with the pre-ObjectBox baseline in the artifact contract, the debug
 APK is 10,150,479 bytes larger and the release APK is 9,922,521 bytes larger.
@@ -75,19 +103,27 @@ Compared with the Task 0 post-ObjectBox snapshot, the Task 7 debug APK is
 Runtime and the 24,010,842-byte canary model remain AndroidTest-only and are
 absent from the release APK.
 
-`zipalign -c -P 16 4` passed. NDK 28.2 `llvm-objdump -p` produced this
-ObjectBox LOAD-segment evidence:
+`zipalign -c -P 16 4` passed for both signed APKs. NDK 28.2
+`llvm-readelf --program-headers --wide` inspected every native library under
+the two requested 64-bit ABIs:
 
-| ABI | LOAD alignment | 16 KB compatible evidence |
-| --- | ---: | --- |
-| arm64-v8a | `2**14` for all LOAD segments | yes |
-| x86_64 | `2**14` for all LOAD segments | yes |
-| armeabi-v7a | `2**12` for all LOAD segments | no |
-| x86 | `2**12` for all LOAD segments | no |
+| APK | ABI | Native libraries checked | Minimum LOAD alignment | Result |
+| --- | --- | --- | ---: | --- |
+| Release target | arm64-v8a | `libandroidx.graphics.path.so`, `libdatastore_shared_counter.so`, `libobjectbox-jni.so` | `0x4000` | pass |
+| Release target | x86_64 | `libandroidx.graphics.path.so`, `libdatastore_shared_counter.so`, `libobjectbox-jni.so` | `0x4000` | pass |
+| Instrumentation companion | arm64-v8a | `libonnxruntime.so`, `libonnxruntime4j_jni.so` | `0x4000` | pass |
+| Instrumentation companion | x86_64 | `libonnxruntime.so`, `libonnxruntime4j_jni.so` | `0x4000` | pass |
 
-The release APK contains no ONNX native library because production embedding
-is not provisioned. `tools/memory-vector/verify-release.ps1` reproduces unit,
-release, device, ZIP, ELF, hash, ABI, and page-size evidence.
+An earlier inspection found the packaged 32-bit ObjectBox variants aligned to
+`0x1000`; deciding whether those ABIs remain supported is a separate product
+gate and does not change the passing arm64-v8a/x86_64 result.
+
+The release APK contains neither ONNX Runtime nor the model. Production
+embedding remains `NOT_PROVISIONED`, production recall remains
+`MarkdownLexicalRetriever`, and no READY production HNSW manifest is enabled.
+`tools/memory-vector/run-16kb-release-compatibility.ps1` reproduces the signed
+release lifecycle, ZIP alignment, all 64-bit ELF checks, hashes, ABI, exact
+page size, process restart, and native-owner evidence.
 
 ## Failure Matrix Coverage
 
@@ -106,27 +142,18 @@ release, device, ZIP, ELF, hash, ABI, and page-size evidence.
 | Worker races, leases, bounded retries, and disabled memory | scheduler/processor/worker JVM tests and Room claim device tests |
 | Populated Room `14 -> 15` upgrade | real Room instrumentation migration |
 
-## Open Release Gates
+## Release Gates
 
-The schema 15 lexical delivery is valid, but production semantic recall is not
-release-ready until all of these are satisfied:
+| Gate | Status | Scope |
+| --- | --- | --- |
+| 16 KB emulator compatibility | PASSED | Clears page-size compatibility after release lifecycle, process restart, ZIP alignment, and both 64-bit ABI ELF checks |
+| Real ARM64 performance/OEM validation | OPEN | Final latency, indexing, peak RSS, cancellation, concurrency, restart, and OEM-environment evidence; it does not block or reopen the page-size gate |
+| Production embedding provisioning/quality | OPEN | Official reproducible export, tokenizer fixtures, Recall@5, license, lifecycle, and production provider |
+| 32-bit ABI policy | OPEN | Separate support decision because packaged 32-bit ObjectBox LOAD alignment is `0x1000` |
+| Backup/restore integration | OPEN | Separate real backup-agent restore validation |
 
-1. Provide a reproducible official INT8 export, pinned exporter/quantizer
-   toolchain, checksum-verified release lifecycle, 50 tokenizer golden
-   fixtures, Recall@5 evidence, and production on-device embedding provider.
-2. Run release ObjectBox open/write/query/close/reopen on a physical arm64
-   device reporting `PAGE_SIZE=16384`.
-3. Decide whether 32-bit ABIs remain supported. Their packaged ObjectBox ELF
-   LOAD segments are currently 4 KB aligned even though both packaged 64-bit
-   ABIs are 16 KB aligned.
-4. Perform an Android backup/restore integration run. The canonical Markdown
-   and Room locations are backup-eligible while ObjectBox is under
-   `noBackupFilesDir`, and missing-store recovery is tested, but a real backup
-   agent restore was not run in this slice.
-5. Record physical-device query latency, indexing time, peak memory, process
-   restart, cancellation, and concurrency measurements with the approved
-   production model.
-
-Until these gates pass, keep production recall lexical, keep ObjectBox
-shadow/rebuildable, do not publish a production READY HNSW manifest, and do not
-claim Task 8/schema 16 completion.
+The schema 15 lexical delivery and 16 KB page-size compatibility are valid.
+This does not make production semantic recall release-ready: until the
+provisioning and quality gates pass, keep production recall lexical, keep
+ObjectBox shadow/rebuildable, do not publish a production READY HNSW manifest,
+and do not claim Task 8/schema 16 completion.
