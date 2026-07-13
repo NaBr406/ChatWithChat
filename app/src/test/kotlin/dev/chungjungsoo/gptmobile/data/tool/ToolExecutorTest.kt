@@ -500,8 +500,8 @@ class ToolExecutorTest {
         val executor = builtInExecutor(FakeWebSearchRepository(emptyList()))
 
         val webSearchPolicy = executor.policyFor(ToolDefinition.WebSearch.name)
-        assertEquals(2, webSearchPolicy.maxCallsPerRequest)
-        assertEquals(4, webSearchPolicy.maxCallsPerChat)
+        assertEquals(3, webSearchPolicy.maxCallsPerRequest)
+        assertEquals(20, webSearchPolicy.maxCallsPerChat)
         assertEquals("max_search_queries_per_request", webSearchPolicy.maxCallsPerRequestErrorKey)
         assertEquals("max_search_queries_per_chat", webSearchPolicy.maxCallsPerChatErrorKey)
 

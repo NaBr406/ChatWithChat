@@ -19,8 +19,8 @@ class WebSearchToolProvider(
 
     override val securityPolicy: ToolSecurityPolicy = ToolSecurityPolicy.ReadOnlyPublic
     override val policy: ToolPolicy = ToolPolicy(
-        maxCallsPerRequest = 2,
-        maxCallsPerChat = 4,
+        maxCallsPerRequest = 3,
+        maxCallsPerChat = 20,
         maxCallsPerRequestErrorKey = "max_search_queries_per_request",
         maxCallsPerChatErrorKey = "max_search_queries_per_chat"
     )
