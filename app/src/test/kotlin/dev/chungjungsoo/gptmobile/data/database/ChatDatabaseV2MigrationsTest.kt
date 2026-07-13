@@ -241,6 +241,31 @@ class ChatDatabaseV2MigrationsTest {
         assertTrue(executedSql.none { it.contains("SET `status` =", ignoreCase = true) })
     }
 
+    @Test
+    fun `migration 15 to 16 dismisses legacy index jobs before dropping index tables`() {
+        val executedSql = mutableListOf<String>()
+        val db = recordingDatabase(executedSql)
+
+        ChatDatabaseV2Migrations.MIGRATION_15_16.migrate(db)
+
+        assertEquals(3, executedSql.size)
+        assertTrue(executedSql[0].trimStart().startsWith("UPDATE `memory_maintenance_job`"))
+        assertEquals("DROP TABLE IF EXISTS `memory_chunk`", executedSql[1])
+        assertEquals("DROP TABLE IF EXISTS `memory_document`", executedSql[2])
+
+        val updateSql = executedSql[0]
+        assertTrue(updateSql.contains("SET `status` = 'dismissed'"))
+        assertTrue(updateSql.contains("`last_error` = 'schema16_legacy_room_index_removed'"))
+        assertTrue(updateSql.contains("`blocked_reason` = NULL"))
+        assertTrue(updateSql.contains("`next_run_at` = NULL"))
+        assertTrue(updateSql.contains("`started_at` = NULL"))
+        assertTrue(updateSql.contains("`lease_owner` = NULL"))
+        assertTrue(updateSql.contains("`lease_expires_at` = NULL"))
+        assertTrue(updateSql.contains("`row_version` = `row_version` + 1"))
+        assertTrue(updateSql.contains("WHERE `type` IN ('rebuild_memory_index', 'repair_markdown_metadata')"))
+        assertTrue(updateSql.contains("AND `status` NOT IN ('succeeded', 'dismissed')"))
+    }
+
     private fun recordingDatabase(executedSql: MutableList<String>): SupportSQLiteDatabase = Proxy.newProxyInstance(
         SupportSQLiteDatabase::class.java.classLoader,
         arrayOf(SupportSQLiteDatabase::class.java),
