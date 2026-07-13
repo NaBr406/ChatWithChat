@@ -32,6 +32,13 @@ val memoryTestInstrumentationRunner = providers.gradleProperty("memoryTestInstru
 require(memoryTestInstrumentationRunner.isNotBlank()) {
     "memoryTestInstrumentationRunner must not be blank"
 }
+val supportedApkAbis = setOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
+val apkAbi = providers.gradleProperty("chatWithChatApkAbi").orNull
+    ?.trim()
+    ?.takeIf { it.isNotEmpty() }
+require(apkAbi == null || apkAbi in supportedApkAbis) {
+    "chatWithChatApkAbi must be one of: ${supportedApkAbis.joinToString()}"
+}
 
 val productionMemoryModelDirectory = layout.projectDirectory.dir(
     "src/main/assets/memory-model/bge-small-zh-v1.5"
@@ -99,6 +106,11 @@ extensions.configure<ApplicationExtension> {
         testInstrumentationRunner = memoryTestInstrumentationRunner
         vectorDrawables {
             useSupportLibrary = true
+        }
+        apkAbi?.let { abi ->
+            ndk {
+                abiFilters.add(abi)
+            }
         }
     }
 

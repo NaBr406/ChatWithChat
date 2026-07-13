@@ -2,6 +2,9 @@ param(
     [string]$JavaHome,
     [string]$AndroidSdk,
     [string]$OutputDir = "dist",
+    [Alias("Abi")]
+    [ValidateSet("arm64-v8a", "armeabi-v7a", "x86", "x86_64")]
+    [string]$TargetAbi = "arm64-v8a",
     [string]$Keystore,
     [string]$KeyAlias = "androiddebugkey",
     [string]$KeystorePassword = "android",
@@ -143,22 +146,33 @@ function Invoke-Gradle {
 function Get-BuiltApkPath {
     param([string]$Variant)
 
-    $apkCandidates = if ($Variant -eq "release") {
-        @(
-            (Join-Path $ProjectRoot "app\build\outputs\apk\release\app-release.apk")
-            (Join-Path $ProjectRoot "app\build\outputs\apk\release\app-release-unsigned.apk")
-        )
-    } else {
-        @(Join-Path $ProjectRoot "app\build\outputs\apk\debug\app-debug.apk")
+    $outputDirectory = Join-Path $ProjectRoot "app\build\outputs\apk\$Variant"
+    $metadataPath = Join-Path $outputDirectory "output-metadata.json"
+    if (-not (Test-Path -LiteralPath $metadataPath)) {
+        throw "Gradle APK output metadata not found for $Variant build: $metadataPath"
     }
 
-    foreach ($apk in $apkCandidates) {
-        if (Test-Path -LiteralPath $apk) {
-            return (Resolve-Path -LiteralPath $apk).Path
-        }
+    try {
+        $metadata = Get-Content -Raw -Encoding UTF8 -LiteralPath $metadataPath | ConvertFrom-Json
+    } catch {
+        throw "Failed to read Gradle APK output metadata for $Variant build: $($_.Exception.Message)"
     }
 
-    throw "APK output not found for $Variant build."
+    $outputFiles = @(
+        $metadata.elements |
+            ForEach-Object { $_.outputFile } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+    if ($outputFiles.Count -ne 1) {
+        throw "Expected one APK output for $Variant build, found $($outputFiles.Count)."
+    }
+
+    $apkPath = Join-Path $outputDirectory $outputFiles[0]
+    if (-not (Test-Path -LiteralPath $apkPath)) {
+        throw "APK listed in Gradle output metadata was not found: $apkPath"
+    }
+
+    return (Resolve-Path -LiteralPath $apkPath).Path
 }
 
 function Copy-InstallableApk {
@@ -182,22 +196,26 @@ function Copy-InstallableApk {
     Write-Step "Android SDK: $sdkPath"
     Write-Step "Signing release APK with keystore: $keystorePath"
 
-    & $zipalign -f -P 16 4 $SourceApk $alignedApk
-    if ($LASTEXITCODE -ne 0) { throw "zipalign failed with exit code $LASTEXITCODE." }
+    try {
+        & $zipalign -f -P 16 4 $SourceApk $alignedApk
+        if ($LASTEXITCODE -ne 0) { throw "zipalign failed with exit code $LASTEXITCODE." }
 
-    & $apksigner sign `
-        --ks $keystorePath `
-        --ks-key-alias $KeyAlias `
-        --ks-pass "pass:$KeystorePassword" `
-        --key-pass "pass:$KeyPassword" `
-        --out $DestinationApk `
-        $alignedApk
-    if ($LASTEXITCODE -ne 0) { throw "apksigner sign failed with exit code $LASTEXITCODE." }
+        & $apksigner sign `
+            --ks $keystorePath `
+            --ks-key-alias $KeyAlias `
+            --ks-pass "pass:$KeystorePassword" `
+            --key-pass "pass:$KeyPassword" `
+            --out $DestinationApk `
+            $alignedApk
+        if ($LASTEXITCODE -ne 0) { throw "apksigner sign failed with exit code $LASTEXITCODE." }
 
-    & $zipalign -c -P 16 4 $DestinationApk
-    if ($LASTEXITCODE -ne 0) { throw "Signed APK 16 KB alignment verification failed with exit code $LASTEXITCODE." }
-
-    Remove-Item -LiteralPath $alignedApk -Force
+        & $zipalign -c -P 16 4 $DestinationApk
+        if ($LASTEXITCODE -ne 0) { throw "Signed APK 16 KB alignment verification failed with exit code $LASTEXITCODE." }
+    } finally {
+        if (Test-Path -LiteralPath $alignedApk) {
+            Remove-Item -LiteralPath $alignedApk -Force
+        }
+    }
 }
 
 function Test-ApkSignature {
@@ -211,6 +229,34 @@ function Test-ApkSignature {
     if ($LASTEXITCODE -ne 0) { throw "APK signature verification failed with exit code $LASTEXITCODE." }
 }
 
+function Test-ApkAbi {
+    param(
+        [string]$ApkPath,
+        [string]$ExpectedAbi
+    )
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [System.IO.Compression.ZipFile]::OpenRead($ApkPath)
+    try {
+        $packagedAbis = @(
+            $archive.Entries |
+                Where-Object { $_.FullName -match "^lib/[^/]+/.+\.so$" } |
+                ForEach-Object {
+                    [regex]::Match($_.FullName, "^lib/([^/]+)/").Groups[1].Value
+                } |
+                Sort-Object -Unique
+        )
+    } finally {
+        $archive.Dispose()
+    }
+
+    if ($packagedAbis.Count -ne 1 -or $packagedAbis[0] -ne $ExpectedAbi) {
+        throw "APK ABI verification failed. Expected only '$ExpectedAbi', found: $($packagedAbis -join ', ')."
+    }
+
+    Write-Step "Verified APK contains only $ExpectedAbi native libraries"
+}
+
 $variant = if ($Release) { "release" } else { "debug" }
 $assembleTask = if ($Release) { ":app:assembleRelease" } else { ":app:assembleDebug" }
 $resolvedJavaHome = Resolve-JavaHomePath $JavaHome
@@ -219,15 +265,24 @@ $env:JAVA_HOME = $resolvedJavaHome
 Write-Step "Project: $ProjectRoot"
 Write-Step "JAVA_HOME: $resolvedJavaHome"
 Write-Step "Variant: $variant"
+Write-Step "Target ABI: $TargetAbi"
 
 if ($Release) {
     $provisionModel = Join-Path $ProjectRoot "tools\memory-model\provision-bge-small-zh-v1.5-production.ps1"
+    if (-not (Test-Path -LiteralPath $provisionModel)) {
+        throw "Memory model provisioning script not found: $provisionModel"
+    }
+
     Write-Step "Provisioning checksum-verified production memory model"
-    & $provisionModel
-    if ($LASTEXITCODE -ne 0) { throw "Memory model provisioning failed with exit code $LASTEXITCODE." }
+    try {
+        & $provisionModel
+    } catch {
+        throw "Memory model provisioning failed: $($_.Exception.Message)"
+    }
 }
 
 $tasks = New-Object System.Collections.Generic.List[string]
+$tasks.Add("-PchatWithChatApkAbi=$TargetAbi")
 if ($Clean) { $tasks.Add("clean") }
 if ($RunTests) { $tasks.Add("test") }
 $tasks.Add($assembleTask)
@@ -240,10 +295,20 @@ New-Item -ItemType Directory -Force -Path $outputPath | Out-Null
 
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $sourceFileName = Split-Path -Leaf $apkPath
-$packageKind = if ($sourceFileName -match "unsigned") { "$variant-debug-signed" } else { $variant }
+$packageKind = if ($sourceFileName -match "unsigned") { "$variant-$TargetAbi-debug-signed" } else { "$variant-$TargetAbi" }
 $destinationPath = Join-Path $outputPath "ChatWithChat-$packageKind-$timestamp.apk"
-Copy-InstallableApk -SourceApk $apkPath -DestinationApk $destinationPath -Variant $variant
-Test-ApkSignature $destinationPath
+try {
+    Copy-InstallableApk -SourceApk $apkPath -DestinationApk $destinationPath -Variant $variant
+    Test-ApkSignature $destinationPath
+    Test-ApkAbi -ApkPath $destinationPath -ExpectedAbi $TargetAbi
+} catch {
+    foreach ($partialOutput in @($destinationPath, "$destinationPath.idsig")) {
+        if (Test-Path -LiteralPath $partialOutput) {
+            Remove-Item -LiteralPath $partialOutput -Force
+        }
+    }
+    throw
+}
 
 Write-Step "APK built successfully"
 Write-Host "Source APK: $apkPath"

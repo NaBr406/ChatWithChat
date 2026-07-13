@@ -82,31 +82,162 @@ function Get-ConnectedDeviceSerial {
     param([string]$AdbPath)
 
     $deviceLines = & $AdbPath devices | Where-Object { $_ -match "^(?<serial>\S+)\s+device(\s|$)" }
-    if (-not $deviceLines) { return $null }
-
     if (-not [string]::IsNullOrWhiteSpace($DeviceSerial)) {
         foreach ($line in $deviceLines) {
             if ($line -match "^$([regex]::Escape($DeviceSerial))\s+device(\s|$)") {
                 return $DeviceSerial
             }
         }
-        throw "Requested device '$DeviceSerial' is not connected."
+        return $null
     }
 
-    $firstLine = @($deviceLines)[0]
-    if ($firstLine -match "^(?<serial>\S+)\s+device(\s|$)") {
-        return $Matches.serial
+    foreach ($line in $deviceLines) {
+        if ($line -match "^(?<serial>emulator-\d+)\s+device(\s|$)") {
+            return $Matches.serial
+        }
     }
 
     return $null
 }
 
-function Get-FirstAvdName {
+function Get-PreferredAvdName {
     param([string]$EmulatorPath)
 
     $avds = & $EmulatorPath -list-avds | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
     if (-not $avds) { throw "No Android Virtual Devices found. Create an AVD in Android Studio first." }
-    return @($avds)[0]
+
+    $rankedAvds = foreach ($avd in $avds) {
+        $configPath = Join-Path $env:USERPROFILE ".android\avd\$avd.avd\config.ini"
+        $abi = if (Test-Path -LiteralPath $configPath) {
+            $abiLine = Get-Content -LiteralPath $configPath -ErrorAction SilentlyContinue |
+                Where-Object { $_ -match '^abi\.type=' } |
+                Select-Object -First 1
+            if ($abiLine) { ($abiLine -split '=', 2)[1].Trim() } else { "" }
+        } else {
+            ""
+        }
+
+        $score = 100
+        if ($abi -match 'x86_64') { $score -= 50 }
+        elseif ($abi -match '^x86$') { $score -= 40 }
+        elseif ($abi -match 'arm64') { $score += 20 }
+        if ($avd -match 'ChatWithChat') { $score -= 10 }
+
+        [PSCustomObject]@{
+            Name = "$avd"
+            Score = $score
+        }
+    }
+
+    return ($rankedAvds | Sort-Object Score, Name | Select-Object -First 1).Name
+}
+
+function Get-EmulatorPort {
+    param([string]$Serial)
+
+    if ($Serial -match '^emulator-(?<port>\d+)$') {
+        return [int]$Matches.port
+    }
+
+    return $null
+}
+
+function Get-RunningAvdName {
+    param(
+        [string]$AdbPath,
+        [string]$Serial
+    )
+
+    $output = @(
+        & $AdbPath -s $Serial emu avd name 2>$null |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and $_ -ne "OK" }
+    )
+    if (-not $output) { return $null }
+    return "$($output[0])".Trim()
+}
+
+function Test-IsHeadlessEmulator {
+    param([string]$Serial)
+
+    $port = Get-EmulatorPort $Serial
+    if ($null -eq $port) { return $false }
+
+    $portPattern = "(?:^|\s)-port\s+$port(?:\s|$)"
+    $process = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.Name -match '^(emulator|qemu-system.*)\.exe$' -and
+            $_.CommandLine -match $portPattern -and
+            $_.CommandLine -match '(?:^|\s)-no-window(?:\s|$)'
+        } |
+        Select-Object -First 1
+
+    return $null -ne $process
+}
+
+function Wait-ForRunningEmulatorRegistration {
+    param([string]$AdbPath)
+
+    $emulatorProcess = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^(emulator|qemu-system.*)\.exe$' } |
+        Select-Object -First 1
+    if (-not $emulatorProcess) { return $null }
+
+    $deadline = (Get-Date).AddSeconds(10)
+    do {
+        Start-Sleep -Milliseconds 500
+        $serial = Get-ConnectedDeviceSerial $AdbPath
+        if ($serial) { return $serial }
+    } while ((Get-Date) -lt $deadline)
+
+    return $null
+}
+
+function Stop-Emulator {
+    param(
+        [string]$AdbPath,
+        [string]$Serial
+    )
+
+    & $AdbPath -s $Serial emu kill | Out-Null
+    $deadline = (Get-Date).AddSeconds(30)
+    do {
+        Start-Sleep -Seconds 1
+        $isConnected = & $AdbPath devices | Where-Object { $_ -match "^$([regex]::Escape($Serial))\s+" }
+        if (-not $isConnected) { return }
+    } while ((Get-Date) -lt $deadline)
+
+    throw "Timed out stopping headless emulator '$Serial'."
+}
+
+function Show-EmulatorWindow {
+    param(
+        [string]$AvdName,
+        [int]$TimeoutSeconds = 30
+    )
+
+    if ([string]::IsNullOrWhiteSpace($AvdName)) { return $false }
+
+    $escapedAvdName = [regex]::Escape($AvdName)
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    do {
+        $windowProcess = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.Name -match '^(emulator|qemu-system.*)\.exe$' -and
+                $_.CommandLine -match "(?:^|\s)-avd\s+$escapedAvdName(?:\s|$)"
+            } |
+            ForEach-Object { Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue } |
+            Where-Object { $_.MainWindowHandle -ne 0 } |
+            Select-Object -First 1
+
+        if ($windowProcess) {
+            $shell = New-Object -ComObject WScript.Shell
+            return $shell.AppActivate($windowProcess.Id)
+        }
+
+        Start-Sleep -Milliseconds 500
+    } while ((Get-Date) -lt $deadline)
+
+    return $false
 }
 
 function Ensure-DeviceBooted {
@@ -117,13 +248,37 @@ function Ensure-DeviceBooted {
 
     & $AdbPath start-server | Out-Null
     $serial = Get-ConnectedDeviceSerial $AdbPath
+    if (-not $serial) {
+        $serial = Wait-ForRunningEmulatorRegistration $AdbPath
+    }
+    $runningAvdName = $null
+    $emulatorPort = $null
+
+    if ($serial -and $serial -match '^emulator-') {
+        $runningAvdName = Get-RunningAvdName -AdbPath $AdbPath -Serial $serial
+        if (-not $Headless -and (Test-IsHeadlessEmulator $serial)) {
+            $emulatorPort = Get-EmulatorPort $serial
+            Write-Step "Restarting headless emulator '$serial' with a visible window"
+            Stop-Emulator -AdbPath $AdbPath -Serial $serial
+            $script:AvdName = $runningAvdName
+            $serial = $null
+        }
+    }
+
+    if (-not $serial -and -not [string]::IsNullOrWhiteSpace($DeviceSerial)) {
+        if ($DeviceSerial -notmatch '^emulator-\d+$') {
+            throw "Requested device '$DeviceSerial' is not connected."
+        }
+        $emulatorPort = Get-EmulatorPort $DeviceSerial
+    }
 
     if (-not $serial) {
         if ([string]::IsNullOrWhiteSpace($AvdName)) {
-            $script:AvdName = Get-FirstAvdName $EmulatorPath
+            $script:AvdName = Get-PreferredAvdName $EmulatorPath
         }
 
         $arguments = @("-avd", $script:AvdName, "-no-snapshot")
+        if ($null -ne $emulatorPort) { $arguments += @("-port", "$emulatorPort") }
         if ($Headless) { $arguments += "-no-window" }
 
         Write-Step "Starting emulator '$script:AvdName'"
@@ -159,7 +314,25 @@ function Ensure-DeviceBooted {
         }
     } while ($true)
 
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & $AdbPath -s $serial shell cmd package wait-for-handler --timeout 60000 2>$null | Out-Null
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+
     & $AdbPath -s $serial shell input keyevent 82 | Out-Null
+
+    if (-not $Headless -and $serial -match '^emulator-') {
+        if ([string]::IsNullOrWhiteSpace($runningAvdName)) {
+            $runningAvdName = Get-RunningAvdName -AdbPath $AdbPath -Serial $serial
+        }
+        if (-not (Show-EmulatorWindow -AvdName $runningAvdName)) {
+            throw "Emulator '$serial' booted, but its visible window could not be found. Use -Headless only when a window is not required."
+        }
+    }
+
     return $serial
 }
 
@@ -234,11 +407,26 @@ function Install-And-Launch {
     Write-Step "Launching $PackageName/$ActivityName"
     & $AdbPath -s $Serial logcat -c
     & $AdbPath -s $Serial shell am force-stop $PackageName
-    & $AdbPath -s $Serial shell am start -n "$PackageName/$ActivityName"
-    if ($LASTEXITCODE -ne 0) { throw "am start failed with exit code $LASTEXITCODE." }
+    $appPid = ""
+    $resumedActivity = $null
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        & $AdbPath -s $Serial shell am start -W -n "$PackageName/$ActivityName"
+        if ($LASTEXITCODE -ne 0) { throw "am start failed with exit code $LASTEXITCODE." }
 
-    Start-Sleep -Seconds 8
-    $appPid = ((& $AdbPath -s $Serial shell pidof $PackageName 2>$null) -join "").Trim()
+        Start-Sleep -Seconds 3
+        $appPid = ((& $AdbPath -s $Serial shell pidof $PackageName 2>$null) -join "").Trim()
+        $resumedActivity = & $AdbPath -s $Serial shell dumpsys activity activities |
+            Select-String -Pattern "topResumedActivity=.*$([regex]::Escape($PackageName))/" |
+            Select-Object -First 1
+        if (-not [string]::IsNullOrWhiteSpace($appPid) -and $resumedActivity) {
+            break
+        }
+
+        if ($attempt -lt 3) {
+            Write-Step "App is not foreground yet; retrying launch ($attempt/3)"
+        }
+    }
+
     $focusMatch = & $AdbPath -s $Serial shell dumpsys window |
         Select-String -Pattern "mCurrentFocus" |
         Select-Object -First 1
@@ -258,10 +446,25 @@ function Install-And-Launch {
         exit 2
     }
 
+    if (-not $resumedActivity) {
+        Write-Warning "App process is running, but its activity is not resumed in the foreground."
+        if ($crashes) {
+            $crashes | ForEach-Object { Write-Warning $_ }
+        }
+        exit 2
+    }
+
     if ($crashes) {
         Write-Warning "Potential crash/error logs detected after launch:"
         $crashes | ForEach-Object { Write-Warning $_ }
         exit 2
+    }
+
+    if (-not $Headless -and $Serial -match '^emulator-') {
+        $runningAvdName = Get-RunningAvdName -AdbPath $AdbPath -Serial $Serial
+        if (-not (Show-EmulatorWindow -AvdName $runningAvdName)) {
+            throw "App launched, but the emulator window could not be brought to the foreground."
+        }
     }
 
     Write-Step "Launch check passed"
