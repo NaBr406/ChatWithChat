@@ -17,9 +17,15 @@ the 16 KB extension started from `dbc1148`.
 - ObjectBox 5.4.2 is a disposable HNSW store below
   `noBackupFilesDir/memory_vector_index`. Deleting or corrupting it must move
   derived state forward from current Markdown; it never rolls Markdown back.
-- Production `MemoryRetriever` remains `MarkdownLexicalRetriever`.
-  `MemoryEmbeddingCapability` is `NOT_PROVISIONED`, so production hybrid DI and
-  READY vector publication remain disabled.
+- Production `MemoryRetriever` remains `MarkdownLexicalRetriever` until the
+  separately committed Hybrid cutover. The production model is now
+  checksum-provisioned from release assets, verified again below
+  `noBackupFilesDir`, self-tested with ONNX Runtime, and published through a
+  dynamic `MemoryEmbeddingCapability` only after it is `READY`.
+- Startup creates an idempotent schema 15 bootstrap receipt for the current
+  `MEMORY.md`; the existing recovery/index worker then builds the complete
+  ObjectBox snapshot. Missing, corrupt, or mismatched artifacts remain
+  `NOT_PROVISIONED` with no network, cloud, or fake fallback.
 
 Schema 16 and removal of the old Room `memory_document` / `memory_chunk`
 tables are intentionally deferred to a later release after schema 15 has been
@@ -46,7 +52,7 @@ installed and observed.
 
 | Gate | Result |
 | --- | --- |
-| `:app:testDebugUnitTest --tests "*Memory*"` | 243 tests, 0 failures/errors |
+| `:app:testDebugUnitTest --tests "*Memory*"` | 269 tests, 0 failures/errors |
 | Daily distillation failpoint suite | 12 tests, 0 failures/errors |
 | ObjectBox device suite | 11 tests passed |
 | Room populated `14 -> 15` device migration | 1 test passed |
@@ -57,8 +63,9 @@ installed and observed.
 | `:app:assembleRelease` with R8/lint vital | passed |
 | Debug-key-signed release install and cold launch | passed; process remained resumed with no `AndroidRuntime` error |
 | Android 15 Experimental 16 KB emulator compatibility | passed on API 35 x86_64 `google_apis_ps16k`; `PAGE_SIZE=16384` |
-| Release ObjectBox and companion ONNX lifecycle | passed: initialize, infer, write, HNSW query, close/reopen, intentional process kill, new-process reopen, and persisted query |
+| Release ObjectBox and production ONNX lifecycle | passed: initialize, infer, write, HNSW query, close/reopen, intentional process kill, new-process reopen, and persisted query |
 | Physical ARM64 performance/OEM validation | pending as a separate final gate; it does not block 16 KB page-size compatibility |
+| Production release Hybrid shadow | passed with the real tokenizer, ONNX model, and ObjectBox on API 35 x86_64 `PAGE_SIZE=16384` |
 
 The earlier debug/device suites used an API 35 x86_64 emulator reporting ABI
 list `x86_64,arm64-v8a` and `PAGE_SIZE=4096`; those results are not 16 KB
@@ -72,12 +79,12 @@ The permitted fallback used the API 35 x86_64
 | Runtime component | APK owner | Evidence meaning |
 | --- | --- | --- |
 | ObjectBox 5.4.2 | Installed, non-debuggable release target APK | Production release R8, Java/JNI, persistence, and HNSW runtime evidence |
-| ONNX Runtime 1.27.0 and checksum-verified canary model | Release AndroidTest instrumentation companion, loaded in the same target process | Test-only 16 KB runtime evidence; not production model provisioning |
+| ONNX Runtime 1.27.0 and checksum-verified production model | Installed, non-debuggable release target APK | Production asset install, tokenizer, inference, CLS/L2, R8/JNI, and process-restart evidence |
 
-The release target and companion loaded their native runtimes again in the
-second process. Android `nativeloader` evidence identified
-`libobjectbox-jni.so` under the release target APK and
-`libonnxruntime4j_jni.so` under the companion APK in both invocations.
+The release target loaded both native runtimes again in the second process.
+Android `nativeloader` evidence identified `libobjectbox-jni.so` and
+`libonnxruntime4j_jni.so` under the release target APK in both invocations.
+The companion contains neither ONNX Runtime nor production model assets.
 
 ### APK And Native Packaging
 
@@ -87,7 +94,7 @@ The earlier Task 7 debug size baseline remains:
 | --- | ---: | --- |
 | Debug APK | 97,030,068 | `d68c012b1213c80399d22a8ac466960ec20eea6062811a0d38198c4412ae3462` |
 
-The 16 KB gate installed these exact signed artifacts:
+The original 16 KB gate installed these historical signed artifacts:
 
 | Artifact | Bytes | SHA-256 |
 | --- | ---: | --- |
@@ -96,7 +103,7 @@ The 16 KB gate installed these exact signed artifacts:
 | Release AndroidTest build input | 134,867,195 | `0b1c8ef248a51eec793d5307d86c87c43fc22a5177dc3a093d6050fb172ba7c2` |
 | Installed signed instrumentation companion | 134,881,735 | `b641b056f5990bcef5547d482283175a2be9ade7a894a9842c93ee1be90a0146` |
 
-Compared with the pre-ObjectBox baseline in the artifact contract, the debug
+At that historical Task 7 point, compared with the pre-ObjectBox baseline in the artifact contract, the debug
 APK is 10,150,479 bytes larger and the release APK is 9,922,521 bytes larger.
 Compared with the Task 0 post-ObjectBox snapshot, the Task 7 debug APK is
 2,054,082 bytes larger and the release APK is 263,188 bytes larger. ONNX
@@ -118,12 +125,29 @@ An earlier inspection found the packaged 32-bit ObjectBox variants aligned to
 `0x1000`; deciding whether those ABIs remain supported is a separate product
 gate and does not change the passing arm64-v8a/x86_64 result.
 
-The release APK contains neither ONNX Runtime nor the model. Production
-embedding remains `NOT_PROVISIONED`, production recall remains
-`MarkdownLexicalRetriever`, and no READY production HNSW manifest is enabled.
-`tools/memory-vector/run-16kb-release-compatibility.ps1` reproduces the signed
-release lifecycle, ZIP alignment, all 64-bit ELF checks, hashes, ABI, exact
-page size, process restart, and native-owner evidence.
+The production-provisioned 16 KB rerun installed these exact artifacts:
+
+| Artifact | Bytes | SHA-256 |
+| --- | ---: | --- |
+| Release unsigned build input | 153,883,230 | `7e8d75883a7cce7a9ceaefbfe4abc100260c65748e718a58136385162f5ac74b` |
+| Installed signed release target | 153,910,465 | `6e49f9e50396253e833bb62e1fa0b1658ae5bb3b665c8179b78ac96ad8b146c7` |
+| Release AndroidTest build input | 2,059,615 | `f2c186791ea30eef9cb9056924316fe0c75e62951343e232e9bc558487526c20` |
+| Installed signed instrumentation companion | 2,075,815 | `9b9bceb119303d1e5089011f271077dfeb54cd9d440d32075cb9206267180d56` |
+
+The target APK owns ObjectBox, ONNX Runtime, and all seven fixed model/tokenizer
+assets. `tools/memory-vector/run-16kb-release-compatibility.ps1` reproduced
+initialization, inference, ObjectBox write/query, close/reopen, intentional
+process death, new-process reopen/query, ZIP alignment, both 64-bit ELF checks,
+and target-APK native ownership with `PAGE_SIZE=16384`.
+
+`tools/memory-vector/run-production-hybrid-shadow.ps1` separately passed the
+real production Hybrid shadow. Generation 2 indexed six visible chunks; after
+canonical deletion, generation 3 rejected the stale six-row store without an
+HNSW query, rebuilt five rows, and permanently excluded the deleted entry.
+Daily-only content was never embedded or returned, a low-overlap Chinese
+paraphrase hit the intended visible entry in the top five, and
+`NOT_PROVISIONED` produced the same entry-ID/content-hash projection as current
+lexical recall.
 
 ## Failure Matrix Coverage
 
@@ -132,7 +156,7 @@ page size, process restart, and native-owner evidence.
 | Daily-only text is excluded until distillation | JVM lexical and distillation tests |
 | Deleted/stale/mismatched vectors fail closed | hybrid retriever JVM tests and ObjectBox device tests |
 | Markdown changes while embedding | synchronizer revision-retry JVM test |
-| Missing embedding never falls back to cloud | `NOT_PROVISIONED` capability and lexical production DI tests |
+| Missing embedding never falls back to cloud | provisioning tests and real release Hybrid lexical-fallback shadow |
 | ObjectBox missing/corrupt rebuilds only derived state | recovery JVM tests and ObjectBox corruption device test |
 | Dimension/fingerprint/model/tokenizer/chunker mismatch | JVM and device fail-closed tests |
 | PREPARED and rename-before-Room process death | real two-invocation process-death harness |
@@ -148,12 +172,12 @@ page size, process restart, and native-owner evidence.
 | --- | --- | --- |
 | 16 KB emulator compatibility | PASSED | Clears page-size compatibility after release lifecycle, process restart, ZIP alignment, and both 64-bit ABI ELF checks |
 | Real ARM64 performance/OEM validation | OPEN | Final latency, indexing, peak RSS, cancellation, concurrency, restart, and OEM-environment evidence; it does not block or reopen the page-size gate |
-| Production embedding provisioning/quality | OPEN | Official reproducible export, tokenizer fixtures, Recall@5, license, lifecycle, and production provider |
+| Production embedding provisioning/quality | PASSED | Immutable revision/hash contract, 72 tokenizer fixtures, release asset/install checks, real ONNX inference, shadow semantic top-5, and process restart |
+| Production Hybrid cutover | READY | Shadow passed; enable Hybrid DI in a separate commit while permanently retaining lexical fallback |
 | 32-bit ABI policy | OPEN | Separate support decision because packaged 32-bit ObjectBox LOAD alignment is `0x1000` |
 | Backup/restore integration | OPEN | Separate real backup-agent restore validation |
 
-The schema 15 lexical delivery and 16 KB page-size compatibility are valid.
-This does not make production semantic recall release-ready: until the
-provisioning and quality gates pass, keep production recall lexical, keep
-ObjectBox shadow/rebuildable, do not publish a production READY HNSW manifest,
-and do not claim Task 8/schema 16 completion.
+The schema 15 production provisioning, Hybrid shadow, and 16 KB page-size
+compatibility gates are valid. The real ARM64 gate remains only a final
+performance/OEM supplement. Keep ObjectBox rebuildable, preserve lexical
+fallback after Hybrid cutover, and do not claim Task 8/schema 16 completion.

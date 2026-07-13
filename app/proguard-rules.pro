@@ -23,6 +23,9 @@
 # ObjectBox JNI constructs scored query results by their binary class name.
 -keep class io.objectbox.query.ObjectWithScore { *; }
 
+# ONNX Runtime JNI resolves tensor/value metadata classes by their binary names.
+-keep class ai.onnxruntime.** { *; }
+
 # If your project uses WebView with JS, uncomment the following
 # and specify the fully qualified class name to the JavaScript interface
 # class:

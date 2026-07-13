@@ -21,10 +21,16 @@ val memoryTestBuildType = providers.gradleProperty("memoryTestBuildType").orElse
 require(memoryTestBuildType == "debug" || memoryTestBuildType == "release") {
     "memoryTestBuildType must be either debug or release"
 }
-val memoryTestInstrumentationRunner = if (memoryTestBuildType == "release") {
+val defaultMemoryTestInstrumentationRunner = if (memoryTestBuildType == "release") {
     "dev.chungjungsoo.gptmobile.data.memory.vector.Memory16KbReleaseCompatibilityInstrumentedTest"
 } else {
     "androidx.test.runner.AndroidJUnitRunner"
+}
+val memoryTestInstrumentationRunner = providers.gradleProperty("memoryTestInstrumentationRunner")
+    .orElse(defaultMemoryTestInstrumentationRunner)
+    .get()
+require(memoryTestInstrumentationRunner.isNotBlank()) {
+    "memoryTestInstrumentationRunner must not be blank"
 }
 
 val productionMemoryModelDirectory = layout.projectDirectory.dir(
@@ -109,6 +115,12 @@ extensions.configure<ApplicationExtension> {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            if (
+                memoryTestBuildType == "release" &&
+                memoryTestInstrumentationRunner == "androidx.test.runner.AndroidJUnitRunner"
+            ) {
+                proguardFiles("proguard-memory-shadow-rules.pro")
+            }
         }
     }
     testBuildType = memoryTestBuildType

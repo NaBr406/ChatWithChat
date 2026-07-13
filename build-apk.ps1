@@ -182,7 +182,7 @@ function Copy-InstallableApk {
     Write-Step "Android SDK: $sdkPath"
     Write-Step "Signing release APK with keystore: $keystorePath"
 
-    & $zipalign -f -p 4 $SourceApk $alignedApk
+    & $zipalign -f -P 16 4 $SourceApk $alignedApk
     if ($LASTEXITCODE -ne 0) { throw "zipalign failed with exit code $LASTEXITCODE." }
 
     & $apksigner sign `
@@ -193,6 +193,9 @@ function Copy-InstallableApk {
         --out $DestinationApk `
         $alignedApk
     if ($LASTEXITCODE -ne 0) { throw "apksigner sign failed with exit code $LASTEXITCODE." }
+
+    & $zipalign -c -P 16 4 $DestinationApk
+    if ($LASTEXITCODE -ne 0) { throw "Signed APK 16 KB alignment verification failed with exit code $LASTEXITCODE." }
 
     Remove-Item -LiteralPath $alignedApk -Force
 }
@@ -216,6 +219,13 @@ $env:JAVA_HOME = $resolvedJavaHome
 Write-Step "Project: $ProjectRoot"
 Write-Step "JAVA_HOME: $resolvedJavaHome"
 Write-Step "Variant: $variant"
+
+if ($Release) {
+    $provisionModel = Join-Path $ProjectRoot "tools\memory-model\provision-bge-small-zh-v1.5-production.ps1"
+    Write-Step "Provisioning checksum-verified production memory model"
+    & $provisionModel
+    if ($LASTEXITCODE -ne 0) { throw "Memory model provisioning failed with exit code $LASTEXITCODE." }
+}
 
 $tasks = New-Object System.Collections.Generic.List[string]
 if ($Clean) { $tasks.Add("clean") }

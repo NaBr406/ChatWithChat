@@ -95,9 +95,9 @@ class ProductionMemoryEmbeddingProvisioner(
     ): MemoryEmbeddingCapability {
         var candidate: MemoryEmbeddingProvider? = null
         return try {
-            val result = withContext(provisioningDispatcher) { providerFactory.create(artifacts) }
-            val provider = result.getOrThrow()
-            candidate = provider
+            val provider = withContext(provisioningDispatcher) {
+                providerFactory.create(artifacts).getOrThrow().also { created -> candidate = created }
+            }
             check(provider.descriptor == configuration.embeddingDescriptor) {
                 "The provisioned provider does not match the production embedding descriptor"
             }
@@ -121,15 +121,24 @@ class ProductionMemoryEmbeddingProvisioner(
         } catch (error: CancellationException) {
             closeProvider(candidate)
             throw error
+        } catch (error: LinkageError) {
+            initializationFailed(candidate, error)
         } catch (error: Exception) {
-            closeProvider(candidate)
-            capabilitySource.setUnavailable(
-                MemoryEmbeddingAvailability.Unavailable(
-                    MemoryEmbeddingAvailability.Reason.INITIALIZATION_FAILED,
-                    error.message ?: error.javaClass.simpleName
-                )
-            )
+            initializationFailed(candidate, error)
         }
+    }
+
+    private fun initializationFailed(
+        candidate: MemoryEmbeddingProvider?,
+        error: Throwable
+    ): MemoryEmbeddingCapability.Unavailable {
+        closeProvider(candidate)
+        return capabilitySource.setUnavailable(
+            MemoryEmbeddingAvailability.Unavailable(
+                MemoryEmbeddingAvailability.Reason.INITIALIZATION_FAILED,
+                error.message ?: error.javaClass.simpleName
+            )
+        )
     }
 
     private fun closeOwnedProvider() {

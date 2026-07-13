@@ -9,6 +9,7 @@ $ErrorActionPreference = "Stop"
 
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $Gradle = Join-Path $ProjectRoot "gradlew.bat"
+$ProvisionModel = Join-Path $ProjectRoot "tools/memory-model/provision-bge-small-zh-v1.5-production.ps1"
 $Apk = Join-Path $ProjectRoot "app/build/outputs/apk/release/app-release-unsigned.apk"
 
 function Invoke-Checked {
@@ -67,6 +68,7 @@ $ObjDump = Join-Path $Ndk "toolchains/llvm/prebuilt/windows-x86_64/bin/llvm-objd
 Push-Location $ProjectRoot
 try {
     if (-not $SkipBuild) {
+        Invoke-Checked "Provision checksum-verified production embedding artifacts" { & $ProvisionModel }
         Invoke-Checked "Memory JVM tests" { & $Gradle :app:testDebugUnitTest --tests "*Memory*" }
         Invoke-Checked "Debug Kotlin compilation" { & $Gradle :app:compileDebugKotlin }
         Invoke-Checked "Release R8 assembly" { & $Gradle :app:assembleRelease }

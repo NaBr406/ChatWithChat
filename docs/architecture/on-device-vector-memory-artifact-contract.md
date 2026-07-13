@@ -84,7 +84,7 @@ Production Hybrid DI still requires the independent shadow gate: ordinary recall
 - The same emulator verified the pinned model SHA-256, created an ONNX Runtime session, ran all three INT64 inputs, and produced a finite normalized 512-dimension CLS embedding.
 - Post-ObjectBox debug APK: 94,975,986 bytes, SHA-256 `466ec3580f5de2dcc3cae150a2ada0a7cce7228bb2b7e2908154521745d1edf2`.
 - Post-ObjectBox release unsigned APK: 20,734,390 bytes, SHA-256 `5fe5da2838881021a10b63e1632b6ada3233b1eedaf45fe71ca5f3379fd684ae`.
-- Release delta from the recorded baseline: +8,096,397 bytes debug and +9,659,333 bytes release. ONNX Runtime remains AndroidTest-only and is not part of the release delta.
+- Historical Task 0 release delta from the recorded baseline was +8,096,397 bytes debug and +9,659,333 bytes release; ONNX Runtime was still AndroidTest-only at that stage. The production evidence is recorded in `on-device-vector-memory-readiness.md`.
 - `zipalign -c -P 16 -v 4` passed for the release APK.
 - `llvm-objdump -p` reports ObjectBox LOAD alignment `2**14` for arm64-v8a and x86_64, and `2**12` for armeabi-v7a and x86.
 - The connected emulator reports page size 4096. Real arm64 process-restart, performance, cancellation/concurrency, and 16 KB device checks remain unverified and keep production hybrid disabled.

@@ -34,6 +34,10 @@ jobs:
           sdkmanager "$latest_stable_version"
           echo "$ANDROID_SDK_ROOT/build-tools/$latest_version_number" >> $GITHUB_PATH
 
+      - name: Provision Checksum-Verified Memory Model
+        shell: pwsh
+        run: ./tools/memory-model/provision-bge-small-zh-v1.5-production.ps1
+
       - name: Build Unsigned Release APK
         run: ./gradlew assembleRelease
 
@@ -52,7 +56,9 @@ jobs:
         env:
           SIGNING_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
+          zipalign -c -P 16 4 app-release-unsigned.apk
           apksigner sign --ks keystore.jks --alignment-preserved true --ks-pass env:SIGNING_PASSWORD --out app-release.apk app-release-unsigned.apk
+          zipalign -c -P 16 4 app-release.apk
         working-directory: ${{ github.workspace }}/app/build/outputs/apk/release
 
       - name: Sign Release App Bundle

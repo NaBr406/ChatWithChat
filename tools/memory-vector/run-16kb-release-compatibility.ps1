@@ -187,6 +187,30 @@ function Assert-ApkElfLoadAlignment {
     }
 }
 
+function Assert-TestApkDoesNotOwnProductionEmbeddingArtifacts {
+    param([string]$ApkPath)
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $Archive = [System.IO.Compression.ZipFile]::OpenRead(
+        (Resolve-Path -LiteralPath $ApkPath).Path
+    )
+    try {
+        $ForbiddenEntries = @(
+            $Archive.Entries |
+                Where-Object {
+                    $_.FullName -match '^lib/[^/]+/libonnxruntime(4j_jni)?\.so$' -or
+                        $_.FullName -like 'assets/memory-model/*'
+                } |
+                Select-Object -ExpandProperty FullName
+        )
+        if ($ForbiddenEntries.Count -gt 0) {
+            throw "Instrumentation APK unexpectedly owns production embedding artifacts: $($ForbiddenEntries -join ', ')"
+        }
+    } finally {
+        $Archive.Dispose()
+    }
+}
+
 $SdkRoot = if ($env:ANDROID_SDK_ROOT) {
     $env:ANDROID_SDK_ROOT
 } elseif ($env:ANDROID_HOME) {
@@ -303,6 +327,7 @@ try {
             "lib/x86_64/libonnxruntime.so",
             "lib/x86_64/libonnxruntime4j_jni.so"
         )
+    Assert-TestApkDoesNotOwnProductionEmbeddingArtifacts -ApkPath $SignedReleaseTestApk
 
     & $Adb @AdbTarget uninstall $TestPackage 2>&1 | Out-Host
     & $Adb @AdbTarget uninstall $AppPackage 2>&1 | Out-Host

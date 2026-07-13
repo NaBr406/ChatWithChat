@@ -86,6 +86,29 @@ class ProductionMemoryEmbeddingProvisionerTest {
     }
 
     @Test
+    fun `native runtime linkage failure leaves capability unavailable instead of loading`() = runBlocking {
+        val fixture = fixture()
+        val source = MutableMemoryEmbeddingCapabilitySource()
+        val provisioner = ProductionMemoryEmbeddingProvisioner(
+            artifactInstaller = fixture.installer,
+            capabilitySource = source,
+            providerFactory = ProductionMemoryEmbeddingProviderFactory {
+                Result.failure(UnsatisfiedLinkError("ORT native library unavailable"))
+            },
+            provisioningDispatcher = Dispatchers.Unconfined
+        )
+
+        val result = provisioner.provision()
+
+        assertTrue(result is MemoryEmbeddingCapability.Unavailable)
+        val availability = (result as MemoryEmbeddingCapability.Unavailable).availability
+            as MemoryEmbeddingAvailability.Unavailable
+        assertEquals(MemoryEmbeddingAvailability.Reason.INITIALIZATION_FAILED, availability.reason)
+        assertEquals("ORT native library unavailable", availability.detail)
+        assertSame(result, source.current())
+    }
+
+    @Test
     fun `provider self test must produce a finite normalized 512 dimensional embedding`() = runBlocking {
         val invalidEmbeddings = listOf(
             floatArrayOf(1f),
