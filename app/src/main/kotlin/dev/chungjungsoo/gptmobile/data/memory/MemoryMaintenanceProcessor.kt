@@ -12,7 +12,6 @@ import kotlinx.coroutines.launch
 
 class MemoryMaintenanceProcessor @Inject constructor(
     private val maintenanceScheduler: MemoryMaintenanceScheduler,
-    private val memoryIndexRepository: MemoryIndexRepository,
     private val settingRepository: SettingRepository,
     private val leaseWatchdog: MemoryMaintenanceLeaseWatchdog,
     private val memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null,
@@ -77,6 +76,10 @@ class MemoryMaintenanceProcessor @Inject constructor(
     private suspend fun processClaimedJob(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome {
         check(job.status == MemoryMaintenanceJobStatus.RUNNING)
         check(job.leaseOwner != null)
+        if (job.type in LEGACY_ROOM_INDEX_JOB_TYPES) {
+            maintenanceScheduler.markDismissed(job, LEGACY_ROOM_INDEX_DISMISS_REASON)
+            return MemoryMaintenanceOutcome.TERMINAL
+        }
         return when (job.family) {
             MemoryMaintenanceJobFamily.SEMANTIC -> processSemanticJob(job)
             MemoryMaintenanceJobFamily.INDEX -> processIndexJob(job)
@@ -108,7 +111,6 @@ class MemoryMaintenanceProcessor @Inject constructor(
     }
 
     private suspend fun processIndexJob(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome = when (job.type) {
-        MemoryMaintenanceJobType.REBUILD_MEMORY_INDEX -> rebuildLegacyRoomIndex(job)
         MemoryMaintenanceJobType.SYNC_VECTOR_INDEX -> synchronizeVectorIndex(job)
         MemoryMaintenanceJobType.REBUILD_VECTOR_INDEX -> {
             maintenanceScheduler.markBlockedDependency(job, "vector_index_rebuild_payload_not_available")
@@ -143,7 +145,6 @@ class MemoryMaintenanceProcessor @Inject constructor(
     }
 
     private suspend fun processRepairJob(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome = when (job.type) {
-        MemoryMaintenanceJobType.REPAIR_MARKDOWN_METADATA -> rebuildLegacyRoomIndex(job)
         MemoryMaintenanceJobType.RECONCILE_MEMORY_MUTATIONS -> reconcileMemoryMutations(job)
         MemoryMaintenanceJobType.PLAN_DAILY_DISTILLATION -> planDailyDistillation(job)
         else -> dismissUnknownJob(job)
@@ -192,18 +193,6 @@ class MemoryMaintenanceProcessor @Inject constructor(
         } catch (throwable: Throwable) {
             persistUnexpectedFailure(job, throwable)
         }
-    }
-
-    private suspend fun rebuildLegacyRoomIndex(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome = try {
-        maintenanceScheduler.renewClaimedLease(job)
-        memoryIndexRepository.rebuildAll().getOrThrow()
-        maintenanceScheduler.renewClaimedLease(job)
-        maintenanceScheduler.markSucceeded(job)
-        MemoryMaintenanceOutcome.SUCCEEDED
-    } catch (cancellation: CancellationException) {
-        throw cancellation
-    } catch (throwable: Throwable) {
-        persistUnexpectedFailure(job, throwable)
     }
 
     private suspend fun unavailableConsolidation(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome {
@@ -262,6 +251,11 @@ class MemoryMaintenanceProcessor @Inject constructor(
     companion object {
         private const val DEFAULT_LIMIT = 10
         private const val LEASE_HEARTBEAT_INTERVAL_MILLIS = 5 * 60 * 1_000L
+        const val LEGACY_ROOM_INDEX_DISMISS_REASON = "schema16_legacy_room_index_removed"
+        val LEGACY_ROOM_INDEX_JOB_TYPES = setOf(
+            MemoryMaintenanceJobType.REBUILD_MEMORY_INDEX,
+            MemoryMaintenanceJobType.REPAIR_MARKDOWN_METADATA
+        )
     }
 }
 

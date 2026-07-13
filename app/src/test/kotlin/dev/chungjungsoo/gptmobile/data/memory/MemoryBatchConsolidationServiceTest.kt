@@ -239,20 +239,18 @@ class MemoryBatchConsolidationServiceTest {
             createdAt = 10L,
             updatedAt = 10L
         )
-        val searchResult = MemoryIndexSearchResult(
+        val retrievalResult = MemoryRetrievalResult(
             chunkId = "MEMORY.md#mem_project#0",
-            sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
-            chunkIndex = 0,
-            heading = "Projects",
-            text = existingEntry.text,
             entryId = existingEntry.id,
+            sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+            text = existingEntry.text,
             type = existingEntry.type,
             sensitivity = existingEntry.sensitivity,
             source = existingEntry.source,
-            chatId = null,
-            createdAt = existingEntry.createdAt,
-            updatedAt = existingEntry.updatedAt,
-            score = 10f
+            contentHash = "hash-MEMORY.md#mem_project#0",
+            lexicalScore = 10f,
+            fusedScore = 10f,
+            updatedAt = existingEntry.updatedAt
         )
         val fixture = fixture(
             proposal = MemoryBatchConsolidationProposal(
@@ -266,7 +264,7 @@ class MemoryBatchConsolidationServiceTest {
                     )
                 )
             ),
-            searchResults = listOf(searchResult)
+            retrievalResults = listOf(retrievalResult)
         )
         fixture.fileStore.replaceLongTermMemory(
             MarkdownMemoryCodec().renderLongTerm(listOf(existingEntry))
@@ -614,7 +612,7 @@ class MemoryBatchConsolidationServiceTest {
 
     private fun fixture(
         proposal: MemoryBatchConsolidationProposal?,
-        searchResults: List<MemoryIndexSearchResult> = emptyList(),
+        retrievalResults: List<MemoryRetrievalResult> = emptyList(),
         failIndexScheduling: Boolean = false,
         clock: Clock = FIXED_CLOCK,
         commitObserver: MemoryBatchCommitObserver = MemoryBatchCommitObserver.None
@@ -654,7 +652,7 @@ class MemoryBatchConsolidationServiceTest {
         val maintenanceCorpusReader = object : MemoryMaintenanceCorpusReader {
             override suspend fun retrieveWorkingSet(request: MemoryRetrievalRequest): Result<List<MemoryRetrievalResult>> =
                 if (request.corpus == MemoryCorpus.MAINTENANCE_WORKING_SET) {
-                    Result.success(searchResults.map { it.toRetrievalResult() })
+                    Result.success(retrievalResults)
                 } else {
                     Result.failure(IllegalArgumentException("Expected maintenance working set"))
                 }
@@ -724,20 +722,6 @@ class MemoryBatchConsolidationServiceTest {
     private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
         .digest(value.toByteArray(Charsets.UTF_8))
         .joinToString(separator = "") { byte -> "%02x".format(byte) }
-
-    private fun MemoryIndexSearchResult.toRetrievalResult(): MemoryRetrievalResult = MemoryRetrievalResult(
-        chunkId = chunkId,
-        entryId = entryId,
-        sourcePath = sourcePath,
-        text = text,
-        type = type,
-        sensitivity = sensitivity,
-        source = source,
-        contentHash = "hash-$chunkId",
-        lexicalScore = score,
-        fusedScore = score,
-        updatedAt = updatedAt
-    )
 
     private data class Fixture(
         val turnDao: InMemoryMemoryTurnBatchDao,

@@ -9,6 +9,10 @@ import java.time.Clock
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -18,6 +22,66 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MemoryMutationCoordinatorTest {
+
+    @Test
+    fun `concurrent local prepare keeps one durable staged receipt`() = runBlocking {
+        val fixture = Fixture()
+        val baseContent = fixture.fileStore.readLongTermMemory().getOrThrow()
+        val targetContent = "# ChatWithChat Memory\n\n- Concurrent local migration"
+
+        val prepared = coroutineScope {
+            List(16) {
+                async(Dispatchers.Default) {
+                    fixture.coordinator.prepareLocalMutation(
+                        operationKey = "concurrent-local-migration",
+                        targets = listOf(fixture.longTermTarget(baseContent, targetContent))
+                    )
+                }
+            }.awaitAll()
+        }
+
+        assertEquals(1, prepared.map { it.group.groupId }.distinct().size)
+        val receipt = prepared.first().receipts.single()
+        assertTrue(fixture.root.resolve(receipt.stagedTargetPath).isFile)
+        val restarted = fixture.newCoordinator(MemoryFileStore(fixture.paths, FIXED_CLOCK))
+        assertTrue(restarted.reconcile(prepared.first()) is MemoryMutationCommitResult.CanonicalCommitted)
+        assertEquals(targetContent + "\n", fixture.fileStore.readLongTermMemory().getOrThrow())
+    }
+
+    @Test
+    fun `local mutation is non semantic idempotent and advances after content round trip`() = runBlocking {
+        val fixture = Fixture()
+        val contentA = fixture.fileStore.readLongTermMemory().getOrThrow()
+        val contentB = "# ChatWithChat Memory\n\n- Local migration target"
+
+        val firstPrepared = fixture.coordinator.prepareLocalMutation(
+            operationKey = "legacy-personal-memory",
+            targets = listOf(fixture.longTermTarget(contentA, contentB))
+        )
+        val replayedPrepare = fixture.coordinator.prepareLocalMutation(
+            operationKey = "legacy-personal-memory",
+            targets = listOf(fixture.longTermTarget(contentA, contentB))
+        )
+
+        assertEquals(firstPrepared.group.groupId, replayedPrepare.group.groupId)
+        assertEquals(1L, firstPrepared.group.generation)
+        assertEquals(null, firstPrepared.group.semanticJobId)
+        assertEquals(null, firstPrepared.group.semanticBatchId)
+        val firstResult = fixture.coordinator.reconcile(firstPrepared)
+        assertTrue(firstResult is MemoryMutationCommitResult.CanonicalCommitted)
+        assertEquals(MemoryMutationState.INDEX_PENDING, fixture.recoveryDao.getMutationGroup(firstPrepared.group.groupId)?.state)
+
+        val committedB = fixture.fileStore.readLongTermMemory().getOrThrow()
+        val returnPrepared = fixture.coordinator.prepareLocalMutation(
+            operationKey = "legacy-personal-memory",
+            targets = listOf(fixture.longTermTarget(committedB, contentA))
+        )
+
+        assertNotEquals(firstPrepared.group.groupId, returnPrepared.group.groupId)
+        assertEquals(2L, returnPrepared.group.generation)
+        assertTrue(fixture.coordinator.reconcile(returnPrepared) is MemoryMutationCommitResult.CanonicalCommitted)
+        assertEquals(contentA.trimEnd() + "\n", fixture.fileStore.readLongTermMemory().getOrThrow())
+    }
 
     @Test
     fun `prepared receipt commits base to target and advances durable state`() = runBlocking {
@@ -463,7 +527,7 @@ class MemoryMutationCoordinatorTest {
                 sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
                 baseContent = baseContent,
                 targetContent = targetContent,
-                targetIndexFingerprint = "fingerprint-v1"
+                targetIndexFingerprint = VALID_FINGERPRINT
             )
 
         fun newCoordinator(store: MemoryFileStore): MemoryMutationCoordinator =
@@ -480,5 +544,6 @@ class MemoryMutationCoordinatorTest {
         val FIXED_DATE: LocalDate = LocalDate.parse("2026-07-09")
         val FIXED_CLOCK: Clock = Clock.fixed(Instant.parse("2026-07-09T10:20:30Z"), ZoneOffset.UTC)
         val CHAT_RECALL_CORPUS_KEY: String = MemoryCorpus.CHAT_RECALL_LONG_TERM.name.lowercase()
+        val VALID_FINGERPRINT: String = "a".repeat(64)
     }
 }

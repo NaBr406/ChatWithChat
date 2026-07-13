@@ -13,7 +13,9 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryCorpus
 import dev.chungjungsoo.gptmobile.data.memory.MemoryDailyDistillationScheduler
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFilePaths
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFileStore
-import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexRebuilder
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMutationCommitResult
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMutationCoordinator
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMutationTarget
 import dev.chungjungsoo.gptmobile.data.memory.MemoryPromptBuilder
 import dev.chungjungsoo.gptmobile.data.memory.MemoryRetrievalRequest
 import dev.chungjungsoo.gptmobile.data.memory.MemoryRetrievalStrategy
@@ -25,7 +27,7 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnRecordingResult
 import dev.chungjungsoo.gptmobile.data.memory.PreparedMemoryContext
 import dev.chungjungsoo.gptmobile.data.memory.buildMemoryMessages
 import dev.chungjungsoo.gptmobile.data.memory.toMarkdownMemoryEntry
-import java.io.File
+import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorIndexDefaults
 
 class MemoryRepositoryImpl(
     // Upgrade-only source. Runtime learning and recall never write or search this table.
@@ -34,10 +36,11 @@ class MemoryRepositoryImpl(
     private val memoryRetriever: MemoryRetriever? = null,
     private val memoryFileStore: MemoryFileStore? = null,
     private val markdownMemoryCodec: MarkdownMemoryCodec? = null,
-    private val memoryIndexRebuilder: MemoryIndexRebuilder? = null,
+    private val memoryMutationCoordinator: MemoryMutationCoordinator? = null,
     private val memoryTurnBatchCoordinator: MemoryTurnBatchCoordinator? = null,
     private val memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null,
-    private val memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler? = null
+    private val memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler? = null,
+    private val targetIndexFingerprint: String = MemoryVectorIndexDefaults.configuration.fingerprint()
 ) : MemoryRepository {
 
     override suspend fun onMemoryEnabledChanged(enabled: Boolean) {
@@ -90,6 +93,7 @@ class MemoryRepositoryImpl(
     override suspend fun migrateActiveMemoriesToMarkdown(): Int {
         val fileStore = memoryFileStore ?: return 0
         val codec = markdownMemoryCodec ?: return 0
+        val mutationCoordinator = memoryMutationCoordinator ?: return 0
 
         return runCatching {
             val activeMemories = personalMemoryDao.getAll()
@@ -98,17 +102,11 @@ class MemoryRepositoryImpl(
                 .filter { memory -> memory.isClassifierFallbackMemory() }
                 .map { memory -> "personal_${memory.id}" }
                 .toSet()
-            val existingEntries = codec.parse(fileStore.readLongTermMemory().getOrThrow()).entries
+            val baseMarkdown = fileStore.readLongTermMemory().getOrThrow()
+            val existingEntries = codec.parse(baseMarkdown).entries
             val repairedExistingEntries = existingEntries
                 .mapNotNull { entry -> entry.repairedLongTermEntryOrNull(classifierFallbackMarkdownIds) }
                 .deduplicatedMarkdownEntries()
-            val filesToRebuild = mutableSetOf<File>()
-            if (repairedExistingEntries != existingEntries) {
-                filesToRebuild += fileStore
-                    .replaceLongTermMemory(codec.renderLongTerm(repairedExistingEntries))
-                    .getOrThrow()
-                    .file
-            }
 
             val existingIds = repairedExistingEntries.map { it.id }.toSet()
             val existingKeys = repairedExistingEntries.map { it.memoryDuplicateKey() }.toSet()
@@ -117,17 +115,44 @@ class MemoryRepositoryImpl(
                 .deduplicatedMarkdownEntries()
                 .filterNot { entry -> entry.id in existingIds || entry.memoryDuplicateKey() in existingKeys }
 
+            var targetMarkdown = baseMarkdown
+            if (repairedExistingEntries != existingEntries) {
+                targetMarkdown = codec.renderLongTerm(repairedExistingEntries)
+            }
             if (entriesToAppend.isNotEmpty()) {
-                filesToRebuild += fileStore
-                    .appendLongTermMemory(codec.renderLongTermAppend(entriesToAppend))
-                    .getOrThrow()
+                targetMarkdown += codec.renderLongTermAppend(entriesToAppend).asAppendedMarkdownBlock()
             }
-            filesToRebuild.forEach { file ->
-                memoryIndexRebuilder?.rebuildFile(file)?.onFailure { throwable ->
-                    logWarning("Markdown memory migration index rebuild failed: ${throwable.message}", throwable)
+            if (targetMarkdown == baseMarkdown) return@runCatching 0
+
+            val prepared = mutationCoordinator.prepareLocalMutation(
+                operationKey = LEGACY_PERSONAL_MEMORY_MIGRATION_OPERATION,
+                targets = listOf(
+                    MemoryMutationTarget(
+                        sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+                        baseContent = baseMarkdown,
+                        targetContent = targetMarkdown,
+                        targetIndexFingerprint = targetIndexFingerprint
+                    )
+                )
+            )
+            val commitResult = try {
+                mutationCoordinator.reconcile(prepared)
+            } catch (throwable: Throwable) {
+                val targetHash = prepared.receipts.single().targetSourceHash
+                if (fileStore.currentMemoryFileHash(MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME).getOrNull() == targetHash) {
+                    logWarning(
+                        "Markdown memory migration committed; receipt reconciliation remains pending: ${throwable.message}",
+                        throwable
+                    )
+                    return@runCatching entriesToAppend.size
                 }
+                throw throwable
             }
-            entriesToAppend.size
+            when (commitResult) {
+                is MemoryMutationCommitResult.CanonicalCommitted -> entriesToAppend.size
+                is MemoryMutationCommitResult.Conflict ->
+                    error("Markdown memory migration conflicted at ${commitResult.sourcePath}")
+            }
         }.getOrElse { throwable ->
             logWarning("Markdown memory migration failed: ${throwable.message}", throwable)
             0
@@ -225,6 +250,11 @@ class MemoryRepositoryImpl(
     private fun String.hasRawUserStatementPrefix(): Boolean =
         trimStart().startsWith(RAW_USER_STATEMENT_PREFIX, ignoreCase = true)
 
+    private fun String.asAppendedMarkdownBlock(): String {
+        val trimmed = trim()
+        return if (trimmed.isEmpty()) "" else "\n$trimmed\n"
+    }
+
     private fun logWarning(message: String, throwable: Throwable) {
         runCatching { Log.w(TAG, message, throwable) }
     }
@@ -242,6 +272,7 @@ class MemoryRepositoryImpl(
         private const val MAX_LOCAL_RECALL_QUERY_LENGTH = 2_000
         private const val MAX_LOCAL_RECENT_MESSAGE_LENGTH = 600
         private const val RAW_USER_STATEMENT_PREFIX = "The user said:"
+        private const val LEGACY_PERSONAL_MEMORY_MIGRATION_OPERATION = "legacy_personal_memory_to_markdown"
 
         private val ALLOWED_TYPES = setOf(
             "stable_profile",

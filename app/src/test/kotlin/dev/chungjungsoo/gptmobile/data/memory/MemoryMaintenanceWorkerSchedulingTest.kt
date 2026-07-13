@@ -1,7 +1,6 @@
 package dev.chungjungsoo.gptmobile.data.memory
 
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMaintenanceJob
-import java.nio.file.Files
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
@@ -48,18 +47,8 @@ class MemoryMaintenanceWorkerSchedulingTest {
             )
         )
         val scheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK)
-        val fileStore = MemoryFileStore(
-            MemoryFilePaths(Files.createTempDirectory("memory-worker-scheduling").toFile()),
-            FIXED_CLOCK
-        )
         val processor = MemoryMaintenanceProcessor(
             maintenanceScheduler = scheduler,
-            memoryIndexRepository = MemoryIndexRepository(
-                fileStore,
-                InMemoryProcessorMemoryIndexDao(),
-                MemoryChunker(),
-                FIXED_CLOCK
-            ),
             settingRepository = FakeMaintenanceSettingRepository(memoryEnabled = true),
             leaseWatchdog = NoOpWorkerLeaseWatchdog
         )
@@ -101,18 +90,8 @@ class MemoryMaintenanceWorkerSchedulingTest {
             )
         )
         val scheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK)
-        val fileStore = MemoryFileStore(
-            MemoryFilePaths(Files.createTempDirectory("memory-worker-reschedule-failure").toFile()),
-            FIXED_CLOCK
-        )
         val processor = MemoryMaintenanceProcessor(
             maintenanceScheduler = scheduler,
-            memoryIndexRepository = MemoryIndexRepository(
-                fileStore,
-                InMemoryProcessorMemoryIndexDao(),
-                MemoryChunker(),
-                FIXED_CLOCK
-            ),
             settingRepository = FakeMaintenanceSettingRepository(memoryEnabled = true),
             leaseWatchdog = NoOpWorkerLeaseWatchdog
         )
@@ -133,18 +112,8 @@ class MemoryMaintenanceWorkerSchedulingTest {
     fun `zero processed and no follow up wake maps scheduling failure to retry`() = runBlocking {
         val jobDao = InMemoryMaintenanceJobDao()
         val scheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK)
-        val fileStore = MemoryFileStore(
-            MemoryFilePaths(Files.createTempDirectory("memory-worker-empty-failure").toFile()),
-            FIXED_CLOCK
-        )
         val processor = MemoryMaintenanceProcessor(
             maintenanceScheduler = scheduler,
-            memoryIndexRepository = MemoryIndexRepository(
-                fileStore,
-                InMemoryProcessorMemoryIndexDao(),
-                MemoryChunker(),
-                FIXED_CLOCK
-            ),
             settingRepository = FakeMaintenanceSettingRepository(memoryEnabled = true),
             leaseWatchdog = NoOpWorkerLeaseWatchdog
         )
@@ -236,18 +205,8 @@ class MemoryMaintenanceWorkerSchedulingTest {
             )
         )
         val scheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK)
-        val fileStore = MemoryFileStore(
-            MemoryFilePaths(Files.createTempDirectory("memory-worker-active-lease").toFile()),
-            FIXED_CLOCK
-        )
         val processor = MemoryMaintenanceProcessor(
             maintenanceScheduler = scheduler,
-            memoryIndexRepository = MemoryIndexRepository(
-                fileStore,
-                InMemoryProcessorMemoryIndexDao(),
-                MemoryChunker(),
-                FIXED_CLOCK
-            ),
             settingRepository = FakeMaintenanceSettingRepository(memoryEnabled = true),
             leaseWatchdog = NoOpWorkerLeaseWatchdog
         )

@@ -9,6 +9,8 @@ import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMutationGroup
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMutationReceipt
 import java.time.Clock
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -20,6 +22,8 @@ class MemoryMutationCoordinator(
     private val clock: Clock = Clock.systemDefaultZone(),
     private val json: Json = Json { encodeDefaults = true }
 ) {
+    private val localMutationPrepareMutex = Mutex()
+
     suspend fun findBySemanticJobId(semanticJobId: String): MemoryPreparedMutation? =
         recoveryDao.getMutationGroupBySemanticJobId(semanticJobId)?.let { group -> loadMutation(group) }
 
@@ -66,6 +70,95 @@ class MemoryMutationCoordinator(
                         stagedTargetPath = staged.stagedTargetPath,
                         state = MemoryMutationState.PREPARED,
                         idempotencyKeyBase = "memory-mutation-receipt:$semanticJobId:${target.sourcePath}",
+                        targetIndexFingerprint = target.targetIndexFingerprint
+                    )
+                },
+                createdAt = now()
+            )
+        )
+        return MemoryPreparedMutation(prepared.group, prepared.receipts)
+    }
+
+    suspend fun prepareLocalMutation(
+        operationKey: String,
+        targets: List<MemoryMutationTarget>
+    ): MemoryPreparedMutation {
+        require(operationKey.isNotBlank()) { "Local mutation operation key must not be blank" }
+        require(targets.singleOrNull()?.sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME) {
+            "A local mutation must target only the long-term memory file"
+        }
+        require(targets.single().targetIndexFingerprint?.let(SHA_256_REGEX::matches) == true) {
+            "A long-term local mutation requires a SHA-256 index fingerprint"
+        }
+        return localMutationPrepareMutex.withLock {
+            prepareLocalMutationLocked(operationKey, targets)
+        }
+    }
+
+    private suspend fun prepareLocalMutationLocked(
+        operationKey: String,
+        targets: List<MemoryMutationTarget>
+    ): MemoryPreparedMutation {
+        val observedCorpusGeneration = recoveryDao.getCorpusState(CHAT_RECALL_CORPUS_KEY)?.generation ?: 0L
+        val targetIdentity = targets.sortedBy(MemoryMutationTarget::sourcePath).joinToString(separator = "|") { target ->
+            listOf(
+                target.sourcePath,
+                target.baseContent.toByteArray(Charsets.UTF_8).sha256Hex(),
+                target.normalizedTargetSourceHash(),
+                target.targetIndexFingerprint.orEmpty()
+            ).joinToString(separator = ":")
+        }
+        val identity = "$operationKey|$targetIdentity|after=$observedCorpusGeneration"
+        val groupId = "mutation_local_${identity.sha256Utf8().take(ID_HASH_LENGTH)}"
+        recoveryDao.getMutationGroup(groupId)?.let { group ->
+            val existing = loadMutation(group)
+            val expectedTargets = targets.associateBy(MemoryMutationTarget::sourcePath)
+            check(
+                group.semanticJobId == null &&
+                    group.semanticBatchId == null &&
+                    existing.receipts.size == expectedTargets.size &&
+                    existing.receipts.all { receipt ->
+                        expectedTargets[receipt.sourcePath]?.let { target ->
+                            receipt.baseSourceHash == target.baseContent.toByteArray(Charsets.UTF_8).sha256Hex() &&
+                                receipt.targetSourceHash == target.normalizedTargetSourceHash() &&
+                                receipt.targetIndexFingerprint == target.targetIndexFingerprint
+                        } == true
+                    }
+            ) { "Existing local mutation does not match the requested identity" }
+            return existing
+        }
+
+        memoryFileStore.cleanupStagedTargets(groupId).getOrThrow()
+        val stagedTargets = targets.sortedBy(MemoryMutationTarget::sourcePath).map { target ->
+            val receiptId = receiptId(groupId, target.sourcePath)
+            val expectedBaseHash = target.baseContent.toByteArray(Charsets.UTF_8).sha256Hex()
+            val staged = memoryFileStore.stageMemoryFile(
+                sourcePath = target.sourcePath,
+                content = target.targetContent,
+                stagingId = receiptId
+            ).getOrThrow()
+            check(staged.baseSourceHash == expectedBaseHash) {
+                "Memory source changed before its local mutation receipt was prepared"
+            }
+            target to staged
+        }
+        val idempotencyKeyBase = "memory-local-mutation:${identity.sha256Utf8()}"
+        val prepared = recoveryDao.prepareMutation(
+            MemoryMutationPrepareRequest(
+                groupId = groupId,
+                semanticJobId = null,
+                semanticBatchId = null,
+                state = MemoryMutationState.PREPARED,
+                idempotencyKeyBase = idempotencyKeyBase,
+                receipts = stagedTargets.map { (target, staged) ->
+                    MemoryMutationReceiptDraft(
+                        receiptId = receiptId(groupId, target.sourcePath),
+                        sourcePath = target.sourcePath,
+                        baseSourceHash = staged.baseSourceHash,
+                        targetSourceHash = staged.targetSourceHash,
+                        stagedTargetPath = staged.stagedTargetPath,
+                        state = MemoryMutationState.PREPARED,
+                        idempotencyKeyBase = "$idempotencyKeyBase:${target.sourcePath}",
                         targetIndexFingerprint = target.targetIndexFingerprint
                     )
                 },
@@ -540,6 +633,9 @@ class MemoryMutationCoordinator(
 
     private fun receiptId(groupId: String, sourcePath: String): String =
         "${groupId}_receipt_${sourcePath.sha256Utf8().take(RECEIPT_PATH_HASH_LENGTH)}"
+
+    private fun MemoryMutationTarget.normalizedTargetSourceHash(): String =
+        (targetContent.trimEnd() + "\n").toByteArray(Charsets.UTF_8).sha256Hex()
 
     private fun now(): Long = clock.instant().epochSecond
 

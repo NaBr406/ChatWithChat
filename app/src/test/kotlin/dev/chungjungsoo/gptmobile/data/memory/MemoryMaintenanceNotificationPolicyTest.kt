@@ -31,6 +31,33 @@ class MemoryMaintenanceNotificationPolicyTest {
     }
 
     @Test
+    fun `retired repair job start only clears notifications`() {
+        val decision = policy.decide(
+            event = event(job(type = MemoryMaintenanceJobType.REPAIR_MARKDOWN_METADATA, status = MemoryMaintenanceJobStatus.RUNNING)),
+            preferenceEnabled = true,
+            systemPermissionGranted = true
+        )
+
+        assertEquals(MemoryMaintenanceNotificationDecision.Cancel("key-1"), decision)
+    }
+
+    @Test
+    fun `retired index job failure only clears notifications`() {
+        val decision = policy.decide(
+            event = event(
+                job(
+                    type = MemoryMaintenanceJobType.REBUILD_MEMORY_INDEX,
+                    status = MemoryMaintenanceJobStatus.FAILED_RETRYABLE
+                )
+            ),
+            preferenceEnabled = true,
+            systemPermissionGranted = true
+        )
+
+        assertEquals(MemoryMaintenanceNotificationDecision.Cancel("key-1"), decision)
+    }
+
+    @Test
     fun `retryable failure shows failure notification`() {
         val decision = policy.decide(
             event = event(job(status = MemoryMaintenanceJobStatus.FAILED_RETRYABLE)),
@@ -186,7 +213,7 @@ class MemoryMaintenanceNotificationPolicyTest {
 
     private fun job(
         jobId: String = "job-1",
-        type: String = MemoryMaintenanceJobType.REBUILD_MEMORY_INDEX,
+        type: String = MemoryMaintenanceJobType.SYNC_VECTOR_INDEX,
         attempts: Int = 1,
         status: String
     ): MemoryMaintenanceJob = MemoryMaintenanceJob(

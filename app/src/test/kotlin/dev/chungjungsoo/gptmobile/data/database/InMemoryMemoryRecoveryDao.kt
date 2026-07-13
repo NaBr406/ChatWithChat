@@ -6,7 +6,9 @@ import dev.chungjungsoo.gptmobile.data.database.entity.MemoryDistillationCheckpo
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMutationGroup
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMutationReceipt
 
-internal class InMemoryMemoryRecoveryDao : MemoryRecoveryDao {
+internal class InMemoryMemoryRecoveryDao(
+    var failNextReceiptTransition: Boolean = false
+) : MemoryRecoveryDao {
     private val mutationGroups = linkedMapOf<String, MemoryMutationGroup>()
     private val mutationReceipts = linkedMapOf<String, MemoryMutationReceipt>()
     private val corpusStates = linkedMapOf<String, MemoryCorpusState>()
@@ -182,6 +184,10 @@ internal class InMemoryMemoryRecoveryDao : MemoryRecoveryDao {
         fileCommittedAt: Long?,
         indexedAt: Long?
     ): Int {
+        if (failNextReceiptTransition) {
+            failNextReceiptTransition = false
+            error("injected_receipt_transition_failure")
+        }
         if (attemptIncrement < 0) return 0
         val current = mutationReceipts[receiptId] ?: return 0
         val matches = current.groupId == groupId &&

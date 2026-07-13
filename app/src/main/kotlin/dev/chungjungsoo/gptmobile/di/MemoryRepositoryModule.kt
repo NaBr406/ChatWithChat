@@ -7,7 +7,6 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryActivityLogDao
-import dev.chungjungsoo.gptmobile.data.database.dao.MemoryIndexDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryMaintenanceJobDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryRecoveryDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryTurnBatchDao
@@ -16,7 +15,6 @@ import dev.chungjungsoo.gptmobile.data.memory.HybridMemoryRetriever
 import dev.chungjungsoo.gptmobile.data.memory.LlmMemoryIntelligence
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownLexicalRetriever
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryCodec
-import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryDebugEditor
 import dev.chungjungsoo.gptmobile.data.memory.MemoryActivityLogger
 import dev.chungjungsoo.gptmobile.data.memory.MemoryBatchConsolidationService
 import dev.chungjungsoo.gptmobile.data.memory.MemoryChunker
@@ -27,7 +25,6 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryDailyDistillationScheduler
 import dev.chungjungsoo.gptmobile.data.memory.MemoryDailyDistillationService
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFilePaths
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFileStore
-import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexRepository
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexSyncService
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexSynchronizer
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIntelligence
@@ -227,30 +224,6 @@ object MemoryRepositoryModule {
 
     @Provides
     @Singleton
-    fun provideMemoryIndexRepository(
-        memoryFileStore: MemoryFileStore,
-        memoryIndexDao: MemoryIndexDao,
-        memoryChunker: MemoryChunker
-    ): MemoryIndexRepository = MemoryIndexRepository(
-        memoryFileStore = memoryFileStore,
-        memoryIndexDao = memoryIndexDao,
-        memoryChunker = memoryChunker
-    )
-
-    @Provides
-    @Singleton
-    internal fun provideMarkdownMemoryDebugEditor(
-        memoryFileStore: MemoryFileStore,
-        markdownMemoryCodec: MarkdownMemoryCodec,
-        memoryIndexRepository: MemoryIndexRepository
-    ): MarkdownMemoryDebugEditor = MarkdownMemoryDebugEditor(
-        memoryFileStore = memoryFileStore,
-        markdownMemoryCodec = markdownMemoryCodec,
-        memoryIndexRebuilder = memoryIndexRepository
-    )
-
-    @Provides
-    @Singleton
     fun provideMemoryMaintenanceNotificationPolicy(): MemoryMaintenanceNotificationPolicy =
         MemoryMaintenanceNotificationPolicy()
 
@@ -443,9 +416,9 @@ object MemoryRepositoryModule {
         personalMemoryDao: PersonalMemoryDao,
         memoryPromptBuilder: MemoryPromptBuilder,
         memoryRetriever: MemoryRetriever,
-        memoryIndexRepository: MemoryIndexRepository,
         memoryFileStore: MemoryFileStore,
         markdownMemoryCodec: MarkdownMemoryCodec,
+        memoryMutationCoordinator: MemoryMutationCoordinator,
         memoryTurnBatchCoordinator: MemoryTurnBatchCoordinator,
         memoryTurnBatchScheduler: MemoryTurnBatchScheduler,
         memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler
@@ -455,7 +428,7 @@ object MemoryRepositoryModule {
         memoryRetriever = memoryRetriever,
         memoryFileStore = memoryFileStore,
         markdownMemoryCodec = markdownMemoryCodec,
-        memoryIndexRebuilder = memoryIndexRepository,
+        memoryMutationCoordinator = memoryMutationCoordinator,
         memoryTurnBatchCoordinator = memoryTurnBatchCoordinator,
         memoryTurnBatchScheduler = memoryTurnBatchScheduler,
         memoryDailyDistillationScheduler = memoryDailyDistillationScheduler

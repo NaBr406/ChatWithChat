@@ -2,9 +2,6 @@ package dev.chungjungsoo.gptmobile.data.memory
 
 import dev.chungjungsoo.gptmobile.data.database.InMemoryMemoryRecoveryDao
 import dev.chungjungsoo.gptmobile.data.database.InMemoryMemoryTurnBatchDao
-import dev.chungjungsoo.gptmobile.data.database.dao.MemoryIndexDao
-import dev.chungjungsoo.gptmobile.data.database.entity.MemoryChunk
-import dev.chungjungsoo.gptmobile.data.database.entity.MemoryDocument
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMaintenanceJob
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformModelV2
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
@@ -31,32 +28,22 @@ import org.junit.Test
 class MemoryMaintenanceProcessorTest {
 
     @Test
-    fun `processor rebuilds memory index jobs`() = runBlocking {
-        val fileStore = MemoryFileStore(MemoryFilePaths(Files.createTempDirectory("memory-maintenance-processor").toFile()))
-        fileStore.replaceLongTermMemory(
-            """
-            # ChatWithChat Memory
-
-            ## Stable Preferences
-
-            <!-- memory:id=mem_1 type=communication_style sensitivity=normal source=explicit_user_statement -->
-            - The user prefers direct answers.
-            """.trimIndent()
-        ).getOrThrow()
-        val jobDao = InMemoryMaintenanceJobDao(listOf(job(MemoryMaintenanceJobType.REBUILD_MEMORY_INDEX)))
-        val indexDao = InMemoryProcessorMemoryIndexDao()
-        val processor = createProcessor(
-            jobDao = jobDao,
-            fileStore = fileStore,
-            indexDao = indexDao
+    fun `processor dismisses retired room index jobs without index access`() = runBlocking {
+        val jobDao = InMemoryMaintenanceJobDao(
+            listOf(
+                job(MemoryMaintenanceJobType.REBUILD_MEMORY_INDEX),
+                job(MemoryMaintenanceJobType.REPAIR_MARKDOWN_METADATA)
+            )
         )
+        val processor = createProcessor(jobDao = jobDao)
 
-        val result = processor.processRunnableJobs(MemoryMaintenanceJobFamily.INDEX)
+        val indexResult = processor.processRunnableJobs(MemoryMaintenanceJobFamily.INDEX)
+        val repairResult = processor.processRunnableJobs(MemoryMaintenanceJobFamily.REPAIR)
 
-        assertEquals(1, result.succeededCount)
-        assertEquals(MemoryMaintenanceJobStatus.SUCCEEDED, jobDao.jobs.single().status)
-        assertTrue(indexDao.documents.containsKey("MEMORY.md"))
-        assertTrue(indexDao.chunks.isNotEmpty())
+        assertEquals(1, indexResult.terminalCount)
+        assertEquals(1, repairResult.terminalCount)
+        assertTrue(jobDao.jobs.all { it.status == MemoryMaintenanceJobStatus.DISMISSED })
+        assertTrue(jobDao.jobs.all { it.lastError == MemoryMaintenanceProcessor.LEGACY_ROOM_INDEX_DISMISS_REASON })
     }
 
     @Test
@@ -242,7 +229,6 @@ class MemoryMaintenanceProcessorTest {
         )
         val processor = createProcessor(
             jobDao = jobDao,
-            fileStore = fileStore,
             memoryMutationRecoveryService = recoveryService
         )
 
@@ -288,7 +274,6 @@ class MemoryMaintenanceProcessorTest {
         dailyScheduler.ensurePlanningJobs()
         val processor = createProcessor(
             jobDao = jobDao,
-            fileStore = fileStore,
             memoryDailyDistillationScheduler = dailyScheduler
         )
 
@@ -400,8 +385,6 @@ class MemoryMaintenanceProcessorTest {
 
     private fun createProcessor(
         jobDao: InMemoryMaintenanceJobDao,
-        fileStore: MemoryFileStore = MemoryFileStore(MemoryFilePaths(Files.createTempDirectory("memory-maintenance-processor-default").toFile()), FIXED_CLOCK),
-        indexDao: InMemoryProcessorMemoryIndexDao = InMemoryProcessorMemoryIndexDao(),
         memoryEnabled: Boolean = true,
         leaseWatchdog: MemoryMaintenanceLeaseWatchdog = NoOpLeaseWatchdog,
         memoryMutationRecoveryService: MemoryMutationRecoveryService? = null,
@@ -409,7 +392,6 @@ class MemoryMaintenanceProcessorTest {
         memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler? = null
     ): MemoryMaintenanceProcessor = MemoryMaintenanceProcessor(
         maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK),
-        memoryIndexRepository = MemoryIndexRepository(fileStore, indexDao, MemoryChunker(), FIXED_CLOCK),
         settingRepository = FakeMaintenanceSettingRepository(memoryEnabled = memoryEnabled),
         leaseWatchdog = leaseWatchdog,
         memoryMutationRecoveryService = memoryMutationRecoveryService,
@@ -440,37 +422,6 @@ private class RecordingLeaseWatchdog : MemoryMaintenanceLeaseWatchdog {
 private data object FailingRepairWorkEnqueuer : MemoryMaintenanceWorkEnqueuer {
     override fun enqueueWork(family: String, delaySeconds: Long) {
         error("work scheduling unavailable")
-    }
-}
-
-internal class InMemoryProcessorMemoryIndexDao : MemoryIndexDao {
-    val documents = linkedMapOf<String, MemoryDocument>()
-    val chunks = linkedMapOf<String, MemoryChunk>()
-
-    override suspend fun getDocuments(): List<MemoryDocument> = documents.values.toList()
-    override suspend fun getDocument(sourcePath: String): MemoryDocument? = documents[sourcePath]
-    override suspend fun getChunksForSource(sourcePath: String): List<MemoryChunk> = chunks.values.filter { it.sourcePath == sourcePath }
-    override suspend fun getSearchCandidates(sourcePath: String?, includePrivate: Boolean, limit: Int): List<MemoryChunk> = chunks.values.take(limit)
-    override suspend fun upsertDocument(document: MemoryDocument) {
-        documents[document.sourcePath] = document
-    }
-    override suspend fun upsertDocuments(documents: List<MemoryDocument>) {
-        documents.forEach { upsertDocument(it) }
-    }
-    override suspend fun insertChunks(chunks: List<MemoryChunk>) {
-        chunks.forEach { chunk -> this.chunks[chunk.chunkId] = chunk }
-    }
-    override suspend fun deleteChunksForSource(sourcePath: String) {
-        chunks.values.removeAll { it.sourcePath == sourcePath }
-    }
-    override suspend fun deleteDocument(sourcePath: String) {
-        documents.remove(sourcePath)
-    }
-    override suspend fun clearChunks() {
-        chunks.clear()
-    }
-    override suspend fun clearDocuments() {
-        documents.clear()
     }
 }
 

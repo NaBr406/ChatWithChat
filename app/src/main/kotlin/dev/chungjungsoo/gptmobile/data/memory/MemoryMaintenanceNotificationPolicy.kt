@@ -9,6 +9,10 @@ class MemoryMaintenanceNotificationPolicy {
         val job = event.newJob
         val notificationKey = notificationKey(jobId = job.jobId, idempotencyKey = job.idempotencyKey)
 
+        if (job.type in LEGACY_ROOM_INDEX_JOB_TYPES) {
+            return MemoryMaintenanceNotificationDecision.Cancel(notificationKey)
+        }
+
         if (
             event.newStatus == MemoryMaintenanceJobStatus.SUCCEEDED ||
             event.newStatus == MemoryMaintenanceJobStatus.DISMISSED ||
@@ -68,10 +72,13 @@ class MemoryMaintenanceNotificationPolicy {
         idempotencyKey.ifBlank { jobId }
 
     private companion object {
+        val LEGACY_ROOM_INDEX_JOB_TYPES = setOf(
+            MemoryMaintenanceJobType.REBUILD_MEMORY_INDEX,
+            MemoryMaintenanceJobType.REPAIR_MARKDOWN_METADATA
+        )
         val START_NOTIFICATION_JOB_TYPES = setOf(
             MemoryMaintenanceJobType.DISTILL_DAILY_NOTES,
             MemoryMaintenanceJobType.PROMOTE_LONG_TERM_CANDIDATE,
-            MemoryMaintenanceJobType.REPAIR_MARKDOWN_METADATA,
             MemoryMaintenanceJobType.COMPACTION_FLUSH,
             MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH
         )

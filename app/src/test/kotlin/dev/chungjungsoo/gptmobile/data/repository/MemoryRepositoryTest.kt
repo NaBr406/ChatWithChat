@@ -1,8 +1,10 @@
 package dev.chungjungsoo.gptmobile.data.repository
 
+import dev.chungjungsoo.gptmobile.data.database.InMemoryMemoryRecoveryDao
 import dev.chungjungsoo.gptmobile.data.database.InMemoryMemoryTurnBatchDao
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatRoomV2
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
+import dev.chungjungsoo.gptmobile.data.memory.InMemoryMaintenanceJobDao
 import dev.chungjungsoo.gptmobile.data.memory.InMemoryPersonalMemoryDao
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownLexicalRetriever
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryCodec
@@ -10,12 +12,19 @@ import dev.chungjungsoo.gptmobile.data.memory.MarkdownMemoryEntry
 import dev.chungjungsoo.gptmobile.data.memory.MemoryChunker
 import dev.chungjungsoo.gptmobile.data.memory.MemoryCompletedTurnInput
 import dev.chungjungsoo.gptmobile.data.memory.MemoryCorpus
+import dev.chungjungsoo.gptmobile.data.memory.MemoryCorpusIndexStatus
 import dev.chungjungsoo.gptmobile.data.memory.MemoryCorpusSnapshotter
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFilePaths
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFileStore
-import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexRebuildResult
-import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexRebuilder
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceJobFamily
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceJobType
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceScheduler
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceWorkEnqueuer
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMarkdownCodec
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMutationCommitResult
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMutationCoordinator
+import dev.chungjungsoo.gptmobile.data.memory.MemoryMutationState
+import dev.chungjungsoo.gptmobile.data.memory.MemoryPreparedMutation
 import dev.chungjungsoo.gptmobile.data.memory.MemoryPromptBuilder
 import dev.chungjungsoo.gptmobile.data.memory.MemoryRetrievalRequest
 import dev.chungjungsoo.gptmobile.data.memory.MemoryRetrievalResult
@@ -25,8 +34,8 @@ import dev.chungjungsoo.gptmobile.data.memory.MemorySensitivity
 import dev.chungjungsoo.gptmobile.data.memory.MemorySource
 import dev.chungjungsoo.gptmobile.data.memory.MemoryStatus
 import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnBatchCoordinator
+import dev.chungjungsoo.gptmobile.data.memory.RecordingWorkEnqueuer
 import dev.chungjungsoo.gptmobile.data.memory.testMemory
-import java.io.File
 import java.nio.file.Files
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -193,13 +202,20 @@ class MemoryRepositoryTest {
             )
         )
         val fileStore = MemoryFileStore(MemoryFilePaths(Files.createTempDirectory("memory-repository-migration-test").toFile()))
-        val indexRebuilder = RecordingRepositoryMemoryIndexRebuilder()
+        val recoveryDao = InMemoryMemoryRecoveryDao()
+        val jobDao = InMemoryMaintenanceJobDao()
+        val enqueuer = RecordingWorkEnqueuer()
         val repository = MemoryRepositoryImpl(
             personalMemoryDao = personalMemoryDao,
             memoryPromptBuilder = MemoryPromptBuilder(),
             memoryFileStore = fileStore,
             markdownMemoryCodec = MarkdownMemoryCodec(),
-            memoryIndexRebuilder = indexRebuilder
+            memoryMutationCoordinator = MemoryMutationCoordinator(
+                recoveryDao = recoveryDao,
+                memoryFileStore = fileStore,
+                maintenanceScheduler = MemoryMaintenanceScheduler(jobDao),
+                workEnqueuer = enqueuer
+            )
         )
 
         val firstMigrationCount = repository.migrateActiveMemoriesToMarkdown()
@@ -211,7 +227,16 @@ class MemoryRepositoryTest {
         assertTrue(markdown.contains("personal_1"))
         assertFalse(markdown.contains("Resolved memory should stay legacy only."))
         assertEquals(2, personalMemoryDao.memories.size)
-        assertEquals(listOf("MEMORY.md"), indexRebuilder.rebuiltFiles.map { it.name })
+        val corpus = recoveryDao.getCorpusState(MemoryCorpus.CHAT_RECALL_LONG_TERM.name.lowercase())
+        assertEquals(MemoryCorpusIndexStatus.PENDING, corpus?.indexStatus)
+        val receipt = recoveryDao.getMutationReceipt(checkNotNull(corpus?.latestReceiptId))
+        assertEquals(MemoryMutationState.INDEX_PENDING, receipt?.state)
+        val group = recoveryDao.getMutationGroup(checkNotNull(receipt?.groupId))
+        assertNull(group?.semanticJobId)
+        assertNull(group?.semanticBatchId)
+        assertEquals(MemoryMutationState.INDEX_PENDING, group?.state)
+        assertEquals(listOf(MemoryMaintenanceJobType.SYNC_VECTOR_INDEX), jobDao.jobs.map { it.type })
+        assertEquals(listOf(MemoryMaintenanceJobFamily.INDEX), enqueuer.works.map { it.family })
     }
 
     @Test
@@ -245,7 +270,12 @@ class MemoryRepositoryTest {
             memoryPromptBuilder = MemoryPromptBuilder(),
             memoryFileStore = fileStore,
             markdownMemoryCodec = MarkdownMemoryCodec(),
-            memoryIndexRebuilder = RecordingRepositoryMemoryIndexRebuilder()
+            memoryMutationCoordinator = MemoryMutationCoordinator(
+                recoveryDao = InMemoryMemoryRecoveryDao(),
+                memoryFileStore = fileStore,
+                maintenanceScheduler = MemoryMaintenanceScheduler(InMemoryMaintenanceJobDao()),
+                workEnqueuer = RecordingWorkEnqueuer()
+            )
         )
 
         assertEquals(1, repository.migrateActiveMemoriesToMarkdown())
@@ -253,6 +283,74 @@ class MemoryRepositoryTest {
         assertFalse(markdown.contains("The user said:"))
         assertFalse(markdown.contains("personal_1"))
         assertTrue(markdown.contains("personal_2"))
+    }
+
+    @Test
+    fun `migration keeps canonical markdown when index wakeup fails`() = runBlocking {
+        val personalMemoryDao = InMemoryPersonalMemoryDao(
+            listOf(testMemory(1, "The user prefers durable local commits."))
+        )
+        val fileStore = MemoryFileStore(
+            MemoryFilePaths(Files.createTempDirectory("memory-repository-index-wakeup-failure").toFile())
+        )
+        val recoveryDao = InMemoryMemoryRecoveryDao()
+        val repository = MemoryRepositoryImpl(
+            personalMemoryDao = personalMemoryDao,
+            memoryPromptBuilder = MemoryPromptBuilder(),
+            memoryFileStore = fileStore,
+            markdownMemoryCodec = MarkdownMemoryCodec(),
+            memoryMutationCoordinator = MemoryMutationCoordinator(
+                recoveryDao = recoveryDao,
+                memoryFileStore = fileStore,
+                maintenanceScheduler = MemoryMaintenanceScheduler(InMemoryMaintenanceJobDao()),
+                workEnqueuer = FailingRepositoryWorkEnqueuer
+            )
+        )
+
+        assertEquals(1, repository.migrateActiveMemoriesToMarkdown())
+
+        assertTrue(repository.getLongTermMarkdown().contains("durable local commits"))
+        val corpus = recoveryDao.getCorpusState(MemoryCorpus.CHAT_RECALL_LONG_TERM.name.lowercase())
+        assertEquals(MemoryCorpusIndexStatus.PENDING, corpus?.indexStatus)
+        val receipt = recoveryDao.getMutationReceipt(checkNotNull(corpus?.latestReceiptId))
+        assertEquals(MemoryMutationState.INDEX_PENDING, receipt?.state)
+    }
+
+    @Test
+    fun `migration reports canonical success when receipt transition needs recovery`() = runBlocking {
+        val personalMemoryDao = InMemoryPersonalMemoryDao(
+            listOf(testMemory(1, "The user prefers recoverable local commits."))
+        )
+        val fileStore = MemoryFileStore(
+            MemoryFilePaths(Files.createTempDirectory("memory-repository-receipt-recovery").toFile())
+        )
+        val recoveryDao = InMemoryMemoryRecoveryDao(failNextReceiptTransition = true)
+        val jobDao = InMemoryMaintenanceJobDao()
+        val coordinator = MemoryMutationCoordinator(
+            recoveryDao = recoveryDao,
+            memoryFileStore = fileStore,
+            maintenanceScheduler = MemoryMaintenanceScheduler(jobDao),
+            workEnqueuer = RecordingWorkEnqueuer()
+        )
+        val repository = MemoryRepositoryImpl(
+            personalMemoryDao = personalMemoryDao,
+            memoryPromptBuilder = MemoryPromptBuilder(),
+            memoryFileStore = fileStore,
+            markdownMemoryCodec = MarkdownMemoryCodec(),
+            memoryMutationCoordinator = coordinator
+        )
+
+        assertEquals(1, repository.migrateActiveMemoriesToMarkdown())
+        assertTrue(repository.getLongTermMarkdown().contains("recoverable local commits"))
+        val preparedGroup = recoveryDao.getMutationGroupsByStates(listOf(MemoryMutationState.PREPARED)).single()
+        val prepared = MemoryPreparedMutation(
+            group = preparedGroup,
+            receipts = recoveryDao.getMutationReceipts(preparedGroup.groupId)
+        )
+
+        assertTrue(coordinator.reconcile(prepared) is MemoryMutationCommitResult.CanonicalCommitted)
+        assertEquals(MemoryMutationState.INDEX_PENDING, recoveryDao.getMutationGroup(preparedGroup.groupId)?.state)
+        assertEquals(MemoryMaintenanceJobType.SYNC_VECTOR_INDEX, jobDao.jobs.single().type)
     }
 
     @Test
@@ -361,18 +459,15 @@ private class FakeVectorMemoryRetriever : MemoryRetriever {
     }
 }
 
+private data object FailingRepositoryWorkEnqueuer : MemoryMaintenanceWorkEnqueuer {
+    override fun enqueueWork(family: String, delaySeconds: Long) {
+        error("work scheduling unavailable")
+    }
+}
+
 private class LexicalFallbackMemoryRetriever(
     private val lexicalRetriever: MarkdownLexicalRetriever
 ) : MemoryRetriever {
     override suspend fun retrieve(request: MemoryRetrievalRequest): Result<List<MemoryRetrievalResult>> =
         lexicalRetriever.retrieve(request.copy(strategy = MemoryRetrievalStrategy.LEXICAL))
-}
-
-private class RecordingRepositoryMemoryIndexRebuilder : MemoryIndexRebuilder {
-    val rebuiltFiles = mutableListOf<File>()
-
-    override suspend fun rebuildFile(file: File): Result<MemoryIndexRebuildResult> {
-        rebuiltFiles += file
-        return Result.success(MemoryIndexRebuildResult(indexedDocuments = 1, indexedChunks = 1))
-    }
 }
