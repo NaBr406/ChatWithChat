@@ -889,15 +889,17 @@ Acceptance:
 
 Do not implement this task in the first delivery merely because Tasks 1-7 pass in one development worktree. Start it in a later release/independent prompt only after a schema 15 build has been installed and has produced accepted shadow/cutover/recovery evidence.
 
-- [ ] Prove no production code reads/writes `MemoryIndexDao`, `MemoryDocument`, or Room `MemoryChunk`.
-- [ ] Add/register `MIGRATION_15_16` dropping `memory_chunk` before `memory_document`.
-- [ ] Remove old entities/DAO/provider and Room index adapters.
-- [ ] Export schema `16.json`.
-- [ ] Rebuild ObjectBox from current Markdown after upgrade; do not copy Room chunks.
-- [ ] Add real populated `15 -> 16` and direct supported upgrade-path tests.
-- [ ] Verify all business and operational Room data remains.
-- [ ] Update `docs/architecture/on-device-vector-memory-readiness.md` with the final backend/model/fingerprint/recovery decision.
-- [ ] Run final tests, debug/release builds, runtime smoke test, `git diff --check`, and `git status --short`.
+> **2026-07-13 status override:** The paragraph above records the first schema 15 delivery gate. The user later authorized this task independently through [`2026-07-13-direct-task8-schema16-memory-index-cleanup-prompt.md`](2026-07-13-direct-task8-schema16-memory-index-cleanup-prompt.md). That authorization skipped only the additional waiting/observation period; it did not relax Markdown authority, non-destructive migration, business-data preservation, real migration tests, or recovery requirements.
+
+- [x] Prove no production code reads/writes `MemoryIndexDao`, `MemoryDocument`, or Room `MemoryChunk`.
+- [x] Add/register `MIGRATION_15_16` dropping `memory_chunk` before `memory_document`.
+- [x] Remove old entities/DAO/provider and Room index adapters.
+- [x] Export schema `16.json`.
+- [x] Rebuild ObjectBox from current Markdown after upgrade; do not copy Room chunks.
+- [x] Add real populated `15 -> 16` and direct supported upgrade-path tests.
+- [x] Verify all business and operational Room data remains.
+- [x] Update `docs/architecture/on-device-vector-memory-readiness.md` with the final backend/model/fingerprint/recovery decision.
+- [x] Run final tests, debug/release builds, runtime smoke test, `git diff --check`, and `git status --short`.
 
 ## Required Failure And Process-Death Matrix
 
@@ -1096,6 +1098,8 @@ Do not report completion while any of these remain true:
 - business Room data is removed or destructively migrated.
 
 ## Copy-Paste Prompt For A Fresh Implementation Conversation
+
+> **Historical prompt only:** This block records the original schema 15 delivery instructions. Task 8 was later authorized and completed through [`2026-07-13-direct-task8-schema16-memory-index-cleanup-prompt.md`](2026-07-13-direct-task8-schema16-memory-index-cleanup-prompt.md); do not use the deferral text below for new work.
 
 ```text
 Work in E:\code\ChatWithChat.

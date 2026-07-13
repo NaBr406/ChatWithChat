@@ -1,9 +1,10 @@
 # On-Device Vector Memory Readiness
 
-Status updated on 2026-07-13 for schema 15 on branch
-`codex/openclaw-vector-memory-maintenance`. The implementation baseline before
-the Task 7 evidence slice is `b267b269f1651286d6d06a1dcb5fb89ce2ad87fd`;
-the 16 KB extension started from `dbc1148`.
+Status updated on 2026-07-14 for schema 16 on branch
+`codex/task8-schema16-cleanup`. The Task 8 implementation baseline is
+`6db485ff8dfe7a4e225768260d8564a922aa73f7`; the earlier Task 7 evidence
+baseline remains `b267b269f1651286d6d06a1dcb5fb89ce2ad87fd`, and the 16 KB
+extension started from `dbc1148`.
 
 ## Current Ownership
 
@@ -11,9 +12,10 @@ the 16 KB extension started from `dbc1148`.
   truth.
 - `filesDir/memory_store/memory/YYYY-MM-DD.md` is maintenance-only input until
   daily distillation commits selected content to `MEMORY.md`.
-- Room schema 15 retains chats, messages, providers, pending turns,
+- Room schema 16 retains chats, messages, providers, pending turns,
   checkpoints, maintenance jobs, activity logs, mutation receipts, corpus
-  generations, and distillation checkpoints.
+  generations, and distillation checkpoints. The retired derived-index tables
+  `memory_chunk` and `memory_document` are no longer part of Room.
 - ObjectBox 5.4.2 is a disposable HNSW store below
   `noBackupFilesDir/memory_vector_index`. Deleting or corrupting it must move
   derived state forward from current Markdown; it never rolls Markdown back.
@@ -24,14 +26,75 @@ the 16 KB extension started from `dbc1148`.
   checksum-provisioned from release assets, verified again below
   `noBackupFilesDir`, self-tested with ONNX Runtime, and published through a
   dynamic `MemoryEmbeddingCapability` only after it is `READY`.
-- Startup creates an idempotent schema 15 bootstrap receipt for the current
+- Startup creates an idempotent schema 16 bootstrap receipt for the current
   `MEMORY.md`; the existing recovery/index worker then builds the complete
   ObjectBox snapshot. Missing, corrupt, or mismatched artifacts remain
   `NOT_PROVISIONED` with no network, cloud, or fake fallback.
 
-Schema 16 and removal of the old Room `memory_document` / `memory_chunk`
-tables are intentionally deferred to a later release after schema 15 has been
-installed and observed.
+Schema 16 cleanup is complete under the explicit authorization in
+`docs/superpowers/plans/2026-07-13-direct-task8-schema16-memory-index-cleanup-prompt.md`.
+That authorization skipped the additional schema 15 soak period but did not
+relax non-destructive migration, business-data preservation, or runtime
+upgrade requirements.
+
+## Task 8 / Schema 16 Evidence
+
+### Migration And Runtime Cleanup
+
+- Production Kotlin has zero references to the retired `MemoryIndexRepository`,
+  `MemoryIndexDao`, Room `MemoryDocument`/`MemoryChunk`, old rebuilder/search
+  DTOs, or `MarkdownMemoryDebugEditor`. Historical table-creation SQL remains
+  only for supported older migrations.
+- `MIGRATION_15_16` dismisses every legacy Room-index job not already
+  `succeeded` or `dismissed` with reason
+  `schema16_legacy_room_index_removed`, clears its lease/schedule, then drops
+  child `memory_chunk` before parent `memory_document`.
+- Schema 16 contains exactly the 15 retained tables. A structured comparison
+  proved all 15 retained entity definitions identical to schema 15: 185
+  fields, 37 indexes, and 6 foreign keys. Only the two derived tables, their
+  19 fields, 7 indexes, and 1 foreign key were removed.
+- `16.json` SHA-256 is
+  `E2FC5D089F3DD6B29F55C51EC2387BD151329D068B63C8FD1672597DA71FCF67`;
+  `17.json` does not exist. No destructive migration fallback is present.
+
+### Test And Device Results
+
+| Gate | Result |
+| --- | --- |
+| Focused migration JVM suite | 17 tests passed, including strict UPDATE -> child DROP -> parent DROP ordering |
+| Memory JVM suite | 267 tests, 0 failures/errors |
+| Populated Room `15 -> 16` | passed with all 17 schema 15 tables seeded, exact snapshots for 14 untouched tables, contract-field checks for maintenance jobs, and old tables/indexes absent |
+| Chained Room `14 -> 15 -> 16` | passed with business data and recovery state retained |
+| Fresh schema 16 open/reopen | passed with exactly 15 retained tables |
+| Room validation | real `ChatDatabaseV2` reopen and business/recovery/job/batch/activity DAO reads passed; `foreign_key_check` returned 0 rows and `integrity_check` returned `ok` |
+| Schema 16 startup recovery | current `MEMORY.md` bytes/hash preserved; absent ObjectBox rebuilt to READY and remained queryable after store reopen |
+| Gradle connected migration run | 3 tests passed on API 35 x86_64 `PAGE_SIZE=16384` |
+| Production Hybrid shadow | real ONNX/ObjectBox semantic hit, unavailable-model lexical equivalence, stale-store rejection, and deleted-entry exclusion passed |
+| Populated APK upgrade | schema 15 debug APK upgraded in place with `adb install -r`; no uninstall or clear-data occurred between versions |
+| Upgrade data/UI | chat, message, provider, pending turn, maintenance history, and Memory-page content remained readable |
+| Production ObjectBox deletion/rebuild | deleting only `noBackupFilesDir/memory_vector_index` and cold-starting recreated ObjectBox from current Markdown; corpus returned READY |
+| Legacy retry/notification loop | repeated starts left legacy jobs dismissed with stable attempts/row versions; 0 legacy activity rows and 0 active app notifications |
+| Debug/release/R8/lint | `assembleDebug`, `assembleRelease`, R8, and `lintVitalRelease` passed |
+
+The runtime upgrade used `emulator-5560`, API 35 x86_64, with
+`PAGE_SIZE=16384`. The schema 15 APK SHA-256 was
+`E3D908B564B34825CD59302CE39AAA15B9A234AFEB51D2A2C994AA111F163C4A`;
+the schema 16 debug APK SHA-256 was
+`CA55E22A14DF4001B288E9ED20F9D5A6C083ED767EBA80B90CFB30A85395442E`.
+Before and after migration, `MEMORY.md` SHA-256 was
+`633EA02D15E3651DD099974B3CE0D74BE26ED6A51742F4AE13F8F5E42982F7AF`.
+Content-free warning/error logs and database/APK snapshots are stored outside
+the repository under `E:\code\ChatWithChat-task8-evidence\runtime-upgrade`.
+
+### Accepted Residual Risk
+
+- The user explicitly accepted skipping an additional multi-day schema 15
+  soak. This does not weaken the passing populated migration/runtime evidence.
+- Direct installation of a schema 15 APK over a schema 16 database is
+  unsupported. Recovery is a schema 17 forward fix or a user-directed reset or
+  pre-upgrade snapshot restore, never an automatic destructive fallback.
+- Real backup-agent/cloud restore, physical ARM64 performance/OEM validation,
+  and the 32-bit ABI support decision remain OPEN, non-blocking follow-ups.
 
 ## Task 7 Evidence
 
@@ -159,14 +222,16 @@ lexical recall.
 | Deleted/stale/mismatched vectors fail closed | hybrid retriever JVM tests and ObjectBox device tests |
 | Markdown changes while embedding | synchronizer revision-retry JVM test |
 | Missing embedding never falls back to cloud | provisioning tests and real release Hybrid lexical-fallback shadow |
-| ObjectBox missing/corrupt rebuilds only derived state | recovery JVM tests and ObjectBox corruption device test |
+| ObjectBox missing/corrupt rebuilds only derived state | recovery JVM tests, ObjectBox corruption device test, schema 16 startup test, and populated runtime delete/restart smoke |
 | Dimension/fingerprint/model/tokenizer/chunker mismatch | JVM and device fail-closed tests |
 | PREPARED and rename-before-Room process death | real two-invocation process-death harness |
 | ObjectBox transaction succeeds before Room completion | manifest fast-forward/retry JVM tests |
 | Semantic file commit precedes claimed-batch completion | deterministic consolidation and distillation failpoint tests |
 | Two rapid mutations and `A -> B -> A` | persistent-generation JVM tests |
 | Worker races, leases, bounded retries, and disabled memory | scheduler/processor/worker JVM tests and Room claim device tests |
-| Populated Room `14 -> 15` upgrade | real Room instrumentation migration |
+| Populated Room `14 -> 15 -> 16` upgrade | real Room instrumentation migration with business/recovery data retained |
+| Populated Room `15 -> 16` upgrade | all retained rows/columns preserved; only two derived tables/indexes removed; real Room reopen passed |
+| Persisted legacy Room-index job after schema 16 | migration dismissal plus startup repair test; no retry or notification loop in runtime smoke |
 
 ## Release Gates
 
@@ -176,10 +241,12 @@ lexical recall.
 | Real ARM64 performance/OEM validation | OPEN | Final latency, indexing, peak RSS, cancellation, concurrency, restart, and OEM-environment evidence; it does not block or reopen the page-size gate |
 | Production embedding provisioning/quality | PASSED | Immutable revision/hash contract, 72 tokenizer fixtures, release asset/install checks, real ONNX inference, shadow semantic top-5, and process restart |
 | Production Hybrid cutover | PASSED | Production recall uses Hybrid DI after shadow passed; missing, stale, corrupt, or unavailable vectors permanently fall back to current Markdown lexical recall |
+| Room schema 16 / Task 8 cleanup | PASSED | Non-destructive populated and chained migrations, exact retained-schema comparison, in-place APK upgrade, Room reopen, Markdown preservation, and ObjectBox rebuild |
 | 32-bit ABI policy | OPEN | Separate support decision because packaged 32-bit ObjectBox LOAD alignment is `0x1000` |
 | Backup/restore integration | OPEN | Separate real backup-agent restore validation |
 
-The schema 15 production provisioning, Hybrid shadow/cutover, and 16 KB
-page-size compatibility gates have passed. The real ARM64 gate remains only a
-final performance/OEM supplement. Keep ObjectBox rebuildable, preserve lexical
-fallback permanently, and do not claim Task 8/schema 16 completion.
+The schema 16 cleanup, production provisioning, Hybrid shadow/cutover, and 16
+KB page-size compatibility gates have passed. The real ARM64 gate remains only
+a final performance/OEM supplement; 32-bit support and real backup-agent
+restore remain separate OPEN decisions. Keep ObjectBox rebuildable and preserve
+lexical fallback permanently.
