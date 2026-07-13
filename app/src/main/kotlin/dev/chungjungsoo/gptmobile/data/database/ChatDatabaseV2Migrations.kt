@@ -318,6 +318,28 @@ object ChatDatabaseV2Migrations {
         }
     }
 
+    val MIGRATION_15_16 = object : Migration(15, 16) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                UPDATE `memory_maintenance_job`
+                SET `status` = 'dismissed',
+                    `last_error` = 'schema16_legacy_room_index_removed',
+                    `blocked_reason` = NULL,
+                    `next_run_at` = NULL,
+                    `started_at` = NULL,
+                    `lease_owner` = NULL,
+                    `lease_expires_at` = NULL,
+                    `row_version` = `row_version` + 1
+                WHERE `type` IN ('rebuild_memory_index', 'repair_markdown_metadata')
+                    AND `status` NOT IN ('succeeded', 'dismissed')
+                """.trimIndent()
+            )
+            db.execSQL("DROP TABLE IF EXISTS `memory_chunk`")
+            db.execSQL("DROP TABLE IF EXISTS `memory_document`")
+        }
+    }
+
     internal fun legacyFilesToAttachmentsJson(filesValue: String): String {
         val attachments = filesValue
             .split(",")

@@ -7,7 +7,6 @@ import dev.chungjungsoo.gptmobile.data.database.dao.ChatClassificationDao
 import dev.chungjungsoo.gptmobile.data.database.dao.ChatPlatformModelV2Dao
 import dev.chungjungsoo.gptmobile.data.database.dao.ChatRoomV2Dao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryActivityLogDao
-import dev.chungjungsoo.gptmobile.data.database.dao.MemoryIndexDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryMaintenanceJobDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryRecoveryDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryTurnBatchDao
@@ -22,10 +21,8 @@ import dev.chungjungsoo.gptmobile.data.database.entity.ChatPlatformModelV2
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatRoomV2
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryActivityLog
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryChatCheckpoint
-import dev.chungjungsoo.gptmobile.data.database.entity.MemoryChunk
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryCorpusState
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryDistillationCheckpoint
-import dev.chungjungsoo.gptmobile.data.database.entity.MemoryDocument
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMaintenanceJob
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMutationGroup
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMutationReceipt
@@ -47,8 +44,6 @@ import dev.chungjungsoo.gptmobile.data.database.entity.TokenUsageRecordConverter
         ChatPlatformModelV2::class,
         PersonalMemory::class,
         ChatClassification::class,
-        MemoryDocument::class,
-        MemoryChunk::class,
         MemoryMaintenanceJob::class,
         MemoryMutationGroup::class,
         MemoryMutationReceipt::class,
@@ -58,7 +53,7 @@ import dev.chungjungsoo.gptmobile.data.database.entity.TokenUsageRecordConverter
         MemoryPendingTurn::class,
         MemoryActivityLog::class
     ],
-    version = 15,
+    version = 16,
     exportSchema = true
 )
 @TypeConverters(
@@ -77,7 +72,6 @@ abstract class ChatDatabaseV2 : RoomDatabase() {
     abstract fun personalMemoryDao(): PersonalMemoryDao
     abstract fun chatClassificationDao(): ChatClassificationDao
     abstract fun platformModelDao(): PlatformModelV2Dao
-    abstract fun memoryIndexDao(): MemoryIndexDao
     abstract fun memoryMaintenanceJobDao(): MemoryMaintenanceJobDao
     abstract fun memoryRecoveryDao(): MemoryRecoveryDao
     abstract fun memoryTurnBatchDao(): MemoryTurnBatchDao
