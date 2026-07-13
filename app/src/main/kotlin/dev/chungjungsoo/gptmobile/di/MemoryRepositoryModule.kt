@@ -46,14 +46,17 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryPromptBuilder
 import dev.chungjungsoo.gptmobile.data.memory.MemoryRetriever
 import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnBatchCoordinator
 import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnBatchScheduler
+import dev.chungjungsoo.gptmobile.data.memory.MemoryVectorIndexBootstrapService
 import dev.chungjungsoo.gptmobile.data.memory.MemoryVectorIndexRecoveryService
 import dev.chungjungsoo.gptmobile.data.memory.MemoryVectorRecallRepairTrigger
 import dev.chungjungsoo.gptmobile.data.memory.MemoryVectorRecallStateSource
 import dev.chungjungsoo.gptmobile.data.memory.RoomMemoryActivityLogger
 import dev.chungjungsoo.gptmobile.data.memory.RoomMemoryVectorRecallStateSource
 import dev.chungjungsoo.gptmobile.data.memory.WorkEnqueuingMemoryVectorRecallRepairTrigger
-import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingAvailability
-import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingCapability
+import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingArtifactInstaller
+import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingCapabilitySource
+import dev.chungjungsoo.gptmobile.data.memory.embedding.MutableMemoryEmbeddingCapabilitySource
+import dev.chungjungsoo.gptmobile.data.memory.embedding.ProductionMemoryEmbeddingProvisioner
 import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorStore
 import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorStoreFactory
 import dev.chungjungsoo.gptmobile.data.network.AnthropicAPI
@@ -104,13 +107,30 @@ object MemoryRepositoryModule {
 
     @Provides
     @Singleton
-    fun provideMemoryEmbeddingCapability(): MemoryEmbeddingCapability =
-        MemoryEmbeddingCapability.Unavailable(
-            MemoryEmbeddingAvailability.Unavailable(
-                reason = MemoryEmbeddingAvailability.Reason.NOT_PROVISIONED,
-                detail = "On-device embedding model and device validation gates have not passed"
-            )
-        )
+    fun provideMutableMemoryEmbeddingCapabilitySource(): MutableMemoryEmbeddingCapabilitySource =
+        MutableMemoryEmbeddingCapabilitySource()
+
+    @Provides
+    @Singleton
+    fun provideMemoryEmbeddingCapabilitySource(
+        source: MutableMemoryEmbeddingCapabilitySource
+    ): MemoryEmbeddingCapabilitySource = source
+
+    @Provides
+    @Singleton
+    fun provideMemoryEmbeddingArtifactInstaller(
+        @ApplicationContext context: Context
+    ): MemoryEmbeddingArtifactInstaller = MemoryEmbeddingArtifactInstaller.fromContext(context)
+
+    @Provides
+    @Singleton
+    fun provideProductionMemoryEmbeddingProvisioner(
+        artifactInstaller: MemoryEmbeddingArtifactInstaller,
+        capabilitySource: MutableMemoryEmbeddingCapabilitySource
+    ): ProductionMemoryEmbeddingProvisioner = ProductionMemoryEmbeddingProvisioner(
+        artifactInstaller = artifactInstaller,
+        capabilitySource = capabilitySource
+    )
 
     @Provides
     @Singleton
@@ -130,13 +150,13 @@ object MemoryRepositoryModule {
         memoryCorpusSnapshotter: MemoryCorpusSnapshotter,
         memoryFileStore: MemoryFileStore,
         memoryVectorStore: MemoryVectorStore,
-        memoryEmbeddingCapability: MemoryEmbeddingCapability
+        memoryEmbeddingCapabilitySource: MemoryEmbeddingCapabilitySource
     ): MemoryIndexSyncService = MemoryIndexSynchronizer(
         recoveryDao = memoryRecoveryDao,
         snapshotSource = memoryCorpusSnapshotter,
         memoryFileStore = memoryFileStore,
         vectorStore = memoryVectorStore,
-        embeddingCapability = memoryEmbeddingCapability
+        embeddingCapabilitySource = memoryEmbeddingCapabilitySource
     )
 
     @Provides
@@ -146,14 +166,14 @@ object MemoryRepositoryModule {
         memoryCorpusSnapshotter: MemoryCorpusSnapshotter,
         memoryFileStore: MemoryFileStore,
         memoryVectorStore: MemoryVectorStore,
-        memoryEmbeddingCapability: MemoryEmbeddingCapability,
+        memoryEmbeddingCapabilitySource: MemoryEmbeddingCapabilitySource,
         memoryMaintenanceScheduler: MemoryMaintenanceScheduler
     ): MemoryVectorIndexRecoveryService = MemoryVectorIndexRecoveryService(
         recoveryDao = memoryRecoveryDao,
         snapshotSource = memoryCorpusSnapshotter,
         memoryFileStore = memoryFileStore,
         vectorStore = memoryVectorStore,
-        embeddingCapability = memoryEmbeddingCapability,
+        embeddingCapabilitySource = memoryEmbeddingCapabilitySource,
         maintenanceScheduler = memoryMaintenanceScheduler
     )
 
@@ -182,14 +202,14 @@ object MemoryRepositoryModule {
         memoryCorpusSnapshotter: MemoryCorpusSnapshotter,
         markdownLexicalRetriever: MarkdownLexicalRetriever,
         memoryVectorStore: MemoryVectorStore,
-        memoryEmbeddingCapability: MemoryEmbeddingCapability,
+        memoryEmbeddingCapabilitySource: MemoryEmbeddingCapabilitySource,
         memoryVectorRecallStateSource: MemoryVectorRecallStateSource,
         memoryVectorRecallRepairTrigger: MemoryVectorRecallRepairTrigger
     ): HybridMemoryRetriever = HybridMemoryRetriever(
         snapshotSource = memoryCorpusSnapshotter,
         lexicalRetriever = markdownLexicalRetriever,
         vectorStore = memoryVectorStore,
-        embeddingCapability = memoryEmbeddingCapability,
+        embeddingCapabilitySource = memoryEmbeddingCapabilitySource,
         vectorRecallStateSource = memoryVectorRecallStateSource,
         repairTrigger = memoryVectorRecallRepairTrigger
     )
@@ -268,6 +288,18 @@ object MemoryRepositoryModule {
         memoryFileStore = memoryFileStore,
         maintenanceScheduler = memoryMaintenanceScheduler,
         workEnqueuer = memoryMaintenanceWorkEnqueuer
+    )
+
+    @Provides
+    @Singleton
+    fun provideMemoryVectorIndexBootstrapService(
+        memoryRecoveryDao: MemoryRecoveryDao,
+        memoryFileStore: MemoryFileStore,
+        memoryMutationCoordinator: MemoryMutationCoordinator
+    ): MemoryVectorIndexBootstrapService = MemoryVectorIndexBootstrapService(
+        recoveryDao = memoryRecoveryDao,
+        memoryFileStore = memoryFileStore,
+        mutationCoordinator = memoryMutationCoordinator
     )
 
     @Provides

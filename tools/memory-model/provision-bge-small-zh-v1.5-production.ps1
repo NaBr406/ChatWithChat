@@ -1,5 +1,5 @@
 param(
-    [string]$OutputDir = "app/src/androidTest/assets/memory-model/bge-small-zh-v1.5"
+    [string]$OutputDir = "app/src/main/assets/memory-model/bge-small-zh-v1.5"
 )
 
 $ErrorActionPreference = "Stop"
@@ -100,5 +100,5 @@ foreach ($Artifact in $Artifacts) {
         -ExpectedSha256 $Artifact.Sha256
 }
 
-Write-Host "Canary artifacts are ready under $ResolvedOutputDir"
-Write-Warning "The pinned Xenova ONNX export is for feasibility testing only. It is not approved for release hybrid DI."
+Write-Host "Production memory model artifacts are verified under $ResolvedOutputDir"
+Write-Host "Release builds will independently verify every artifact before packaging."

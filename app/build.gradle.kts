@@ -1,6 +1,7 @@
 @file:Suppress("UnstableApiUsage")
 
 import com.android.build.api.dsl.ApplicationExtension
+import java.security.MessageDigest
 import org.gradle.kotlin.dsl.aboutLibraries
 import org.gradle.kotlin.dsl.configure
 
@@ -24,6 +25,58 @@ val memoryTestInstrumentationRunner = if (memoryTestBuildType == "release") {
     "dev.chungjungsoo.gptmobile.data.memory.vector.Memory16KbReleaseCompatibilityInstrumentedTest"
 } else {
     "androidx.test.runner.AndroidJUnitRunner"
+}
+
+val productionMemoryModelDirectory = layout.projectDirectory.dir(
+    "src/main/assets/memory-model/bge-small-zh-v1.5"
+)
+val productionMemoryModelArtifacts = listOf(
+    Triple("model.onnx", 24_010_842L, "15b717c382bcb518ba457b93ea6850ede7f4f1cd8937454aa06972366cd19bcc"),
+    Triple("quantize_config.json", 674L, "2cc488b20fa05fe86aba2fdc2be44d24827e11e2b7c7a0753d1427da6797b46f"),
+    Triple("MODEL_CARD.md", 27_670L, "c48a4eeea77f6b1d38b48ec1c5b8d4f86d5550cc43fa345a0db1b2ca1d082369"),
+    Triple("config.json", 776L, "3853a7979202c348751b753e36f579c41d8da7d36af617d3d907e1fc9b441f2a"),
+    Triple("tokenizer.json", 439_125L, "48cea5d44424912a6fd1ea647bf4fe50b55ab8b1e5879c3275f80e339e8fae26"),
+    Triple("tokenizer_config.json", 367L, "e6f3b96db926a37d4039995fbf5ad17de158dfb8f6343d607e4dbaad18d75f5a"),
+    Triple("vocab.txt", 109_540L, "45bbac6b341c319adc98a532532882e91a9cefc0329aa57bac9ae761c27b291c")
+)
+
+val verifyProductionMemoryModelArtifacts by tasks.registering {
+    group = "verification"
+    description = "Verifies the pinned production memory model assets before a release build"
+    inputs.files(productionMemoryModelArtifacts.map { artifact ->
+        productionMemoryModelDirectory.file(artifact.first)
+    })
+    doLast {
+        productionMemoryModelArtifacts.forEach { (relativePath, expectedSize, expectedSha256) ->
+            val artifact = productionMemoryModelDirectory.file(relativePath).asFile
+            check(artifact.isFile) {
+                "Missing production memory model artifact: ${artifact.absolutePath}. " +
+                    "Run tools/memory-model/provision-bge-small-zh-v1.5-production.ps1."
+            }
+            check(artifact.length() == expectedSize) {
+                "Production memory model artifact has unexpected size: $relativePath " +
+                    "(${artifact.length()} != $expectedSize)"
+            }
+            val digest = MessageDigest.getInstance("SHA-256")
+            artifact.inputStream().buffered().use { input ->
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    digest.update(buffer, 0, count)
+                }
+            }
+            val actualSha256 = digest.digest().joinToString("") { byte -> "%02x".format(byte) }
+            check(actualSha256 == expectedSha256) {
+                "Production memory model artifact checksum mismatch: $relativePath " +
+                    "($actualSha256 != $expectedSha256)"
+            }
+        }
+    }
+}
+
+tasks.matching { task -> task.name == "preReleaseBuild" }.configureEach {
+    dependsOn(verifyProductionMemoryModelArtifacts)
 }
 
 extensions.configure<ApplicationExtension> {
@@ -146,6 +199,9 @@ dependencies {
     // Serialization
     implementation(libs.kotlin.serialization)
 
+    // On-device embeddings
+    implementation(libs.onnx.runtime.android)
+
     // Test
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
@@ -153,7 +209,6 @@ dependencies {
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.ui.test.junit4)
     androidTestImplementation(libs.room.testing)
-    androidTestImplementation(libs.onnx.runtime.android)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
 }

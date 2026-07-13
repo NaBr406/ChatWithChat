@@ -75,6 +75,76 @@ class MemoryMutationCoordinator(
         return MemoryPreparedMutation(prepared.group, prepared.receipts)
     }
 
+    suspend fun prepareLocalIndexBootstrap(
+        sourceContent: String,
+        sourceHash: String,
+        targetIndexFingerprint: String,
+        observedCorpusGeneration: Long
+    ): MemoryPreparedMutation {
+        require(SHA_256_REGEX.matches(sourceHash)) { "Bootstrap source hash must be SHA-256" }
+        require(SHA_256_REGEX.matches(targetIndexFingerprint)) { "Bootstrap index fingerprint must be SHA-256" }
+        require(observedCorpusGeneration >= 0) { "Observed corpus generation must not be negative" }
+        check(sourceContent.toByteArray(Charsets.UTF_8).sha256Hex() == sourceHash) {
+            "Bootstrap content does not match its source hash"
+        }
+
+        val identity = "$sourceHash|$targetIndexFingerprint|after=$observedCorpusGeneration"
+        val groupId = "mutation_bootstrap_${identity.sha256Utf8().take(ID_HASH_LENGTH)}"
+        recoveryDao.getMutationGroup(groupId)?.let { group ->
+            val existing = loadMutation(group)
+            check(
+                group.semanticJobId == null &&
+                    group.semanticBatchId == null &&
+                    existing.receipts.singleOrNull()?.let { receipt ->
+                        receipt.sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME &&
+                            receipt.baseSourceHash == sourceHash &&
+                            receipt.targetSourceHash == sourceHash &&
+                            receipt.targetIndexFingerprint == targetIndexFingerprint
+                    } == true
+            ) { "Existing local bootstrap mutation does not match the requested identity" }
+            return existing
+        }
+
+        memoryFileStore.cleanupStagedTargets(groupId).getOrThrow()
+        val receiptId = receiptId(groupId, MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME)
+        val staged = memoryFileStore.stageMemoryFile(
+            sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+            content = sourceContent,
+            stagingId = receiptId
+        ).getOrThrow()
+        check(staged.baseSourceHash == sourceHash) {
+            "Memory source changed before its bootstrap receipt was prepared"
+        }
+        if (staged.targetSourceHash != sourceHash) {
+            memoryFileStore.cleanupStagedTarget(staged.stagedTargetPath).getOrThrow()
+            error("Bootstrap receipt must not change canonical memory content")
+        }
+        val idempotencyKeyBase = "memory-vector-bootstrap:$identity"
+        val prepared = recoveryDao.prepareMutation(
+            MemoryMutationPrepareRequest(
+                groupId = groupId,
+                semanticJobId = null,
+                semanticBatchId = null,
+                state = MemoryMutationState.PREPARED,
+                idempotencyKeyBase = idempotencyKeyBase,
+                receipts = listOf(
+                    MemoryMutationReceiptDraft(
+                        receiptId = receiptId,
+                        sourcePath = staged.sourcePath,
+                        baseSourceHash = staged.baseSourceHash,
+                        targetSourceHash = staged.targetSourceHash,
+                        stagedTargetPath = staged.stagedTargetPath,
+                        state = MemoryMutationState.PREPARED,
+                        idempotencyKeyBase = "$idempotencyKeyBase:${staged.sourcePath}",
+                        targetIndexFingerprint = targetIndexFingerprint
+                    )
+                ),
+                createdAt = now()
+            )
+        )
+        return MemoryPreparedMutation(prepared.group, prepared.receipts)
+    }
+
     suspend fun reconcile(mutation: MemoryPreparedMutation): MemoryMutationCommitResult {
         var current = loadMutation(checkNotNull(recoveryDao.getMutationGroup(mutation.group.groupId)))
         if (current.group.state == MemoryMutationState.SUPERSEDED) {
@@ -293,7 +363,12 @@ class MemoryMutationCoordinator(
         ) {
             return mutation
         }
-        val newState = MemoryMutationState.SEMANTIC_ACK_PENDING
+        val newState = when {
+            group.semanticJobId != null -> MemoryMutationState.SEMANTIC_ACK_PENDING
+            mutation.receipts.any { receipt -> receipt.state == MemoryMutationState.INDEX_PENDING } ->
+                MemoryMutationState.INDEX_PENDING
+            else -> MemoryMutationState.INDEXED
+        }
         val changed = if (mutation.receipts.isEmpty()) {
             recoveryDao.completeEmptyMutationGroupCas(
                 groupId = group.groupId,
@@ -484,6 +559,7 @@ class MemoryMutationCoordinator(
             MemoryMutationState.FAILED
         )
         val CHAT_RECALL_CORPUS_KEY = MemoryCorpus.CHAT_RECALL_LONG_TERM.name.lowercase()
+        val SHA_256_REGEX = Regex("[0-9a-f]{64}")
     }
 }
 

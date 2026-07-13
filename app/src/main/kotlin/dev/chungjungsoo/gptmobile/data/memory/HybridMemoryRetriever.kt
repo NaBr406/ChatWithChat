@@ -2,6 +2,7 @@ package dev.chungjungsoo.gptmobile.data.memory
 
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingAvailability
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingCapability
+import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingCapabilitySource
 import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorIndexConfiguration
 import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorIndexIdentity
 import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorQuery
@@ -17,7 +18,7 @@ class HybridMemoryRetriever(
     private val snapshotSource: MemoryCorpusSnapshotSource,
     private val lexicalRetriever: MarkdownLexicalRetriever,
     private val vectorStore: MemoryVectorStore,
-    private val embeddingCapability: MemoryEmbeddingCapability,
+    private val embeddingCapabilitySource: MemoryEmbeddingCapabilitySource,
     private val vectorRecallStateSource: MemoryVectorRecallStateSource,
     private val repairTrigger: MemoryVectorRecallRepairTrigger
 ) : MemoryRetriever {
@@ -84,7 +85,8 @@ class HybridMemoryRetriever(
         snapshot: MemoryCorpusSnapshot
     ): List<VectorCandidate>? {
         return try {
-            val capability = embeddingCapability as? MemoryEmbeddingCapability.Ready ?: return unavailableVectorBranch()
+            val capability = embeddingCapabilitySource.current() as? MemoryEmbeddingCapability.Ready
+                ?: return unavailableVectorBranch()
             val configuration = capability.configuration
             val expectedIdentity = vectorRecallStateSource.expectedIdentity(snapshot, configuration)
                 ?: return unavailableVectorBranch()

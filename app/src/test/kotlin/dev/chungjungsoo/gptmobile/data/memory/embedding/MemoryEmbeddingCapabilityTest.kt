@@ -39,8 +39,8 @@ class MemoryEmbeddingCapabilityTest {
     }
 
     @Test
-    fun `production dependency injection stays unavailable until provisioning gates pass`() {
-        val capability = MemoryRepositoryModule.provideMemoryEmbeddingCapability()
+    fun `production dependency injection starts unavailable until provisioning succeeds`() {
+        val capability = MemoryRepositoryModule.provideMutableMemoryEmbeddingCapabilitySource().current()
 
         assertTrue(capability is MemoryEmbeddingCapability.Unavailable)
         val availability = (capability as MemoryEmbeddingCapability.Unavailable).availability

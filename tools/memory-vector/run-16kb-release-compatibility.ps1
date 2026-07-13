@@ -8,7 +8,7 @@ $ErrorActionPreference = "Stop"
 
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $Gradle = Join-Path $ProjectRoot "gradlew.bat"
-$ProvisionModel = Join-Path $ProjectRoot "tools/memory-model/provision-bge-small-zh-v1.5-canary.ps1"
+$ProvisionModel = Join-Path $ProjectRoot "tools/memory-model/provision-bge-small-zh-v1.5-production.ps1"
 $UnsignedReleaseApk = Join-Path $ProjectRoot "app/build/outputs/apk/release/app-release-unsigned.apk"
 $ReleaseTestApk = Join-Path $ProjectRoot "app/build/outputs/apk/androidTest/release/app-release-androidTest.apk"
 $EvidenceDirectory = Join-Path $ProjectRoot "app/build/outputs/apk/memory16k"
@@ -22,7 +22,7 @@ $ExpectedPageSize = "16384"
 $PhaseOneCheckpoint = "MEMORY_16KB_PHASE1_READY"
 $PhaseTwoCheckpoint = "MEMORY_16KB_PHASE2_OK"
 $ObjectBoxLoadPattern = 'Load .*/dev\.chungjungsoo\.gptmobile-[^/]+/base\.apk!/lib/[^/]+/libobjectbox-jni\.so'
-$OnnxLoadPattern = 'Load .*/dev\.chungjungsoo\.gptmobile\.test-[^/]+/base\.apk!/lib/[^/]+/libonnxruntime4j_jni\.so'
+$OnnxLoadPattern = 'Load .*/dev\.chungjungsoo\.gptmobile-[^/]+/base\.apk!/lib/[^/]+/libonnxruntime4j_jni\.so'
 
 function Invoke-Checked {
     param(
@@ -241,7 +241,7 @@ if ($PrimaryAbi -notin @("arm64-v8a", "x86_64")) {
 Push-Location $ProjectRoot
 try {
     if (-not $SkipBuild) {
-        Invoke-Checked "Provision checksum-verified ONNX canary model" { & $ProvisionModel }
+        Invoke-Checked "Provision checksum-verified production ONNX model" { & $ProvisionModel }
         Invoke-Checked "Build release app and release-under-test instrumentation APK" {
             & $Gradle "-PmemoryTestBuildType=release" :app:assembleRelease :app:assembleReleaseAndroidTest
         }
@@ -297,15 +297,9 @@ try {
         -LlvmReadElf $LlvmReadElf `
         -RequiredEntries @(
             "lib/arm64-v8a/libobjectbox-jni.so",
-            "lib/x86_64/libobjectbox-jni.so"
-        )
-    Assert-ApkElfLoadAlignment `
-        -Label "signed release instrumentation companion APK" `
-        -ApkPath $SignedReleaseTestApk `
-        -LlvmReadElf $LlvmReadElf `
-        -RequiredEntries @(
             "lib/arm64-v8a/libonnxruntime.so",
             "lib/arm64-v8a/libonnxruntime4j_jni.so",
+            "lib/x86_64/libobjectbox-jni.so",
             "lib/x86_64/libonnxruntime.so",
             "lib/x86_64/libonnxruntime4j_jni.so"
         )
@@ -400,7 +394,7 @@ try {
     Write-Host "PAGE_SIZE=$PageSize API=$ApiLevel ABI=$PrimaryAbi ABI_LIST=$AbiList"
     Write-Host "Installed release target: $($ReleaseInfo.Length) bytes, SHA-256 $ReleaseHash"
     Write-Host "Installed instrumentation companion: $($TestInfo.Length) bytes, SHA-256 $TestHash"
-    Write-Host "ObjectBox was loaded from the release target; ONNX Runtime was loaded from the test companion."
+    Write-Host "ObjectBox, ONNX Runtime, and the model were all loaded from the release target APK."
 } finally {
     Pop-Location
 }

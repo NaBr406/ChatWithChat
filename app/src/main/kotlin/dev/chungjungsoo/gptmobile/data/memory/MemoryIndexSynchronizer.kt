@@ -8,6 +8,7 @@ import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMaintenanceJob
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMutationReceipt
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingAvailability
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingCapability
+import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingCapabilitySource
 import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryEmbeddedChunk
 import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorIndexConfiguration
 import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorManifest
@@ -32,7 +33,7 @@ class MemoryIndexSynchronizer(
     private val snapshotSource: MemoryCorpusSnapshotSource,
     private val memoryFileStore: MemoryFileStore,
     private val vectorStore: MemoryVectorStore,
-    private val embeddingCapability: MemoryEmbeddingCapability,
+    private val embeddingCapabilitySource: MemoryEmbeddingCapabilitySource,
     private val clock: Clock = Clock.systemUTC(),
     private val json: Json = Json
 ) : MemoryIndexSyncService {
@@ -82,7 +83,7 @@ class MemoryIndexSynchronizer(
             MemoryVectorSnapshotVerification.RecoveredCorruption -> Unit
         }
 
-        val readyCapability = when (val capability = embeddingCapability) {
+        val readyCapability = when (val capability = embeddingCapabilitySource.current()) {
             is MemoryEmbeddingCapability.Ready -> capability
             is MemoryEmbeddingCapability.Unavailable ->
                 return availabilityResult(payload, capability.availability)

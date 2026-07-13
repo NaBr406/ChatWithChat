@@ -4,6 +4,7 @@ import dev.chungjungsoo.gptmobile.data.database.InMemoryMemoryRecoveryDao
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryCorpusState
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingAvailability
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingCapability
+import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingCapabilitySource
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingDescriptor
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingPooling
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingProvider
@@ -336,7 +337,7 @@ class HybridMemoryRetrieverTest {
             snapshotSource = snapshotSource,
             lexicalRetriever = lexicalRetriever,
             vectorStore = vectorStore,
-            embeddingCapability = resolvedCapability,
+            embeddingCapabilitySource = MemoryEmbeddingCapabilitySource { resolvedCapability },
             vectorRecallStateSource = FixedVectorRecallStateSource(DURABLE_GENERATION),
             repairTrigger = repairTrigger
         )

@@ -19,6 +19,8 @@ class MemoryMaintenanceStartupCoordinatorTest {
                 error("migration failed")
             },
             enqueueRepair = { enqueueCalls += 1 },
+            provision = {},
+            bootstrap = {},
             repair = { repairCalls += 1 }
         )
 
@@ -38,6 +40,8 @@ class MemoryMaintenanceStartupCoordinatorTest {
                 runMemoryStartupTasks(
                     migrate = { migrationCalls += 1 },
                     enqueueRepair = { enqueueCalls += 1 },
+                    provision = {},
+                    bootstrap = {},
                     repair = {
                         repairCalls += 1
                         error("repair failed")
@@ -58,6 +62,8 @@ class MemoryMaintenanceStartupCoordinatorTest {
         runMemoryStartupTasks(
             migrate = {},
             enqueueRepair = { error("work manager unavailable") },
+            provision = {},
+            bootstrap = {},
             repair = { repairCalls += 1 }
         )
 
@@ -71,9 +77,32 @@ class MemoryMaintenanceStartupCoordinatorTest {
         runMemoryStartupTasks(
             migrate = { order += "migrate" },
             enqueueRepair = { order += "enqueue" },
+            provision = { order += "provision" },
+            bootstrap = { order += "bootstrap" },
             repair = { order += "repair" }
         )
 
-        assertEquals(listOf("enqueue", "migrate", "repair"), order)
+        assertEquals(listOf("enqueue", "migrate", "provision", "bootstrap", "repair"), order)
+    }
+
+    @Test
+    fun `repair still runs when provisioning and bootstrap fail`() = runBlocking {
+        val order = mutableListOf<String>()
+
+        runMemoryStartupTasks(
+            enqueueRepair = { order += "enqueue" },
+            migrate = { order += "migrate" },
+            provision = {
+                order += "provision"
+                error("model unavailable")
+            },
+            bootstrap = {
+                order += "bootstrap"
+                error("bootstrap unavailable")
+            },
+            repair = { order += "repair" }
+        )
+
+        assertEquals(listOf("enqueue", "migrate", "provision", "bootstrap", "repair"), order)
     }
 }

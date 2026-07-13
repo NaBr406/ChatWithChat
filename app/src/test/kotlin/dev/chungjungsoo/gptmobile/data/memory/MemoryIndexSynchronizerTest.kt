@@ -10,6 +10,7 @@ import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMutationGroup
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMutationReceipt
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingAvailability
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingCapability
+import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingCapabilitySource
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingDescriptor
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingPooling
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingProvider
@@ -458,7 +459,7 @@ class MemoryIndexSynchronizerTest {
             snapshotSource = snapshotSource,
             memoryFileStore = fileStore,
             vectorStore = vectorStore,
-            embeddingCapability = capability,
+            embeddingCapabilitySource = MemoryEmbeddingCapabilitySource { capability },
             clock = FIXED_CLOCK
         )
 

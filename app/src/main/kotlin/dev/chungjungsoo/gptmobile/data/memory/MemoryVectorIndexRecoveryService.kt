@@ -6,6 +6,7 @@ import dev.chungjungsoo.gptmobile.data.database.dao.MemoryVectorIndexPublication
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryCorpusState
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingAvailability
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingCapability
+import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingCapabilitySource
 import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorSnapshotExpectation
 import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorSnapshotVerification
 import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorStore
@@ -19,7 +20,7 @@ class MemoryVectorIndexRecoveryService(
     private val snapshotSource: MemoryCorpusSnapshotSource,
     private val memoryFileStore: MemoryFileStore,
     private val vectorStore: MemoryVectorStore,
-    private val embeddingCapability: MemoryEmbeddingCapability,
+    private val embeddingCapabilitySource: MemoryEmbeddingCapabilitySource,
     private val maintenanceScheduler: MemoryMaintenanceScheduler,
     private val clock: Clock = Clock.systemUTC(),
     private val json: Json = Json
@@ -224,7 +225,9 @@ class MemoryVectorIndexRecoveryService(
         }
     }
 
-    private suspend fun embeddingAvailability(): MemoryEmbeddingAvailability = when (val capability = embeddingCapability) {
+    private suspend fun embeddingAvailability(): MemoryEmbeddingAvailability = when (
+        val capability = embeddingCapabilitySource.current()
+    ) {
         is MemoryEmbeddingCapability.Ready -> capability.provider.availability()
         is MemoryEmbeddingCapability.Unavailable -> capability.availability
     }

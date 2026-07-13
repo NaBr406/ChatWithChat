@@ -19,14 +19,15 @@ class OnnxRuntimeBuildCanaryInstrumentedTest {
     @Test
     fun pinnedInt8Model_createsSessionAndProducesNormalizedClsEmbedding() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val targetContext = instrumentation.targetContext
         val assetPath = "memory-model/bge-small-zh-v1.5/model.onnx"
         val hasProvisionedModel = runCatching {
-            instrumentation.context.assets.open(assetPath).close()
+            targetContext.assets.open(assetPath).close()
         }.isSuccess
-        assumeTrue("Run tools/memory-model/provision-bge-small-zh-v1.5-canary.ps1 first", hasProvisionedModel)
+        assumeTrue("Run tools/memory-model/provision-bge-small-zh-v1.5-production.ps1 first", hasProvisionedModel)
 
-        val modelFile = File(instrumentation.targetContext.cacheDir, "bge-small-zh-v1.5-int8.onnx")
-        instrumentation.context.assets.open(assetPath).use { input ->
+        val modelFile = File(targetContext.cacheDir, "bge-small-zh-v1.5-int8.onnx")
+        targetContext.assets.open(assetPath).use { input ->
             modelFile.outputStream().use(input::copyTo)
         }
         assertEquals(EXPECTED_MODEL_SHA256, modelFile.sha256())

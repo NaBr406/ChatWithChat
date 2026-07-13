@@ -1,6 +1,6 @@
 # On-Device Vector Memory Artifact Contract
 
-This contract records the Task 0 dependency and model gate for the first schema 15 delivery. It does not enable production hybrid recall.
+This is the immutable production artifact contract for the schema 15 on-device embedding implementation. It authorizes local provisioning and READY capability publication after runtime verification; production Hybrid recall remains subject to the separate shadow gate.
 
 ## Baseline
 
@@ -18,11 +18,11 @@ This contract records the Task 0 dependency and model gate for the first schema 
 - ObjectBox runtime API is Apache-2.0. `objectbox-android-db` also declares the ObjectBox Binary License and OpenLDAP Public License 2.8. The Gradle plugin and processor are AGPL-3.0 build-time tools.
 - ONNX Runtime is MIT licensed.
 - The ObjectBox store is a separate derived store below `noBackupFilesDir`; Task 0 opens only a disposable canary directory.
-- The fixed candidate HNSW schema is 512 dimensions with cosine distance. No production READY manifest is published in Task 0.
+- The production HNSW schema is fixed at 512 dimensions with cosine distance.
 
 ## Model Source
 
-The candidate model is `BAAI/bge-small-zh-v1.5` at immutable revision `7999e1d3359715c523056ef9478215996d62a620`.
+The tokenizer and model-card source is `BAAI/bge-small-zh-v1.5` at immutable revision `7999e1d3359715c523056ef9478215996d62a620`.
 
 | Artifact | Bytes | SHA-256 |
 | --- | ---: | --- |
@@ -33,12 +33,14 @@ The candidate model is `BAAI/bge-small-zh-v1.5` at immutable revision `7999e1d33
 | `tokenizer_config.json` | 367 | `e6f3b96db926a37d4039995fbf5ad17de158dfb8f6343d607e4dbaad18d75f5a` |
 | `vocab.txt` | 109,540 | `45bbac6b341c319adc98a532532882e91a9cefc0329aa57bac9ae761c27b291c` |
 
-The feasibility artifact is `Xenova/bge-small-zh-v1.5` revision `75c43b069aac4d136ba6bc1122f995fedcfd2781`:
+The production ONNX binary is the exact companion-validated artifact from `Xenova/bge-small-zh-v1.5` revision `75c43b069aac4d136ba6bc1122f995fedcfd2781`:
 
 | Artifact | Bytes | SHA-256 |
 | --- | ---: | --- |
 | `onnx/model_quantized.onnx` | 24,010,842 | `15b717c382bcb518ba457b93ea6850ede7f4f1cd8937454aa06972366cd19bcc` |
 | `quantize_config.json` | 674 | `2cc488b20fa05fe86aba2fdc2be44d24827e11e2b7c7a0753d1427da6797b46f` |
+
+This contract deliberately treats the Xenova ONNX binary as an immutable upstream artifact identified by repository, revision, byte length, and SHA-256. It does not claim that this binary is a locally reproducible export of the BAAI safetensors checkpoint.
 
 Expected tensors and retrieval semantics:
 
@@ -53,19 +55,27 @@ Expected tensors and retrieval semantics:
 
 ## Delivery Choice
 
-The selected lifecycle is a checksum-verified build-provisioned bundled asset. `tools/memory-model/provision-bge-small-zh-v1.5-canary.ps1` obtains the pinned feasibility artifacts without a mutable URL and puts them only in an ignored instrumentation asset directory.
+The selected lifecycle is a checksum-verified build-provisioned bundled asset:
 
-A future release-hybrid provisioning task must:
+1. `tools/memory-model/provision-bge-small-zh-v1.5-production.ps1` downloads only immutable revision URLs and verifies every byte length and SHA-256 before writing `app/src/main/assets/memory-model/bge-small-zh-v1.5/`.
+2. Generated model assets are intentionally ignored by Git. The script and this immutable contract are tracked.
+3. `:app:verifyProductionMemoryModelArtifacts` independently verifies all seven files. Every release build depends on that task and fails when an artifact is absent, truncated, replaced, or mismatched.
+4. At runtime, the app verifies the packaged assets and atomically installs them below `noBackupFilesDir/memory_models/bge-small-zh-v1.5/15b717c382bcb518ba457b93ea6850ede7f4f1cd8937454aa06972366cd19bcc/`.
+5. The installed files are verified again before ONNX Runtime opens a session. Missing, corrupt, or mismatched files keep `MemoryEmbeddingCapability` at `NOT_PROVISIONED` and never invoke a network, cloud embedding, or fake provider.
+6. Only successful artifact verification, tokenizer construction, ONNX session initialization, 512-dimensional CLS extraction, and L2 normalization may transition the process-local capability to `READY`.
 
-1. Accept only an immutable official export whose exporter, quantizer, opset, and dependency versions are pinned.
-2. Verify every artifact size and SHA-256 before adding generated release assets.
-3. Fail the release build when hybrid release DI is enabled and any artifact is absent or mismatched.
-4. Copy the verified model atomically to `noBackupFilesDir/memory_models/bge-small-zh-v1.5/<model-sha256>/model.onnx`.
-5. Re-verify the installed model before opening it. Deletion returns the provider to `UNAVAILABLE`; it never triggers a cloud or fake fallback.
+The release provisioning command is:
+
+```powershell
+.\tools\memory-model\provision-bge-small-zh-v1.5-production.ps1
+.\gradlew.bat :app:verifyProductionMemoryModelArtifacts :app:assembleRelease
+```
 
 ## Gate Status
 
-ObjectBox and ONNX build/native canaries may proceed. Production embedding and READY HNSW publication remain blocked because the pinned Xenova INT8 artifact does not record a complete reproducible exporter toolchain, 50 tokenizer golden fixtures and Recall@5 evidence are not yet present, and no API 31+ arm64 physical 16 KB device is connected. Until all gates pass, production recall remains current-Markdown lexical and ObjectBox remains shadow-only.
+The companion-validated Xenova model, BAAI tokenizer, and inference parameters are promoted by this contract for production provisioning. The Android 15 Experimental 16 KB x86_64 emulator gate passed with `PAGE_SIZE=16384`; both arm64-v8a and x86_64 ELF LOAD alignment checks passed, so page-size compatibility is no longer blocked. A real ARM64 device remains a separate final performance and OEM-environment supplement, not a page-size or provisioning prerequisite.
+
+Production Hybrid DI still requires the independent shadow gate: ordinary recall must exclude daily notes, stale vectors must fail closed, deleted content must become immediately ineligible, and lexical fallback must remain permanent. Schema 16 cleanup is not authorized by this contract.
 
 ## Task 0 Verification
 

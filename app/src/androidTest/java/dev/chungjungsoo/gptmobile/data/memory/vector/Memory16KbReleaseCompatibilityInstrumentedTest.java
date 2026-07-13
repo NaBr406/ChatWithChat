@@ -82,7 +82,7 @@ public final class Memory16KbReleaseCompatibilityInstrumentedTest extends Instru
         assertRelease16KbTarget(target);
         resetHarness(target);
 
-        File model = provisionVerifiedModel(getContext(), target);
+        File model = provisionVerifiedModel(target);
         float[] firstEmbedding = createEmbedding(model);
         MemoryVectorReleaseCompatibilityProbe.writeQueryAndClose(
                 target,
@@ -143,7 +143,7 @@ public final class Memory16KbReleaseCompatibilityInstrumentedTest extends Instru
         );
     }
 
-    private static File provisionVerifiedModel(Context testContext, Context targetContext) throws Exception {
+    private static File provisionVerifiedModel(Context targetContext) throws Exception {
         File destination = modelFile(targetContext);
         File temporary = new File(destination.getParentFile(), destination.getName() + ".download");
         File parent = destination.getParentFile();
@@ -154,7 +154,7 @@ public final class Memory16KbReleaseCompatibilityInstrumentedTest extends Instru
             throw new AssertionError("Unable to remove stale ONNX canary download");
         }
 
-        try (InputStream input = testContext.getAssets().open(MODEL_ASSET_PATH);
+        try (InputStream input = targetContext.getAssets().open(MODEL_ASSET_PATH);
              FileOutputStream output = new FileOutputStream(temporary)) {
             byte[] buffer = new byte[8192];
             int count;
@@ -165,8 +165,8 @@ public final class Memory16KbReleaseCompatibilityInstrumentedTest extends Instru
             output.getFD().sync();
         } catch (Throwable throwable) {
             throw new AssertionError(
-                    "Missing verified ONNX canary asset; run " +
-                            "tools/memory-model/provision-bge-small-zh-v1.5-canary.ps1",
+                    "Missing verified production ONNX asset; run " +
+                            "tools/memory-model/provision-bge-small-zh-v1.5-production.ps1",
                     throwable
             );
         }
@@ -174,9 +174,9 @@ public final class Memory16KbReleaseCompatibilityInstrumentedTest extends Instru
         assertEquals(EXPECTED_MODEL_BYTES, temporary.length());
         assertEquals(EXPECTED_MODEL_SHA256, sha256(temporary));
         if (destination.exists() && !destination.delete()) {
-            throw new AssertionError("Unable to replace stale ONNX canary model");
+            throw new AssertionError("Unable to replace stale production ONNX model");
         }
-        assertTrue("Unable to publish verified ONNX canary model", temporary.renameTo(destination));
+        assertTrue("Unable to publish verified production ONNX model", temporary.renameTo(destination));
         assertEquals(EXPECTED_MODEL_SHA256, sha256(destination));
         return destination;
     }
