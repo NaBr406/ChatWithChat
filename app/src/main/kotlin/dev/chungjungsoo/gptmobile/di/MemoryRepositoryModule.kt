@@ -216,8 +216,8 @@ object MemoryRepositoryModule {
 
     @Provides
     @Singleton
-    fun provideMemoryRetriever(markdownLexicalRetriever: MarkdownLexicalRetriever): MemoryRetriever =
-        markdownLexicalRetriever
+    fun provideMemoryRetriever(hybridMemoryRetriever: HybridMemoryRetriever): MemoryRetriever =
+        hybridMemoryRetriever
 
     @Provides
     @Singleton

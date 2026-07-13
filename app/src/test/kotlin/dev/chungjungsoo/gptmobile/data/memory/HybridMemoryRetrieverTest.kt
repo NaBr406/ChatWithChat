@@ -105,6 +105,7 @@ class HybridMemoryRetrieverTest {
 
         assertEquals("mem_zh", chineseResults.first().entryId)
         assertEquals("mem_en", englishResults.first().entryId)
+        assertEquals(0, fixture.provider.embedQueryCalls)
         assertEquals(0, fixture.vectorStore.verifyCalls)
         assertEquals(0, fixture.vectorStore.queryCalls)
         assertEquals(2, fixture.repairTrigger.requestCalls)
@@ -310,11 +311,13 @@ class HybridMemoryRetrieverTest {
     }
 
     @Test
-    fun `production DI remains lexical while the real model gate is blocked`() {
+    fun `production DI uses hybrid while maintenance remains lexical after shadow gate passes`() {
         val source = StaticSnapshotSource(snapshot())
         val lexical = MarkdownLexicalRetriever(source)
+        val hybrid = fixture(snapshot(), snapshotSource = source).retriever
 
-        assertTrue(MemoryRepositoryModule.provideMemoryRetriever(lexical) === lexical)
+        assertTrue(MemoryRepositoryModule.provideMemoryRetriever(hybrid) === hybrid)
+        assertTrue(MemoryRepositoryModule.provideMemoryMaintenanceCorpusReader(lexical) === lexical)
     }
 
     private fun fixture(

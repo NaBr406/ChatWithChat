@@ -1,6 +1,6 @@
 # On-Device Vector Memory Artifact Contract
 
-This is the immutable production artifact contract for the schema 15 on-device embedding implementation. It authorizes local provisioning and READY capability publication after runtime verification; production Hybrid recall remains subject to the separate shadow gate.
+This is the immutable production artifact contract for the schema 15 on-device embedding implementation. It authorizes local provisioning and READY capability publication after runtime verification. The separate production Hybrid shadow gate has passed and production DI is enabled with permanent current-Markdown lexical fallback.
 
 ## Baseline
 
@@ -75,7 +75,7 @@ The release provisioning command is:
 
 The companion-validated Xenova model, BAAI tokenizer, and inference parameters are promoted by this contract for production provisioning. The Android 15 Experimental 16 KB x86_64 emulator gate passed with `PAGE_SIZE=16384`; both arm64-v8a and x86_64 ELF LOAD alignment checks passed, so page-size compatibility is no longer blocked. A real ARM64 device remains a separate final performance and OEM-environment supplement, not a page-size or provisioning prerequisite.
 
-Production Hybrid DI still requires the independent shadow gate: ordinary recall must exclude daily notes, stale vectors must fail closed, deleted content must become immediately ineligible, and lexical fallback must remain permanent. Schema 16 cleanup is not authorized by this contract.
+The independent production Hybrid shadow gate passed: ordinary recall excludes daily notes, stale vectors fail closed, deleted content becomes immediately ineligible, and lexical fallback remains permanent. Production Hybrid DI is enabled. Schema 16 cleanup is not authorized by this contract.
 
 ## Task 0 Verification
 
@@ -87,4 +87,4 @@ Production Hybrid DI still requires the independent shadow gate: ordinary recall
 - Historical Task 0 release delta from the recorded baseline was +8,096,397 bytes debug and +9,659,333 bytes release; ONNX Runtime was still AndroidTest-only at that stage. The production evidence is recorded in `on-device-vector-memory-readiness.md`.
 - `zipalign -c -P 16 -v 4` passed for the release APK.
 - `llvm-objdump -p` reports ObjectBox LOAD alignment `2**14` for arm64-v8a and x86_64, and `2**12` for armeabi-v7a and x86.
-- The connected emulator reports page size 4096. Real arm64 process-restart, performance, cancellation/concurrency, and 16 KB device checks remain unverified and keep production hybrid disabled.
+- Historical Task 0 evidence used a 4096-byte-page emulator and did not authorize Hybrid cutover at that stage. Later production shadow and Android 15 Experimental 16 KB x86_64 release evidence are recorded in `on-device-vector-memory-readiness.md`; real ARM64 performance/OEM validation remains a separate supplement.

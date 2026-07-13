@@ -17,8 +17,10 @@ the 16 KB extension started from `dbc1148`.
 - ObjectBox 5.4.2 is a disposable HNSW store below
   `noBackupFilesDir/memory_vector_index`. Deleting or corrupting it must move
   derived state forward from current Markdown; it never rolls Markdown back.
-- Production `MemoryRetriever` remains `MarkdownLexicalRetriever` until the
-  separately committed Hybrid cutover. The production model is now
+- Production `MemoryRetriever` is `HybridMemoryRetriever` after the production
+  shadow gate passed. It always derives lexical candidates from current
+  `MEMORY.md` and permanently falls back to them whenever the vector branch is
+  unavailable or fails freshness checks. The production model is
   checksum-provisioned from release assets, verified again below
   `noBackupFilesDir`, self-tested with ONNX Runtime, and published through a
   dynamic `MemoryEmbeddingCapability` only after it is `READY`.
@@ -173,11 +175,11 @@ lexical recall.
 | 16 KB emulator compatibility | PASSED | Clears page-size compatibility after release lifecycle, process restart, ZIP alignment, and both 64-bit ABI ELF checks |
 | Real ARM64 performance/OEM validation | OPEN | Final latency, indexing, peak RSS, cancellation, concurrency, restart, and OEM-environment evidence; it does not block or reopen the page-size gate |
 | Production embedding provisioning/quality | PASSED | Immutable revision/hash contract, 72 tokenizer fixtures, release asset/install checks, real ONNX inference, shadow semantic top-5, and process restart |
-| Production Hybrid cutover | READY | Shadow passed; enable Hybrid DI in a separate commit while permanently retaining lexical fallback |
+| Production Hybrid cutover | PASSED | Production recall uses Hybrid DI after shadow passed; missing, stale, corrupt, or unavailable vectors permanently fall back to current Markdown lexical recall |
 | 32-bit ABI policy | OPEN | Separate support decision because packaged 32-bit ObjectBox LOAD alignment is `0x1000` |
 | Backup/restore integration | OPEN | Separate real backup-agent restore validation |
 
-The schema 15 production provisioning, Hybrid shadow, and 16 KB page-size
-compatibility gates are valid. The real ARM64 gate remains only a final
-performance/OEM supplement. Keep ObjectBox rebuildable, preserve lexical
-fallback after Hybrid cutover, and do not claim Task 8/schema 16 completion.
+The schema 15 production provisioning, Hybrid shadow/cutover, and 16 KB
+page-size compatibility gates have passed. The real ARM64 gate remains only a
+final performance/OEM supplement. Keep ObjectBox rebuildable, preserve lexical
+fallback permanently, and do not claim Task 8/schema 16 completion.

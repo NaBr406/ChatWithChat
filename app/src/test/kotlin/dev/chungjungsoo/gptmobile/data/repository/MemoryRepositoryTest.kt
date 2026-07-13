@@ -19,6 +19,7 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryMarkdownCodec
 import dev.chungjungsoo.gptmobile.data.memory.MemoryPromptBuilder
 import dev.chungjungsoo.gptmobile.data.memory.MemoryRetrievalRequest
 import dev.chungjungsoo.gptmobile.data.memory.MemoryRetrievalResult
+import dev.chungjungsoo.gptmobile.data.memory.MemoryRetrievalStrategy
 import dev.chungjungsoo.gptmobile.data.memory.MemoryRetriever
 import dev.chungjungsoo.gptmobile.data.memory.MemorySensitivity
 import dev.chungjungsoo.gptmobile.data.memory.MemorySource
@@ -53,6 +54,7 @@ class MemoryRepositoryTest {
         assertEquals(MemoryCorpus.CHAT_RECALL_LONG_TERM, retriever.lastRequest?.corpus)
         assertEquals(900, retriever.lastRequest?.tokenBudget)
         assertTrue(retriever.lastRequest?.includePrivate == true)
+        assertEquals(MemoryRetrievalStrategy.HYBRID, retriever.lastRequest?.strategy)
         assertEquals(1, prepared.retrievedMemories.size)
         assertTrue(prepared.prompt!!.contains("implementation before long explanations"))
         assertTrue(prepared.prompt.contains("path: MEMORY.md"))
@@ -102,7 +104,9 @@ class MemoryRepositoryTest {
         )
         fileStore.appendDailyNote(MarkdownMemoryCodec().renderDailyAppend(listOf(hiddenEntry))).getOrThrow()
         val repository = createRepository(
-            MarkdownLexicalRetriever(MemoryCorpusSnapshotter(fileStore, MemoryChunker()))
+            LexicalFallbackMemoryRetriever(
+                MarkdownLexicalRetriever(MemoryCorpusSnapshotter(fileStore, MemoryChunker()))
+            )
         )
 
         val hidden = repository.prepareMemoryContext(
@@ -355,6 +359,13 @@ private class FakeVectorMemoryRetriever : MemoryRetriever {
             )
         )
     }
+}
+
+private class LexicalFallbackMemoryRetriever(
+    private val lexicalRetriever: MarkdownLexicalRetriever
+) : MemoryRetriever {
+    override suspend fun retrieve(request: MemoryRetrievalRequest): Result<List<MemoryRetrievalResult>> =
+        lexicalRetriever.retrieve(request.copy(strategy = MemoryRetrievalStrategy.LEXICAL))
 }
 
 private class RecordingRepositoryMemoryIndexRebuilder : MemoryIndexRebuilder {

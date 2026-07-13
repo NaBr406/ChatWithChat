@@ -16,6 +16,7 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryFileStore
 import dev.chungjungsoo.gptmobile.data.memory.MemoryIndexRebuilder
 import dev.chungjungsoo.gptmobile.data.memory.MemoryPromptBuilder
 import dev.chungjungsoo.gptmobile.data.memory.MemoryRetrievalRequest
+import dev.chungjungsoo.gptmobile.data.memory.MemoryRetrievalStrategy
 import dev.chungjungsoo.gptmobile.data.memory.MemoryRetriever
 import dev.chungjungsoo.gptmobile.data.memory.MemoryStatus
 import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnBatchCoordinator
@@ -70,7 +71,8 @@ class MemoryRepositoryImpl(
                 limit = MAX_SELECTED_MEMORIES,
                 candidateLimit = MAX_CANDIDATE_MEMORIES,
                 tokenBudget = MEMORY_RECALL_TOKEN_BUDGET,
-                includePrivate = true
+                includePrivate = true,
+                strategy = MemoryRetrievalStrategy.HYBRID
             )
         ).getOrElse { throwable ->
             logWarning("Local memory retrieval failed; continuing without memory: ${throwable.message}", throwable)
