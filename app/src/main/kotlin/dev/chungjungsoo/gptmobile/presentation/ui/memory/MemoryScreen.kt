@@ -25,7 +25,6 @@ import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -59,10 +58,6 @@ fun MemoryScreen(
     val emptyMarkdownText = stringResource(R.string.memory_export_empty_markdown)
     var selectedTab by rememberSaveable { mutableIntStateOf(MEMORY_TAB) }
     val materialColors = settingsMaterialColors()
-
-    LaunchedEffect(Unit) {
-        memoryViewModel.loadMemories()
-    }
 
     Scaffold(
         topBar = {

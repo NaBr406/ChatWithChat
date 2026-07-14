@@ -31,7 +31,15 @@ class MemoryViewModel @Inject constructor(
     val uiState = _uiState.asStateFlow()
 
     init {
-        loadMemories()
+        viewModelScope.launch {
+            memoryRepository.observeLongTermMarkdown().collect { markdown ->
+                _uiState.update { it.copy(markdown = markdown) }
+            }
+        }
+        viewModelScope.launch {
+            val memoryEnabled = settingRepository.fetchMemoryEnabled()
+            _uiState.update { it.copy(memoryEnabled = memoryEnabled) }
+        }
         viewModelScope.launch {
             memoryActivityLogDao.observeLatest().collect { logs ->
                 _uiState.update { it.copy(activityLogs = logs) }
@@ -39,22 +47,10 @@ class MemoryViewModel @Inject constructor(
         }
     }
 
-    fun loadMemories() {
-        viewModelScope.launch {
-            memoryRepository.migrateActiveMemoriesToMarkdown()
-            _uiState.update {
-                it.copy(
-                    markdown = memoryRepository.getLongTermMarkdown(),
-                    memoryEnabled = settingRepository.fetchMemoryEnabled()
-                )
-            }
-        }
-    }
-
     fun exportMarkdown() {
         viewModelScope.launch {
-            val markdown = _uiState.value.markdown.ifBlank { memoryRepository.getLongTermMarkdown() }
-            _uiState.update { it.copy(exportMarkdown = markdown) }
+            val markdown = memoryRepository.getLongTermMarkdown()
+            _uiState.update { it.copy(markdown = markdown, exportMarkdown = markdown) }
         }
     }
 
