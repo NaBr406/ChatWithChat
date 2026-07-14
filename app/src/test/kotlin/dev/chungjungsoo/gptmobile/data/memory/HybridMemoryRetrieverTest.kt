@@ -136,6 +136,87 @@ class HybridMemoryRetrieverTest {
     }
 
     @Test
+    fun `vector exact duplicates trigger bounded overfetch without consuming candidate limit`() = runBlocking {
+        val first = chunk("a", "mem_duplicate_a", "Same semantic memory.")
+        val duplicate = chunk("b", "mem_duplicate_b", "  SAME   SEMANTIC MEMORY.  ")
+        val unique = chunk("c", "mem_unique", "Different semantic memory.")
+        val fixture = fixture(snapshot(chunks = listOf(first, duplicate, unique)))
+        fixture.vectorStore.matches = listOf(
+            match(first, TARGET_VECTOR, 0f),
+            match(duplicate, NEAR_VECTOR, 0.01f),
+            match(unique, DIVERSE_VECTOR, 0.02f)
+        )
+
+        val results = fixture.retriever.retrieve(
+            request("vector only").copy(limit = 2, candidateLimit = 2)
+        ).getOrThrow()
+
+        assertEquals(listOf("mem_duplicate_a", "mem_unique"), results.map { result -> result.entryId })
+        assertEquals(listOf(2, 3), fixture.vectorStore.queryLimits)
+    }
+
+    @Test
+    fun `vector overfetch reaches unique candidates beyond five hundred exact duplicates`() = runBlocking {
+        val duplicates = (0 until 600).map { index ->
+            chunk("duplicate-$index", "mem_duplicate_$index", "Repeated historical memory.")
+        }
+        val unique = chunk("unique", "mem_unique", "Unique memory after historical duplicates.")
+        val chunks = duplicates + unique
+        val fixture = fixture(snapshot(chunks = chunks))
+        fixture.vectorStore.approximateReturnCap = 153
+        fixture.vectorStore.matches = duplicates.mapIndexed { index, chunk ->
+            match(chunk, TARGET_VECTOR, index / 10_000f)
+        } + match(unique, DIVERSE_VECTOR, 0.1f)
+
+        val results = fixture.retriever.retrieve(
+            request("vector only").copy(limit = 2, candidateLimit = 2)
+        ).getOrThrow()
+
+        assertEquals(listOf("mem_duplicate_0", "mem_unique"), results.map { result -> result.entryId })
+        assertEquals(601, fixture.vectorStore.queryLimits.last())
+        assertTrue(fixture.vectorStore.queryLimits.any { limit -> limit > 500 })
+        assertTrue(fixture.vectorStore.queryLimits.size > 2)
+    }
+
+    @Test
+    fun `hybrid keeps the highest ranked representative of cross branch exact text`() = runBlocking {
+        val lexical = chunk("a", "mem_lexical", "Shared exact memory.")
+        val vectorDuplicate = chunk("b", "mem_vector", "  SHARED   EXACT MEMORY.  ")
+        val vectorUnique = chunk("c", "mem_unique", "Independent vector context.")
+        val fixture = fixture(snapshot(chunks = listOf(lexical, vectorDuplicate, vectorUnique)))
+        fixture.vectorStore.matches = listOf(
+            match(vectorDuplicate, TARGET_VECTOR, 0f),
+            match(vectorUnique, DIVERSE_VECTOR, 0.01f)
+        )
+
+        val results = fixture.retriever.retrieve(
+            request("shared exact memory").copy(limit = 3, candidateLimit = 3)
+        ).getOrThrow()
+
+        assertEquals(listOf("mem_lexical", "mem_unique"), results.map { result -> result.entryId })
+        assertEquals(1, results.count { result -> normalizeExactMemoryText(result.text) == "shared exact memory." })
+    }
+
+    @Test
+    fun `unavailable vector fallback keeps exact duplicates from consuming lexical candidates`() = runBlocking {
+        val first = chunk("a", "mem_duplicate_a", "Shared fallback memory.")
+        val duplicate = chunk("b", "mem_duplicate_b", "  SHARED   FALLBACK MEMORY.  ")
+        val unique = chunk("c", "mem_unique", "Shared unique context.")
+        val fixture = fixture(
+            snapshot(chunks = listOf(first, duplicate, unique)),
+            capability = unavailableCapability()
+        )
+
+        val results = fixture.retriever.retrieve(
+            request("shared").copy(limit = 2, candidateLimit = 2)
+        ).getOrThrow()
+
+        assertEquals(listOf("mem_duplicate_a", "mem_unique"), results.map { result -> result.entryId })
+        assertEquals(0, fixture.vectorStore.queryCalls)
+        assertEquals(1, fixture.repairTrigger.requestCalls)
+    }
+
+    @Test
     fun `MMR selects a diverse vector result before a near duplicate`() = runBlocking {
         val first = chunk("first", "mem_first", "Primary response style.")
         val nearDuplicate = chunk("near", "mem_near", "Very similar response style.")
@@ -462,8 +543,10 @@ class HybridMemoryRetrieverTest {
         var matches = emptyList<MemoryVectorMatch>()
         var verification: MemoryVectorSnapshotVerification? = null
         var queryResult: MemoryVectorQueryResult? = null
+        var approximateReturnCap: Int? = null
         var verifyCalls = 0
         var queryCalls = 0
+        val queryLimits = mutableListOf<Int>()
 
         override fun readManifest(): MemoryVectorManifest? = readyManifest(identity, matches.size)
 
@@ -483,9 +566,16 @@ class HybridMemoryRetrieverTest {
 
         override fun query(request: MemoryVectorQuery): MemoryVectorQueryResult {
             queryCalls += 1
+            queryLimits += request.limit
+            val requestedMatches = matches.take(request.limit)
+            val returnedMatches = if (request.limit <= 500) {
+                requestedMatches.take(approximateReturnCap ?: requestedMatches.size)
+            } else {
+                requestedMatches
+            }
             return queryResult ?: MemoryVectorQueryResult.Ready(
                 manifest = readyManifest(request.expectedIdentity, matches.size),
-                matches = matches.take(request.limit)
+                matches = returnedMatches
             )
         }
 

@@ -30,6 +30,7 @@ import dev.chungjungsoo.gptmobile.data.dto.openai.common.Role as OpenAIRole
 import dev.chungjungsoo.gptmobile.data.dto.openai.common.TextContent as OpenAITextContent
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ChatCompletionRequest
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ChatCompletionToolChoice
+import dev.chungjungsoo.gptmobile.data.dto.openai.request.ChatMessage
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ResponseFunctionCallInputItem
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ResponseFunctionCallOutputItem
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ResponseToolChoice
@@ -1406,6 +1407,87 @@ class ChatRepositoryImplTest {
         )
     }
 
+    @Test
+    fun `openai responses final request merges memory exactly once with all prompt sections`() = runBlocking {
+        val harness = providerPromptHarness()
+        val platform = openAIPlatform(systemPrompt = PROVIDER_BASE_SYSTEM_MARKER)
+
+        harness.execute(platform)
+
+        assertProviderPromptSections(
+            provider = "OpenAI Responses",
+            prompt = harness.openAIAPI.responsesRequests.single().instructions.orEmpty()
+        )
+    }
+
+    @Test
+    fun `openrouter chat final request merges memory exactly once with all prompt sections`() = runBlocking {
+        val harness = providerPromptHarness()
+        val platform = openRouterPlatform(systemPrompt = PROVIDER_BASE_SYSTEM_MARKER)
+
+        harness.execute(platform)
+
+        assertProviderPromptSections(
+            provider = "OpenRouter chat completions",
+            prompt = harness.openAIAPI.chatCompletionRequests.single().systemText()
+        )
+    }
+
+    @Test
+    fun `ollama chat final request merges memory exactly once with all prompt sections`() = runBlocking {
+        val harness = providerPromptHarness()
+        val platform = ollamaPlatform(systemPrompt = PROVIDER_BASE_SYSTEM_MARKER)
+
+        harness.execute(platform)
+
+        assertProviderPromptSections(
+            provider = "Ollama chat completions",
+            prompt = harness.openAIAPI.chatCompletionRequests.single().systemText()
+        )
+    }
+
+    @Test
+    fun `groq final request merges memory exactly once with all prompt sections`() = runBlocking {
+        val harness = providerPromptHarness()
+        val platform = groqPlatform(reasoning = false, model = "llama-3.3-70b-versatile")
+            .copy(systemPrompt = PROVIDER_BASE_SYSTEM_MARKER)
+
+        harness.execute(platform)
+
+        assertEquals(1, harness.groqAPI.streamCalls)
+        assertProviderPromptSections(
+            provider = "Groq",
+            prompt = checkNotNull(harness.groqAPI.lastRequest).messages.systemText()
+        )
+    }
+
+    @Test
+    fun `anthropic final request merges memory exactly once with all prompt sections`() = runBlocking {
+        val harness = providerPromptHarness()
+        val platform = anthropicPlatform(systemPrompt = PROVIDER_BASE_SYSTEM_MARKER)
+
+        harness.execute(platform)
+
+        assertProviderPromptSections(
+            provider = "Anthropic",
+            prompt = harness.anthropicAPI.requests.single().systemPrompt.orEmpty()
+        )
+    }
+
+    @Test
+    fun `google final request merges memory exactly once with all prompt sections`() = runBlocking {
+        val harness = providerPromptHarness()
+        val platform = googlePlatform(systemPrompt = PROVIDER_BASE_SYSTEM_MARKER)
+
+        harness.execute(platform)
+
+        val prompt = harness.googleAPI.requests.single().systemInstruction
+            ?.parts
+            .orEmpty()
+            .joinToString(separator = "\n") { part -> part.text.orEmpty() }
+        assertProviderPromptSections(provider = "Google", prompt = prompt)
+    }
+
     private fun createRepository(
         groqAPI: GroqAPI = FakeGroqAPI(emptyFlow()),
         openAIAPI: OpenAIAPI = RecordingOpenAIAPI(),
@@ -1436,6 +1518,108 @@ class ChatRepositoryImplTest {
         toolLoopOrchestrator = toolLoopOrchestrator,
         searchDecisionService = searchDecisionService
     )
+
+    private fun providerPromptHarness(): ProviderPromptHarness {
+        val openAIAPI = RecordingOpenAIAPI()
+        val groqAPI = FakeGroqAPI(emptyFlow())
+        val anthropicAPI = RecordingAnthropicAPI()
+        val googleAPI = RecordingGoogleAPI()
+        val webSearchRepository = RecordingWebSearchRepository(
+            Result.success(listOf(webSearchResult()))
+        )
+        val searchDecisionService = SearchDecisionService(
+            SearchDecisionModelClient { _, _ ->
+                Result.success(
+                    """{"shouldSearch":true,"queries":["provider prompt assembly evidence"],"reason":"test evidence"}"""
+                )
+            }
+        )
+        return ProviderPromptHarness(
+            repository = createRepository(
+                groqAPI = groqAPI,
+                openAIAPI = openAIAPI,
+                anthropicAPI = anthropicAPI,
+                googleAPI = googleAPI,
+                settingRepository = settingRepository(
+                    webSearchMode = WebSearchMode.Auto,
+                    toolCallingMode = ToolCallingMode.Auto
+                ),
+                webSearchRepository = webSearchRepository,
+                searchDecisionService = searchDecisionService
+            ),
+            openAIAPI = openAIAPI,
+            groqAPI = groqAPI,
+            anthropicAPI = anthropicAPI,
+            googleAPI = googleAPI
+        )
+    }
+
+    private suspend fun ProviderPromptHarness.execute(platform: PlatformV2) {
+        val (userMessages, assistantMessages) = promptAssemblyConversation(platform.uid)
+        repository.completeChat(
+            userMessages = userMessages,
+            assistantMessages = assistantMessages,
+            platform = platform,
+            memoryPrompt = "Relevant long-term user memories:\n- $PROVIDER_MEMORY_MARKER"
+        ).toList()
+    }
+
+    private fun promptAssemblyConversation(
+        platformUid: String
+    ): Pair<List<MessageV2>, List<List<MessageV2>>> {
+        val userMessages = (1..12).map { index ->
+            MessageV2(
+                id = index,
+                content = if (index == 12) {
+                    "Find current provider prompt assembly evidence"
+                } else {
+                    "provider-topic-$index user detail"
+                },
+                platformType = null
+            )
+        }
+        val assistantMessages = (1..12).map { index ->
+            if (index == 12) {
+                emptyList()
+            } else {
+                listOf(
+                    MessageV2(
+                        id = 100 + index,
+                        content = "provider-topic-$index assistant detail",
+                        platformType = platformUid
+                    )
+                )
+            }
+        }
+        return userMessages to assistantMessages
+    }
+
+    private fun assertProviderPromptSections(provider: String, prompt: String) {
+        assertEquals(
+            "$provider memory marker count",
+            1,
+            Regex(Regex.escape(PROVIDER_MEMORY_MARKER)).findAll(prompt).count()
+        )
+        assertTrue("$provider lost base system prompt", prompt.contains(PROVIDER_BASE_SYSTEM_MARKER))
+        assertTrue("$provider lost runtime context", prompt.contains("Runtime context:"))
+        assertTrue("$provider lost context summary", prompt.contains("Earlier conversation summary:"))
+        assertTrue("$provider lost omitted context", prompt.contains("provider-topic-1"))
+        assertTrue("$provider lost tool result prompt", prompt.contains("Tool results are available"))
+        assertTrue("$provider lost search evidence", prompt.contains("https://example.com/source"))
+    }
+
+    private data class ProviderPromptHarness(
+        val repository: ChatRepositoryImpl,
+        val openAIAPI: RecordingOpenAIAPI,
+        val groqAPI: FakeGroqAPI,
+        val anthropicAPI: RecordingAnthropicAPI,
+        val googleAPI: RecordingGoogleAPI
+    )
+
+    private companion object {
+        const val PROVIDER_BASE_SYSTEM_MARKER = "__PROVIDER_BASE_SYSTEM_5CFA__"
+        const val PROVIDER_MEMORY_MARKER = "__PROVIDER_MEMORY_EXACTLY_ONCE_7E31__"
+    }
 
     private fun List<ApiState>.withoutUsageUpdates(): List<ApiState> =
         filterNot { it is ApiState.UsageUpdated }
@@ -1503,6 +1687,16 @@ class ChatRepositoryImplTest {
         stream = true
     )
 
+    private fun ollamaPlatform(systemPrompt: String? = null) = PlatformV2(
+        uid = "ollama-platform",
+        name = "Ollama",
+        compatibleType = ClientType.OLLAMA,
+        apiUrl = "http://localhost:11434/",
+        model = "llama3.2",
+        systemPrompt = systemPrompt,
+        stream = true
+    )
+
     private fun systemText(openAIAPI: RecordingOpenAIAPI): String = openAIAPI.lastChatCompletionRequest
         ?.systemText()
         .orEmpty()
@@ -1514,6 +1708,14 @@ class ChatRepositoryImplTest {
         ?.firstOrNull()
         ?.text
         .orEmpty()
+
+    private fun List<ChatMessage>.systemText(): String =
+        firstOrNull()
+            ?.content
+            ?.filterIsInstance<OpenAITextContent>()
+            ?.firstOrNull()
+            ?.text
+            .orEmpty()
 
     private fun webSearchResult() = WebSearchResult(
         title = "Example Source",

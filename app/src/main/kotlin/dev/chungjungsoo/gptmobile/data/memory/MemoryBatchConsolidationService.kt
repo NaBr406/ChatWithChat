@@ -247,7 +247,7 @@ class MemoryBatchConsolidationService(
                     )
                 }
                 commitObserver.afterBatchCompletion(runningJob.jobId)
-                return terminal(runningJob, "memory_mutation_conflict:${commitResult.sourcePath}")
+                return terminal(runningJob, commitResult.reason)
             }
         }
 
@@ -489,6 +489,7 @@ class MemoryBatchConsolidationService(
         val existingById = request.existingMemories.associateBy { it.id }
         val turnKeys = request.turns.map { it.turnKey }.toSet()
         val targetedIds = mutableSetOf<String>()
+        val normalizedCreateTextsByDestination = mutableMapOf<String, MutableSet<String>>()
 
         operations.forEach { operation ->
             check(operation.destination in VALID_DESTINATIONS)
@@ -506,6 +507,11 @@ class MemoryBatchConsolidationService(
                 MemoryBatchAction.CREATE -> {
                     check(operation.targetMemoryId.isNullOrBlank())
                     validateWriteText(operation.text)
+                    check(
+                        normalizedCreateTextsByDestination
+                            .getOrPut(operation.destination) { mutableSetOf() }
+                            .add(normalizeExactMemoryText(operation.text))
+                    )
                     check(operation.evidenceTurnKeys.isNotEmpty())
                 }
                 MemoryBatchAction.REPLACE -> {
@@ -529,7 +535,7 @@ class MemoryBatchConsolidationService(
 
         operations
             .filter { it.action in setOf(MemoryBatchAction.CREATE, MemoryBatchAction.REPLACE) }
-            .groupBy { normalizeMemoryText(it.text) }
+            .groupBy { normalizeExactMemoryText(it.text) }
             .values
             .forEach { sameTextOperations ->
                 check(sameTextOperations.map { it.destination }.distinct().size == 1)
@@ -582,9 +588,14 @@ class MemoryBatchConsolidationService(
                 else -> checkNotNull(existingById[operation.targetMemoryId]?.sourcePath)
             }
             val currentMarkdown = checkNotNull(editedMarkdown[sourcePath])
-            val currentEntries = markdownMemoryCodec.parse(currentMarkdown).entries.associateBy { it.id }
+            val parsedCurrentEntries = markdownMemoryCodec.parse(currentMarkdown).entries
+            val currentEntries = parsedCurrentEntries.associateBy { it.id }
             val updatedMarkdown = when (operation.action) {
                 MemoryBatchAction.CREATE -> {
+                    val normalizedText = normalizeExactMemoryText(operation.text)
+                    if (parsedCurrentEntries.any { entry -> normalizeExactMemoryText(entry.text) == normalizedText }) {
+                        return@forEachIndexed
+                    }
                     val generatedId = generatedEntryId(batchId, operationIndex, operation.destination)
                     if (generatedId in currentEntries) return@forEachIndexed
                     val entry = operation.toEntry(
@@ -767,11 +778,6 @@ class MemoryBatchConsolidationService(
             throw throwable
         }
     }
-
-    private fun normalizeMemoryText(text: String): String = text
-        .trim()
-        .lowercase()
-        .replace(Regex("\\s+"), " ")
 
     private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
         .digest(value.toByteArray(Charsets.UTF_8))

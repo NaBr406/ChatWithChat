@@ -53,6 +53,26 @@ class MemoryDailyDistillationServiceTest {
     }
 
     @Test
+    fun `missing staged daily target preserves terminal reason without semantic replay`() = runBlocking {
+        val fixture = fixture(proposal = createProposal())
+        val mutation = fixture.prepareMutation(reconcile = false)
+        val receipt = mutation.receipts.single()
+        val root = fixture.fileStore.ensureStore().getOrThrow().rootDirectory
+        Files.delete(root.resolve(receipt.stagedTargetPath).toPath())
+        fixture.intelligence.distillationCalls = 0
+
+        val result = fixture.service.process(fixture.claimSemanticJob())
+
+        assertEquals(MemoryDailyDistillationProcessResult.STATUS_TERMINAL, result.status)
+        assertEquals(MEMORY_MUTATION_UNRECOVERABLE_STAGING_MISSING, result.reason)
+        assertEquals(0, fixture.intelligence.distillationCalls)
+        assertEquals(MemoryDistillationCheckpointStatus.CONFLICT, fixture.checkpoint().status)
+        assertEquals(MemoryMaintenanceJobStatus.FAILED_TERMINAL, fixture.semanticJob().status)
+        assertEquals(MEMORY_MUTATION_UNRECOVERABLE_STAGING_MISSING, fixture.semanticJob().lastError)
+        assertFalse(fixture.fileStore.readLongTermMemory().getOrThrow().contains("silver compass"))
+    }
+
+    @Test
     fun `canonical commit replay advances checkpoint without a second semantic call`() = runBlocking {
         val fixture = fixture(proposal = createProposal())
         fixture.prepareMutation(reconcile = true)

@@ -52,7 +52,7 @@ class MemoryDailyDistillationOperationController(
         val existingById = input.existingMemories.associateBy(MemoryBatchExistingMemory::id)
         val targetedIds = mutableSetOf<String>()
         val normalizedWriteTexts = mutableSetOf<String>()
-        val normalizedExistingTexts = input.existingMemories.map { memory -> normalizeText(memory.text) }.toSet()
+        val normalizedExistingTexts = input.existingMemories.map { memory -> normalizeExactMemoryText(memory.text) }.toSet()
 
         return operations.map { operation ->
             require(operation.action in VALID_ACTIONS)
@@ -74,16 +74,16 @@ class MemoryDailyDistillationOperationController(
                 MemoryDailyDistillationAction.REPLACE -> {
                     require(operation.evidenceKeys.isNotEmpty())
                     val normalizedText = normalizeWriteText(operation.text)
-                    require(normalizedWriteTexts.add(normalizeText(normalizedText)))
+                    require(normalizedWriteTexts.add(normalizeExactMemoryText(normalizedText)))
                     val target = if (operation.action == MemoryDailyDistillationAction.REPLACE) {
                         val targetId = requireNotNull(operation.targetMemoryId?.takeIf(String::isNotBlank))
                         require(targetedIds.add(targetId))
                         requireNotNull(existingById[targetId]).also { existing ->
-                            require(normalizeText(normalizedText) != normalizeText(existing.text))
+                            require(normalizeExactMemoryText(normalizedText) != normalizeExactMemoryText(existing.text))
                         }
                     } else {
                         require(operation.targetMemoryId.isNullOrBlank())
-                        require(normalizeText(normalizedText) !in normalizedExistingTexts)
+                        require(normalizeExactMemoryText(normalizedText) !in normalizedExistingTexts)
                         null
                     }
                     val evidence = operation.evidenceKeys.map(evidenceByKey::getValue)
@@ -130,7 +130,7 @@ class MemoryDailyDistillationOperationController(
                     val id = generatedEntryId(input.batchId, index)
                     val currentEntries = markdownMemoryCodec.parse(markdown).entries
                     val duplicateText = currentEntries.any { entry ->
-                        normalizeText(entry.text) == normalizeText(operation.text)
+                        normalizeExactMemoryText(entry.text) == normalizeExactMemoryText(operation.text)
                     }
                     require(!duplicateText)
                     currentEntries.firstOrNull { entry -> entry.id == id }?.let { existing ->
@@ -194,8 +194,6 @@ class MemoryDailyDistillationOperationController(
         require(!normalized.startsWith("<!-- memory:", ignoreCase = true))
         return normalized
     }
-
-    private fun normalizeText(text: String): String = text.trim().lowercase().replace(WHITESPACE_REGEX, " ")
 
     private fun derivedSensitivity(
         evidence: List<MemoryDailyDistillationEvidence>,

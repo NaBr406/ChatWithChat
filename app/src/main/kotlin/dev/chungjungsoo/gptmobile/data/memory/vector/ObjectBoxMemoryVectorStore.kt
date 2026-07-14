@@ -1,19 +1,27 @@
 package dev.chungjungsoo.gptmobile.data.memory.vector
 
 import android.content.Context
-import io.objectbox.Box
-import io.objectbox.BoxStore
-import io.objectbox.exception.DbSchemaException
-import io.objectbox.exception.FileCorruptException
-import io.objectbox.query.QueryCondition
 import dev.chungjungsoo.gptmobile.data.memory.MemoryCorpus
 import dev.chungjungsoo.gptmobile.data.memory.MemoryCorpusChunk
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFilePaths
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingDescriptor
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingPooling
+import io.objectbox.Box
+import io.objectbox.BoxStore
+import io.objectbox.exception.DbSchemaException
+import io.objectbox.exception.FileCorruptException
+import io.objectbox.query.QueryCondition
 import java.util.concurrent.Callable
 import kotlin.math.abs
 import kotlin.math.sqrt
+
+private const val MAX_HNSW_QUERY_LIMIT = 500
+
+internal fun shouldUseExactCosineScan(effectiveLimit: Int, matchingChunkCount: Long): Boolean {
+    require(effectiveLimit > 0) { "effectiveLimit must be positive" }
+    require(matchingChunkCount > 0) { "matchingChunkCount must be positive" }
+    return effectiveLimit > MAX_HNSW_QUERY_LIMIT || effectiveLimit.toLong() == matchingChunkCount
+}
 
 internal class ObjectBoxMemoryVectorStore(
     private val context: Context,
@@ -88,9 +96,7 @@ internal class ObjectBoxMemoryVectorStore(
     override fun query(request: MemoryVectorQuery): MemoryVectorQueryResult {
         validateIdentity(request.expectedIdentity)
         validateEmbedding(request.embedding, "query embedding")
-        require(request.limit in 1..MAX_MEMORY_VECTOR_QUERY_LIMIT) {
-            "limit must be between 1 and $MAX_MEMORY_VECTOR_QUERY_LIMIT"
-        }
+        require(request.limit > 0) { "limit must be positive" }
 
         return withStore { currentStore ->
             currentStore.callInReadTx(
@@ -123,19 +129,28 @@ internal class ObjectBoxMemoryVectorStore(
                     if (manifest.expectedChunkCount == 0L) {
                         return@Callable MemoryVectorQueryResult.Ready(manifest, emptyList())
                     }
+                    val effectiveLimit = minOf(request.limit.toLong(), matchingChunkCount).toInt()
 
-                    val matches = chunkBox
-                        .query(
-                            chunkIdentityCondition(manifest.identity).and(
-                                MemoryVectorChunkEntity_.embedding.nearestNeighbors(request.embedding, request.limit)
-                            )
+                    val matches = if (shouldUseExactCosineScan(effectiveLimit, matchingChunkCount)) {
+                        chunkBox.exactCosineMatches(
+                            identity = manifest.identity,
+                            queryEmbedding = request.embedding,
+                            limit = effectiveLimit
                         )
-                        .build()
-                        .use { query ->
-                            query.findWithScores().map { scored ->
-                                scored.get().toMatch(manifest.identity, scored.score.toFloat())
+                    } else {
+                        chunkBox
+                            .query(
+                                chunkIdentityCondition(manifest.identity).and(
+                                    MemoryVectorChunkEntity_.embedding.nearestNeighbors(request.embedding, effectiveLimit)
+                                )
+                            )
+                            .build()
+                            .use { query ->
+                                query.findWithScores().map { scored ->
+                                    scored.get().toMatch(manifest.identity, scored.score.toFloat())
+                                }
                             }
-                        }
+                    }
                     MemoryVectorQueryResult.Ready(manifest, matches)
                 }
             )
@@ -404,6 +419,47 @@ internal class ObjectBoxMemoryVectorStore(
             .build()
             .use { query -> query.findUnique() }
 
+    private fun Box<MemoryVectorChunkEntity>.exactCosineMatches(
+        identity: MemoryVectorIndexIdentity,
+        queryEmbedding: FloatArray,
+        limit: Int
+    ): List<MemoryVectorMatch> = query(chunkIdentityCondition(identity))
+        .build()
+        .use { query ->
+            query.find()
+                .asSequence()
+                .map { entity ->
+                    val match = entity.toMatch(identity, cosineDistance = 0f)
+                    match.copy(
+                        cosineDistance = cosineDistance(queryEmbedding, match.embedding)
+                    )
+                }
+                .sortedWith(
+                    compareBy<MemoryVectorMatch>(MemoryVectorMatch::cosineDistance)
+                        .thenBy { match -> match.chunk.chunkId }
+                )
+                .take(limit)
+                .toList()
+        }
+
+    private fun cosineDistance(left: FloatArray, right: FloatArray): Float {
+        check(left.size == right.size) { "Cosine distance requires equal vector dimensions" }
+        var dotProduct = 0.0
+        var leftSquaredNorm = 0.0
+        var rightSquaredNorm = 0.0
+        left.indices.forEach { index ->
+            val leftValue = left[index].toDouble()
+            val rightValue = right[index].toDouble()
+            dotProduct += leftValue * rightValue
+            leftSquaredNorm += leftValue * leftValue
+            rightSquaredNorm += rightValue * rightValue
+        }
+        val normProduct = sqrt(leftSquaredNorm * rightSquaredNorm)
+        check(normProduct > 0.0) { "Cosine distance requires non-zero vectors" }
+        val similarity = (dotProduct / normProduct).coerceIn(-1.0, 1.0)
+        return (1.0 - similarity).toFloat()
+    }
+
     private fun chunkIdentityCondition(
         identity: MemoryVectorIndexIdentity
     ): QueryCondition<MemoryVectorChunkEntity> =
@@ -574,7 +630,6 @@ internal class ObjectBoxMemoryVectorStore(
             }
 
     private companion object {
-        const val MAX_MEMORY_VECTOR_QUERY_LIMIT = 500
         const val NORMALIZED_VECTOR_TOLERANCE = 1e-3
         val SHA_256_REGEX = Regex("[0-9a-f]{64}")
     }

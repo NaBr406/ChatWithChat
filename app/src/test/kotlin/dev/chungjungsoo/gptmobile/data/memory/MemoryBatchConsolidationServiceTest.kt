@@ -3,8 +3,8 @@ package dev.chungjungsoo.gptmobile.data.memory
 import dev.chungjungsoo.gptmobile.data.database.InMemoryMemoryRecoveryDao
 import dev.chungjungsoo.gptmobile.data.database.InMemoryMemoryTurnBatchDao
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatRoomV2
-import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
 import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMaintenanceJob
+import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
 import java.nio.file.Files
 import java.security.MessageDigest
 import java.time.Clock
@@ -133,6 +133,123 @@ class MemoryBatchConsolidationServiceTest {
         assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
         assertEquals(1, markdown.split(memoryText).size - 1)
         assertEquals(5, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
+    }
+
+    @Test
+    fun `same batch exact duplicate creates fail closed without advancing checkpoint`() = runBlocking {
+        val fixture = fixture(
+            MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        text = "The user prefers CAFÉ answers."
+                    ),
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        text = "\u00a0THE user prefers\u3000café\nanswers.  "
+                    )
+                )
+            )
+        )
+        val beforeLongTerm = fixture.fileStore.readLongTermMemory().getOrThrow()
+        val beforeDaily = fixture.fileStore.readDailyMemory().getOrThrow()
+        val job = fixture.createFiveTurnBatch()
+
+        val result = fixture.service.process(job)
+
+        assertEquals(MemoryBatchProcessResult.STATUS_RETRYABLE, result.status)
+        assertEquals(0, result.dailyWriteCount + result.longTermWriteCount)
+        assertEquals(beforeLongTerm, fixture.fileStore.readLongTermMemory().getOrThrow())
+        assertEquals(beforeDaily, fixture.fileStore.readDailyMemory().getOrThrow())
+        assertEquals(0, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
+        assertEquals(5, fixture.turnDao.getTurnsClaimedByJob(job.jobId).size)
+        assertEquals(null, fixture.recoveryDao.getMutationGroupBySemanticJobId(job.jobId))
+    }
+
+    @Test
+    fun `create matching canonical text is a replayable byte identical no-op`() = runBlocking {
+        val codec = MarkdownMemoryCodec()
+        val existingEntry = MarkdownMemoryEntry(
+            id = "mem_existing_exact",
+            text = "The user prefers CAFÉ answers.",
+            type = "communication_style",
+            sensitivity = MemorySensitivity.PRIVATE,
+            source = MemorySource.USER_CONFIRMED,
+            chatId = 3,
+            createdAt = 20L,
+            updatedAt = 30L,
+            section = "Stable Preferences"
+        )
+        val fixture = fixture(
+            MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        text = "\u00a0THE user prefers\u3000café\nanswers.  ",
+                        type = "stable_profile"
+                    )
+                )
+            )
+        )
+        fixture.fileStore.replaceLongTermMemory(codec.renderLongTerm(listOf(existingEntry))).getOrThrow()
+        val before = fixture.fileStore.readLongTermMemory().getOrThrow()
+        val job = fixture.createFiveTurnBatch()
+
+        val result = fixture.service.process(job)
+        val group = checkNotNull(fixture.recoveryDao.getMutationGroupBySemanticJobId(job.jobId))
+
+        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(1, result.operationCount)
+        assertEquals(0, result.dailyWriteCount + result.longTermWriteCount)
+        assertEquals(before, fixture.fileStore.readLongTermMemory().getOrThrow())
+        assertEquals(existingEntry, codec.parse(before).entries.single())
+        assertEquals(5, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
+        assertEquals(0, group.expectedReceiptCount)
+        assertTrue(fixture.recoveryDao.getMutationReceipts(group.groupId).isEmpty())
+
+        val replay = fixture.service.process(checkNotNull(fixture.jobDao.getById(job.jobId)))
+
+        assertEquals(MemoryBatchProcessResult.STATUS_DUPLICATE, replay.status)
+        assertEquals(1, fixture.intelligence.consolidateCalls)
+        assertEquals(before, fixture.fileStore.readLongTermMemory().getOrThrow())
+        assertEquals(group.groupId, fixture.recoveryDao.getMutationGroupBySemanticJobId(job.jobId)?.groupId)
+        assertTrue(fixture.recoveryDao.getMutationReceipts(group.groupId).isEmpty())
+    }
+
+    @Test
+    fun `daily exact text does not block a long term create`() = runBlocking {
+        val codec = MarkdownMemoryCodec()
+        val dailyEntry = MarkdownMemoryEntry(
+            id = "day_existing_exact",
+            text = "The user prefers CAFÉ answers.",
+            type = "communication_style",
+            sensitivity = MemorySensitivity.NORMAL,
+            source = MemorySource.EXPLICIT_USER_STATEMENT,
+            createdAt = 20L,
+            updatedAt = 30L
+        )
+        val fixture = fixture(
+            MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        text = "  THE user prefers   café\nanswers.  ",
+                        type = "communication_style"
+                    )
+                )
+            )
+        )
+        fixture.fileStore.appendDailyNote(codec.renderDailyAppend(listOf(dailyEntry))).getOrThrow()
+        val beforeDaily = fixture.fileStore.readDailyMemory().getOrThrow()
+        val job = fixture.createFiveTurnBatch()
+
+        val result = fixture.service.process(job)
+
+        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(0, result.dailyWriteCount)
+        assertEquals(1, result.longTermWriteCount)
+        assertEquals(beforeDaily, fixture.fileStore.readDailyMemory().getOrThrow())
+        assertEquals(1, codec.parse(fixture.fileStore.readLongTermMemory().getOrThrow()).entries.size)
     }
 
     @Test
@@ -335,6 +452,38 @@ class MemoryBatchConsolidationServiceTest {
         assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
         assertEquals(1, fixture.intelligence.consolidateCalls)
         assertTrue(fixture.fileStore.readLongTermMemory().getOrThrow().contains("Prepared targets resume"))
+    }
+
+    @Test
+    fun `missing staged batch target preserves terminal reason without semantic replay`() = runBlocking {
+        val clock = MutableBatchConsolidationClock(1_000L)
+        val fixture = fixture(
+            proposal = MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        text = "Missing staged targets are terminal."
+                    )
+                )
+            ),
+            clock = clock,
+            commitObserver = OneShotCommitObserver(CommitInterruptionPoint.AFTER_PREPARED)
+        )
+        val job = fixture.createFiveTurnBatch()
+        val failure = runCatching { fixture.service.process(job) }.exceptionOrNull()
+        assertTrue(failure is MemoryBatchCommitInterruptedException)
+        val mutation = checkNotNull(fixture.mutationCoordinator.findBySemanticJobId(job.jobId))
+        Files.delete(fixture.fileStoreRoot().resolve(mutation.receipts.single().stagedTargetPath).toPath())
+
+        val result = fixture.service.process(fixture.reclaim(job, clock))
+
+        assertEquals(MemoryBatchProcessResult.STATUS_TERMINAL, result.status)
+        assertEquals(MEMORY_MUTATION_UNRECOVERABLE_STAGING_MISSING, result.reason)
+        assertEquals(1, fixture.intelligence.consolidateCalls)
+        assertEquals(MemoryMaintenanceJobStatus.FAILED_TERMINAL, fixture.jobDao.getById(job.jobId)?.status)
+        assertEquals(MEMORY_MUTATION_UNRECOVERABLE_STAGING_MISSING, fixture.jobDao.getById(job.jobId)?.lastError)
+        assertEquals(MemoryMutationState.CONFLICT, fixture.recoveryDao.getMutationGroup(mutation.group.groupId)?.state)
+        assertFalse(fixture.fileStore.readLongTermMemory().getOrThrow().contains("Missing staged targets"))
     }
 
     @Test
@@ -736,6 +885,8 @@ class MemoryBatchConsolidationServiceTest {
         val turnBatchScheduler: MemoryTurnBatchScheduler,
         val service: MemoryBatchConsolidationService
     ) {
+        fun fileStoreRoot() = fileStore.ensureStore().getOrThrow().rootDirectory
+
         suspend fun createTurns(count: Int) {
             (1..count).forEach { userMessageId ->
                 coordinator.recordCompletedTurn(

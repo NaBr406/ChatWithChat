@@ -4,7 +4,6 @@ import android.content.Context
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import io.objectbox.BoxStore
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingArtifactInstallResult
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingArtifactInstaller
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingArtifactSource
@@ -29,6 +28,7 @@ import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorSnapshotExpecta
 import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorSnapshotVerification
 import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorStore
 import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorStoreFactory
+import io.objectbox.BoxStore
 import java.io.File
 import java.time.Clock
 import java.time.Instant
@@ -75,6 +75,14 @@ class MemoryProductionHybridShadowInstrumentedTest {
         runCatching { embeddingProvider?.close() }
         runCatching { BoxStore.deleteAllFiles(vectorDirectory) }
         rootDirectory.deleteRecursively()
+    }
+
+    @Test
+    fun exactTextNormalization_collapsesUnicodeWhitespaceOnAndroid() {
+        assertEquals(
+            "mixed whitespace \ud83d\ude00 preserved",
+            normalizeExactMemoryText("\u00a0MiXeD\u0085\u2003whitespace\n\ud83d\ude00\u202fpreserved\u3000")
+        )
     }
 
     @Test

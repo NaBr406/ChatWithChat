@@ -164,14 +164,14 @@ class MemoryDailyDistillationService(
             )
             maintenanceScheduler.markFailedTerminal(
                 job,
-                "daily_distillation_mutation_conflict:${commitResult.sourcePath}"
+                commitResult.reason
             )
             dailyDistillationScheduler.ensurePlanningJobs()
             return MemoryDailyDistillationProcessResult(
                 status = MemoryDailyDistillationProcessResult.STATUS_TERMINAL,
                 jobId = job.jobId,
                 operationCount = operationCount,
-                reason = "daily_distillation_mutation_conflict:${commitResult.sourcePath}"
+                reason = commitResult.reason
             )
         }
 

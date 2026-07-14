@@ -52,20 +52,28 @@ data class MemoryRetrievalConfig(
 internal fun List<MemoryRetrievalResult>.packFor(request: MemoryRetrievalRequest): List<MemoryRetrievalResult> {
     if (request.limit <= 0 || request.tokenBudget <= 0) return emptyList()
     var usedTokens = 0
-    return filter { result ->
-        val resultTokens = TokenUsageEstimator.estimateText(
-            text = result.text,
-            model = "",
-            clientType = ClientType.OPENAI
-        ) + MEMORY_RETRIEVAL_RESULT_TOKEN_OVERHEAD
-        if (usedTokens + resultTokens > request.tokenBudget) {
-            false
-        } else {
-            usedTokens += resultTokens
-            true
+    return asSequence()
+        .distinctBy(MemoryRetrievalResult::deduplicationKey)
+        .distinctBy { result -> normalizeExactMemoryText(result.text) }
+        .filter { result ->
+            val resultTokens = TokenUsageEstimator.estimateText(
+                text = result.text,
+                model = "",
+                clientType = ClientType.OPENAI
+            ) + MEMORY_RETRIEVAL_RESULT_TOKEN_OVERHEAD
+            if (usedTokens + resultTokens > request.tokenBudget) {
+                false
+            } else {
+                usedTokens += resultTokens
+                true
+            }
         }
-    }.take(request.limit)
+        .take(request.limit)
+        .toList()
 }
+
+internal fun MemoryRetrievalResult.deduplicationKey(): String =
+    entryId?.let { value -> "entry:$value" } ?: "hash:$contentHash"
 
 internal fun MemoryRetrievalRequest.combinedQuery(): String = listOfNotNull(
     query.trim().takeIf { it.isNotBlank() },

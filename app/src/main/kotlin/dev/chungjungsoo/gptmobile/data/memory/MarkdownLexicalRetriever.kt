@@ -67,9 +67,10 @@ class MarkdownLexicalRetriever(
                     .thenBy { result -> result.chunk.chunkIndex }
                     .thenBy { result -> result.chunk.chunkId }
             )
-            .take(candidateLimit)
             .map { result -> result.toRetrievalResult() }
-            .distinctBy { result -> result.entryId?.let { entryId -> "entry:$entryId" } ?: "hash:${result.contentHash}" }
+            .distinctBy(MemoryRetrievalResult::deduplicationKey)
+            .distinctBy { result -> normalizeExactMemoryText(result.text) }
+            .take(candidateLimit)
             .toList()
         return ranked
     }
@@ -132,10 +133,7 @@ class MarkdownLexicalRetriever(
         updatedAt = chunk.updatedAt
     )
 
-    private fun normalizeSearchText(text: String): String = text
-        .lowercase()
-        .replace(WHITESPACE_REGEX, " ")
-        .trim()
+    private fun normalizeSearchText(text: String): String = normalizeExactMemoryText(text)
 
     private fun String.isCjkToken(): Boolean = any { character -> character.code in 0x3400..0x9FFF }
 
@@ -148,7 +146,6 @@ class MarkdownLexicalRetriever(
         private val LATIN_TOKEN_REGEX = Regex("[a-z0-9_-]+")
         private val CJK_SEQUENCE_REGEX = Regex("[\\u3400-\\u9fff]+")
         private val CJK_GRAM_SIZES = listOf(2, 3)
-        private val WHITESPACE_REGEX = Regex("\\s+")
         private const val MIN_TOKEN_LENGTH = 2
         private const val EXACT_QUERY_SCORE = 6f
         private const val TOKEN_MATCH_SCORE = 1f

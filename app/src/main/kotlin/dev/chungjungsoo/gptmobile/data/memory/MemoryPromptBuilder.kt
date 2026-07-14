@@ -9,6 +9,8 @@ class MemoryPromptBuilder(
 
         val lines = retrievedMemories
             .sortedWith(compareByDescending<MemoryRetrievalResult> { it.fusedScore }.thenBy { it.sourcePath }.thenBy { it.chunkId })
+            .distinctBy(MemoryRetrievalResult::deduplicationKey)
+            .distinctBy { memory -> normalizeExactMemoryText(memory.text) }
             .take(maxMemories)
             .map { memory ->
                 val sensitivityGuidance = when (memory.sensitivity) {

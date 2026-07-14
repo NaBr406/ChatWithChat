@@ -130,6 +130,50 @@ class MarkdownLexicalRetrieverTest {
     }
 
     @Test
+    fun `exact text duplicates do not consume the lexical candidate limit`() = runBlocking {
+        val chunks = listOf(
+            corpusChunk("MEMORY.md#mem_duplicate_a#0", "mem_duplicate_a", "Concrete answer memory."),
+            corpusChunk("MEMORY.md#mem_duplicate_b#0", "mem_duplicate_b", "\u00a0CONCRETE\u3000ANSWER MEMORY.  "),
+            corpusChunk("MEMORY.md#mem_unique#0", "mem_unique", "Concrete answer unique.")
+        )
+        val retriever = MarkdownLexicalRetriever(StaticSnapshotSource(snapshot(1L, chunks)))
+
+        val results = retriever.retrieve(
+            MemoryRetrievalRequest(
+                corpus = MemoryCorpus.CHAT_RECALL_LONG_TERM,
+                query = "concrete answer",
+                limit = 2,
+                candidateLimit = 2,
+                tokenBudget = 300
+            )
+        ).getOrThrow()
+
+        assertEquals(listOf("mem_duplicate_a", "mem_unique"), results.map { result -> result.entryId })
+    }
+
+    @Test
+    fun `exact text duplicates do not consume the lexical token budget`() = runBlocking {
+        val chunks = listOf(
+            corpusChunk("MEMORY.md#mem_duplicate_a#0", "mem_duplicate_a", "Shared duplicate."),
+            corpusChunk("MEMORY.md#mem_duplicate_b#0", "mem_duplicate_b", "  SHARED   DUPLICATE.  "),
+            corpusChunk("MEMORY.md#mem_unique#0", "mem_unique", "Shared unique.")
+        )
+        val retriever = MarkdownLexicalRetriever(StaticSnapshotSource(snapshot(1L, chunks)))
+
+        val results = retriever.retrieve(
+            MemoryRetrievalRequest(
+                corpus = MemoryCorpus.CHAT_RECALL_LONG_TERM,
+                query = "shared",
+                limit = 3,
+                candidateLimit = 3,
+                tokenBudget = 60
+            )
+        ).getOrThrow()
+
+        assertEquals(listOf("mem_duplicate_a", "mem_unique"), results.map { result -> result.entryId })
+    }
+
+    @Test
     fun `retrieval retries once when corpus revision changes`() = runBlocking {
         val source = SequencedSnapshotSource(
             snapshots = listOf(

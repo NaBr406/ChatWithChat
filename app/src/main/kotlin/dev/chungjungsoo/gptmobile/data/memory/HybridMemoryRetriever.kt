@@ -106,60 +106,96 @@ class HybridMemoryRetriever(
                 return unavailableVectorBranch()
             }
             if (!queryEmbedding.isValidFor(configuration)) return unavailableVectorBranch()
-            val queryResult = vectorStore.query(
-                MemoryVectorQuery(
+            val candidateLimit = request.candidateLimit.coerceIn(1, MAX_CANDIDATE_LIMIT)
+            var queryLimit = candidateLimit
+            var queryResult = queryReadyVectorSnapshot(
+                expectedIdentity = expectedIdentity,
+                embedding = queryEmbedding,
+                limit = queryLimit
+            ) ?: return unavailableVectorBranch()
+            var candidates = queryResult.toCurrentVectorCandidates(snapshot, request.includePrivate)
+            val maximumQueryLimit = snapshot.chunks.size.coerceAtLeast(candidateLimit)
+            while (
+                candidates.size < candidateLimit &&
+                queryLimit < maximumQueryLimit
+            ) {
+                queryLimit = (queryLimit.toLong() * 2L)
+                    .coerceAtMost(maximumQueryLimit.toLong())
+                    .toInt()
+                queryResult = queryReadyVectorSnapshot(
                     expectedIdentity = expectedIdentity,
                     embedding = queryEmbedding,
-                    limit = request.candidateLimit.coerceIn(1, MAX_CANDIDATE_LIMIT)
-                )
-            ) as? MemoryVectorQueryResult.Ready ?: return unavailableVectorBranch()
-            if (queryResult.manifest.identity != expectedIdentity) return unavailableVectorBranch()
-
-            val currentChunks = snapshot.chunks.associateBy(MemoryCorpusChunk::chunkId)
-            queryResult.matches
-                .asSequence()
-                .mapNotNull { match ->
-                    val current = currentChunks[match.chunk.chunkId]
-                        ?.takeIf { chunk -> chunk.contentHash == match.chunk.contentHash }
-                        ?: return@mapNotNull null
-                    CurrentVectorMatch(current, match.embedding, match.cosineDistance)
-                }
-                .filter { match ->
-                    request.includePrivate ||
-                        match.chunk.sensitivity == null ||
-                        match.chunk.sensitivity !in setOf(MemorySensitivity.PRIVATE, MemorySensitivity.SENSITIVE)
-                }
-                .sortedWith(
-                    compareBy<CurrentVectorMatch> { match ->
-                        match.cosineDistance
-                    }.thenBy { match -> match.chunk.chunkId }
-                )
-                .map { match ->
-                    VectorCandidate(
-                        result = MemoryRetrievalResult(
-                            chunkId = match.chunk.chunkId,
-                            entryId = match.chunk.entryId,
-                            sourcePath = match.chunk.sourcePath,
-                            text = match.chunk.text,
-                            type = match.chunk.type,
-                            sensitivity = match.chunk.sensitivity,
-                            source = match.chunk.source,
-                            contentHash = match.chunk.contentHash,
-                            lexicalScore = null,
-                            vectorScore = (1f - match.cosineDistance).coerceIn(-1f, 1f),
-                            fusedScore = 0f,
-                            updatedAt = match.chunk.updatedAt
-                        ),
-                        embedding = match.embedding
-                    )
-                }
-                .distinctBy { candidate -> candidate.result.deduplicationKey() }
-                .toList()
+                    limit = queryLimit
+                ) ?: return unavailableVectorBranch()
+                candidates = queryResult.toCurrentVectorCandidates(snapshot, request.includePrivate)
+            }
+            candidates.take(candidateLimit)
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (_: Throwable) {
             unavailableVectorBranch()
         }
+    }
+
+    private fun queryReadyVectorSnapshot(
+        expectedIdentity: MemoryVectorIndexIdentity,
+        embedding: FloatArray,
+        limit: Int
+    ): MemoryVectorQueryResult.Ready? = (
+        vectorStore.query(
+            MemoryVectorQuery(
+                expectedIdentity = expectedIdentity,
+                embedding = embedding,
+                limit = limit
+            )
+        ) as? MemoryVectorQueryResult.Ready
+        )?.takeIf { result -> result.manifest.identity == expectedIdentity }
+
+    private fun MemoryVectorQueryResult.Ready.toCurrentVectorCandidates(
+        snapshot: MemoryCorpusSnapshot,
+        includePrivate: Boolean
+    ): List<VectorCandidate> {
+        val currentChunks = snapshot.chunks.associateBy(MemoryCorpusChunk::chunkId)
+        return matches
+            .asSequence()
+            .mapNotNull { match ->
+                val current = currentChunks[match.chunk.chunkId]
+                    ?.takeIf { chunk -> chunk.contentHash == match.chunk.contentHash }
+                    ?: return@mapNotNull null
+                CurrentVectorMatch(current, match.embedding, match.cosineDistance)
+            }
+            .filter { match ->
+                includePrivate ||
+                    match.chunk.sensitivity == null ||
+                    match.chunk.sensitivity !in setOf(MemorySensitivity.PRIVATE, MemorySensitivity.SENSITIVE)
+            }
+            .sortedWith(
+                compareBy<CurrentVectorMatch> { match ->
+                    match.cosineDistance
+                }.thenBy { match -> match.chunk.chunkId }
+            )
+            .map { match ->
+                VectorCandidate(
+                    result = MemoryRetrievalResult(
+                        chunkId = match.chunk.chunkId,
+                        entryId = match.chunk.entryId,
+                        sourcePath = match.chunk.sourcePath,
+                        text = match.chunk.text,
+                        type = match.chunk.type,
+                        sensitivity = match.chunk.sensitivity,
+                        source = match.chunk.source,
+                        contentHash = match.chunk.contentHash,
+                        lexicalScore = null,
+                        vectorScore = (1f - match.cosineDistance).coerceIn(-1f, 1f),
+                        fusedScore = 0f,
+                        updatedAt = match.chunk.updatedAt
+                    ),
+                    embedding = match.embedding
+                )
+            }
+            .distinctBy { candidate -> candidate.result.deduplicationKey() }
+            .distinctBy { candidate -> normalizeExactMemoryText(candidate.result.text) }
+            .toList()
     }
 
     private fun unavailableVectorBranch(): List<VectorCandidate>? {
@@ -218,6 +254,7 @@ class HybridMemoryRetriever(
         val maxFusedScore = candidates.maxOf { candidate -> candidate.result.fusedScore }.coerceAtLeast(1e-9f)
         val remaining = candidates.toMutableList()
         val selected = mutableListOf<DiversifiableCandidate>()
+        val selectedExactTexts = mutableSetOf<String>()
         while (remaining.isNotEmpty() && selected.size < limit) {
             val next = remaining.sortedWith(
                 compareByDescending<DiversifiableCandidate> { candidate ->
@@ -228,8 +265,9 @@ class HybridMemoryRetriever(
                     .thenByDescending { candidate -> candidate.result.updatedAt }
                     .thenBy { candidate -> candidate.result.chunkId }
             ).first()
-            selected += next
             remaining -= next
+            if (!selectedExactTexts.add(normalizeExactMemoryText(next.result.text))) continue
+            selected += next
         }
         return selected
     }
@@ -252,9 +290,6 @@ class HybridMemoryRetriever(
         .findAll(text.lowercase())
         .map { match -> match.value }
         .toSet()
-
-    private fun MemoryRetrievalResult.deduplicationKey(): String =
-        entryId?.let { value -> "entry:$value" } ?: "hash:$contentHash"
 
     private fun reciprocalRank(rank: Int): Float = 1f / (RRF_K + rank)
 

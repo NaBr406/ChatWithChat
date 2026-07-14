@@ -3,13 +3,26 @@ package dev.chungjungsoo.gptmobile.data.memory.vector
 import android.content.Context
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import io.objectbox.BoxStore
+import dev.chungjungsoo.gptmobile.data.memory.HybridMemoryRetriever
+import dev.chungjungsoo.gptmobile.data.memory.MarkdownLexicalRetriever
 import dev.chungjungsoo.gptmobile.data.memory.MemoryCorpus
 import dev.chungjungsoo.gptmobile.data.memory.MemoryCorpusChunk
+import dev.chungjungsoo.gptmobile.data.memory.MemoryCorpusSnapshot
+import dev.chungjungsoo.gptmobile.data.memory.MemoryCorpusSnapshotSource
 import dev.chungjungsoo.gptmobile.data.memory.MemoryFilePaths
+import dev.chungjungsoo.gptmobile.data.memory.MemoryRetrievalRequest
+import dev.chungjungsoo.gptmobile.data.memory.MemoryRetrievalStrategy
+import dev.chungjungsoo.gptmobile.data.memory.MemoryVectorRecallRepairTrigger
+import dev.chungjungsoo.gptmobile.data.memory.MemoryVectorRecallStateSource
+import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingAvailability
+import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingCapability
+import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingCapabilitySource
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingDescriptor
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingPooling
+import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingProvider
+import io.objectbox.BoxStore
 import java.io.File
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -123,6 +136,149 @@ class ObjectBoxMemoryVectorStoreInstrumentedTest {
         assertTrue(queryFailure.message.orEmpty().contains("exactly $MEMORY_VECTOR_DIMENSION"))
         assertEquals(original.manifest, store.readManifest())
         assertEquals(1L, store.countChunks())
+    }
+
+    @Test
+    fun queryBeyondLegacyCandidateCap_isBoundedByPublishedSnapshot() = runBlocking {
+        val identity = identity(generation = 1, sourceHash = hash('a'))
+        val chunks = (0 until 601).map { index ->
+            embeddedChunk(
+                chunkId = "candidate-$index",
+                text = if (index < 600) {
+                    "Repeated historical memory."
+                } else {
+                    "Unique memory after historical duplicates."
+                },
+                axis = if (index < 600) 0 else 1,
+                hashCharacter = (index % 10).digitToChar()
+            ).let { chunk ->
+                if (index == 0) {
+                    chunk.copy(
+                        embedding = embedding(axis = 0).apply { this[0] = 0.9995f }
+                    )
+                } else {
+                    chunk
+                }
+            }
+        }
+        val store = openStore()
+        assertEquals(
+            MemoryVectorPublishResult.PUBLISHED,
+            store.replaceSnapshot(snapshot(identity = identity, chunks = chunks))
+        )
+
+        val result = store.query(
+            MemoryVectorQuery(
+                expectedIdentity = identity,
+                embedding = embedding(axis = 0),
+                limit = chunks.size + 100
+            )
+        ) as MemoryVectorQueryResult.Ready
+
+        assertEquals(chunks.size, result.matches.size)
+        assertEquals(
+            chunks.map { chunk -> chunk.chunk.chunkId }.toSet(),
+            result.matches.map { match -> match.chunk.chunkId }.toSet()
+        )
+        assertEquals(
+            result.matches
+                .sortedWith(
+                    compareBy<MemoryVectorMatch>(MemoryVectorMatch::cosineDistance)
+                        .thenBy { match -> match.chunk.chunkId }
+                )
+                .map { match -> match.chunk.chunkId },
+            result.matches.map { match -> match.chunk.chunkId }
+        )
+        assertEquals(
+            0f,
+            result.matches.single { match -> match.chunk.chunkId == "candidate-0" }.cosineDistance,
+            1e-6f
+        )
+        assertEquals(
+            1f,
+            result.matches.single { match -> match.chunk.chunkId == "candidate-600" }.cosineDistance,
+            1e-6f
+        )
+
+        val limitedResult = store.query(
+            MemoryVectorQuery(
+                expectedIdentity = identity,
+                embedding = embedding(axis = 0),
+                limit = 501
+            )
+        ) as MemoryVectorQueryResult.Ready
+        assertEquals(501, limitedResult.matches.size)
+        assertFalse(limitedResult.matches.any { match -> match.chunk.chunkId == "candidate-600" })
+
+        assertThrows(IllegalArgumentException::class.java) {
+            store.query(
+                MemoryVectorQuery(
+                    expectedIdentity = identity,
+                    embedding = embedding(axis = 0),
+                    limit = 0
+                )
+            )
+        }
+
+        val retrieved = hybridRetriever(identity, chunks, store).retrieve(vectorOnlyRequest()).getOrThrow()
+
+        assertEquals(
+            listOf("entry-candidate-0", "entry-candidate-600"),
+            retrieved.map { result -> result.entryId }
+        )
+    }
+
+    @Test
+    fun fullMatchingSnapshotBelowHnswLimit_usesExactScanAndKeepsTailUnique() = runBlocking {
+        val identity = identity(generation = 1, sourceHash = hash('a'))
+        val chunks = (0 until 401).map { index ->
+            embeddedChunk(
+                chunkId = "candidate-$index",
+                text = if (index < 400) {
+                    "Repeated historical memory."
+                } else {
+                    "Unique memory after historical duplicates."
+                },
+                axis = if (index < 400) 0 else 1,
+                hashCharacter = (index % 10).digitToChar()
+            )
+        }
+        val store = openStore()
+        assertEquals(
+            MemoryVectorPublishResult.PUBLISHED,
+            store.replaceSnapshot(snapshot(identity = identity, chunks = chunks))
+        )
+        assertFalse(shouldUseExactCosineScan(effectiveLimit = 400, matchingChunkCount = 401))
+        assertTrue(shouldUseExactCosineScan(effectiveLimit = 401, matchingChunkCount = 401))
+
+        val result = store.query(
+            MemoryVectorQuery(
+                expectedIdentity = identity,
+                embedding = embedding(axis = 0),
+                limit = chunks.size
+            )
+        ) as MemoryVectorQueryResult.Ready
+
+        assertEquals(chunks.size, result.matches.size)
+        assertEquals(
+            result.matches
+                .sortedWith(
+                    compareBy<MemoryVectorMatch>(MemoryVectorMatch::cosineDistance)
+                        .thenBy { match -> match.chunk.chunkId }
+                )
+                .map { match -> match.chunk.chunkId },
+            result.matches.map { match -> match.chunk.chunkId }
+        )
+        assertEquals("candidate-0", result.matches.first().chunk.chunkId)
+        assertEquals(0f, result.matches.first().cosineDistance, 1e-6f)
+        assertEquals("candidate-400", result.matches.last().chunk.chunkId)
+        assertEquals(1f, result.matches.last().cosineDistance, 1e-6f)
+
+        val retrieved = hybridRetriever(identity, chunks, store).retrieve(vectorOnlyRequest()).getOrThrow()
+        assertEquals(
+            listOf("entry-candidate-0", "entry-candidate-400"),
+            retrieved.map { item -> item.entryId }
+        )
     }
 
     @Test
@@ -386,6 +542,64 @@ class ObjectBoxMemoryVectorStoreInstrumentedTest {
         directory = directory,
         beforeManifestPublished = beforeManifestPublished
     ).also(openedStores::add)
+
+    private fun hybridRetriever(
+        identity: MemoryVectorIndexIdentity,
+        chunks: List<MemoryEmbeddedChunk>,
+        store: MemoryVectorStore
+    ): HybridMemoryRetriever {
+        val corpusSnapshot = MemoryCorpusSnapshot(
+            corpus = identity.corpus,
+            sourcePath = identity.sourcePath,
+            sourceHash = identity.sourceHash,
+            generation = identity.corpusGeneration,
+            chunks = chunks.map(MemoryEmbeddedChunk::chunk)
+        )
+        val snapshotSource = object : MemoryCorpusSnapshotSource {
+            override suspend fun snapshots(corpus: MemoryCorpus): Result<List<MemoryCorpusSnapshot>> =
+                Result.success(listOf(corpusSnapshot))
+
+            override suspend fun isCurrent(snapshots: List<MemoryCorpusSnapshot>): Result<Boolean> =
+                Result.success(snapshots.single() == corpusSnapshot)
+        }
+        val provider = object : MemoryEmbeddingProvider {
+            override val descriptor: MemoryEmbeddingDescriptor = DESCRIPTOR
+
+            override suspend fun availability(): MemoryEmbeddingAvailability = MemoryEmbeddingAvailability.Available
+
+            override suspend fun embedDocuments(texts: List<String>): Result<List<FloatArray>> =
+                Result.success(texts.map { embedding(axis = 0) })
+
+            override suspend fun embedQuery(text: String): Result<FloatArray> =
+                Result.success(embedding(axis = 0))
+        }
+        return HybridMemoryRetriever(
+            snapshotSource = snapshotSource,
+            lexicalRetriever = MarkdownLexicalRetriever(snapshotSource),
+            vectorStore = store,
+            embeddingCapabilitySource = MemoryEmbeddingCapabilitySource {
+                MemoryEmbeddingCapability.Ready(provider, INDEX_CONFIGURATION)
+            },
+            vectorRecallStateSource = object : MemoryVectorRecallStateSource {
+                override suspend fun expectedIdentity(
+                    snapshot: MemoryCorpusSnapshot,
+                    configuration: MemoryVectorIndexConfiguration
+                ): MemoryVectorIndexIdentity? = identity
+            },
+            repairTrigger = object : MemoryVectorRecallRepairTrigger {
+                override fun requestRepair() = Unit
+            }
+        )
+    }
+
+    private fun vectorOnlyRequest(): MemoryRetrievalRequest = MemoryRetrievalRequest(
+        corpus = MemoryCorpus.CHAT_RECALL_LONG_TERM,
+        query = "unmatched vector query",
+        limit = 2,
+        candidateLimit = 2,
+        tokenBudget = 1_000,
+        strategy = MemoryRetrievalStrategy.VECTOR
+    )
 
     private fun identity(
         generation: Long,
