@@ -10,7 +10,6 @@ import dagger.hilt.components.SingletonComponent
 import dev.chungjungsoo.gptmobile.data.database.ChatDatabase
 import dev.chungjungsoo.gptmobile.data.database.ChatDatabaseV2
 import dev.chungjungsoo.gptmobile.data.database.ChatDatabaseV2Migrations
-import dev.chungjungsoo.gptmobile.data.database.dao.ChatClassificationDao
 import dev.chungjungsoo.gptmobile.data.database.dao.ChatPlatformModelV2Dao
 import dev.chungjungsoo.gptmobile.data.database.dao.ChatRoomDao
 import dev.chungjungsoo.gptmobile.data.database.dao.ChatRoomV2Dao
@@ -20,7 +19,6 @@ import dev.chungjungsoo.gptmobile.data.database.dao.MemoryRecoveryDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryTurnBatchDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MessageDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MessageV2Dao
-import dev.chungjungsoo.gptmobile.data.database.dao.PersonalMemoryDao
 import dev.chungjungsoo.gptmobile.data.database.dao.PlatformModelV2Dao
 import dev.chungjungsoo.gptmobile.data.database.dao.PlatformV2Dao
 import javax.inject.Singleton
@@ -51,12 +49,6 @@ object DatabaseModule {
 
     @Provides
     fun provideMessageV2Dao(chatDatabaseV2: ChatDatabaseV2): MessageV2Dao = chatDatabaseV2.messageDao()
-
-    @Provides
-    fun providePersonalMemoryDao(chatDatabaseV2: ChatDatabaseV2): PersonalMemoryDao = chatDatabaseV2.personalMemoryDao()
-
-    @Provides
-    fun provideChatClassificationDao(chatDatabaseV2: ChatDatabaseV2): ChatClassificationDao = chatDatabaseV2.chatClassificationDao()
 
     @Provides
     fun provideMemoryMaintenanceJobDao(chatDatabaseV2: ChatDatabaseV2): MemoryMaintenanceJobDao = chatDatabaseV2.memoryMaintenanceJobDao()
@@ -99,6 +91,7 @@ object DatabaseModule {
         ChatDatabaseV2Migrations.MIGRATION_12_13,
         ChatDatabaseV2Migrations.MIGRATION_13_14,
         ChatDatabaseV2Migrations.MIGRATION_14_15,
-        ChatDatabaseV2Migrations.MIGRATION_15_16
+        ChatDatabaseV2Migrations.MIGRATION_15_16,
+        ChatDatabaseV2Migrations.MIGRATION_16_17
     ).build()
 }

@@ -10,7 +10,6 @@ import dev.chungjungsoo.gptmobile.data.database.dao.MemoryActivityLogDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryMaintenanceJobDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryRecoveryDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryTurnBatchDao
-import dev.chungjungsoo.gptmobile.data.database.dao.PersonalMemoryDao
 import dev.chungjungsoo.gptmobile.data.memory.HybridMemoryRetriever
 import dev.chungjungsoo.gptmobile.data.memory.LlmMemoryIntelligence
 import dev.chungjungsoo.gptmobile.data.memory.MarkdownLexicalRetriever
@@ -36,7 +35,6 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceNotificationPolic
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceScheduler
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceWorkEnqueuer
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceWorkScheduler
-import dev.chungjungsoo.gptmobile.data.memory.MemoryMarkdownCodec
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMutationCoordinator
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMutationRecoveryService
 import dev.chungjungsoo.gptmobile.data.memory.MemoryPromptBuilder
@@ -76,10 +74,6 @@ object MemoryRepositoryModule {
     @Provides
     @Singleton
     fun provideMemoryPromptBuilder(): MemoryPromptBuilder = MemoryPromptBuilder()
-
-    @Provides
-    @Singleton
-    fun provideMemoryMarkdownCodec(): MemoryMarkdownCodec = MemoryMarkdownCodec()
 
     @Provides
     @Singleton
@@ -413,22 +407,16 @@ object MemoryRepositoryModule {
     @Provides
     @Singleton
     fun provideMemoryRepository(
-        personalMemoryDao: PersonalMemoryDao,
         memoryPromptBuilder: MemoryPromptBuilder,
         memoryRetriever: MemoryRetriever,
         memoryFileStore: MemoryFileStore,
-        markdownMemoryCodec: MarkdownMemoryCodec,
-        memoryMutationCoordinator: MemoryMutationCoordinator,
         memoryTurnBatchCoordinator: MemoryTurnBatchCoordinator,
         memoryTurnBatchScheduler: MemoryTurnBatchScheduler,
         memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler
     ): MemoryRepository = MemoryRepositoryImpl(
-        personalMemoryDao = personalMemoryDao,
         memoryPromptBuilder = memoryPromptBuilder,
         memoryRetriever = memoryRetriever,
         memoryFileStore = memoryFileStore,
-        markdownMemoryCodec = markdownMemoryCodec,
-        memoryMutationCoordinator = memoryMutationCoordinator,
         memoryTurnBatchCoordinator = memoryTurnBatchCoordinator,
         memoryTurnBatchScheduler = memoryTurnBatchScheduler,
         memoryDailyDistillationScheduler = memoryDailyDistillationScheduler

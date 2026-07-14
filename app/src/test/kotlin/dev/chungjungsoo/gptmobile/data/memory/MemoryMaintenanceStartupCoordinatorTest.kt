@@ -8,40 +8,18 @@ import org.junit.Test
 class MemoryMaintenanceStartupCoordinatorTest {
 
     @Test
-    fun `repair still runs when legacy migration fails`() = runBlocking {
-        var migrationCalls = 0
+    fun `repair failure propagates after optional startup steps run once`() {
         var enqueueCalls = 0
-        var repairCalls = 0
-
-        runMemoryStartupTasks(
-            migrate = {
-                migrationCalls += 1
-                error("migration failed")
-            },
-            enqueueRepair = { enqueueCalls += 1 },
-            provision = {},
-            bootstrap = {},
-            repair = { repairCalls += 1 }
-        )
-
-        assertEquals(1, migrationCalls)
-        assertEquals(1, enqueueCalls)
-        assertEquals(1, repairCalls)
-    }
-
-    @Test
-    fun `repair failure does not repeat migration`() {
-        var migrationCalls = 0
-        var enqueueCalls = 0
+        var provisionCalls = 0
+        var bootstrapCalls = 0
         var repairCalls = 0
 
         assertThrows(IllegalStateException::class.java) {
             runBlocking {
                 runMemoryStartupTasks(
-                    migrate = { migrationCalls += 1 },
                     enqueueRepair = { enqueueCalls += 1 },
-                    provision = {},
-                    bootstrap = {},
+                    provision = { provisionCalls += 1 },
+                    bootstrap = { bootstrapCalls += 1 },
                     repair = {
                         repairCalls += 1
                         error("repair failed")
@@ -50,8 +28,9 @@ class MemoryMaintenanceStartupCoordinatorTest {
             }
         }
 
-        assertEquals(1, migrationCalls)
         assertEquals(1, enqueueCalls)
+        assertEquals(1, provisionCalls)
+        assertEquals(1, bootstrapCalls)
         assertEquals(1, repairCalls)
     }
 
@@ -60,7 +39,6 @@ class MemoryMaintenanceStartupCoordinatorTest {
         var repairCalls = 0
 
         runMemoryStartupTasks(
-            migrate = {},
             enqueueRepair = { error("work manager unavailable") },
             provision = {},
             bootstrap = {},
@@ -71,18 +49,17 @@ class MemoryMaintenanceStartupCoordinatorTest {
     }
 
     @Test
-    fun `durable repair wake is enqueued before migration starts`() = runBlocking {
+    fun `durable repair wake is enqueued before provisioning starts`() = runBlocking {
         val order = mutableListOf<String>()
 
         runMemoryStartupTasks(
-            migrate = { order += "migrate" },
             enqueueRepair = { order += "enqueue" },
             provision = { order += "provision" },
             bootstrap = { order += "bootstrap" },
             repair = { order += "repair" }
         )
 
-        assertEquals(listOf("enqueue", "migrate", "provision", "bootstrap", "repair"), order)
+        assertEquals(listOf("enqueue", "provision", "bootstrap", "repair"), order)
     }
 
     @Test
@@ -91,7 +68,6 @@ class MemoryMaintenanceStartupCoordinatorTest {
 
         runMemoryStartupTasks(
             enqueueRepair = { order += "enqueue" },
-            migrate = { order += "migrate" },
             provision = {
                 order += "provision"
                 error("model unavailable")
@@ -103,6 +79,6 @@ class MemoryMaintenanceStartupCoordinatorTest {
             repair = { order += "repair" }
         )
 
-        assertEquals(listOf("enqueue", "migrate", "provision", "bootstrap", "repair"), order)
+        assertEquals(listOf("enqueue", "provision", "bootstrap", "repair"), order)
     }
 }

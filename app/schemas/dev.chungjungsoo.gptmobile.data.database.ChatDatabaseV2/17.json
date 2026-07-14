@@ -1,0 +1,1489 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 17,
+    "identityHash": "44588a69a5805e538f86c014dbd6f8e8",
+    "entities": [
+      {
+        "tableName": "chats_v2",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`chat_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `title` TEXT NOT NULL, `enabled_platform` TEXT NOT NULL, `created_at` INTEGER NOT NULL, `updated_at` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "chat_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "enabledPlatform",
+            "columnName": "enabled_platform",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "chat_id"
+          ]
+        }
+      },
+      {
+        "tableName": "messages_v2",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`message_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `chat_id` INTEGER NOT NULL, `thoughts` TEXT NOT NULL, `content` TEXT NOT NULL, `attachments` TEXT NOT NULL, `revisions` TEXT NOT NULL, `active_revision_index` INTEGER NOT NULL, `source_metadata` TEXT NOT NULL, `token_usage` TEXT, `linked_message_id` INTEGER NOT NULL, `platform_type` TEXT, `created_at` INTEGER NOT NULL, FOREIGN KEY(`chat_id`) REFERENCES `chats_v2`(`chat_id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "message_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "chatId",
+            "columnName": "chat_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "thoughts",
+            "columnName": "thoughts",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "content",
+            "columnName": "content",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "attachments",
+            "columnName": "attachments",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "revisions",
+            "columnName": "revisions",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "activeRevisionIndex",
+            "columnName": "active_revision_index",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceMetadata",
+            "columnName": "source_metadata",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tokenUsage",
+            "columnName": "token_usage",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "linkedMessageId",
+            "columnName": "linked_message_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "platformType",
+            "columnName": "platform_type",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "message_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_messages_v2_chat_id",
+            "unique": false,
+            "columnNames": [
+              "chat_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_messages_v2_chat_id` ON `${TABLE_NAME}` (`chat_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "chats_v2",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "chat_id"
+            ],
+            "referencedColumns": [
+              "chat_id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "platform_v2",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`platform_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `uid` TEXT NOT NULL, `name` TEXT NOT NULL, `compatible_type` TEXT NOT NULL, `enabled` INTEGER NOT NULL, `api_url` TEXT NOT NULL, `token` TEXT, `model` TEXT NOT NULL, `temperature` REAL, `top_p` REAL, `system_prompt` TEXT, `stream` INTEGER NOT NULL, `reasoning` INTEGER NOT NULL, `timeout` INTEGER NOT NULL, `model_refresh_status` TEXT NOT NULL, `model_refresh_error` TEXT, `model_refreshed_at` INTEGER)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "platform_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "uid",
+            "columnName": "uid",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "compatibleType",
+            "columnName": "compatible_type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "enabled",
+            "columnName": "enabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "apiUrl",
+            "columnName": "api_url",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "token",
+            "columnName": "token",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "model",
+            "columnName": "model",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "temperature",
+            "columnName": "temperature",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "topP",
+            "columnName": "top_p",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "systemPrompt",
+            "columnName": "system_prompt",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "stream",
+            "columnName": "stream",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "reasoning",
+            "columnName": "reasoning",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timeout",
+            "columnName": "timeout",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "modelRefreshStatus",
+            "columnName": "model_refresh_status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "modelRefreshError",
+            "columnName": "model_refresh_error",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "modelRefreshedAt",
+            "columnName": "model_refreshed_at",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "platform_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_platform_v2_uid",
+            "unique": true,
+            "columnNames": [
+              "uid"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_platform_v2_uid` ON `${TABLE_NAME}` (`uid`)"
+          }
+        ]
+      },
+      {
+        "tableName": "platform_model_v2",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`platform_uid` TEXT NOT NULL, `model_id` TEXT NOT NULL, `display_name` TEXT NOT NULL, `description` TEXT NOT NULL, `enabled` INTEGER NOT NULL, `is_default` INTEGER NOT NULL, `updated_at` INTEGER NOT NULL, PRIMARY KEY(`platform_uid`, `model_id`), FOREIGN KEY(`platform_uid`) REFERENCES `platform_v2`(`uid`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "platformUid",
+            "columnName": "platform_uid",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "modelId",
+            "columnName": "model_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "displayName",
+            "columnName": "display_name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "description",
+            "columnName": "description",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "enabled",
+            "columnName": "enabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isDefault",
+            "columnName": "is_default",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "platform_uid",
+            "model_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_platform_model_v2_platform_uid",
+            "unique": false,
+            "columnNames": [
+              "platform_uid"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_platform_model_v2_platform_uid` ON `${TABLE_NAME}` (`platform_uid`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "platform_v2",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "platform_uid"
+            ],
+            "referencedColumns": [
+              "uid"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "chat_platform_model_v2",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`chat_id` INTEGER NOT NULL, `platform_uid` TEXT NOT NULL, `model` TEXT NOT NULL, `reasoning_mode` TEXT NOT NULL, `updated_at` INTEGER NOT NULL, PRIMARY KEY(`chat_id`, `platform_uid`), FOREIGN KEY(`chat_id`) REFERENCES `chats_v2`(`chat_id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "chatId",
+            "columnName": "chat_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "platformUid",
+            "columnName": "platform_uid",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "model",
+            "columnName": "model",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "reasoningMode",
+            "columnName": "reasoning_mode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "chat_id",
+            "platform_uid"
+          ]
+        },
+        "foreignKeys": [
+          {
+            "table": "chats_v2",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "chat_id"
+            ],
+            "referencedColumns": [
+              "chat_id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "memory_maintenance_job",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`job_id` TEXT NOT NULL, `type` TEXT NOT NULL, `status` TEXT NOT NULL, `idempotency_key` TEXT NOT NULL, `payload_json` TEXT NOT NULL, `attempts` INTEGER NOT NULL, `last_error` TEXT, `created_at` INTEGER NOT NULL, `started_at` INTEGER, `updated_at` INTEGER NOT NULL, `next_run_at` INTEGER, `family` TEXT NOT NULL DEFAULT 'semantic', `generation` INTEGER NOT NULL DEFAULT 0, `row_version` INTEGER NOT NULL DEFAULT 0, `lease_owner` TEXT, `lease_expires_at` INTEGER, `retry_cycle` INTEGER NOT NULL DEFAULT 0, `blocked_reason` TEXT, PRIMARY KEY(`job_id`))",
+        "fields": [
+          {
+            "fieldPath": "jobId",
+            "columnName": "job_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "type",
+            "columnName": "type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "idempotencyKey",
+            "columnName": "idempotency_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payloadJson",
+            "columnName": "payload_json",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "attempts",
+            "columnName": "attempts",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastError",
+            "columnName": "last_error",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startedAt",
+            "columnName": "started_at",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "nextRunAt",
+            "columnName": "next_run_at",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "family",
+            "columnName": "family",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'semantic'"
+          },
+          {
+            "fieldPath": "generation",
+            "columnName": "generation",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "rowVersion",
+            "columnName": "row_version",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "leaseOwner",
+            "columnName": "lease_owner",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "leaseExpiresAt",
+            "columnName": "lease_expires_at",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "retryCycle",
+            "columnName": "retry_cycle",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "blockedReason",
+            "columnName": "blocked_reason",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "job_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_memory_maintenance_job_idempotency_key",
+            "unique": true,
+            "columnNames": [
+              "idempotency_key"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_memory_maintenance_job_idempotency_key` ON `${TABLE_NAME}` (`idempotency_key`)"
+          },
+          {
+            "name": "index_memory_maintenance_job_status",
+            "unique": false,
+            "columnNames": [
+              "status"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_maintenance_job_status` ON `${TABLE_NAME}` (`status`)"
+          },
+          {
+            "name": "index_memory_maintenance_job_type",
+            "unique": false,
+            "columnNames": [
+              "type"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_maintenance_job_type` ON `${TABLE_NAME}` (`type`)"
+          },
+          {
+            "name": "index_memory_maintenance_job_next_run_at",
+            "unique": false,
+            "columnNames": [
+              "next_run_at"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_maintenance_job_next_run_at` ON `${TABLE_NAME}` (`next_run_at`)"
+          },
+          {
+            "name": "index_memory_maintenance_job_family_status_next_run_at_created_at",
+            "unique": false,
+            "columnNames": [
+              "family",
+              "status",
+              "next_run_at",
+              "created_at"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_maintenance_job_family_status_next_run_at_created_at` ON `${TABLE_NAME}` (`family`, `status`, `next_run_at`, `created_at`)"
+          },
+          {
+            "name": "index_memory_maintenance_job_family_status_lease_expires_at",
+            "unique": false,
+            "columnNames": [
+              "family",
+              "status",
+              "lease_expires_at"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_maintenance_job_family_status_lease_expires_at` ON `${TABLE_NAME}` (`family`, `status`, `lease_expires_at`)"
+          },
+          {
+            "name": "index_memory_maintenance_job_generation_status",
+            "unique": false,
+            "columnNames": [
+              "generation",
+              "status"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_maintenance_job_generation_status` ON `${TABLE_NAME}` (`generation`, `status`)"
+          }
+        ]
+      },
+      {
+        "tableName": "memory_mutation_group",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`group_id` TEXT NOT NULL, `generation` INTEGER NOT NULL, `semantic_job_id` TEXT, `semantic_batch_id` TEXT, `state` TEXT NOT NULL, `idempotency_key` TEXT NOT NULL, `last_error` TEXT, `created_at` INTEGER NOT NULL, `updated_at` INTEGER NOT NULL, `completed_at` INTEGER, `expected_receipt_count` INTEGER NOT NULL DEFAULT 0, `row_version` INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(`group_id`))",
+        "fields": [
+          {
+            "fieldPath": "groupId",
+            "columnName": "group_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "generation",
+            "columnName": "generation",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "semanticJobId",
+            "columnName": "semantic_job_id",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "semanticBatchId",
+            "columnName": "semantic_batch_id",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "idempotencyKey",
+            "columnName": "idempotency_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastError",
+            "columnName": "last_error",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "completedAt",
+            "columnName": "completed_at",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "expectedReceiptCount",
+            "columnName": "expected_receipt_count",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "rowVersion",
+            "columnName": "row_version",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "group_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_memory_mutation_group_idempotency_key",
+            "unique": true,
+            "columnNames": [
+              "idempotency_key"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_memory_mutation_group_idempotency_key` ON `${TABLE_NAME}` (`idempotency_key`)"
+          },
+          {
+            "name": "index_memory_mutation_group_semantic_job_id",
+            "unique": false,
+            "columnNames": [
+              "semantic_job_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_mutation_group_semantic_job_id` ON `${TABLE_NAME}` (`semantic_job_id`)"
+          },
+          {
+            "name": "index_memory_mutation_group_semantic_batch_id",
+            "unique": false,
+            "columnNames": [
+              "semantic_batch_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_mutation_group_semantic_batch_id` ON `${TABLE_NAME}` (`semantic_batch_id`)"
+          },
+          {
+            "name": "index_memory_mutation_group_generation",
+            "unique": false,
+            "columnNames": [
+              "generation"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_mutation_group_generation` ON `${TABLE_NAME}` (`generation`)"
+          },
+          {
+            "name": "index_memory_mutation_group_state",
+            "unique": false,
+            "columnNames": [
+              "state"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_mutation_group_state` ON `${TABLE_NAME}` (`state`)"
+          }
+        ]
+      },
+      {
+        "tableName": "memory_mutation_receipt",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`receipt_id` TEXT NOT NULL, `group_id` TEXT NOT NULL, `generation` INTEGER NOT NULL, `source_path` TEXT NOT NULL, `base_source_hash` TEXT NOT NULL, `target_source_hash` TEXT NOT NULL, `staged_target_path` TEXT NOT NULL, `state` TEXT NOT NULL, `idempotency_key` TEXT NOT NULL, `target_index_fingerprint` TEXT, `attempts` INTEGER NOT NULL, `last_error` TEXT, `created_at` INTEGER NOT NULL, `updated_at` INTEGER NOT NULL, `file_committed_at` INTEGER, `indexed_at` INTEGER, `row_version` INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(`receipt_id`), FOREIGN KEY(`group_id`) REFERENCES `memory_mutation_group`(`group_id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "receiptId",
+            "columnName": "receipt_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "groupId",
+            "columnName": "group_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "generation",
+            "columnName": "generation",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourcePath",
+            "columnName": "source_path",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "baseSourceHash",
+            "columnName": "base_source_hash",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "targetSourceHash",
+            "columnName": "target_source_hash",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "stagedTargetPath",
+            "columnName": "staged_target_path",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "idempotencyKey",
+            "columnName": "idempotency_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "targetIndexFingerprint",
+            "columnName": "target_index_fingerprint",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "attempts",
+            "columnName": "attempts",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastError",
+            "columnName": "last_error",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fileCommittedAt",
+            "columnName": "file_committed_at",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "indexedAt",
+            "columnName": "indexed_at",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "rowVersion",
+            "columnName": "row_version",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "receipt_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_memory_mutation_receipt_idempotency_key",
+            "unique": true,
+            "columnNames": [
+              "idempotency_key"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_memory_mutation_receipt_idempotency_key` ON `${TABLE_NAME}` (`idempotency_key`)"
+          },
+          {
+            "name": "index_memory_mutation_receipt_group_id_source_path",
+            "unique": true,
+            "columnNames": [
+              "group_id",
+              "source_path"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_memory_mutation_receipt_group_id_source_path` ON `${TABLE_NAME}` (`group_id`, `source_path`)"
+          },
+          {
+            "name": "index_memory_mutation_receipt_generation",
+            "unique": false,
+            "columnNames": [
+              "generation"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_mutation_receipt_generation` ON `${TABLE_NAME}` (`generation`)"
+          },
+          {
+            "name": "index_memory_mutation_receipt_state",
+            "unique": false,
+            "columnNames": [
+              "state"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_mutation_receipt_state` ON `${TABLE_NAME}` (`state`)"
+          },
+          {
+            "name": "index_memory_mutation_receipt_source_path",
+            "unique": false,
+            "columnNames": [
+              "source_path"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_mutation_receipt_source_path` ON `${TABLE_NAME}` (`source_path`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "memory_mutation_group",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "group_id"
+            ],
+            "referencedColumns": [
+              "group_id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "memory_corpus_state",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`corpus` TEXT NOT NULL, `source_path` TEXT NOT NULL, `source_hash` TEXT NOT NULL, `generation` INTEGER NOT NULL, `target_index_fingerprint` TEXT, `index_status` TEXT NOT NULL, `indexed_generation` INTEGER, `indexed_source_hash` TEXT, `indexed_fingerprint` TEXT, `latest_receipt_id` TEXT, `last_error` TEXT, `row_version` INTEGER NOT NULL DEFAULT 0, `created_at` INTEGER NOT NULL, `updated_at` INTEGER NOT NULL, PRIMARY KEY(`corpus`))",
+        "fields": [
+          {
+            "fieldPath": "corpus",
+            "columnName": "corpus",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourcePath",
+            "columnName": "source_path",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceHash",
+            "columnName": "source_hash",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "generation",
+            "columnName": "generation",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "targetIndexFingerprint",
+            "columnName": "target_index_fingerprint",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "indexStatus",
+            "columnName": "index_status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "indexedGeneration",
+            "columnName": "indexed_generation",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "indexedSourceHash",
+            "columnName": "indexed_source_hash",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "indexedFingerprint",
+            "columnName": "indexed_fingerprint",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "latestReceiptId",
+            "columnName": "latest_receipt_id",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "lastError",
+            "columnName": "last_error",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "rowVersion",
+            "columnName": "row_version",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "corpus"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_memory_corpus_state_source_path",
+            "unique": false,
+            "columnNames": [
+              "source_path"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_corpus_state_source_path` ON `${TABLE_NAME}` (`source_path`)"
+          },
+          {
+            "name": "index_memory_corpus_state_generation",
+            "unique": false,
+            "columnNames": [
+              "generation"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_corpus_state_generation` ON `${TABLE_NAME}` (`generation`)"
+          },
+          {
+            "name": "index_memory_corpus_state_index_status",
+            "unique": false,
+            "columnNames": [
+              "index_status"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_corpus_state_index_status` ON `${TABLE_NAME}` (`index_status`)"
+          }
+        ]
+      },
+      {
+        "tableName": "memory_distillation_checkpoint",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`checkpoint_id` TEXT NOT NULL, `daily_source_path` TEXT NOT NULL, `daily_source_hash` TEXT NOT NULL, `batch_key` TEXT NOT NULL, `daily_date` TEXT NOT NULL, `semantic_job_id` TEXT NOT NULL, `target_source_path` TEXT NOT NULL, `target_base_hash` TEXT NOT NULL, `target_source_hash` TEXT NOT NULL, `mutation_group_id` TEXT, `status` TEXT NOT NULL, `created_at` INTEGER NOT NULL, `updated_at` INTEGER NOT NULL, `processed_at` INTEGER, `row_version` INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(`checkpoint_id`))",
+        "fields": [
+          {
+            "fieldPath": "checkpointId",
+            "columnName": "checkpoint_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dailySourcePath",
+            "columnName": "daily_source_path",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dailySourceHash",
+            "columnName": "daily_source_hash",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "batchKey",
+            "columnName": "batch_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dailyDate",
+            "columnName": "daily_date",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "semanticJobId",
+            "columnName": "semantic_job_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "targetSourcePath",
+            "columnName": "target_source_path",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "targetBaseHash",
+            "columnName": "target_base_hash",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "targetSourceHash",
+            "columnName": "target_source_hash",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mutationGroupId",
+            "columnName": "mutation_group_id",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "processedAt",
+            "columnName": "processed_at",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "rowVersion",
+            "columnName": "row_version",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "checkpoint_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_memory_distillation_checkpoint_source_batch",
+            "unique": true,
+            "columnNames": [
+              "daily_source_path",
+              "daily_source_hash",
+              "batch_key"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_memory_distillation_checkpoint_source_batch` ON `${TABLE_NAME}` (`daily_source_path`, `daily_source_hash`, `batch_key`)"
+          },
+          {
+            "name": "index_memory_distillation_checkpoint_daily_date",
+            "unique": false,
+            "columnNames": [
+              "daily_date"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_distillation_checkpoint_daily_date` ON `${TABLE_NAME}` (`daily_date`)"
+          },
+          {
+            "name": "index_memory_distillation_checkpoint_semantic_job_id",
+            "unique": false,
+            "columnNames": [
+              "semantic_job_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_distillation_checkpoint_semantic_job_id` ON `${TABLE_NAME}` (`semantic_job_id`)"
+          },
+          {
+            "name": "index_memory_distillation_checkpoint_mutation_group_id",
+            "unique": false,
+            "columnNames": [
+              "mutation_group_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_distillation_checkpoint_mutation_group_id` ON `${TABLE_NAME}` (`mutation_group_id`)"
+          },
+          {
+            "name": "index_memory_distillation_checkpoint_status",
+            "unique": false,
+            "columnNames": [
+              "status"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_distillation_checkpoint_status` ON `${TABLE_NAME}` (`status`)"
+          }
+        ]
+      },
+      {
+        "tableName": "memory_chat_checkpoint",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`chat_id` INTEGER NOT NULL, `last_processed_user_message_id` INTEGER NOT NULL, `last_observed_user_message_id` INTEGER NOT NULL, `pending_since` INTEGER, `last_user_activity_at` INTEGER, `idle_due_at` INTEGER, `updated_at` INTEGER NOT NULL, PRIMARY KEY(`chat_id`), FOREIGN KEY(`chat_id`) REFERENCES `chats_v2`(`chat_id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "chatId",
+            "columnName": "chat_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastProcessedUserMessageId",
+            "columnName": "last_processed_user_message_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastObservedUserMessageId",
+            "columnName": "last_observed_user_message_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pendingSince",
+            "columnName": "pending_since",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "lastUserActivityAt",
+            "columnName": "last_user_activity_at",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "idleDueAt",
+            "columnName": "idle_due_at",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "chat_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_memory_chat_checkpoint_idle_due_at",
+            "unique": false,
+            "columnNames": [
+              "idle_due_at"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_chat_checkpoint_idle_due_at` ON `${TABLE_NAME}` (`idle_due_at`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "chats_v2",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "chat_id"
+            ],
+            "referencedColumns": [
+              "chat_id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "memory_pending_turn",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`turn_key` TEXT NOT NULL, `chat_id` INTEGER NOT NULL, `user_message_id` INTEGER NOT NULL, `payload_json` TEXT NOT NULL, `content_hash` TEXT NOT NULL, `completed_at` INTEGER NOT NULL, `claimed_job_id` TEXT, `created_at` INTEGER NOT NULL, `updated_at` INTEGER NOT NULL, PRIMARY KEY(`turn_key`), FOREIGN KEY(`chat_id`) REFERENCES `chats_v2`(`chat_id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "turnKey",
+            "columnName": "turn_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "chatId",
+            "columnName": "chat_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "userMessageId",
+            "columnName": "user_message_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payloadJson",
+            "columnName": "payload_json",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "contentHash",
+            "columnName": "content_hash",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "completedAt",
+            "columnName": "completed_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "claimedJobId",
+            "columnName": "claimed_job_id",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "turn_key"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_memory_pending_turn_chat_id_user_message_id",
+            "unique": true,
+            "columnNames": [
+              "chat_id",
+              "user_message_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_memory_pending_turn_chat_id_user_message_id` ON `${TABLE_NAME}` (`chat_id`, `user_message_id`)"
+          },
+          {
+            "name": "index_memory_pending_turn_chat_id_claimed_job_id",
+            "unique": false,
+            "columnNames": [
+              "chat_id",
+              "claimed_job_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_pending_turn_chat_id_claimed_job_id` ON `${TABLE_NAME}` (`chat_id`, `claimed_job_id`)"
+          },
+          {
+            "name": "index_memory_pending_turn_claimed_job_id",
+            "unique": false,
+            "columnNames": [
+              "claimed_job_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_pending_turn_claimed_job_id` ON `${TABLE_NAME}` (`claimed_job_id`)"
+          },
+          {
+            "name": "index_memory_pending_turn_completed_at",
+            "unique": false,
+            "columnNames": [
+              "completed_at"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_pending_turn_completed_at` ON `${TABLE_NAME}` (`completed_at`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "chats_v2",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "chat_id"
+            ],
+            "referencedColumns": [
+              "chat_id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "memory_activity_log",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`log_id` TEXT NOT NULL, `batch_id` TEXT NOT NULL, `category` TEXT NOT NULL, `status` TEXT NOT NULL, `platform_name` TEXT, `model_name` TEXT, `attempt` INTEGER, `turn_count` INTEGER, `operation_count` INTEGER, `detail` TEXT, `started_at` INTEGER NOT NULL, `completed_at` INTEGER, `updated_at` INTEGER NOT NULL, PRIMARY KEY(`log_id`))",
+        "fields": [
+          {
+            "fieldPath": "logId",
+            "columnName": "log_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "batchId",
+            "columnName": "batch_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "category",
+            "columnName": "category",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "platformName",
+            "columnName": "platform_name",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "modelName",
+            "columnName": "model_name",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "attempt",
+            "columnName": "attempt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "turnCount",
+            "columnName": "turn_count",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "operationCount",
+            "columnName": "operation_count",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "detail",
+            "columnName": "detail",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "startedAt",
+            "columnName": "started_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "completedAt",
+            "columnName": "completed_at",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "log_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_memory_activity_log_batch_id",
+            "unique": false,
+            "columnNames": [
+              "batch_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_activity_log_batch_id` ON `${TABLE_NAME}` (`batch_id`)"
+          },
+          {
+            "name": "index_memory_activity_log_category",
+            "unique": false,
+            "columnNames": [
+              "category"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_activity_log_category` ON `${TABLE_NAME}` (`category`)"
+          },
+          {
+            "name": "index_memory_activity_log_status",
+            "unique": false,
+            "columnNames": [
+              "status"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_activity_log_status` ON `${TABLE_NAME}` (`status`)"
+          },
+          {
+            "name": "index_memory_activity_log_started_at",
+            "unique": false,
+            "columnNames": [
+              "started_at"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_activity_log_started_at` ON `${TABLE_NAME}` (`started_at`)"
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '44588a69a5805e538f86c014dbd6f8e8')"
+    ]
+  }
+}

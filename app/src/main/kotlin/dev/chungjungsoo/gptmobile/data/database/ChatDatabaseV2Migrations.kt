@@ -340,6 +340,13 @@ object ChatDatabaseV2Migrations {
         }
     }
 
+    val MIGRATION_16_17 = object : Migration(16, 17) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("DROP TABLE IF EXISTS `chat_classification`")
+            db.execSQL("DROP TABLE IF EXISTS `personal_memory`")
+        }
+    }
+
     internal fun legacyFilesToAttachmentsJson(filesValue: String): String {
         val attachments = filesValue
             .split(",")

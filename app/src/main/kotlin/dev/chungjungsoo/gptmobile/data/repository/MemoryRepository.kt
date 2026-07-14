@@ -6,6 +6,7 @@ import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
 import dev.chungjungsoo.gptmobile.data.memory.MemoryCompletedTurnInput
 import dev.chungjungsoo.gptmobile.data.memory.MemoryTurnRecordingResult
 import dev.chungjungsoo.gptmobile.data.memory.PreparedMemoryContext
+import kotlinx.coroutines.flow.Flow
 
 interface MemoryRepository {
     suspend fun onMemoryEnabledChanged(enabled: Boolean)
@@ -22,5 +23,5 @@ interface MemoryRepository {
     ): PreparedMemoryContext
 
     suspend fun getLongTermMarkdown(): String
-    suspend fun migrateActiveMemoriesToMarkdown(): Int
+    fun observeLongTermMarkdown(): Flow<String>
 }

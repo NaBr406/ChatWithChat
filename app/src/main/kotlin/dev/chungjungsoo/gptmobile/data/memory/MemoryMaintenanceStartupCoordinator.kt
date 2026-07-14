@@ -1,12 +1,10 @@
 package dev.chungjungsoo.gptmobile.data.memory
 
 import dev.chungjungsoo.gptmobile.data.memory.embedding.ProductionMemoryEmbeddingProvisioner
-import dev.chungjungsoo.gptmobile.data.repository.MemoryRepository
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 
 class MemoryMaintenanceStartupCoordinator @Inject constructor(
-    private val memoryRepository: MemoryRepository,
     private val embeddingProvisioner: ProductionMemoryEmbeddingProvisioner,
     private val vectorIndexBootstrapService: MemoryVectorIndexBootstrapService,
     private val memoryMaintenanceRepairer: MemoryMaintenanceRepairer,
@@ -14,7 +12,6 @@ class MemoryMaintenanceStartupCoordinator @Inject constructor(
 ) {
     suspend fun run() {
         runMemoryStartupTasks(
-            migrate = { memoryRepository.migrateActiveMemoriesToMarkdown() },
             enqueueRepair = {
                 workEnqueuer.enqueueWork(
                     family = MemoryMaintenanceJobFamily.REPAIR,
@@ -33,14 +30,12 @@ class MemoryMaintenanceStartupCoordinator @Inject constructor(
 }
 
 internal suspend fun runMemoryStartupTasks(
-    migrate: suspend () -> Unit,
     enqueueRepair: suspend () -> Unit,
     provision: suspend () -> Unit,
     bootstrap: suspend () -> Unit,
     repair: suspend () -> Unit
 ) {
     runOptionalStartupStep(enqueueRepair)
-    runOptionalStartupStep(migrate)
     runOptionalStartupStep(provision)
     runOptionalStartupStep(bootstrap)
     repair()

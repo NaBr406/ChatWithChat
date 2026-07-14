@@ -3,7 +3,6 @@ package dev.chungjungsoo.gptmobile.data.memory
 import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import io.objectbox.BoxStore
 import dev.chungjungsoo.gptmobile.data.database.ChatDatabaseV2
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingAvailability
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingCapability
@@ -17,6 +16,7 @@ import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorQuery
 import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorQueryResult
 import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorStore
 import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorStoreFactory
+import io.objectbox.BoxStore
 import java.io.File
 import java.time.Clock
 import java.time.Instant
@@ -30,15 +30,15 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
-class MemorySchema16StartupRecoveryInstrumentedTest {
+class MemorySchema17StartupRecoveryInstrumentedTest {
 
     @Test
-    fun freshSchema16Startup_rebuildsMissingObjectBoxFromCurrentMarkdown() = runBlocking {
+    fun freshSchema17Startup_rebuildsMissingObjectBoxFromCurrentMarkdown() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val suffix = System.nanoTime().toString()
-        val databaseName = "schema16-startup-$suffix.db"
-        val memoryRoot = File(context.filesDir, "memory_store_schema16_test/$suffix")
-        val vectorDirectory = File(context.noBackupFilesDir, "memory_vector_index_test/schema16-startup-$suffix")
+        val databaseName = "schema17-startup-$suffix.db"
+        val memoryRoot = File(context.filesDir, "memory_store_schema17_test/$suffix")
+        val vectorDirectory = File(context.noBackupFilesDir, "memory_vector_index_test/schema17-startup-$suffix")
         context.deleteDatabase(databaseName)
         memoryRoot.deleteRecursively()
         BoxStore.deleteAllFiles(vectorDirectory)
@@ -49,7 +49,7 @@ class MemorySchema16StartupRecoveryInstrumentedTest {
         var reopenedVectorStore: MemoryVectorStore? = null
         try {
             val sqliteDatabase = database.openHelper.writableDatabase
-            assertEquals(16, sqliteDatabase.version)
+            assertEquals(17, sqliteDatabase.version)
             sqliteDatabase.query(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('memory_chunk', 'memory_document')"
             ).use { cursor -> assertEquals(0, cursor.count) }
@@ -66,7 +66,7 @@ class MemorySchema16StartupRecoveryInstrumentedTest {
                         source = MemorySource.EXPLICIT_USER_STATEMENT,
                         createdAt = FIXED_TIME - 1,
                         updatedAt = FIXED_TIME,
-                        section = "Schema 16 Startup"
+                        section = "Schema 17 Startup"
                     )
                 )
             )
@@ -125,7 +125,6 @@ class MemorySchema16StartupRecoveryInstrumentedTest {
                 enqueueRepair = {
                     workEnqueuer.enqueueWork(MemoryMaintenanceJobFamily.REPAIR, STARTUP_REPAIR_DELAY_SECONDS)
                 },
-                migrate = {},
                 provision = {},
                 bootstrap = {
                     bootstrapResult = bootstrapService.bootstrap()
@@ -160,7 +159,7 @@ class MemorySchema16StartupRecoveryInstrumentedTest {
             val claimedJob = checkNotNull(
                 maintenanceScheduler.claimNextRunnable(
                     family = MemoryMaintenanceJobFamily.INDEX,
-                    leaseOwner = "schema16-startup-test"
+                    leaseOwner = "schema17-startup-test"
                 )
             )
             val synchronizer = MemoryIndexSynchronizer(
@@ -261,8 +260,8 @@ class MemorySchema16StartupRecoveryInstrumentedTest {
 
     private companion object {
         const val CHAT_RECALL_CORPUS_KEY = "chat_recall_long_term"
-        const val SENTINEL_ID = "mem_schema16_startup"
-        const val SENTINEL_TEXT = "Current schema16 startup sentinel comes only from MEMORY.md."
+        const val SENTINEL_ID = "mem_schema17_startup"
+        const val SENTINEL_TEXT = "Current schema17 startup sentinel comes only from MEMORY.md."
         const val FIXED_TIME = 1_784_000_000L
         const val STARTUP_REPAIR_DELAY_SECONDS = 30L
         val FIXED_CLOCK: Clock = Clock.fixed(Instant.ofEpochSecond(FIXED_TIME), ZoneOffset.UTC)

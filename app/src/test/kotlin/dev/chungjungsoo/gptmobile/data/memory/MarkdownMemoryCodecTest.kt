@@ -201,25 +201,4 @@ class MarkdownMemoryCodecTest {
         assertEquals(10, parsed.entries.single { it.id == "mem_progress" }.createdAt)
         assertEquals(30, parsed.entries.single { it.id == "mem_progress" }.updatedAt)
     }
-
-    @Test
-    fun `personal memory can be converted to markdown entry`() {
-        val personalMemory = testMemory(
-            id = 42,
-            recallText = "The user prefers implementation before long explanations.",
-            type = "communication_style",
-            source = MemorySource.USER_CONFIRMED,
-            sensitivity = MemorySensitivity.NORMAL,
-            updatedAt = 200L
-        )
-
-        val entry = personalMemory.toMarkdownMemoryEntry()
-
-        assertEquals("personal_42", entry.id)
-        assertEquals(personalMemory.recallText, entry.text)
-        assertEquals("communication_style", entry.type)
-        assertEquals(MemorySource.USER_CONFIRMED, entry.source)
-        assertEquals(200L, entry.createdAt)
-        assertEquals(200L, entry.updatedAt)
-    }
 }

@@ -10,12 +10,15 @@ import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceJobFamily
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceRepairer
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceScheduler
 import dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceWorkEnqueuer
+import java.io.File
+import java.security.MessageDigest
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -44,7 +47,7 @@ class ChatDatabaseV2MigrationInstrumentedTest {
     }
 
     @Test
-    fun migration14To15To16_preservesBusinessDataAndCreatesRecoveryState() {
+    fun migration14To15To16To17_preservesBusinessDataAndCreatesRecoveryState() {
         migrationHelper.createDatabase(TEST_DATABASE, 14).apply {
             insertSchema14Rows(this)
             close()
@@ -52,10 +55,11 @@ class ChatDatabaseV2MigrationInstrumentedTest {
 
         migrationHelper.runMigrationsAndValidate(
             TEST_DATABASE,
-            16,
+            17,
             true,
             ChatDatabaseV2Migrations.MIGRATION_14_15,
-            ChatDatabaseV2Migrations.MIGRATION_15_16
+            ChatDatabaseV2Migrations.MIGRATION_15_16,
+            ChatDatabaseV2Migrations.MIGRATION_16_17
         ).use { database ->
             assertEquals(1L, database.singleLong("SELECT COUNT(*) FROM chats_v2"))
             assertEquals("kept chat", database.singleString("SELECT title FROM chats_v2 WHERE chat_id = 7"))
@@ -63,10 +67,9 @@ class ChatDatabaseV2MigrationInstrumentedTest {
             assertEquals("provider-1", database.singleString("SELECT uid FROM platform_v2 WHERE platform_id = 3"))
             assertEquals("model-1", database.singleString("SELECT model_id FROM platform_model_v2 WHERE platform_uid = 'provider-1'"))
             assertEquals("medium", database.singleString("SELECT reasoning_mode FROM chat_platform_model_v2 WHERE chat_id = 7"))
-            assertEquals("kept personal memory", database.singleString("SELECT summary FROM personal_memory WHERE memory_id = 5"))
-            assertEquals("chat", database.singleString("SELECT mode FROM chat_classification WHERE chat_id = 7"))
             assertEquals(0L, database.singleLong("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'memory_document'"))
             assertEquals(0L, database.singleLong("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'memory_chunk'"))
+            assertLegacySemanticTablesAbsent(database)
             assertEquals("batch-1", database.singleString("SELECT batch_id FROM memory_activity_log WHERE log_id = 'log-1'"))
             assertEquals(11L, database.singleLong("SELECT last_observed_user_message_id FROM memory_chat_checkpoint WHERE chat_id = 7"))
             assertEquals("turn-hash", database.singleString("SELECT content_hash FROM memory_pending_turn WHERE turn_key = '7:11'"))
@@ -146,15 +149,16 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 assertEquals(0, cursor.count)
             }
             assertEquals("ok", database.singleString("PRAGMA integrity_check"))
-            assertEquals(16L, database.singleLong("PRAGMA user_version"))
-            assertEquals(RETAINED_TABLES, database.userTableNames())
+            assertEquals(17L, database.singleLong("PRAGMA user_version"))
+            assertEquals(SCHEMA_17_TABLES, database.userTableNames())
         }
 
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val roomDatabase = Room.databaseBuilder(context, ChatDatabaseV2::class.java, TEST_DATABASE)
             .addMigrations(
                 ChatDatabaseV2Migrations.MIGRATION_14_15,
-                ChatDatabaseV2Migrations.MIGRATION_15_16
+                ChatDatabaseV2Migrations.MIGRATION_15_16,
+                ChatDatabaseV2Migrations.MIGRATION_16_17
             )
             .build()
         try {
@@ -187,10 +191,10 @@ class ChatDatabaseV2MigrationInstrumentedTest {
         var expectedRows = emptyMap<String, List<List<String>>>()
         migrationHelper.createDatabase(TEST_DATABASE, 15).apply {
             insertSchema15Rows(this)
-            expectedCounts = RETAINED_TABLES.associateWith { tableName ->
+            expectedCounts = SCHEMA_16_TABLES.associateWith { tableName ->
                 singleLong("SELECT COUNT(*) FROM `$tableName`")
             }
-            expectedRows = UNCHANGED_RETAINED_TABLES.associateWith { tableName -> snapshotRows(tableName) }
+            expectedRows = UNCHANGED_SCHEMA_16_TABLES.associateWith { tableName -> snapshotRows(tableName) }
             close()
         }
 
@@ -214,7 +218,7 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                     database.snapshotRows(tableName)
                 )
             }
-            assertEquals(RETAINED_TABLES, database.userTableNames())
+            assertEquals(SCHEMA_16_TABLES, database.userTableNames())
             assertEquals(
                 0L,
                 database.singleLong(
@@ -266,7 +270,10 @@ class ChatDatabaseV2MigrationInstrumentedTest {
 
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val roomDatabase = Room.databaseBuilder(context, ChatDatabaseV2::class.java, TEST_DATABASE)
-            .addMigrations(ChatDatabaseV2Migrations.MIGRATION_15_16)
+            .addMigrations(
+                ChatDatabaseV2Migrations.MIGRATION_15_16,
+                ChatDatabaseV2Migrations.MIGRATION_16_17
+            )
             .build()
         try {
             runBlocking {
@@ -275,8 +282,6 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 assertEquals("provider-16", roomDatabase.platformDao().getPlatform(30)?.uid)
                 assertEquals("model-16", roomDatabase.platformModelDao().getModel("provider-16", "model-16")?.modelId)
                 assertEquals("medium", roomDatabase.chatPlatformModelDao().getByChatId(70).single().reasoningMode)
-                assertEquals("schema 16 personal memory", roomDatabase.personalMemoryDao().getAll().single().summary)
-                assertEquals("chat", roomDatabase.chatClassificationDao().getByChatId(70)?.mode)
                 assertEquals("dismissed", roomDatabase.memoryMaintenanceJobDao().getById("legacy-pending")?.status)
                 val recoveryDao = roomDatabase.memoryRecoveryDao()
                 val mutationGroup = recoveryDao.getMutationGroup("group-15")
@@ -318,21 +323,95 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                     assertEquals("dismissed", roomDatabase.memoryMaintenanceJobDao().getById(jobId)?.status)
                 }
             }
-            assertEquals(RETAINED_TABLES, roomDatabase.openHelper.writableDatabase.userTableNames())
+            assertEquals(SCHEMA_17_TABLES, roomDatabase.openHelper.writableDatabase.userTableNames())
+            assertLegacySemanticTablesAbsent(roomDatabase.openHelper.writableDatabase)
         } finally {
             roomDatabase.close()
         }
     }
 
     @Test
-    fun freshSchema16_opensAndReopensWithExactlyRetainedTables() {
+    fun migration16To17_preservesEveryRetainedTableAndCanonicalMemoryBytes() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val memoryFile = File(File(context.filesDir, "memory_store"), "MEMORY.md")
+        val originalMemoryBytes = memoryFile.takeIf { it.isFile }?.readBytes()
+        val sentinelMemoryBytes = "# Schema 16 canonical memory\r\n\r\n- preserve these exact bytes\r\n"
+            .toByteArray(Charsets.UTF_8)
+
+        try {
+            memoryFile.parentFile?.mkdirs()
+            memoryFile.writeBytes(sentinelMemoryBytes)
+            val memoryHashBefore = sentinelMemoryBytes.sha256()
+            var expectedCounts = emptyMap<String, Long>()
+            var expectedRows = emptyMap<String, List<List<String>>>()
+
+            migrationHelper.createDatabase(TEST_DATABASE, 16).apply {
+                insertSchema16Rows(this)
+                expectedCounts = SCHEMA_17_TABLES.associateWith { tableName ->
+                    singleLong("SELECT COUNT(*) FROM `$tableName`")
+                }
+                expectedRows = SCHEMA_17_TABLES.associateWith { tableName -> snapshotRows(tableName) }
+                assertEquals(1L, singleLong("SELECT COUNT(*) FROM personal_memory"))
+                assertEquals(1L, singleLong("SELECT COUNT(*) FROM chat_classification"))
+                close()
+            }
+
+            migrationHelper.runMigrationsAndValidate(
+                TEST_DATABASE,
+                17,
+                true,
+                ChatDatabaseV2Migrations.MIGRATION_16_17
+            ).use { database ->
+                expectedCounts.forEach { (tableName, expectedCount) ->
+                    assertEquals(
+                        "retained row count for $tableName",
+                        expectedCount,
+                        database.singleLong("SELECT COUNT(*) FROM `$tableName`")
+                    )
+                }
+                expectedRows.forEach { (tableName, expectedTableRows) ->
+                    assertEquals(
+                        "retained values for $tableName",
+                        expectedTableRows,
+                        database.snapshotRows(tableName)
+                    )
+                }
+                assertEquals(SCHEMA_17_TABLES, database.userTableNames())
+                assertLegacySemanticTablesAbsent(database)
+                assertEquals(17L, database.singleLong("PRAGMA user_version"))
+                database.query("PRAGMA foreign_key_check").use { cursor ->
+                    assertEquals(0, cursor.count)
+                }
+                assertEquals("ok", database.singleString("PRAGMA integrity_check"))
+            }
+
+            val memoryBytesAfter = memoryFile.readBytes()
+            assertArrayEquals(sentinelMemoryBytes, memoryBytesAfter)
+            assertEquals(memoryHashBefore, memoryBytesAfter.sha256())
+        } finally {
+            if (originalMemoryBytes == null) {
+                memoryFile.delete()
+            } else {
+                memoryFile.parentFile?.mkdirs()
+                memoryFile.writeBytes(originalMemoryBytes)
+            }
+        }
+    }
+
+    @Test
+    fun freshSchema17_opensAndReopensWithExactlyRetainedTables() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val freshDatabase = Room.databaseBuilder(context, ChatDatabaseV2::class.java, TEST_DATABASE).build()
         try {
             val database = freshDatabase
-            assertEquals(RETAINED_TABLES, database.openHelper.writableDatabase.userTableNames())
-            assertEquals(16L, database.openHelper.writableDatabase.singleLong("PRAGMA user_version"))
-            assertEquals("ok", database.openHelper.writableDatabase.singleString("PRAGMA integrity_check"))
+            val sqliteDatabase = database.openHelper.writableDatabase
+            assertEquals(SCHEMA_17_TABLES, sqliteDatabase.userTableNames())
+            assertLegacySemanticTablesAbsent(sqliteDatabase)
+            assertEquals(17L, sqliteDatabase.singleLong("PRAGMA user_version"))
+            sqliteDatabase.query("PRAGMA foreign_key_check").use { cursor ->
+                assertEquals(0, cursor.count)
+            }
+            assertEquals("ok", sqliteDatabase.singleString("PRAGMA integrity_check"))
         } finally {
             freshDatabase.close()
         }
@@ -340,12 +419,15 @@ class ChatDatabaseV2MigrationInstrumentedTest {
         val reopenedDatabase = Room.databaseBuilder(context, ChatDatabaseV2::class.java, TEST_DATABASE).build()
         try {
             val database = reopenedDatabase
-            assertEquals(RETAINED_TABLES, database.openHelper.writableDatabase.userTableNames())
+            val sqliteDatabase = database.openHelper.writableDatabase
+            assertEquals(SCHEMA_17_TABLES, sqliteDatabase.userTableNames())
+            assertLegacySemanticTablesAbsent(sqliteDatabase)
+            assertEquals(17L, sqliteDatabase.singleLong("PRAGMA user_version"))
+            assertEquals("ok", sqliteDatabase.singleString("PRAGMA integrity_check"))
             runBlocking {
                 assertTrue(database.chatRoomDao().getChatRooms().isEmpty())
                 assertTrue(database.messageDao().loadMessages(1).isEmpty())
                 assertTrue(database.platformDao().getPlatforms().isEmpty())
-                assertTrue(database.personalMemoryDao().getAll().isEmpty())
                 assertNull(database.memoryMaintenanceJobDao().getById("missing"))
                 assertNull(database.memoryRecoveryDao().getCorpusState("chat_recall_long_term"))
                 assertNull(database.memoryTurnBatchDao().getCheckpoint(1))
@@ -357,6 +439,29 @@ class ChatDatabaseV2MigrationInstrumentedTest {
     }
 
     private fun insertSchema15Rows(database: SupportSQLiteDatabase) {
+        insertSchema16Rows(database)
+        database.execSQL(
+            """
+            INSERT INTO memory_document (
+                source_path, title, scope, content_hash, last_modified_at, indexed_at
+            ) VALUES ('MEMORY.md', 'Memory', 'long_term', 'legacy-document-hash', 109, 110)
+            """.trimIndent()
+        )
+        database.execSQL(
+            """
+            INSERT INTO memory_chunk (
+                chunk_id, source_path, chunk_index, heading, text, entry_id, type,
+                sensitivity, source, chat_id, created_at, updated_at, indexed_at
+            ) VALUES (
+                'legacy-chunk-15', 'MEMORY.md', 0, 'Profile', 'legacy derived chunk',
+                'entry-15', 'stable_profile', 'normal', 'explicit_user_statement',
+                70, 109, 109, 110
+            )
+            """.trimIndent()
+        )
+    }
+
+    private fun insertSchema16Rows(database: SupportSQLiteDatabase) {
         database.execSQL(
             "INSERT INTO chats_v2 (chat_id, title, enabled_platform, created_at, updated_at) VALUES (70, 'schema 16 chat', '[]', 100, 101)"
         )
@@ -417,26 +522,6 @@ class ChatDatabaseV2MigrationInstrumentedTest {
             ) VALUES (70, 'chat', 'answer', '[]', '[]', '[]', NULL, 1, 1, 'normal', 0.9, 108, NULL)
             """.trimIndent()
         )
-        database.execSQL(
-            """
-            INSERT INTO memory_document (
-                source_path, title, scope, content_hash, last_modified_at, indexed_at
-            ) VALUES ('MEMORY.md', 'Memory', 'long_term', 'legacy-document-hash', 109, 110)
-            """.trimIndent()
-        )
-        database.execSQL(
-            """
-            INSERT INTO memory_chunk (
-                chunk_id, source_path, chunk_index, heading, text, entry_id, type,
-                sensitivity, source, chat_id, created_at, updated_at, indexed_at
-            ) VALUES (
-                'legacy-chunk-15', 'MEMORY.md', 0, 'Profile', 'legacy derived chunk',
-                'entry-15', 'stable_profile', 'normal', 'explicit_user_statement',
-                70, 109, 109, 110
-            )
-            """.trimIndent()
-        )
-
         listOf(
             Triple("legacy-pending", "rebuild_memory_index", "pending"),
             Triple("legacy-running", "repair_markdown_metadata", "running"),
@@ -760,6 +845,18 @@ class ChatDatabaseV2MigrationInstrumentedTest {
         }
     }
 
+    private fun assertLegacySemanticTablesAbsent(database: SupportSQLiteDatabase) {
+        LEGACY_SEMANTIC_TABLES.forEach { tableName ->
+            assertEquals(
+                "$tableName should be absent",
+                0L,
+                database.singleLong(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '$tableName'"
+                )
+            )
+        }
+    }
+
     private fun SupportSQLiteDatabase.userTableNames(): Set<String> = query(
         """
         SELECT name
@@ -806,6 +903,10 @@ class ChatDatabaseV2MigrationInstrumentedTest {
         cursor.getString(0)
     }
 
+    private fun ByteArray.sha256(): String = MessageDigest.getInstance("SHA-256")
+        .digest(this)
+        .joinToString(separator = "") { byte -> "%02x".format(byte) }
+
     companion object {
         private const val TEST_DATABASE = "chat-v2-migration-test"
         private val FIXED_CLOCK = Clock.fixed(Instant.ofEpochSecond(1_000L), ZoneOffset.UTC)
@@ -817,14 +918,12 @@ class ChatDatabaseV2MigrationInstrumentedTest {
             "legacy-blocked",
             "legacy-terminal"
         )
-        private val RETAINED_TABLES = setOf(
+        private val SCHEMA_17_TABLES = setOf(
             "chats_v2",
             "messages_v2",
             "platform_v2",
             "platform_model_v2",
             "chat_platform_model_v2",
-            "personal_memory",
-            "chat_classification",
             "memory_maintenance_job",
             "memory_mutation_group",
             "memory_mutation_receipt",
@@ -834,7 +933,9 @@ class ChatDatabaseV2MigrationInstrumentedTest {
             "memory_pending_turn",
             "memory_activity_log"
         )
-        private val UNCHANGED_RETAINED_TABLES = RETAINED_TABLES - "memory_maintenance_job"
+        private val LEGACY_SEMANTIC_TABLES = setOf("personal_memory", "chat_classification")
+        private val SCHEMA_16_TABLES = SCHEMA_17_TABLES + LEGACY_SEMANTIC_TABLES
+        private val UNCHANGED_SCHEMA_16_TABLES = SCHEMA_16_TABLES - "memory_maintenance_job"
     }
 
     private class RecordingWorkEnqueuer : MemoryMaintenanceWorkEnqueuer {

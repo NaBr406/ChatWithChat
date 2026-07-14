@@ -1,10 +1,10 @@
 package dev.chungjungsoo.gptmobile.data.database
 
+import androidx.sqlite.db.SupportSQLiteDatabase
 import dev.chungjungsoo.gptmobile.data.database.entity.AssistantRevisionListConverter
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatAttachmentListConverter
 import java.lang.reflect.InvocationHandler
 import java.lang.reflect.Proxy
-import androidx.sqlite.db.SupportSQLiteDatabase
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -185,14 +185,16 @@ class ChatDatabaseV2MigrationsTest {
 
         ChatDatabaseV2Migrations.MIGRATION_12_13.migrate(db)
 
-        assertTrue(executedSql.none { sql ->
-            val normalized = sql.trimStart().uppercase()
-            normalized.startsWith("DROP ") ||
-                normalized.startsWith("DELETE ") ||
-                normalized.startsWith("UPDATE ") ||
-                normalized.startsWith("INSERT ") ||
-                normalized.startsWith("ALTER ")
-        })
+        assertTrue(
+            executedSql.none { sql ->
+                val normalized = sql.trimStart().uppercase()
+                normalized.startsWith("DROP ") ||
+                    normalized.startsWith("DELETE ") ||
+                    normalized.startsWith("UPDATE ") ||
+                    normalized.startsWith("INSERT ") ||
+                    normalized.startsWith("ALTER ")
+            }
+        )
         assertTrue(executedSql.all { it.contains("IF NOT EXISTS") })
     }
 
@@ -264,6 +266,22 @@ class ChatDatabaseV2MigrationsTest {
         assertTrue(updateSql.contains("`row_version` = `row_version` + 1"))
         assertTrue(updateSql.contains("WHERE `type` IN ('rebuild_memory_index', 'repair_markdown_metadata')"))
         assertTrue(updateSql.contains("AND `status` NOT IN ('succeeded', 'dismissed')"))
+    }
+
+    @Test
+    fun `migration 16 to 17 drops only legacy semantic tables`() {
+        val executedSql = mutableListOf<String>()
+        val db = recordingDatabase(executedSql)
+
+        ChatDatabaseV2Migrations.MIGRATION_16_17.migrate(db)
+
+        assertEquals(
+            listOf(
+                "DROP TABLE IF EXISTS `chat_classification`",
+                "DROP TABLE IF EXISTS `personal_memory`"
+            ),
+            executedSql
+        )
     }
 
     private fun recordingDatabase(executedSql: MutableList<String>): SupportSQLiteDatabase = Proxy.newProxyInstance(

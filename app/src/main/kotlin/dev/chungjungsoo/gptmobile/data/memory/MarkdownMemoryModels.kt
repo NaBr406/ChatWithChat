@@ -1,7 +1,5 @@
 package dev.chungjungsoo.gptmobile.data.memory
 
-import dev.chungjungsoo.gptmobile.data.database.entity.PersonalMemory
-
 data class MarkdownMemoryEntry(
     val id: String,
     val text: String,
@@ -24,16 +22,4 @@ data class SkippedMarkdownMemoryEntry(
     val lineNumber: Int,
     val reason: String,
     val metadata: Map<String, String> = emptyMap()
-)
-
-fun PersonalMemory.toMarkdownMemoryEntry(
-    text: String = recallText.trim()
-): MarkdownMemoryEntry = MarkdownMemoryEntry(
-    id = "personal_$id",
-    text = text.trim(),
-    type = type,
-    sensitivity = sensitivity,
-    source = source,
-    createdAt = createdAt,
-    updatedAt = updatedAt
 )
