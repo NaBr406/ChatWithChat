@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -26,10 +27,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -49,6 +53,7 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.font.FontWeight
@@ -267,11 +272,11 @@ private fun SourceMetadataBlock(
     sources: List<MessageSourceMetadata>,
     modifier: Modifier = Modifier
 ) {
+    val materialColors = settingsMaterialColors()
     val visibleSources = sources
         .mapNotNull { source -> source.safeDedupeKey()?.let { key -> key to source } }
         .distinctBy { (key, _) -> key }
         .map { (_, source) -> source }
-        .take(MAX_VISIBLE_SOURCES)
     if (visibleSources.isEmpty()) return
 
     var isExpanded by remember(visibleSources) { mutableStateOf(false) }
@@ -280,49 +285,81 @@ private fun SourceMetadataBlock(
         label = "source_rotation"
     )
 
-    Column(
+    Surface(
         modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = materialColors.grouped,
+        contentColor = materialColors.primaryLabel,
+        border = BorderStroke(0.5.dp, materialColors.separator),
+        tonalElevation = 0.dp
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { isExpanded = !isExpanded }
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text(
-                text = "${stringResource(R.string.sources_title)} (${visibleSources.size})",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.weight(1f)
-            )
-            Icon(
-                imageVector = Icons.Rounded.KeyboardArrowDown,
-                contentDescription = if (isExpanded) {
-                    stringResource(R.string.collapse)
-                } else {
-                    stringResource(R.string.expand)
-                },
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f),
-                modifier = Modifier.rotate(rotationAngle)
-            )
-        }
-
-        AnimatedVisibility(
-            visible = isExpanded,
-            enter = expandVertically(),
-            exit = shrinkVertically()
-        ) {
-            Column(
-                modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { isExpanded = !isExpanded }
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                visibleSources.forEach { source ->
-                    SourceMetadataItem(source = source)
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .background(AppleBlue.copy(alpha = 0.1f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Language,
+                        contentDescription = null,
+                        tint = AppleBlue,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+                Text(
+                    text = "${stringResource(R.string.sources_title)} (${visibleSources.size})",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = materialColors.primaryLabel,
+                    modifier = Modifier.weight(1f)
+                )
+                Icon(
+                    imageVector = Icons.Rounded.KeyboardArrowDown,
+                    contentDescription = if (isExpanded) {
+                        stringResource(R.string.collapse)
+                    } else {
+                        stringResource(R.string.expand)
+                    },
+                    tint = materialColors.secondaryLabel,
+                    modifier = Modifier
+                        .size(20.dp)
+                        .rotate(rotationAngle)
+                )
+            }
+
+            AnimatedVisibility(
+                visible = isExpanded,
+                enter = expandVertically(),
+                exit = shrinkVertically()
+            ) {
+                Column {
+                    HorizontalDivider(
+                        thickness = 0.5.dp,
+                        color = materialColors.separatorStrong
+                    )
+                    visibleSources.forEachIndexed { index, source ->
+                        SourceMetadataItem(
+                            source = source,
+                            sourceNumber = index + 1
+                        )
+                        if (index < visibleSources.lastIndex) {
+                            HorizontalDivider(
+                                modifier = Modifier.padding(start = 52.dp),
+                                thickness = 0.5.dp,
+                                color = materialColors.separator
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -330,7 +367,12 @@ private fun SourceMetadataBlock(
 }
 
 @Composable
-private fun SourceMetadataItem(source: MessageSourceMetadata) {
+private fun SourceMetadataItem(
+    source: MessageSourceMetadata,
+    sourceNumber: Int
+) {
+    val materialColors = settingsMaterialColors()
+    val uriHandler = LocalUriHandler.current
     val target = source.safeNavigationTarget() ?: return
     val detail = when (target) {
         is SafeMessageSourceTarget.PublicUrl -> target.url
@@ -342,34 +384,75 @@ private fun SourceMetadataItem(source: MessageSourceMetadata) {
             "$targetLabel · ${target.entityId}"
         }
     }
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(
-            text = source.title.ifBlank { detail },
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        Text(
-            text = detail,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.primary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        source.snippet.takeIf { it.isNotBlank() }?.let { snippet ->
+    val openSource: (() -> Unit)? = (target as? SafeMessageSourceTarget.PublicUrl)?.let { publicTarget ->
+        { runCatching { uriHandler.openUri(publicTarget.url) } }
+    }
+    val interactionModifier = openSource?.let { onClick ->
+        Modifier.clickable(onClick = onClick)
+    } ?: Modifier
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(interactionModifier)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(30.dp)
+                .background(materialColors.controlFill.copy(alpha = 0.46f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
             Text(
-                text = snippet,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
+                text = sourceNumber.toString(),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = materialColors.secondaryLabel
+            )
+        }
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(
+                text = source.title.ifBlank { detail },
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = materialColors.primaryLabel,
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (openSource != null) AppleBlue else materialColors.secondaryLabel,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            source.snippet.takeIf { it.isNotBlank() }?.let { snippet ->
+                Text(
+                    text = snippet,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = materialColors.secondaryLabel,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        if (openSource != null) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Rounded.OpenInNew,
+                contentDescription = stringResource(R.string.open_link),
+                tint = materialColors.tertiaryLabel,
+                modifier = Modifier
+                    .padding(top = 2.dp)
+                    .size(18.dp)
             )
         }
     }
 }
-
-private const val MAX_VISIBLE_SOURCES = 5
 
 @Composable
 fun PlatformButton(

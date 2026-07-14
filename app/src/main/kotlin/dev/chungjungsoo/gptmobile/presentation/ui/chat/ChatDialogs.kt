@@ -3,13 +3,21 @@ package dev.chungjungsoo.gptmobile.presentation.ui.chat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -31,6 +39,9 @@ import dev.chungjungsoo.gptmobile.R
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
 import dev.chungjungsoo.gptmobile.data.database.entity.effectiveContent
 import dev.chungjungsoo.gptmobile.data.database.entity.effectiveThoughts
+import dev.chungjungsoo.gptmobile.presentation.common.AppleBlue
+import dev.chungjungsoo.gptmobile.presentation.common.HigActionDialog
+import dev.chungjungsoo.gptmobile.presentation.common.settingsTextFieldColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -42,63 +53,62 @@ fun ChatTitleDialog(
     onConfirmRequest: (title: String) -> Unit,
     onDismissRequest: () -> Unit
 ) {
-    val configuration = LocalWindowInfo.current
-    val screenWidth = with(LocalDensity.current) { configuration.containerSize.width.toDp() }
-    val screenHeight = with(LocalDensity.current) { configuration.containerSize.height.toDp() }
     var title by rememberSaveable { mutableStateOf(initialTitle) }
     val untitledChat = stringResource(R.string.untitled_chat)
+    val normalizedTitle = normalizeChatTitle(title)
+    val canUpdate = normalizedTitle.isNotBlank() &&
+        normalizedTitle.length <= 50 &&
+        normalizedTitle != normalizeChatTitle(initialTitle)
 
-    AlertDialog(
-        properties = DialogProperties(usePlatformDefaultWidth = false),
-        modifier = Modifier
-            .widthIn(max = screenWidth - 40.dp)
-            .heightIn(max = screenHeight - 80.dp),
-        title = { Text(text = stringResource(R.string.chat_title)) },
-        text = {
-            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                OutlinedTextField(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 16.dp),
-                    value = title,
-                    singleLine = true,
-                    isError = title.length > 50,
-                    supportingText = {
-                        if (title.length > 50) {
-                            Text(stringResource(R.string.title_length_limit, title.length))
-                        }
-                    },
-                    onValueChange = { title = it },
-                    label = { Text(stringResource(R.string.chat_title)) }
-                )
-            }
+    HigActionDialog(
+        title = stringResource(R.string.chat_title),
+        message = null,
+        primaryActionLabel = stringResource(R.string.update),
+        onPrimaryAction = {
+            onConfirmRequest(normalizedTitle)
+            onDismissRequest()
         },
         onDismissRequest = onDismissRequest,
-        confirmButton = {
-            TextButton(
-                enabled = title.isNotBlank() && title != initialTitle,
-                onClick = {
-                    onConfirmRequest(title)
-                    onDismissRequest()
+        secondaryActionLabel = stringResource(R.string.cancel),
+        onSecondaryAction = onDismissRequest,
+        isPrimaryActionEnabled = canUpdate
+    ) {
+        Spacer(modifier = Modifier.heightIn(min = 14.dp))
+        OutlinedTextField(
+            modifier = Modifier.fillMaxWidth(),
+            value = title,
+            singleLine = true,
+            isError = normalizedTitle.length > 50,
+            supportingText = {
+                if (normalizedTitle.length > 50) {
+                    Text(stringResource(R.string.title_length_limit, normalizedTitle.length))
                 }
-            ) {
-                Text(stringResource(R.string.update))
-            }
-        },
-        dismissButton = {
-            TextButton(
-                onClick = { title = onDefaultTitleMode.invoke() ?: untitledChat }
-            ) {
-                Text(text = stringResource(R.string.default_mode))
-            }
-            TextButton(
-                onClick = onDismissRequest
-            ) {
-                Text(stringResource(R.string.cancel))
-            }
+            },
+            onValueChange = { title = it },
+            placeholder = { Text(stringResource(R.string.chat_title)) },
+            shape = RoundedCornerShape(10.dp),
+            colors = settingsTextFieldColors()
+        )
+        TextButton(
+            onClick = { title = onDefaultTitleMode.invoke() ?: untitledChat },
+            colors = ButtonDefaults.textButtonColors(contentColor = AppleBlue)
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Refresh,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(text = stringResource(R.string.default_mode))
         }
-    )
+    }
 }
+
+private val CHAT_TITLE_WHITESPACE = Regex("\\s+")
+
+internal fun normalizeChatTitle(title: String): String = title
+    .trim()
+    .replace(CHAT_TITLE_WHITESPACE, " ")
 
 @Composable
 fun UserMessageEditDialog(

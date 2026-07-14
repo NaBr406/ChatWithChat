@@ -159,6 +159,7 @@ fun ChatShellScreen(
 
     if (showDeleteWarningDialog) {
         DeleteWarningDialog(
+            selectedCount = chatListState.selectedChats.count { it },
             onDismissRequest = homeViewModel::closeDeleteWarningDialog,
             onConfirm = {
                 val deletedChatRoomCount = chatListState.selectedChats.count { it }

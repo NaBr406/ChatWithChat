@@ -12,17 +12,16 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.outlined.ContentCopy
@@ -31,7 +30,6 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -41,7 +39,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
@@ -60,21 +57,22 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.chungjungsoo.gptmobile.R
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatRoomV2
+import dev.chungjungsoo.gptmobile.presentation.common.AppleBlue
+import dev.chungjungsoo.gptmobile.presentation.common.AppleRed
+import dev.chungjungsoo.gptmobile.presentation.common.HigActionDialog
 import dev.chungjungsoo.gptmobile.presentation.common.settingsMaterialColors
 import dev.chungjungsoo.gptmobile.util.getPlatformName
 
@@ -201,36 +199,41 @@ fun HomeScreen(
             }
             itemsIndexed(chatListState.chats, key = { _, it -> it.id }) { idx, chatRoom ->
                 val usingPlatform = chatRoom.enabledPlatform.joinToString(", ") { uid -> platformState.getPlatformName(uid) }
+                val selected = chatListState.selectedChats.getOrElse(idx) { false }
                 ChatHistoryRow(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .combinedClickable(
-                            onLongClick = {
-                                if (!chatListState.isSearchMode) {
-                                    homeViewModel.enableSelectionMode()
-                                    homeViewModel.selectChat(idx)
-                                }
-                            },
-                            onClick = {
-                                if (chatListState.isSelectionMode) {
-                                    homeViewModel.selectChat(idx)
-                                } else {
-                                    onExistingChatClick(chatRoom)
-                                }
+                        .then(
+                            if (chatListState.isSelectionMode) {
+                                Modifier.toggleable(
+                                    value = selected,
+                                    role = Role.Checkbox,
+                                    onValueChange = { homeViewModel.selectChat(idx) }
+                                )
+                            } else {
+                                Modifier.combinedClickable(
+                                    onLongClick = {
+                                        if (!chatListState.isSearchMode) {
+                                            homeViewModel.enableSelectionMode()
+                                            homeViewModel.selectChat(idx)
+                                        }
+                                    },
+                                    onClick = { onExistingChatClick(chatRoom) }
+                                )
                             }
                         )
                         .animateItem(),
                     title = chatRoom.title,
                     platformLabel = stringResource(R.string.using_certain_platform, usingPlatform),
                     isSelectionMode = chatListState.isSelectionMode,
-                    selected = chatListState.selectedChats.getOrElse(idx) { false },
-                    onCheckedChange = { homeViewModel.selectChat(idx) }
+                    selected = selected
                 )
             }
         }
 
         if (showDeleteWarningDialog) {
             DeleteWarningDialog(
+                selectedCount = chatListState.selectedChats.count { it },
                 onDismissRequest = homeViewModel::closeDeleteWarningDialog,
                 onConfirm = {
                     val deletedChatRoomCount = chatListState.selectedChats.count { it }
@@ -522,36 +525,19 @@ fun NewChatButton(
 
 @Composable
 fun DeleteWarningDialog(
+    selectedCount: Int,
     onDismissRequest: () -> Unit,
     onConfirm: () -> Unit
 ) {
-    val configuration = LocalWindowInfo.current
-    val screenWidth = with(LocalDensity.current) { configuration.containerSize.width.toDp() }
-    val screenHeight = with(LocalDensity.current) { configuration.containerSize.height.toDp() }
-    AlertDialog(
-        properties = DialogProperties(usePlatformDefaultWidth = false),
-        modifier = Modifier
-            .widthIn(max = screenWidth - 40.dp)
-            .heightIn(max = screenHeight - 80.dp),
-        title = {
-            Text(
-                text = stringResource(R.string.delete_selected_chats),
-                style = MaterialTheme.typography.headlineSmall
-            )
-        },
-        text = {
-            Text(stringResource(R.string.this_operation_can_t_be_undone))
-        },
+    HigActionDialog(
+        title = stringResource(R.string.delete_selected_chats_count, selectedCount),
+        message = stringResource(R.string.this_operation_can_t_be_undone),
+        primaryActionLabel = stringResource(R.string.delete),
+        onPrimaryAction = onConfirm,
         onDismissRequest = onDismissRequest,
-        confirmButton = {
-            TextButton(onClick = onConfirm) {
-                Text(stringResource(R.string.confirm))
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismissRequest) {
-                Text(stringResource(R.string.cancel))
-            }
-        }
+        secondaryActionLabel = stringResource(R.string.cancel),
+        onSecondaryAction = onDismissRequest,
+        primaryActionColor = AppleRed,
+        secondaryActionColor = AppleBlue
     )
 }

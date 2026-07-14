@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -11,7 +12,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -21,6 +24,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -32,7 +37,7 @@ import androidx.compose.ui.window.DialogProperties
 @Composable
 fun HigActionDialog(
     title: String,
-    message: String,
+    message: String?,
     primaryActionLabel: String,
     onPrimaryAction: () -> Unit,
     onDismissRequest: () -> Unit,
@@ -41,10 +46,16 @@ fun HigActionDialog(
     secondaryActionLabel: String? = null,
     onSecondaryAction: (() -> Unit)? = null,
     isDismissible: Boolean = true,
+    isPrimaryActionEnabled: Boolean = true,
     primaryActionColor: Color = AppleBlue,
-    secondaryActionColor: Color = AppleBlue
+    secondaryActionColor: Color = AppleBlue,
+    content: @Composable ColumnScope.() -> Unit = {}
 ) {
     val materialColors = settingsMaterialColors()
+    val windowHeight = with(LocalDensity.current) {
+        LocalWindowInfo.current.containerSize.height.toDp()
+    }
+    val maxDialogHeight = (windowHeight - 48.dp).coerceAtLeast(240.dp)
     Dialog(
         onDismissRequest = onDismissRequest,
         properties = DialogProperties(
@@ -62,6 +73,7 @@ fun HigActionDialog(
             Surface(
                 modifier = modifier
                     .widthIn(max = 320.dp)
+                    .heightIn(max = maxDialogHeight)
                     .fillMaxWidth(),
                 shape = RoundedCornerShape(14.dp),
                 color = materialColors.grouped,
@@ -74,6 +86,8 @@ fun HigActionDialog(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .weight(weight = 1f, fill = false)
+                            .verticalScroll(rememberScrollState())
                             .padding(horizontal = 20.dp, vertical = 20.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
@@ -84,13 +98,15 @@ fun HigActionDialog(
                             color = materialColors.primaryLabel,
                             textAlign = TextAlign.Center
                         )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = message,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = materialColors.secondaryLabel,
-                            textAlign = TextAlign.Center
-                        )
+                        message?.takeIf { it.isNotBlank() }?.let { messageText ->
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = messageText,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = materialColors.secondaryLabel,
+                                textAlign = TextAlign.Center
+                            )
+                        }
                         detail?.takeIf { it.isNotBlank() }?.let { detailText ->
                             Spacer(modifier = Modifier.height(10.dp))
                             Text(
@@ -101,6 +117,7 @@ fun HigActionDialog(
                                 textAlign = TextAlign.Center
                             )
                         }
+                        content()
                     }
                     HorizontalDivider(thickness = 0.5.dp, color = materialColors.separatorStrong)
                     val secondaryAction = onSecondaryAction
@@ -121,6 +138,7 @@ fun HigActionDialog(
                                 label = primaryActionLabel,
                                 color = primaryActionColor,
                                 onClick = onPrimaryAction,
+                                enabled = isPrimaryActionEnabled,
                                 modifier = Modifier.weight(1f)
                             )
                         }
@@ -129,6 +147,7 @@ fun HigActionDialog(
                             label = primaryActionLabel,
                             color = primaryActionColor,
                             onClick = onPrimaryAction,
+                            enabled = isPrimaryActionEnabled,
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
@@ -143,12 +162,13 @@ private fun DialogAction(
     label: String,
     color: Color,
     onClick: () -> Unit,
+    enabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     Box(
         modifier = modifier
             .heightIn(min = 50.dp)
-            .clickable(role = Role.Button, onClick = onClick)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .padding(horizontal = 12.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -156,7 +176,7 @@ private fun DialogAction(
             text = label,
             style = MaterialTheme.typography.bodyLarge,
             fontWeight = FontWeight.SemiBold,
-            color = color,
+            color = if (enabled) color else settingsMaterialColors().tertiaryLabel,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )

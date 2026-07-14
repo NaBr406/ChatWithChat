@@ -186,7 +186,7 @@
     <string name="update_chat_title">更新会话标题</string>
     <string name="chat_title">会话标题</string>
     <string name="chat_title_dialog_description">AI 生成标题仅适用于支持 AICore 的设备。</string>
-    <string name="default_mode">默认</string>
+    <string name="default_mode">Restaurer le titre automatique</string>
     <string name="ai_generated">AI 生成（Beta）</string>
     <string name="update">更新</string>
     <string name="untitled_chat">未命名会话</string>

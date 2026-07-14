@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.util.Log
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -102,6 +103,7 @@ import dev.chungjungsoo.gptmobile.data.database.entity.effectiveTokenUsage
 import dev.chungjungsoo.gptmobile.data.model.ReasoningMode
 import dev.chungjungsoo.gptmobile.presentation.common.settingsMaterialColors
 import java.io.File
+import kotlin.math.abs
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -315,8 +317,25 @@ private fun ChatContent(
             enabledPlatformLookup = enabledPlatformLookup
         )
     }
-    val completedRoundCount = remember(roundNavigationItems) {
-        roundNavigationItems.count { it.hasSuccessfulAnswer }
+    val currentTurnIndex by remember(roundNavigationItems, listState) {
+        derivedStateOf {
+            if (roundNavigationItems.isEmpty()) {
+                null
+            } else {
+                val layoutInfo = listState.layoutInfo
+                val viewportCenter = (layoutInfo.viewportStartOffset + layoutInfo.viewportEndOffset) / 2
+                val centeredVisibleTurnIndex = layoutInfo.visibleItemsInfo
+                    .asSequence()
+                    .filter { itemInfo -> itemInfo.index in roundNavigationItems.indices }
+                    .minByOrNull { itemInfo ->
+                        abs((itemInfo.offset + itemInfo.size / 2) - viewportCenter)
+                    }
+                    ?.index
+                val visibleTurnIndex = centeredVisibleTurnIndex
+                    ?: listState.firstVisibleItemIndex.coerceIn(0, roundNavigationItems.lastIndex)
+                roundNavigationItems[visibleTurnIndex].turnIndex
+            }
+        }
     }
     val roundNavigatorMaxHeight = (screenHeightDp * 0.62f).coerceAtMost(520.dp)
     val latestStreamingContentVersion = remember(groupedMessages, toolProgressStates) {
@@ -351,6 +370,9 @@ private fun ChatContent(
     var pendingPostStreamBottomRestore by remember { mutableStateOf(false) }
     var hasHandledInitialLoad by remember { mutableStateOf(false) }
     var isRoundNavigatorOpen by remember { mutableStateOf(false) }
+    BackHandler(enabled = isRoundNavigatorOpen) {
+        isRoundNavigatorOpen = false
+    }
     val currentBottomItemIndex by rememberUpdatedState(bottomItemIndex)
     val showScrollToBottomButton by remember {
         derivedStateOf {
@@ -485,13 +507,14 @@ private fun ChatContent(
                 currentModelLabel = currentModelLabel,
                 currentModelOptions = currentModelOptions,
                 currentReasoningMode = currentReasoningMode,
-                completedRoundCount = completedRoundCount,
+                roundCount = roundNavigationItems.size,
+                isRoundNavigatorOpen = isRoundNavigatorOpen,
                 isMenuItemEnabled = isMenuItemEnabled,
                 onBackAction = onBackAction,
                 navigationIcon = navigationIcon,
                 navigationIconContentDescription = navigationIconContentDescription,
                 scrollBehavior = scrollBehavior,
-                onRoundCountClick = { isRoundNavigatorOpen = true },
+                onRoundCountClick = { isRoundNavigatorOpen = !isRoundNavigatorOpen },
                 onChatTitleItemClick = onChatTitleItemClick,
                 onModelOptionSelected = onModelOptionSelected,
                 onReasoningModeSelected = onReasoningModeSelected,
@@ -625,6 +648,7 @@ private fun ChatContent(
                 ) {
                     RoundNavigatorOverlay(
                         items = roundNavigationItems,
+                        currentTurnIndex = currentTurnIndex,
                         maxHeight = roundNavigatorMaxHeight,
                         onDismiss = { isRoundNavigatorOpen = false },
                         onTurnClick = { turnIndex ->
@@ -835,7 +859,8 @@ private fun ChatTopBar(
     currentModelLabel: String,
     currentModelOptions: List<ModelSelectionOption>,
     currentReasoningMode: ReasoningMode,
-    completedRoundCount: Int,
+    roundCount: Int,
+    isRoundNavigatorOpen: Boolean,
     isMenuItemEnabled: Boolean,
     onBackAction: () -> Unit,
     navigationIcon: ImageVector,
@@ -875,10 +900,13 @@ private fun ChatTopBar(
             }
         },
         actions = {
-            CompletedRoundButton(
-                completedRoundCount = completedRoundCount,
-                onClick = onRoundCountClick
-            )
+            if (roundCount > 0) {
+                CompletedRoundButton(
+                    roundCount = roundCount,
+                    isExpanded = isRoundNavigatorOpen,
+                    onClick = onRoundCountClick
+                )
+            }
             Box(contentAlignment = Alignment.Center) {
                 val overflowButtonColor by animateColorAsState(
                     targetValue = settingsMaterialColors().controlFill.copy(

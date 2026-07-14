@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -16,6 +17,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
@@ -24,9 +27,9 @@ import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -43,6 +46,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -51,6 +55,7 @@ import dev.chungjungsoo.gptmobile.R
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatRoomV2
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
 import dev.chungjungsoo.gptmobile.presentation.common.AppleBlue
+import dev.chungjungsoo.gptmobile.presentation.common.AppleRed
 import dev.chungjungsoo.gptmobile.presentation.common.settingsMaterialColors
 import dev.chungjungsoo.gptmobile.util.getPlatformName
 import java.time.Instant
@@ -84,21 +89,21 @@ fun ChatHistoryDrawer(
             .widthIn(max = 328.dp)
             .padding(horizontal = 14.dp, vertical = 18.dp)
     ) {
-        DrawerHeader(
-            onNewChatClick = onNewChatClick
-        )
-        ChatDrawerSearchField(
-            query = searchQuery,
-            onQueryChange = onSearchQueryChanged,
-            onClearSearch = onClearSearch
-        )
-
         if (chatListState.isSelectionMode) {
             DrawerSelectionToolbar(
                 selectedCount = chatListState.selectedChats.count { it },
                 onCloseSelection = onCloseSelection,
                 onDuplicateSelected = onDuplicateSelected,
                 onDeleteSelected = onDeleteSelected
+            )
+        } else {
+            DrawerHeader(
+                onNewChatClick = onNewChatClick
+            )
+            ChatDrawerSearchField(
+                query = searchQuery,
+                onQueryChange = onSearchQueryChanged,
+                onClearSearch = onClearSearch
             )
         }
 
@@ -132,6 +137,7 @@ fun ChatHistoryDrawer(
                     key = { it.id }
                 ) { chatRoom ->
                     val chatIndex = chatListState.chats.indexOfFirst { it.id == chatRoom.id }
+                    val selected = chatListState.selectedChats.getOrElse(chatIndex) { false }
                     val usingPlatform = chatRoom.enabledPlatform.joinToString(", ") { uid ->
                         platformState.getPlatformName(uid)
                     }
@@ -139,29 +145,32 @@ fun ChatHistoryDrawer(
                     ChatHistoryRow(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .combinedClickable(
-                                onClick = {
-                                    if (chatListState.isSelectionMode && chatIndex >= 0) {
-                                        onChatSelected(chatIndex)
-                                    } else {
-                                        onChatClick(chatRoom)
-                                    }
-                                },
-                                onLongClick = {
-                                    if (chatIndex >= 0) {
-                                        onChatLongClick(chatIndex)
-                                    }
+                            .then(
+                                if (chatListState.isSelectionMode) {
+                                    Modifier.toggleable(
+                                        value = selected,
+                                        role = Role.Checkbox,
+                                        onValueChange = {
+                                            if (chatIndex >= 0) {
+                                                onChatSelected(chatIndex)
+                                            }
+                                        }
+                                    )
+                                } else {
+                                    Modifier.combinedClickable(
+                                        onClick = { onChatClick(chatRoom) },
+                                        onLongClick = {
+                                            if (chatIndex >= 0) {
+                                                onChatLongClick(chatIndex)
+                                            }
+                                        }
+                                    )
                                 }
                             ),
                         title = chatRoom.title,
                         platformLabel = stringResource(R.string.using_certain_platform, usingPlatform),
                         isSelectionMode = chatListState.isSelectionMode,
-                        selected = chatListState.selectedChats.getOrElse(chatIndex) { false },
-                        onCheckedChange = {
-                            if (chatIndex >= 0) {
-                                onChatSelected(chatIndex)
-                            }
-                        }
+                        selected = selected
                     )
                 }
             }
@@ -199,13 +208,12 @@ fun ChatHistoryRow(
     title: String,
     platformLabel: String,
     isSelectionMode: Boolean,
-    selected: Boolean,
-    onCheckedChange: () -> Unit
+    selected: Boolean
 ) {
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(12.dp),
-        color = if (selected) MaterialTheme.colorScheme.surfaceContainerHigh else Color.Transparent,
+        color = if (selected) AppleBlue.copy(alpha = 0.08f) else Color.Transparent,
         contentColor = MaterialTheme.colorScheme.onSurface
     ) {
         Row(
@@ -213,11 +221,8 @@ fun ChatHistoryRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (isSelectionMode) {
-                Checkbox(
-                    checked = selected,
-                    onCheckedChange = { onCheckedChange() }
-                )
-                Spacer(modifier = Modifier.width(10.dp))
+                DrawerSelectionIndicator(selected = selected)
+                Spacer(modifier = Modifier.width(6.dp))
             }
 
             Column(modifier = Modifier.weight(1f)) {
@@ -233,11 +238,35 @@ fun ChatHistoryRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = if (selected) {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    }
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DrawerSelectionIndicator(selected: Boolean) {
+    val materialColors = settingsMaterialColors()
+    Box(
+        modifier = Modifier.size(40.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Surface(
+            modifier = Modifier.size(22.dp),
+            shape = CircleShape,
+            color = if (selected) AppleBlue else Color.Transparent,
+            border = BorderStroke(
+                width = if (selected) 0.dp else 1.5.dp,
+                color = if (selected) Color.Transparent else materialColors.separatorStrong
+            )
+        ) {
+            if (selected) {
+                Icon(
+                    imageVector = Icons.Rounded.Check,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.padding(3.dp)
                 )
             }
         }
@@ -352,38 +381,56 @@ private fun DrawerSelectionToolbar(
     onDuplicateSelected: () -> Unit,
     onDeleteSelected: () -> Unit
 ) {
-    Row(
+    val materialColors = settingsMaterialColors()
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(bottom = 10.dp),
+        shape = RoundedCornerShape(10.dp),
+        color = materialColors.grouped,
+        border = BorderStroke(0.5.dp, materialColors.separator)
     ) {
-        IconButton(onClick = onCloseSelection) {
-            Icon(
-                imageVector = Icons.Rounded.Close,
-                contentDescription = stringResource(R.string.close)
-            )
-        }
-        Text(
-            modifier = Modifier.weight(1f),
-            text = stringResource(R.string.chats_selected, selectedCount),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            style = MaterialTheme.typography.titleMedium
-        )
-        if (selectedCount == 1) {
-            IconButton(onClick = onDuplicateSelected) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onCloseSelection) {
                 Icon(
-                    imageVector = Icons.Outlined.ContentCopy,
-                    contentDescription = stringResource(R.string.duplicate)
+                    imageVector = Icons.Rounded.Close,
+                    contentDescription = stringResource(R.string.close),
+                    tint = AppleBlue
                 )
             }
-        }
-        IconButton(onClick = onDeleteSelected) {
-            Icon(
-                imageVector = Icons.Outlined.Delete,
-                contentDescription = stringResource(R.string.delete)
+            Text(
+                modifier = Modifier.weight(1f),
+                text = stringResource(R.string.chats_selected, selectedCount),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodyLarge,
+                color = materialColors.primaryLabel
             )
+            if (selectedCount == 1) {
+                IconButton(onClick = onDuplicateSelected) {
+                    Icon(
+                        imageVector = Icons.Outlined.ContentCopy,
+                        contentDescription = stringResource(R.string.duplicate),
+                        tint = AppleBlue
+                    )
+                }
+            }
+            IconButton(
+                enabled = selectedCount > 0,
+                onClick = onDeleteSelected,
+                colors = IconButtonDefaults.iconButtonColors(
+                    contentColor = AppleRed,
+                    disabledContentColor = materialColors.tertiaryLabel
+                )
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Delete,
+                    contentDescription = stringResource(R.string.delete)
+                )
+            }
         }
     }
 }
