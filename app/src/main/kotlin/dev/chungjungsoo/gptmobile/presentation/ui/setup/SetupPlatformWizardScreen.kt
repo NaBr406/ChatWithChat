@@ -32,6 +32,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -84,6 +85,14 @@ fun SetupPlatformWizardScreen(
 
                 else -> false
             }
+        }
+    }
+
+    LaunchedEffect(saveStatus) {
+        if (saveStatus.shouldOpenHome()) {
+            setupViewModel.clearSaveStatus()
+            setupViewModel.resetWizard()
+            onComplete()
         }
     }
 
@@ -176,7 +185,6 @@ fun SetupPlatformWizardScreen(
                             onApiKeyChange = setupViewModel::updateApiKey
                         )
                     }
-
                 }
             }
 
@@ -262,6 +270,8 @@ private fun WizardProgressIndicator(
         }
     }
 }
+
+internal fun SaveStatus.shouldOpenHome(): Boolean = this is SaveStatus.Success && modelCount > 0
 
 @Composable
 private fun StepLabel(

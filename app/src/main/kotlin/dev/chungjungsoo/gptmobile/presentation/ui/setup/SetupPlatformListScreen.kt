@@ -44,14 +44,13 @@ fun SetupPlatformListScreen(
     modifier: Modifier = Modifier,
     setupViewModel: SetupViewModelV2 = hiltViewModel(),
     onAddPlatform: () -> Unit,
-    onComplete: () -> Unit,
-    onBackAction: () -> Unit
+    onComplete: () -> Unit
 ) {
     val platforms by setupViewModel.platforms.collectAsStateWithLifecycle()
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
-        topBar = { SetupAppBar(onBackAction) }
+        topBar = { SetupAppBar() }
     ) { innerPadding ->
         Column(
             modifier = Modifier
@@ -132,7 +131,10 @@ private fun EmptyPlatformState(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(modifier = Modifier.height(24.dp))
-        AddPlatformCard(onClick = onAddPlatform)
+        AddPlatformCard(
+            label = stringResource(R.string.add_platform),
+            onClick = onAddPlatform
+        )
     }
 }
 
@@ -156,7 +158,10 @@ private fun PlatformList(
             )
         }
         item {
-            AddPlatformCard(onClick = onAddPlatform)
+            AddPlatformCard(
+                label = stringResource(R.string.add_another_platform),
+                onClick = onAddPlatform
+            )
         }
         item {
             Spacer(modifier = Modifier.height(8.dp))
@@ -226,6 +231,7 @@ private fun PlatformCard(
 
 @Composable
 private fun AddPlatformCard(
+    label: String,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
@@ -252,7 +258,7 @@ private fun AddPlatformCard(
                 modifier = Modifier.size(24.dp)
             )
             Text(
-                text = stringResource(R.string.add_another_platform),
+                text = label,
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.padding(start = 8.dp)

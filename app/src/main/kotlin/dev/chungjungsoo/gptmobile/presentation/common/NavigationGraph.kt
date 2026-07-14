@@ -36,7 +36,6 @@ import dev.chungjungsoo.gptmobile.presentation.ui.setup.SetupPlatformListScreen
 import dev.chungjungsoo.gptmobile.presentation.ui.setup.SetupPlatformTypeScreen
 import dev.chungjungsoo.gptmobile.presentation.ui.setup.SetupPlatformWizardScreen
 import dev.chungjungsoo.gptmobile.presentation.ui.setup.SetupViewModelV2
-import dev.chungjungsoo.gptmobile.presentation.ui.startscreen.StartScreen
 
 @Composable
 fun SetupNavGraph(navController: NavHostController) {
@@ -49,7 +48,6 @@ fun SetupNavGraph(navController: NavHostController) {
     ) {
         homeScreenNavigation(navController)
         migrationScreenNavigation(navController)
-        startScreenNavigation(navController)
         setupNavigation(navController)
         settingNavigation(navController)
         chatScreenNavigation(navController)
@@ -66,12 +64,6 @@ fun NavGraphBuilder.migrationScreenNavigation(navController: NavHostController) 
     }
 }
 
-fun NavGraphBuilder.startScreenNavigation(navController: NavHostController) {
-    composable(Route.GET_STARTED) {
-        StartScreen { navController.navigate(Route.SETUP_ROUTE) }
-    }
-}
-
 fun NavGraphBuilder.setupNavigation(
     navController: NavHostController
 ) {
@@ -84,8 +76,7 @@ fun NavGraphBuilder.setupNavigation(
             SetupPlatformListScreen(
                 setupViewModel = setupViewModel,
                 onAddPlatform = { navController.navigate(Route.SETUP_PLATFORM_TYPE) },
-                onComplete = { navController.navigate(Route.SETUP_COMPLETE) },
-                onBackAction = { navController.navigateUp() }
+                onComplete = { navController.navigate(Route.SETUP_COMPLETE) }
             )
         }
         composable(route = Route.SETUP_PLATFORM_TYPE) {
@@ -107,7 +98,10 @@ fun NavGraphBuilder.setupNavigation(
             SetupPlatformWizardScreen(
                 setupViewModel = setupViewModel,
                 onComplete = {
-                    navController.popBackStack(Route.SETUP_PLATFORM_LIST, inclusive = false)
+                    navController.navigate(Route.CHAT_LIST) {
+                        popUpTo(Route.SETUP_ROUTE) { inclusive = true }
+                        launchSingleTop = true
+                    }
                 },
                 onBackAction = { navController.navigateUp() }
             )
@@ -116,7 +110,7 @@ fun NavGraphBuilder.setupNavigation(
             SetupCompleteScreen(
                 onNavigate = { route ->
                     navController.navigate(route) {
-                        popUpTo(Route.GET_STARTED) { inclusive = true }
+                        popUpTo(Route.SETUP_ROUTE) { inclusive = true }
                     }
                 },
                 onBackAction = { navController.navigateUp() }

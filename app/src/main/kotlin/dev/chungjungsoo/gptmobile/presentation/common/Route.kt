@@ -2,8 +2,6 @@ package dev.chungjungsoo.gptmobile.presentation.common
 
 object Route {
 
-    const val GET_STARTED = "get_started"
-
     const val SETUP_ROUTE = "setup_route"
     const val SETUP_PLATFORM_LIST = "setup_platform_list"
     const val SETUP_PLATFORM_TYPE = "setup_platform_type"

@@ -128,7 +128,6 @@ class SetupViewModelV2 @Inject constructor(
                 lastSavedPlatformUid = platform.uid
                 _saveStatus.value = SaveStatus.RefreshingModels
                 refreshSavedPlatformModels(platform.uid)
-                resetWizard()
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to save platform", e)
                 val errorMessage = when (e) {
@@ -197,11 +196,12 @@ class SetupViewModelV2 @Inject constructor(
     private suspend fun refreshSavedPlatformModels(platformUid: String) {
         val result = settingRepository.refreshPlatformModels(platformUid)
         reloadPlatforms()
-        _saveStatus.value = if (result.isSuccess) {
-            SaveStatus.Success(modelCount = result.models.count { model -> model.enabled })
+        val enabledModelCount = result.models.count { model -> model.enabled }
+        _saveStatus.value = if (result.isSuccess && enabledModelCount > 0) {
+            SaveStatus.Success(modelCount = enabledModelCount)
         } else {
             SaveStatus.Error(
-                message = result.errorMessage ?: "model_fetch_failed",
+                message = result.errorMessage ?: "未获取到可用模型，请检查供应商配置后重试。",
                 platformSaved = true
             )
         }

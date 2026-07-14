@@ -15,7 +15,7 @@ import dev.chungjungsoo.gptmobile.R
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SetupAppBar(
-    backAction: () -> Unit
+    backAction: (() -> Unit)? = null
 ) {
     TopAppBar(
         colors = TopAppBarDefaults.topAppBarColors(
@@ -24,8 +24,10 @@ fun SetupAppBar(
         ),
         title = { },
         navigationIcon = {
-            IconButton(onClick = backAction) {
-                Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.go_back))
+            backAction?.let { action ->
+                IconButton(onClick = action) {
+                    Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.go_back))
+                }
             }
         }
     )

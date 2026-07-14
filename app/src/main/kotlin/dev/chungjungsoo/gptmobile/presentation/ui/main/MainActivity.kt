@@ -16,9 +16,6 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.lifecycleScope
-import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
 import dagger.hilt.android.AndroidEntryPoint
@@ -76,7 +73,7 @@ class MainActivity : ComponentActivity() {
         window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
         setContent {
             val navController = rememberNavController()
-            navController.checkForExistingSettings()
+            navController.navigateFromStartupEvent()
             navController.navigateFromNotificationIntents()
 
             ThemeSettingProvider {
@@ -142,25 +139,24 @@ class MainActivity : ComponentActivity() {
         notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
-    private fun NavHostController.checkForExistingSettings() {
-        lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.CREATED) {
-                mainViewModel.event.collect { event ->
-                    when (event) {
-                        MainViewModel.SplashEvent.OpenIntro -> {
-                            navigate(Route.GET_STARTED) {
-                                popUpTo(Route.CHAT_LIST) { inclusive = true }
-                            }
+    @Composable
+    private fun NavHostController.navigateFromStartupEvent() {
+        LaunchedEffect(this) {
+            mainViewModel.event.collect { event ->
+                when (event) {
+                    MainViewModel.SplashEvent.OpenSetup -> {
+                        navigate(Route.SETUP_ROUTE) {
+                            popUpTo(Route.CHAT_LIST) { inclusive = true }
                         }
-
-                        MainViewModel.SplashEvent.OpenMigrate -> {
-                            navigate(Route.MIGRATE_V2) {
-                                popUpTo(Route.CHAT_LIST) { inclusive = true }
-                            }
-                        }
-
-                        else -> {}
                     }
+
+                    MainViewModel.SplashEvent.OpenMigrate -> {
+                        navigate(Route.MIGRATE_V2) {
+                            popUpTo(Route.CHAT_LIST) { inclusive = true }
+                        }
+                    }
+
+                    MainViewModel.SplashEvent.OpenHome -> Unit
                 }
             }
         }
