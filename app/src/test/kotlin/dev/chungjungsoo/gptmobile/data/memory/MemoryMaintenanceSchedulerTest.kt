@@ -9,6 +9,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -178,6 +179,55 @@ class MemoryMaintenanceSchedulerTest {
         assertEquals(MemoryMaintenanceJobStatus.WAITING_REPAIR, dao.getById("index-exhausted")?.status)
         assertNull(dao.getById("semantic-exhausted")?.nextRunAt)
         assertNull(dao.getById("index-exhausted")?.nextRunAt)
+    }
+
+    @Test
+    fun `recovered conflict rewrites stale terminal dispositions exactly once`() = runBlocking {
+        val exactReason = MEMORY_MUTATION_UNRECOVERABLE_STAGING_MISSING
+        val staleJobs = listOf(
+            job(
+                jobId = "already-terminal",
+                type = MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH,
+                status = MemoryMaintenanceJobStatus.FAILED_TERMINAL
+            ).copy(lastError = "old_generic_error", blockedReason = "old_generic_error"),
+            job(
+                jobId = "already-succeeded",
+                type = MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH,
+                status = MemoryMaintenanceJobStatus.SUCCEEDED
+            )
+        )
+
+        staleJobs.forEach { staleJob ->
+            val dao = InMemoryMaintenanceJobDao(listOf(staleJob))
+            val eventSink = RecordingMemoryMaintenanceEventSink()
+            val scheduler = createScheduler(dao, eventSink)
+
+            assertEquals(
+                MemoryRecoveredJobDisposition.SUCCEEDED,
+                scheduler.markRecoveredConflict(staleJob.jobId, exactReason)
+            )
+            val rewritten = checkNotNull(dao.getById(staleJob.jobId))
+            assertEquals(MemoryMaintenanceJobStatus.FAILED_TERMINAL, rewritten.status)
+            assertEquals(exactReason, rewritten.lastError)
+            assertEquals(exactReason, rewritten.blockedReason)
+            assertEquals(staleJob.attempts, rewritten.attempts)
+            assertEquals(staleJob.rowVersion + 1, rewritten.rowVersion)
+            assertEquals(1, eventSink.events.size)
+            val notification = MemoryMaintenanceNotificationPolicy().decide(
+                event = eventSink.events.single(),
+                preferenceEnabled = true,
+                systemPermissionGranted = true
+            ) as MemoryMaintenanceNotificationDecision.ShowFailed
+            assertTrue(notification.terminal)
+            assertFalse(notification.allowRetry)
+
+            assertEquals(
+                MemoryRecoveredJobDisposition.SUCCEEDED,
+                scheduler.markRecoveredConflict(staleJob.jobId, exactReason)
+            )
+            assertEquals(rewritten, dao.getById(staleJob.jobId))
+            assertEquals(1, eventSink.events.size)
+        }
     }
 
     @Test

@@ -18,31 +18,41 @@ class MemoryMutationRecoveryService(
         val retryGenerations = repair.failedGenerations.toMutableSet().apply {
             repair.continuationGeneration?.let(::add)
         }
-        repair.recoveredSemanticMutations.forEach { recovered ->
-            try {
-                val finalizedDailyDistillation = dailyDistillationFinalizer
-                    ?.finalizeRecoveredMutation(recovered)
-                    ?: false
-                if (!finalizedDailyDistillation) {
-                    check(maintenanceScheduler.jobType(recovered.semanticJobId) != MemoryMaintenanceJobType.DISTILL_DAILY_NOTES) {
-                        "Recovered daily distillation mutation has no checkpoint finalizer"
-                    }
-                    turnBatchDao.completeClaimedBatch(recovered.semanticJobId, now())
-                }
-                val sourceJobDisposition = recovered.terminalReason?.let { terminalReason ->
-                    maintenanceScheduler.markRecoveredTerminal(recovered.semanticJobId, terminalReason)
-                } ?: maintenanceScheduler.markRecoveredSucceeded(recovered.semanticJobId)
-                if (sourceJobDisposition != MemoryRecoveredJobDisposition.ACTIVE) {
-                    memoryMutationCoordinator.acknowledgeSemanticCompletion(recovered.groupId)
-                    recoveredSemanticCount += 1
-                }
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (_: Throwable) {
-                finalizationFailureCount += 1
-                retryGenerations += recovered.generation
+        val persistedTerminalConflicts = memoryMutationCoordinator.terminalSemanticConflicts()
+            .filter { recovered ->
+                val terminalReason = recovered.terminalReason ?: return@filter false
+                maintenanceScheduler.needsRecoveredConflictFinalization(
+                    jobId = recovered.semanticJobId,
+                    reason = terminalReason
+                )
             }
-        }
+        (repair.recoveredSemanticMutations + persistedTerminalConflicts)
+            .distinctBy(MemoryRecoveredSemanticMutation::groupId)
+            .forEach { recovered ->
+                try {
+                    val finalizedDailyDistillation = dailyDistillationFinalizer
+                        ?.finalizeRecoveredMutation(recovered)
+                        ?: false
+                    if (!finalizedDailyDistillation) {
+                        check(maintenanceScheduler.jobType(recovered.semanticJobId) != MemoryMaintenanceJobType.DISTILL_DAILY_NOTES) {
+                            "Recovered daily distillation mutation has no checkpoint finalizer"
+                        }
+                        turnBatchDao.completeClaimedBatch(recovered.semanticJobId, now())
+                    }
+                    val sourceJobDisposition = recovered.terminalReason?.let { terminalReason ->
+                        maintenanceScheduler.markRecoveredConflict(recovered.semanticJobId, terminalReason)
+                    } ?: maintenanceScheduler.markRecoveredSucceeded(recovered.semanticJobId)
+                    if (sourceJobDisposition != MemoryRecoveredJobDisposition.ACTIVE) {
+                        memoryMutationCoordinator.acknowledgeSemanticCompletion(recovered.groupId)
+                        recoveredSemanticCount += 1
+                    }
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (_: Throwable) {
+                    finalizationFailureCount += 1
+                    retryGenerations += recovered.generation
+                }
+            }
         if (scheduleRetry) {
             retryGenerations.maxOrNull()?.let { failedGeneration ->
                 maintenanceScheduler.enqueue(

@@ -94,6 +94,35 @@ class MemoryMaintenanceNotificationPolicyTest {
     }
 
     @Test
+    fun `unrecoverable staging terminal never exposes retry`() {
+        listOf(
+            MEMORY_MUTATION_UNRECOVERABLE_STAGING_MISSING,
+            MEMORY_MUTATION_UNRECOVERABLE_STAGING_INVALID,
+            MEMORY_MUTATION_UNRECOVERABLE_STAGING_HASH_MISMATCH
+        ).forEach { reason ->
+            val decision = policy.decide(
+                event = event(
+                    job(
+                        status = MemoryMaintenanceJobStatus.FAILED_TERMINAL,
+                        lastError = reason
+                    )
+                ),
+                preferenceEnabled = true,
+                systemPermissionGranted = true
+            )
+
+            assertEquals(
+                MemoryMaintenanceNotificationDecision.ShowFailed(
+                    notificationKey = "key-1",
+                    terminal = true,
+                    allowRetry = false
+                ),
+                decision
+            )
+        }
+    }
+
+    @Test
     fun `waiting repair exposes manual retry`() {
         val decision = policy.decide(
             event = event(job(status = MemoryMaintenanceJobStatus.WAITING_REPAIR)),
@@ -215,6 +244,7 @@ class MemoryMaintenanceNotificationPolicyTest {
         jobId: String = "job-1",
         type: String = MemoryMaintenanceJobType.SYNC_VECTOR_INDEX,
         attempts: Int = 1,
+        lastError: String? = null,
         status: String
     ): MemoryMaintenanceJob = MemoryMaintenanceJob(
         jobId = jobId,
@@ -223,7 +253,7 @@ class MemoryMaintenanceNotificationPolicyTest {
         idempotencyKey = "key-1",
         payloadJson = "{}",
         attempts = attempts,
-        lastError = null,
+        lastError = lastError,
         createdAt = 1L,
         startedAt = 10L,
         updatedAt = 100L,

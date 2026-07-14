@@ -204,6 +204,45 @@ interface MemoryRecoveryDao {
         indexedAt: Long?
     ): Int
 
+    @Transaction
+    suspend fun transitionMutationToConflictCas(request: MemoryMutationConflictRequest): Int {
+        require(request.receiptId.isNotBlank()) { "Mutation receipt ID must not be blank" }
+        require(request.groupId.isNotBlank()) { "Mutation group ID must not be blank" }
+        require(request.generation > 0) { "Mutation conflict generation must be positive" }
+        require(request.reason.isNotBlank()) { "Mutation conflict reason must not be blank" }
+
+        val receiptChanged = transitionMutationReceiptCas(
+            receiptId = request.receiptId,
+            groupId = request.groupId,
+            expectedGeneration = request.generation,
+            expectedState = request.expectedReceiptState,
+            expectedRowVersion = request.expectedReceiptRowVersion,
+            expectedTargetSourceHash = request.expectedTargetSourceHash,
+            expectedTargetIndexFingerprint = request.expectedTargetIndexFingerprint,
+            newState = MemoryMutationState.CONFLICT,
+            attemptIncrement = 0,
+            lastError = request.reason,
+            updatedAt = request.completedAt,
+            fileCommittedAt = null,
+            indexedAt = null
+        )
+        if (receiptChanged != 1) return 0
+
+        check(
+            transitionMutationGroupCas(
+                groupId = request.groupId,
+                expectedGeneration = request.generation,
+                expectedState = request.expectedGroupState,
+                expectedRowVersion = request.expectedGroupRowVersion,
+                newState = MemoryMutationState.CONFLICT,
+                lastError = request.reason,
+                updatedAt = request.completedAt,
+                completedAt = request.completedAt
+            ) == 1
+        ) { "Mutation group changed before its receipt could be marked conflicted" }
+        return 1
+    }
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertCorpusStateIgnore(state: MemoryCorpusState): Long
 
@@ -767,6 +806,20 @@ data class MemoryMutationReceiptDraft(
     val state: String,
     val idempotencyKeyBase: String,
     val targetIndexFingerprint: String?
+)
+
+data class MemoryMutationConflictRequest(
+    val receiptId: String,
+    val groupId: String,
+    val generation: Long,
+    val expectedReceiptState: String,
+    val expectedReceiptRowVersion: Long,
+    val expectedTargetSourceHash: String,
+    val expectedTargetIndexFingerprint: String?,
+    val expectedGroupState: String,
+    val expectedGroupRowVersion: Long,
+    val reason: String,
+    val completedAt: Long
 )
 
 data class PreparedMemoryMutation(

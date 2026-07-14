@@ -1,13 +1,15 @@
 package dev.chungjungsoo.gptmobile.data.memory
 
 import java.io.File
+import java.io.IOException
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.security.MessageDigest
 import java.time.Clock
 import java.time.Instant
-import java.time.LocalDate
 import java.time.ZoneOffset
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -41,6 +43,30 @@ class MemoryFileStoreTest {
         assertTrue(dailyText.startsWith("# 2026-07-09\n\n"))
         assertTrue(dailyText.contains("- First note\n"))
         assertTrue(dailyText.contains("- Second note\n"))
+    }
+
+    @Test
+    fun `long term revision emits immediately and ignores daily only writes`() = runBlocking {
+        val root = createTempRoot()
+        val store = createStore(root)
+        store.ensureStore().getOrThrow()
+
+        val initialRevision = store.longTermRevision.first()
+        store.appendDailyNote("- Daily-only note").getOrThrow()
+
+        assertEquals(initialRevision, store.longTermRevision.value)
+
+        store.replaceLongTermMemory("# ChatWithChat Memory\n\n- Replaced target").getOrThrow()
+        assertEquals(initialRevision + 1, store.longTermRevision.value)
+
+        val staged = store.stageMemoryFile(
+            sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+            content = "# ChatWithChat Memory\n\n- Staged target",
+            stagingId = "receipt-revision"
+        ).getOrThrow()
+        store.commitStagedMemoryFile(staged).getOrThrow()
+
+        assertEquals(initialRevision + 2, store.longTermRevision.value)
     }
 
     @Test
@@ -154,8 +180,15 @@ class MemoryFileStoreTest {
         assertTrue(store.cleanupStagedTarget(staged.stagedTargetPath).getOrThrow())
 
         val repeated = store.commitStagedMemoryFile(staged).getOrThrow()
+        val invalidPathReplay = store.commitStagedMemoryFile(
+            sourcePath = staged.sourcePath,
+            stagedTargetPath = "../invalid.target",
+            baseSourceHash = staged.baseSourceHash,
+            targetSourceHash = staged.targetSourceHash
+        ).getOrThrow()
 
         assertTrue(repeated is MemoryFileCommitOutcome.AlreadyCommitted)
+        assertTrue(invalidPathReplay is MemoryFileCommitOutcome.AlreadyCommitted)
         assertEquals(staged.targetSourceHash, repeated.currentSourceHash)
         assertEquals(1, root.resolve(MemoryFilePaths.BACKUP_DIRECTORY_NAME).listFiles().orEmpty().size)
     }
@@ -173,7 +206,12 @@ class MemoryFileStoreTest {
         val newerContent = "# ChatWithChat Memory\n\n- Newer canonical content\n"
         snapshot.longTermMemoryFile.writeText(newerContent, StandardCharsets.UTF_8)
 
-        val outcome = store.commitStagedMemoryFile(staged).getOrThrow()
+        val outcome = store.commitStagedMemoryFile(
+            sourcePath = staged.sourcePath,
+            stagedTargetPath = "../invalid.target",
+            baseSourceHash = staged.baseSourceHash,
+            targetSourceHash = staged.targetSourceHash
+        ).getOrThrow()
 
         assertTrue(outcome is MemoryFileCommitOutcome.Conflict)
         outcome as MemoryFileCommitOutcome.Conflict
@@ -186,7 +224,7 @@ class MemoryFileStoreTest {
     }
 
     @Test
-    fun `commit rejects a modified staged target before backup or replacement`() {
+    fun `commit makes a modified staged target unrecoverable before backup or replacement`() {
         val root = createTempRoot()
         val store = createStore(root)
         val snapshot = store.ensureStore().getOrThrow()
@@ -197,11 +235,63 @@ class MemoryFileStoreTest {
         ).getOrThrow()
         root.resolve(staged.stagedTargetPath).writeText("modified\n", StandardCharsets.UTF_8)
 
-        val outcome = store.commitStagedMemoryFile(staged)
+        val outcome = store.commitStagedMemoryFile(staged).getOrThrow()
 
-        assertFalse(outcome.isSuccess)
+        assertTrue(outcome is MemoryFileCommitOutcome.UnrecoverableStaging)
+        assertEquals(
+            MEMORY_MUTATION_UNRECOVERABLE_STAGING_HASH_MISMATCH,
+            (outcome as MemoryFileCommitOutcome.UnrecoverableStaging).reason
+        )
         assertEquals("# ChatWithChat Memory\n\n", snapshot.longTermMemoryFile.readUtf8())
         assertEquals(0, root.resolve(MemoryFilePaths.BACKUP_DIRECTORY_NAME).listFiles().orEmpty().size)
+    }
+
+    @Test
+    fun `commit makes a missing staged target unrecoverable while canonical is base`() {
+        val root = createTempRoot()
+        val store = createStore(root)
+        val snapshot = store.ensureStore().getOrThrow()
+        val staged = store.stageMemoryFile(
+            sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+            content = "# ChatWithChat Memory\n\n- Missing target",
+            stagingId = "receipt-missing"
+        ).getOrThrow()
+        Files.delete(root.resolve(staged.stagedTargetPath).toPath())
+
+        val outcome = store.commitStagedMemoryFile(staged).getOrThrow()
+
+        assertTrue(outcome is MemoryFileCommitOutcome.UnrecoverableStaging)
+        assertEquals(
+            MEMORY_MUTATION_UNRECOVERABLE_STAGING_MISSING,
+            (outcome as MemoryFileCommitOutcome.UnrecoverableStaging).reason
+        )
+        assertEquals("# ChatWithChat Memory\n\n", snapshot.longTermMemoryFile.readUtf8())
+        assertTrue(root.resolve(MemoryFilePaths.BACKUP_DIRECTORY_NAME).listFiles().orEmpty().isEmpty())
+    }
+
+    @Test
+    fun `commit makes a staged directory unrecoverable while canonical is base`() {
+        val root = createTempRoot()
+        val store = createStore(root)
+        val snapshot = store.ensureStore().getOrThrow()
+        val staged = store.stageMemoryFile(
+            sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+            content = "# ChatWithChat Memory\n\n- Directory target",
+            stagingId = "receipt-directory"
+        ).getOrThrow()
+        val stagedPath = root.resolve(staged.stagedTargetPath).toPath()
+        Files.delete(stagedPath)
+        Files.createDirectory(stagedPath)
+
+        val outcome = store.commitStagedMemoryFile(staged).getOrThrow()
+
+        assertTrue(outcome is MemoryFileCommitOutcome.UnrecoverableStaging)
+        assertEquals(
+            MEMORY_MUTATION_UNRECOVERABLE_STAGING_INVALID,
+            (outcome as MemoryFileCommitOutcome.UnrecoverableStaging).reason
+        )
+        assertEquals("# ChatWithChat Memory\n\n", snapshot.longTermMemoryFile.readUtf8())
+        assertTrue(root.resolve(MemoryFilePaths.BACKUP_DIRECTORY_NAME).listFiles().orEmpty().isEmpty())
     }
 
     @Test
@@ -244,13 +334,15 @@ class MemoryFileStoreTest {
                 stagingId = "../receipt-target-traversal"
             ).isSuccess
         )
-        assertFalse(
-            store.commitStagedMemoryFile(
-                sourcePath = staged.sourcePath,
-                stagedTargetPath = ".staging/../receipt-safe.target",
-                baseSourceHash = staged.baseSourceHash,
-                targetSourceHash = staged.targetSourceHash
-            ).isSuccess
+        val invalidStaging = store.commitStagedMemoryFile(
+            sourcePath = staged.sourcePath,
+            stagedTargetPath = ".staging/../receipt-safe.target",
+            baseSourceHash = staged.baseSourceHash,
+            targetSourceHash = staged.targetSourceHash
+        ).getOrThrow()
+        assertEquals(
+            MEMORY_MUTATION_UNRECOVERABLE_STAGING_INVALID,
+            (invalidStaging as MemoryFileCommitOutcome.UnrecoverableStaging).reason
         )
         assertFalse(store.cleanupStagedTarget("../receipt-safe.target").isSuccess)
         assertFalse(store.currentMemoryFileHash("../MEMORY.md").isSuccess)
@@ -266,6 +358,29 @@ class MemoryFileStoreTest {
 
         assertFalse(result.isSuccess)
         assertNotNull(result.exceptionOrNull())
+    }
+
+    @Test
+    fun `staging parent io failure remains retryable instead of becoming terminal`() {
+        val root = createTempRoot()
+        val paths = MemoryFilePaths(root)
+        val store = MemoryFileStore(paths, Clock.fixed(Instant.parse("2026-07-09T10:20:30Z"), ZoneOffset.UTC))
+        val canonicalBefore = store.readLongTermMemory().getOrThrow()
+        val staged = store.stageMemoryFile(
+            sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+            content = "# ChatWithChat Memory\n\n- Retry after transient I/O",
+            stagingId = "receipt-transient-io"
+        ).getOrThrow()
+        Files.delete(root.resolve(staged.stagedTargetPath).toPath())
+        Files.delete(paths.stagingDirectory.toPath())
+        paths.stagingDirectory.writeText("temporarily not a directory", StandardCharsets.UTF_8)
+
+        val result = store.commitStagedMemoryFile(staged)
+
+        assertFalse(result.isSuccess)
+        assertTrue(result.exceptionOrNull() is IOException)
+        assertEquals(canonicalBefore, paths.longTermMemoryFile.readUtf8())
+        assertTrue(paths.backupDirectory.listFiles().orEmpty().isEmpty())
     }
 
     private fun createStore(root: File): MemoryFileStore =

@@ -26,6 +26,7 @@ sealed interface MemoryMutationCommitResult {
     data class Conflict(
         val mutation: MemoryPreparedMutation,
         val sourcePath: String,
+        val reason: String,
         val requiresSemanticFinalization: Boolean
     ) : MemoryMutationCommitResult
 }

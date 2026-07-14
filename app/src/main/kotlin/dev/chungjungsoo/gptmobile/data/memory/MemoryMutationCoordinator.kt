@@ -2,6 +2,7 @@ package dev.chungjungsoo.gptmobile.data.memory
 
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryCorpusAdvanceOutcome
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryCorpusAdvanceRequest
+import dev.chungjungsoo.gptmobile.data.database.dao.MemoryMutationConflictRequest
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryMutationPrepareRequest
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryMutationReceiptDraft
 import dev.chungjungsoo.gptmobile.data.database.dao.MemoryRecoveryDao
@@ -248,10 +249,10 @@ class MemoryMutationCoordinator(
             )
         }
         current.receipts.firstOrNull { receipt -> receipt.state == MemoryMutationState.CONFLICT }?.let { conflict ->
-            return MemoryMutationCommitResult.Conflict(
+            return markConflict(
                 mutation = current,
-                sourcePath = conflict.sourcePath,
-                requiresSemanticFinalization = current.group.semanticJobId != null
+                receipt = conflict,
+                reason = conflict.lastError ?: current.group.lastError ?: "memory_mutation_conflict"
             )
         }
         if (
@@ -280,7 +281,7 @@ class MemoryMutationCoordinator(
                     return markConflict(current, receipt, "superseded_mutation_generation")
                 }
                 when (
-                    memoryFileStore.commitStagedMemoryFile(
+                    val outcome = memoryFileStore.commitStagedMemoryFile(
                         sourcePath = receipt.sourcePath,
                         stagedTargetPath = receipt.stagedTargetPath,
                         baseSourceHash = receipt.baseSourceHash,
@@ -289,6 +290,8 @@ class MemoryMutationCoordinator(
                 ) {
                     is MemoryFileCommitOutcome.Conflict ->
                         return markConflict(current, receipt, "canonical_source_hash_conflict")
+                    is MemoryFileCommitOutcome.UnrecoverableStaging ->
+                        return markConflict(current, receipt, outcome.reason)
                     is MemoryFileCommitOutcome.AlreadyCommitted,
                     is MemoryFileCommitOutcome.Committed -> {
                         receipt = transitionReceipt(
@@ -419,8 +422,7 @@ class MemoryMutationCoordinator(
                                         groupId = result.mutation.group.groupId,
                                         semanticJobId = semanticJobId,
                                         generation = result.mutation.group.generation,
-                                        terminalReason = result.mutation.group.lastError
-                                            ?: "memory_mutation_conflict:${result.sourcePath}"
+                                        terminalReason = result.reason
                                     )
                                 }
                             }
@@ -443,6 +445,25 @@ class MemoryMutationCoordinator(
             continuationGeneration = orderedGroups.getOrNull(groupsToRepair.size)?.generation
         )
     }
+
+    internal suspend fun terminalSemanticConflicts(): List<MemoryRecoveredSemanticMutation> =
+        recoveryDao.getMutationGroupsByStates(listOf(MemoryMutationState.CONFLICT))
+            .mapNotNull { group ->
+                val semanticJobId = group.semanticJobId ?: return@mapNotNull null
+                val terminalReason = group.lastError
+                    ?.takeIf(String::isNotBlank)
+                    ?: recoveryDao.getMutationReceipts(group.groupId)
+                        .firstNotNullOfOrNull { receipt ->
+                            receipt.lastError?.takeIf(String::isNotBlank)
+                        }
+                    ?: return@mapNotNull null
+                MemoryRecoveredSemanticMutation(
+                    groupId = group.groupId,
+                    semanticJobId = semanticJobId,
+                    generation = group.generation,
+                    terminalReason = terminalReason
+                )
+            }
 
     private suspend fun completeCanonicalGroup(mutation: MemoryPreparedMutation): MemoryPreparedMutation {
         val group = mutation.group
@@ -525,29 +546,65 @@ class MemoryMutationCoordinator(
         receipt: MemoryMutationReceipt,
         reason: String
     ): MemoryMutationCommitResult.Conflict {
-        val conflictedReceipt = if (receipt.state == MemoryMutationState.CONFLICT) {
-            receipt
-        } else {
-            transitionReceipt(receipt, MemoryMutationState.CONFLICT, lastError = reason)
-        }
         val group = checkNotNull(recoveryDao.getMutationGroup(mutation.group.groupId))
         val requiresSemanticFinalization = group.state in SEMANTIC_FINALIZATION_PENDING_STATES
-        if (group.state != MemoryMutationState.CONFLICT) {
-            recoveryDao.transitionMutationGroupCas(
-                groupId = group.groupId,
-                expectedGeneration = group.generation,
-                expectedState = group.state,
-                expectedRowVersion = group.rowVersion,
-                newState = MemoryMutationState.CONFLICT,
-                lastError = reason,
-                updatedAt = now(),
-                completedAt = now()
+        val conflictReason = receipt.lastError.takeIf { receipt.state == MemoryMutationState.CONFLICT } ?: reason
+        val completedAt = now()
+
+        if (receipt.state != MemoryMutationState.CONFLICT && group.state != MemoryMutationState.CONFLICT) {
+            val changed = recoveryDao.transitionMutationToConflictCas(
+                MemoryMutationConflictRequest(
+                    receiptId = receipt.receiptId,
+                    groupId = group.groupId,
+                    generation = receipt.generation,
+                    expectedReceiptState = receipt.state,
+                    expectedReceiptRowVersion = receipt.rowVersion,
+                    expectedTargetSourceHash = receipt.targetSourceHash,
+                    expectedTargetIndexFingerprint = receipt.targetIndexFingerprint,
+                    expectedGroupState = group.state,
+                    expectedGroupRowVersion = group.rowVersion,
+                    reason = conflictReason,
+                    completedAt = completedAt
+                )
             )
+            if (changed != 1) {
+                val currentReceipt = checkNotNull(recoveryDao.getMutationReceipt(receipt.receiptId))
+                val currentGroup = checkNotNull(recoveryDao.getMutationGroup(group.groupId))
+                check(
+                    currentReceipt.state == MemoryMutationState.CONFLICT &&
+                        currentGroup.state == MemoryMutationState.CONFLICT
+                ) { "Mutation changed before it could be marked conflicted" }
+            }
+        } else {
+            if (receipt.state != MemoryMutationState.CONFLICT) {
+                transitionReceipt(receipt, MemoryMutationState.CONFLICT, lastError = conflictReason)
+            }
+            if (group.state != MemoryMutationState.CONFLICT) {
+                val changed = recoveryDao.transitionMutationGroupCas(
+                    groupId = group.groupId,
+                    expectedGeneration = group.generation,
+                    expectedState = group.state,
+                    expectedRowVersion = group.rowVersion,
+                    newState = MemoryMutationState.CONFLICT,
+                    lastError = conflictReason,
+                    updatedAt = completedAt,
+                    completedAt = completedAt
+                )
+                if (changed != 1) {
+                    check(recoveryDao.getMutationGroup(group.groupId)?.state == MemoryMutationState.CONFLICT) {
+                        "Mutation group changed before it could be marked conflicted"
+                    }
+                }
+            }
         }
         val current = loadMutation(checkNotNull(recoveryDao.getMutationGroup(group.groupId)))
+        val conflictedReceipt = checkNotNull(
+            current.receipts.firstOrNull { currentReceipt -> currentReceipt.receiptId == receipt.receiptId }
+        )
         return MemoryMutationCommitResult.Conflict(
             mutation = current,
             sourcePath = conflictedReceipt.sourcePath,
+            reason = current.group.lastError ?: conflictedReceipt.lastError ?: conflictReason,
             requiresSemanticFinalization = requiresSemanticFinalization && current.group.semanticJobId != null
         )
     }

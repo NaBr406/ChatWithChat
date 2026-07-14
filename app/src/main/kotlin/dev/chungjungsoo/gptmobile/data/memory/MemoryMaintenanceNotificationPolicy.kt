@@ -47,7 +47,7 @@ class MemoryMaintenanceNotificationPolicy {
                 MemoryMaintenanceNotificationDecision.ShowFailed(
                     notificationKey = notificationKey,
                     terminal = true,
-                    allowRetry = true
+                    allowRetry = job.lastError?.startsWith(MEMORY_MUTATION_UNRECOVERABLE_STAGING_PREFIX) != true
                 )
             }
             MemoryMaintenanceJobStatus.WAITING_REPAIR -> {
