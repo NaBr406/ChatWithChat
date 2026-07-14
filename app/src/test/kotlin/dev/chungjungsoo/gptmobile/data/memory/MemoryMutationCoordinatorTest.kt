@@ -2,6 +2,7 @@ package dev.chungjungsoo.gptmobile.data.memory
 
 import dev.chungjungsoo.gptmobile.data.database.InMemoryMemoryRecoveryDao
 import dev.chungjungsoo.gptmobile.data.database.InMemoryMemoryTurnBatchDao
+import dev.chungjungsoo.gptmobile.data.database.dao.MemoryTurnBatchDao
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingAvailability
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingCapability
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingCapabilitySource
@@ -582,6 +583,81 @@ class MemoryMutationCoordinatorTest {
             }
         )
         assertTrue(fixture.workEnqueuer.works.isEmpty())
+    }
+
+    @Test
+    fun `claimed terminal conflict is complete before startup recovery`() = runBlocking {
+        val fixture = Fixture()
+        val statusEvents = mutableListOf<MemoryMaintenanceStatusChangedEvent>()
+        val scheduler = MemoryMaintenanceScheduler(
+            jobDao = fixture.jobDao,
+            clock = FIXED_CLOCK,
+            eventSink = object : MemoryMaintenanceEventSink {
+                override suspend fun onStatusChanged(event: MemoryMaintenanceStatusChangedEvent) {
+                    statusEvents += event
+                }
+            }
+        )
+        val sourceJob = scheduler.enqueue(
+            type = MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH,
+            idempotencyKey = "claimed-terminal-conflict",
+            payloadJson = "{}",
+            jobId = "semantic-job-claimed-terminal"
+        )
+        val claimed = checkNotNull(
+            scheduler.claimNextRunnable(MemoryMaintenanceJobFamily.SEMANTIC, "semantic-owner")
+        )
+        assertEquals(sourceJob.jobId, claimed.jobId)
+        val prepared = fixture.coordinator.prepare(
+            semanticJobId = sourceJob.jobId,
+            semanticBatchId = "batch-claimed-terminal",
+            targets = listOf(
+                fixture.longTermTarget(
+                    baseContent = fixture.fileStore.readLongTermMemory().getOrThrow(),
+                    targetContent = "# ChatWithChat Memory\n\n- Terminal conflict"
+                )
+            )
+        )
+        Files.delete(fixture.root.resolve(prepared.receipts.single().stagedTargetPath).toPath())
+        val conflict = fixture.coordinator.reconcile(prepared) as MemoryMutationCommitResult.Conflict
+        val terminal = scheduler.markFailedTerminal(claimed, conflict.reason)
+        val terminalEventCount = statusEvents.size
+        var finalizerCalls = 0
+        val turnBatchDao = object : MemoryTurnBatchDao by InMemoryMemoryTurnBatchDao() {
+            override suspend fun completeClaimedBatch(jobId: String, updatedAt: Long): Boolean {
+                finalizerCalls += 1
+                return true
+            }
+        }
+        val recoveryService = MemoryMutationRecoveryService(
+            memoryMutationCoordinator = fixture.coordinator,
+            turnBatchDao = turnBatchDao,
+            maintenanceScheduler = scheduler,
+            clock = FIXED_CLOCK
+        )
+
+        val firstRecovery = recoveryService.recoverIncomplete()
+        val afterFirstRecovery = checkNotNull(fixture.jobDao.getById(sourceJob.jobId))
+        val eventCountAfterFirstRecovery = statusEvents.size
+        val finalizerCallsAfterFirstRecovery = finalizerCalls
+        val secondRecovery = recoveryService.recoverIncomplete()
+        val afterSecondRecovery = checkNotNull(fixture.jobDao.getById(sourceJob.jobId))
+
+        assertEquals(MemoryMaintenanceJobStatus.FAILED_TERMINAL, terminal.status)
+        assertEquals(conflict.reason, terminal.lastError)
+        assertEquals(conflict.reason, terminal.blockedReason)
+        assertEquals(null, terminal.startedAt)
+        assertEquals(claimed.rowVersion + 1, terminal.rowVersion)
+        assertEquals(0, firstRecovery.recoveredSemanticCount)
+        assertEquals(terminal, afterFirstRecovery)
+        assertEquals(terminalEventCount, eventCountAfterFirstRecovery)
+        assertEquals(0, finalizerCallsAfterFirstRecovery)
+        assertEquals(0, secondRecovery.recoveredSemanticCount)
+        assertEquals(terminal, afterSecondRecovery)
+        assertEquals(eventCountAfterFirstRecovery, statusEvents.size)
+        assertEquals(finalizerCallsAfterFirstRecovery, finalizerCalls)
+        assertEquals(0, finalizerCalls)
+        assertEquals(2, terminalEventCount)
     }
 
     @Test

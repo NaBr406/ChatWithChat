@@ -138,6 +138,7 @@ internal class InMemoryMaintenanceJobDao(
             status = newStatus,
             lastError = lastError,
             blockedReason = blockedReason,
+            startedAt = null,
             updatedAt = updatedAt,
             nextRunAt = nextRunAt,
             rowVersion = jobs[index].rowVersion + 1,

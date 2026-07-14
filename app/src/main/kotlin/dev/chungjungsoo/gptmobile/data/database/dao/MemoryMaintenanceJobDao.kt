@@ -181,6 +181,7 @@ interface MemoryMaintenanceJobDao {
         SET status = :newStatus,
             last_error = :lastError,
             blocked_reason = :blockedReason,
+            started_at = NULL,
             updated_at = :updatedAt,
             next_run_at = :nextRunAt,
             lease_owner = NULL,

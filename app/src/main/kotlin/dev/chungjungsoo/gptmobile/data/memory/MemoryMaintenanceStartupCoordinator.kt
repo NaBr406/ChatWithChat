@@ -6,6 +6,7 @@ import kotlinx.coroutines.CancellationException
 
 class MemoryMaintenanceStartupCoordinator @Inject constructor(
     private val embeddingProvisioner: ProductionMemoryEmbeddingProvisioner,
+    private val memoryMutationRecoveryService: MemoryMutationRecoveryService,
     private val vectorIndexBootstrapService: MemoryVectorIndexBootstrapService,
     private val memoryMaintenanceRepairer: MemoryMaintenanceRepairer,
     private val workEnqueuer: MemoryMaintenanceWorkEnqueuer
@@ -19,6 +20,7 @@ class MemoryMaintenanceStartupCoordinator @Inject constructor(
                 )
             },
             provision = { embeddingProvisioner.provision() },
+            recoverReceipts = { memoryMutationRecoveryService.recoverIncomplete() },
             bootstrap = { vectorIndexBootstrapService.bootstrap() },
             repair = { memoryMaintenanceRepairer.repairAndEnqueue(reopenWaitingRepair = true) }
         )
@@ -32,21 +34,33 @@ class MemoryMaintenanceStartupCoordinator @Inject constructor(
 internal suspend fun runMemoryStartupTasks(
     enqueueRepair: suspend () -> Unit,
     provision: suspend () -> Unit,
+    recoverReceipts: suspend () -> MemoryMutationRecoveryResult,
     bootstrap: suspend () -> Unit,
     repair: suspend () -> Unit
 ) {
     runOptionalStartupStep(enqueueRepair)
     runOptionalStartupStep(provision)
-    runOptionalStartupStep(bootstrap)
+    val receiptsRecovered = runOptionalStartupStep {
+        val result = recoverReceipts()
+        check(
+            result.failedCount == 0 &&
+                result.retryGenerations.isEmpty() &&
+                !result.hasMore
+        ) { "Memory receipt recovery did not complete before bootstrap" }
+    }
+    if (receiptsRecovered) {
+        runOptionalStartupStep(bootstrap)
+    }
     repair()
 }
 
-private suspend fun runOptionalStartupStep(step: suspend () -> Unit) {
+private suspend fun runOptionalStartupStep(step: suspend () -> Unit): Boolean {
     try {
         step()
+        return true
     } catch (cancellation: CancellationException) {
         throw cancellation
     } catch (_: Throwable) {
-        Unit
+        return false
     }
 }

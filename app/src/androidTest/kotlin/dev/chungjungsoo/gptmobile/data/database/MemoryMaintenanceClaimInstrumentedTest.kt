@@ -3,6 +3,13 @@ package dev.chungjungsoo.gptmobile.data.database
 import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import dev.chungjungsoo.gptmobile.data.database.dao.MemoryMaintenanceJobDao
+import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMaintenanceJob
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -11,13 +18,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import dev.chungjungsoo.gptmobile.data.database.dao.MemoryMaintenanceJobDao
-import dev.chungjungsoo.gptmobile.data.database.entity.MemoryMaintenanceJob
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.runBlocking
 
 @RunWith(AndroidJUnit4::class)
 class MemoryMaintenanceClaimInstrumentedTest {
@@ -141,6 +141,39 @@ class MemoryMaintenanceClaimInstrumentedTest {
             )
         )
         assertEquals(STATUS_RUNNING, dao.getById(claimed.jobId)?.status)
+    }
+
+    @Test
+    fun claimedTerminalTransition_clearsRunMetadataOnFirstWrite() = runBlocking {
+        insertJob(jobId = "terminal-job", family = FAMILY_SEMANTIC, createdAt = 1)
+        val claimed = checkNotNull(
+            dao.claimNextRunnable(FAMILY_SEMANTIC, "owner", now = 100, leaseExpiresAt = 200)
+        )
+
+        assertNotNull(claimed.startedAt)
+        assertEquals(
+            1,
+            dao.transitionClaimedJob(
+                jobId = claimed.jobId,
+                leaseOwner = "owner",
+                expectedRowVersion = claimed.rowVersion,
+                newStatus = STATUS_FAILED_TERMINAL,
+                lastError = "terminal_reason",
+                blockedReason = "terminal_reason",
+                updatedAt = 101,
+                nextRunAt = null
+            )
+        )
+
+        val terminal = checkNotNull(dao.getById(claimed.jobId))
+        assertEquals(STATUS_FAILED_TERMINAL, terminal.status)
+        assertEquals("terminal_reason", terminal.lastError)
+        assertEquals("terminal_reason", terminal.blockedReason)
+        assertNull(terminal.startedAt)
+        assertNull(terminal.nextRunAt)
+        assertNull(terminal.leaseOwner)
+        assertNull(terminal.leaseExpiresAt)
+        assertEquals(claimed.rowVersion + 1, terminal.rowVersion)
     }
 
     @Test
@@ -472,5 +505,6 @@ class MemoryMaintenanceClaimInstrumentedTest {
         private const val STATUS_RUNNING = "running"
         private const val STATUS_SUCCEEDED = "succeeded"
         private const val STATUS_FAILED_RETRYABLE = "failed_retryable"
+        private const val STATUS_FAILED_TERMINAL = "failed_terminal"
     }
 }

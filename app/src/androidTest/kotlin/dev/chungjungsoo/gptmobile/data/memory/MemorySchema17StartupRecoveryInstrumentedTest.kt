@@ -4,6 +4,7 @@ import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.chungjungsoo.gptmobile.data.database.ChatDatabaseV2
+import dev.chungjungsoo.gptmobile.data.database.dao.MemoryTurnBatchDao
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingAvailability
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingCapability
 import dev.chungjungsoo.gptmobile.data.memory.embedding.MemoryEmbeddingCapabilitySource
@@ -113,9 +114,16 @@ class MemorySchema17StartupRecoveryInstrumentedTest {
                 maintenanceScheduler = maintenanceScheduler,
                 clock = FIXED_CLOCK
             )
+            val mutationRecoveryService = MemoryMutationRecoveryService(
+                memoryMutationCoordinator = mutationCoordinator,
+                turnBatchDao = database.memoryTurnBatchDao(),
+                maintenanceScheduler = maintenanceScheduler,
+                clock = FIXED_CLOCK
+            )
             val repairer = MemoryMaintenanceRepairer(
                 maintenanceScheduler = maintenanceScheduler,
                 workScheduler = workEnqueuer,
+                memoryMutationRecoveryService = mutationRecoveryService,
                 memoryVectorIndexRecoveryService = vectorRecoveryService
             )
 
@@ -126,6 +134,7 @@ class MemorySchema17StartupRecoveryInstrumentedTest {
                     workEnqueuer.enqueueWork(MemoryMaintenanceJobFamily.REPAIR, STARTUP_REPAIR_DELAY_SECONDS)
                 },
                 provision = {},
+                recoverReceipts = { mutationRecoveryService.recoverIncomplete() },
                 bootstrap = {
                     bootstrapResult = bootstrapService.bootstrap()
                     objectBoxWasAbsentAfterBootstrap = !vectorDirectory.exists()
@@ -221,6 +230,301 @@ class MemorySchema17StartupRecoveryInstrumentedTest {
             database.close()
             runCatching { BoxStore.deleteAllFiles(vectorDirectory) }
             vectorDirectory.deleteRecursively()
+            memoryRoot.deleteRecursively()
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    @Test
+    fun schema17Startup_recoversCanonicalTargetReceiptBeforeBootstrap() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val suffix = System.nanoTime().toString()
+        val databaseName = "schema17-receipt-startup-$suffix.db"
+        val memoryRoot = File(context.filesDir, "memory_store_schema17_receipt_test/$suffix")
+        context.deleteDatabase(databaseName)
+        memoryRoot.deleteRecursively()
+
+        var database = Room.databaseBuilder(context, ChatDatabaseV2::class.java, databaseName).build()
+        try {
+            val fileStore = MemoryFileStore(MemoryFilePaths(memoryRoot), FIXED_CLOCK)
+            fileStore.ensureStore().getOrThrow()
+            val initialScheduler = MemoryMaintenanceScheduler(
+                database.memoryMaintenanceJobDao(),
+                FIXED_CLOCK
+            )
+            val initialWorkEnqueuer = RecordingWorkEnqueuer()
+            val initialCoordinator = MemoryMutationCoordinator(
+                recoveryDao = database.memoryRecoveryDao(),
+                memoryFileStore = fileStore,
+                maintenanceScheduler = initialScheduler,
+                workEnqueuer = initialWorkEnqueuer,
+                clock = FIXED_CLOCK
+            )
+            val sourceJob = initialScheduler.enqueue(
+                type = MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH,
+                idempotencyKey = "schema17-receipt-startup-source",
+                payloadJson = "{}",
+                jobId = "schema17-receipt-startup-source"
+            )
+            val canonicalBefore = fileStore.readLongTermMemory().getOrThrow()
+            val target = "# ChatWithChat Memory\n\n- Canonical target survived process death"
+            val prepared = initialCoordinator.prepare(
+                semanticJobId = sourceJob.jobId,
+                semanticBatchId = "schema17-receipt-startup-batch",
+                targets = listOf(
+                    MemoryMutationTarget(
+                        sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+                        baseContent = canonicalBefore,
+                        targetContent = target,
+                        targetIndexFingerprint = MemoryVectorIndexDefaults.configuration.fingerprint()
+                    )
+                )
+            )
+            val preparedReceipt = prepared.receipts.single()
+            val commitOutcome = fileStore.commitStagedMemoryFile(
+                sourcePath = preparedReceipt.sourcePath,
+                stagedTargetPath = preparedReceipt.stagedTargetPath,
+                baseSourceHash = preparedReceipt.baseSourceHash,
+                targetSourceHash = preparedReceipt.targetSourceHash
+            ).getOrThrow()
+            assertTrue(commitOutcome is MemoryFileCommitOutcome.Committed)
+            fileStore.cleanupStagedTarget(preparedReceipt.stagedTargetPath).getOrThrow()
+
+            database.close()
+            database = Room.databaseBuilder(context, ChatDatabaseV2::class.java, databaseName).build()
+            val restartedFileStore = MemoryFileStore(MemoryFilePaths(memoryRoot), FIXED_CLOCK)
+            val recoveryDao = database.memoryRecoveryDao()
+            val jobDao = database.memoryMaintenanceJobDao()
+            val workEnqueuer = RecordingWorkEnqueuer()
+            val maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK)
+            val mutationCoordinator = MemoryMutationCoordinator(
+                recoveryDao = recoveryDao,
+                memoryFileStore = restartedFileStore,
+                maintenanceScheduler = maintenanceScheduler,
+                workEnqueuer = workEnqueuer,
+                clock = FIXED_CLOCK
+            )
+            val mutationRecoveryService = MemoryMutationRecoveryService(
+                memoryMutationCoordinator = mutationCoordinator,
+                turnBatchDao = database.memoryTurnBatchDao(),
+                maintenanceScheduler = maintenanceScheduler,
+                clock = FIXED_CLOCK
+            )
+            val bootstrapService = MemoryVectorIndexBootstrapService(
+                recoveryDao = recoveryDao,
+                memoryFileStore = restartedFileStore,
+                mutationCoordinator = mutationCoordinator,
+                targetIndexFingerprint = MemoryVectorIndexDefaults.configuration.fingerprint()
+            )
+            val repairer = MemoryMaintenanceRepairer(
+                maintenanceScheduler = maintenanceScheduler,
+                workScheduler = workEnqueuer,
+                memoryMutationRecoveryService = mutationRecoveryService
+            )
+
+            val startupOrder = mutableListOf<String>()
+            var startupRecovery: MemoryMutationRecoveryResult? = null
+            var bootstrapResult: MemoryVectorIndexBootstrapResult? = null
+            runMemoryStartupTasks(
+                enqueueRepair = {
+                    startupOrder += "enqueue"
+                    workEnqueuer.enqueueWork(MemoryMaintenanceJobFamily.REPAIR, STARTUP_REPAIR_DELAY_SECONDS)
+                },
+                provision = { startupOrder += "provision" },
+                recoverReceipts = {
+                    startupOrder += "recovery"
+                    mutationRecoveryService.recoverIncomplete().also { startupRecovery = it }
+                },
+                bootstrap = {
+                    startupOrder += "bootstrap"
+                    bootstrapResult = bootstrapService.bootstrap()
+                },
+                repair = {
+                    startupOrder += "repair"
+                    repairer.repairAndEnqueue(reopenWaitingRepair = true)
+                }
+            )
+
+            assertEquals(listOf("enqueue", "provision", "recovery", "bootstrap", "repair"), startupOrder)
+            assertEquals(1, checkNotNull(startupRecovery).committedCount)
+            assertEquals(0, checkNotNull(startupRecovery).conflictCount)
+            assertEquals(0, checkNotNull(startupRecovery).failedCount)
+            val alreadyCurrent = bootstrapResult as MemoryVectorIndexBootstrapResult.AlreadyCurrent
+            assertEquals(prepared.group.generation, alreadyCurrent.generation)
+            assertEquals(prepared.group.generation, recoveryDao.getLatestMutationGeneration())
+            assertEquals(
+                MemoryMutationState.INDEX_PENDING,
+                checkNotNull(recoveryDao.getMutationReceipt(preparedReceipt.receiptId)).state
+            )
+            assertEquals(
+                MemoryMutationState.INDEX_PENDING,
+                checkNotNull(recoveryDao.getMutationGroup(prepared.group.groupId)).state
+            )
+            val recoveredSourceJob = checkNotNull(jobDao.getById(sourceJob.jobId))
+            assertEquals(MemoryMaintenanceJobStatus.SUCCEEDED, recoveredSourceJob.status)
+            assertEquals(null, recoveredSourceJob.lastError)
+            assertEquals(target.trimEnd() + "\n", restartedFileStore.readLongTermMemory().getOrThrow())
+        } finally {
+            database.close()
+            memoryRoot.deleteRecursively()
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    @Test
+    fun schema17RepeatedStartup_doesNotReplayFinalizedClaimedConflict() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val suffix = System.nanoTime().toString()
+        val databaseName = "schema17-terminal-startup-$suffix.db"
+        val memoryRoot = File(context.filesDir, "memory_store_schema17_terminal_test/$suffix")
+        val sourceJobId = "schema17-terminal-startup-source"
+        context.deleteDatabase(databaseName)
+        memoryRoot.deleteRecursively()
+
+        var database = Room.databaseBuilder(context, ChatDatabaseV2::class.java, databaseName).build()
+        val statusEvents = mutableListOf<MemoryMaintenanceStatusChangedEvent>()
+        val eventSink = object : MemoryMaintenanceEventSink {
+            override suspend fun onStatusChanged(event: MemoryMaintenanceStatusChangedEvent) {
+                if (event.newJob.jobId == sourceJobId) statusEvents += event
+            }
+        }
+        var finalizerCalls = 0
+        try {
+            val fileStore = MemoryFileStore(MemoryFilePaths(memoryRoot), FIXED_CLOCK)
+            fileStore.ensureStore().getOrThrow()
+            val initialWorkEnqueuer = RecordingWorkEnqueuer()
+            val initialScheduler = MemoryMaintenanceScheduler(
+                jobDao = database.memoryMaintenanceJobDao(),
+                clock = FIXED_CLOCK,
+                eventSink = eventSink
+            )
+            val initialCoordinator = MemoryMutationCoordinator(
+                recoveryDao = database.memoryRecoveryDao(),
+                memoryFileStore = fileStore,
+                maintenanceScheduler = initialScheduler,
+                workEnqueuer = initialWorkEnqueuer,
+                clock = FIXED_CLOCK
+            )
+            val sourceJob = initialScheduler.enqueue(
+                type = MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH,
+                idempotencyKey = "schema17-terminal-startup-source",
+                payloadJson = "{}",
+                jobId = sourceJobId
+            )
+            val claimed = checkNotNull(
+                initialScheduler.claimNextRunnable(
+                    family = MemoryMaintenanceJobFamily.SEMANTIC,
+                    leaseOwner = "schema17-terminal-startup-owner"
+                )
+            )
+            val prepared = initialCoordinator.prepare(
+                semanticJobId = sourceJob.jobId,
+                semanticBatchId = "schema17-terminal-startup-batch",
+                targets = listOf(
+                    MemoryMutationTarget(
+                        sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+                        baseContent = fileStore.readLongTermMemory().getOrThrow(),
+                        targetContent = "# ChatWithChat Memory\n\n- Unrecoverable staged target",
+                        targetIndexFingerprint = MemoryVectorIndexDefaults.configuration.fingerprint()
+                    )
+                )
+            )
+            val preparedReceipt = prepared.receipts.single()
+            assertTrue(File(memoryRoot, preparedReceipt.stagedTargetPath).delete())
+            val conflict = initialCoordinator.reconcile(prepared) as MemoryMutationCommitResult.Conflict
+            val terminalJob = initialScheduler.markFailedTerminal(claimed, conflict.reason)
+            val terminalReceipt = checkNotNull(
+                database.memoryRecoveryDao().getMutationReceipt(preparedReceipt.receiptId)
+            )
+            val terminalGroup = checkNotNull(
+                database.memoryRecoveryDao().getMutationGroup(prepared.group.groupId)
+            )
+            val terminalEventCount = statusEvents.size
+            assertEquals(null, terminalJob.startedAt)
+
+            suspend fun runStartup() {
+                val restartedFileStore = MemoryFileStore(MemoryFilePaths(memoryRoot), FIXED_CLOCK)
+                val recoveryDao = database.memoryRecoveryDao()
+                val jobDao = database.memoryMaintenanceJobDao()
+                val workEnqueuer = RecordingWorkEnqueuer()
+                val scheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK, eventSink)
+                val coordinator = MemoryMutationCoordinator(
+                    recoveryDao = recoveryDao,
+                    memoryFileStore = restartedFileStore,
+                    maintenanceScheduler = scheduler,
+                    workEnqueuer = workEnqueuer,
+                    clock = FIXED_CLOCK
+                )
+                val turnBatchDao = database.memoryTurnBatchDao()
+                val countingTurnBatchDao = object : MemoryTurnBatchDao by turnBatchDao {
+                    override suspend fun completeClaimedBatch(jobId: String, updatedAt: Long): Boolean {
+                        finalizerCalls += 1
+                        return turnBatchDao.completeClaimedBatch(jobId, updatedAt)
+                    }
+                }
+                val recoveryService = MemoryMutationRecoveryService(
+                    memoryMutationCoordinator = coordinator,
+                    turnBatchDao = countingTurnBatchDao,
+                    maintenanceScheduler = scheduler,
+                    clock = FIXED_CLOCK
+                )
+                val bootstrapService = MemoryVectorIndexBootstrapService(
+                    recoveryDao = recoveryDao,
+                    memoryFileStore = restartedFileStore,
+                    mutationCoordinator = coordinator,
+                    targetIndexFingerprint = MemoryVectorIndexDefaults.configuration.fingerprint()
+                )
+                val repairer = MemoryMaintenanceRepairer(
+                    maintenanceScheduler = scheduler,
+                    workScheduler = workEnqueuer,
+                    memoryMutationRecoveryService = recoveryService
+                )
+                runMemoryStartupTasks(
+                    enqueueRepair = {
+                        workEnqueuer.enqueueWork(
+                            MemoryMaintenanceJobFamily.REPAIR,
+                            STARTUP_REPAIR_DELAY_SECONDS
+                        )
+                    },
+                    provision = {},
+                    recoverReceipts = { recoveryService.recoverIncomplete() },
+                    bootstrap = { bootstrapService.bootstrap() },
+                    repair = { repairer.repairAndEnqueue(reopenWaitingRepair = true) }
+                )
+            }
+
+            database.close()
+            database = Room.databaseBuilder(context, ChatDatabaseV2::class.java, databaseName).build()
+            runStartup()
+            val jobAfterFirstStartup = checkNotNull(database.memoryMaintenanceJobDao().getById(sourceJob.jobId))
+            val receiptAfterFirstStartup = checkNotNull(
+                database.memoryRecoveryDao().getMutationReceipt(preparedReceipt.receiptId)
+            )
+            val groupAfterFirstStartup = checkNotNull(
+                database.memoryRecoveryDao().getMutationGroup(prepared.group.groupId)
+            )
+            assertEquals(terminalJob, jobAfterFirstStartup)
+            assertEquals(terminalReceipt, receiptAfterFirstStartup)
+            assertEquals(terminalGroup, groupAfterFirstStartup)
+            assertEquals(terminalEventCount, statusEvents.size)
+            assertEquals(0, finalizerCalls)
+
+            database.close()
+            database = Room.databaseBuilder(context, ChatDatabaseV2::class.java, databaseName).build()
+            runStartup()
+            assertEquals(terminalJob, database.memoryMaintenanceJobDao().getById(sourceJob.jobId))
+            assertEquals(
+                terminalReceipt,
+                database.memoryRecoveryDao().getMutationReceipt(preparedReceipt.receiptId)
+            )
+            assertEquals(
+                terminalGroup,
+                database.memoryRecoveryDao().getMutationGroup(prepared.group.groupId)
+            )
+            assertEquals(terminalEventCount, statusEvents.size)
+            assertEquals(0, finalizerCalls)
+        } finally {
+            database.close()
             memoryRoot.deleteRecursively()
             context.deleteDatabase(databaseName)
         }
