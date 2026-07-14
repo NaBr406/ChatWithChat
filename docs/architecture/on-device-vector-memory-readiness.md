@@ -1,6 +1,6 @@
 # On-Device Vector Memory Readiness
 
-Status updated on 2026-07-14 for schema 17 on branch
+Status updated on 2026-07-15 for schema 17 on branch
 `codex/memory-consistency-risk-closure`. The schema 17 implementation baseline
 is `6e2f0c92f9afa43a05b420b765af61b85e79a097`. Historical Task 8/schema 16,
 Task 7, and 16 KB evidence remains below. The Task 8 implementation baseline is
@@ -28,8 +28,10 @@ from `dbc1148`.
   checksum-provisioned from release assets, verified again below
   `noBackupFilesDir`, self-tested with ONNX Runtime, and published through a
   dynamic `MemoryEmbeddingCapability` only after it is `READY`.
-- Startup creates an idempotent schema 17 bootstrap receipt for the current
-  `MEMORY.md`; the existing recovery/index worker then builds the complete
+- Startup recovers incomplete mutation receipts after provisioning and before
+  bootstrap. Bootstrap runs only after recovery reports no failed, retryable,
+  or paginated work, then creates an idempotent schema 17 bootstrap receipt for
+  the current `MEMORY.md`; the existing index worker builds the complete
   ObjectBox snapshot. Missing, corrupt, or mismatched artifacts remain
   `NOT_PROVISIONED` with no network, cloud, or fake fallback.
 
@@ -83,21 +85,51 @@ memory_activity_log
   `migrateActiveMemoriesToMarkdown`, or the retired `MemoryMarkdownCodec`.
   Historical migration SQL and exported schema history remain intact.
 
+### Post-Review Recovery Closure
+
+- A process-death test writes canonical target bytes while leaving the receipt
+  `PREPARED`, closes and reopens Room, and runs the real startup sequence. The
+  old receipt reaches `INDEX_PENDING` and its source job reaches `SUCCEEDED`
+  before bootstrap; bootstrap remains on the original generation instead of
+  creating a superseding mutation.
+- Every claimed-job transition out of `RUNNING` now clears `started_at` in the
+  same Room update that clears its lease. A persisted terminal conflict then
+  survives two complete Room reopen/startup cycles with identical job,
+  receipt, and group row versions, zero source-job status events, and zero
+  semantic finalizer replays.
+- The canonical UI test now commits through a real `MemoryFileStore` and
+  `MemoryMutationCoordinator`, forces index work enqueue to fail, observes the
+  resulting revision through `MemoryRepositoryImpl`, and verifies the open
+  `MemoryViewModel` refreshes. Fresh export still rereads the canonical file
+  when the UI revision is intentionally stale.
+
 ### Consistency Matrix
 
 | Gate | Result |
 | --- | --- |
-| Full JVM suite | 91 suites, 671 tests, 0 failures/errors/skips |
+| Full JVM suite | 91 suites, 673 tests, 0 failures/errors/skips |
 | Duplicate writes | same-proposal normalized duplicate `CREATE` rejects the proposal; a later exact-text `CREATE` is a byte-identical no-op |
 | Duplicate recall | lexical, Hybrid, fallback, prompt packing, and token-budget boundaries retain one highest-ranked normalized text |
 | Large duplicate corpus | 13 real ObjectBox tests cover 401 and 601 entries, exact cosine ordering, query limits, and a unique candidate after historical duplicates |
-| Canonical UI/export | one long-term revision subscription refreshes the view; export performs a fresh canonical read |
-| Terminal receipt recovery | missing, invalid, and hash-mismatched staging become persisted conflicts; transient I/O remains retryable; crash-window source-job finalization is replayed exactly once |
+| Canonical UI/export | a real index-scheduling failure still advances the canonical revision through repository Flow to the open ViewModel; export performs a fresh canonical read |
+| Terminal receipt recovery | receipt recovery precedes bootstrap; canonical-target process death completes idempotently; claimed terminal jobs clear run metadata on the first write and remain unchanged across repeated startup |
 | Provider prompt assembly | all six provider families retain tools/search/system/context content and merge the memory prompt exactly once |
 | Backup rules and simulation | API 30 backup rules, API 31+ cloud/device-transfer rules, and restored-receipt simulation exclude transient memory directories and preserve terminal recovery semantics |
-| Final connected integration | 9 tests passed across Room migration, schema 17 startup, backup rules, restored-receipt simulation, and Memory ViewModel refresh/export |
+| Final connected integration | 13 tests passed across Room migration, two real startup-order cases, claimed-terminal persistence, backup rules, restored-receipt simulation, and Memory ViewModel refresh/export |
 | Production release Hybrid shadow | 2 tests passed with real model/ObjectBox state transitions and `MEMORY_HYBRID_SHADOW_OK` |
 | Build and formatting | Kotlin/AndroidTest compilation, debug, release R8, lint vital, and ktlint 1.3.1 passed |
+
+The post-review build produced a 230,977,216-byte debug APK with SHA-256
+`03EBF84591695011C2853B7482E1F1F3AEB19D3BBF57145B067DA25CF62C7A64`
+and a 153,891,930-byte unsigned release APK with SHA-256
+`AB80DD9EFCF348F5E8A65E65D7FE22A313B776B2C798F9AAF98F22220F056F17`.
+The release Hybrid shadow rerun passed two tests with checkpoint
+`MEMORY_HYBRID_SHADOW_OK`; its signed target and instrumentation APK hashes are
+`24BBE1BF516F340729D229102A1C2A294AE11EABE0972CDA60E63C95451747F4` and
+`2E19C5EEECC20AA847E0F4485B918CA026BC2D4958BAFDA7EA39F68D1A84E756`.
+The same API 35 x86_64 16 KB AVD used a temporary 4 GB RAM launch override for
+this rerun after the 2 GB configuration caused Android LMKD, not application
+code, to kill the instrumentation process during ONNX startup.
 
 Normal production recall remains bound to `HybridMemoryRetriever`, maintenance
 working-set reads remain lexical, and the global retrieval default remains
@@ -373,9 +405,10 @@ lexical recall.
 | Populated Room `16 -> 17` upgrade | all 13 retained tables and sentinels preserved; only `chat_classification` and `personal_memory` removed; FK/integrity clean |
 | Duplicate normalized `CREATE` operations | strict same-proposal rejection plus cross-batch byte-identical no-op tests |
 | Historical exact-text duplicates in recall | lexical, Hybrid, fallback, prompt-packing, and 401/601-entry ObjectBox tests |
-| Background canonical update while Memory is open | long-term revision Flow instrumentation plus fresh-export instrumentation |
-| Missing, invalid, or hash-mismatched staging | persisted receipt/group conflict, exact terminal source-job reason, repeated-startup no-churn tests |
-| Process death after conflict persistence | persisted conflict scan completes source-job finalization once; exact terminal state is skipped thereafter |
+| Background canonical update while Memory is open | real FileStore commit with failed index enqueue -> revision -> repository Flow -> ViewModel, plus fresh-export instrumentation |
+| Missing, invalid, or hash-mismatched staging | persisted receipt/group conflict, exact terminal source-job reason, recovery-before-bootstrap, and repeated-startup no-churn tests |
+| Process death after mutation file commit | real Room reopen/startup completes the canonical-target PREPARED receipt before bootstrap without advancing generation |
+| Process death after conflict persistence | claimed terminal transition clears run metadata immediately; two real Room reopen/startup cycles preserve row versions and replay no event/finalizer |
 | Transient staging I/O | receipt remains PREPARED and bounded repair remains scheduled |
 | Restored PREPARED receipt without transient files | restore simulation terminates missing staging once or completes an already-written target idempotently |
 | Backup of transient memory directories | both Android backup XML formats exclude only `.staging/` and `.backups/` within `memory_store` |
@@ -389,7 +422,7 @@ lexical recall.
 | Production embedding provisioning/quality | PASSED | Immutable revision/hash contract, 72 tokenizer fixtures, release asset/install checks, real ONNX inference, shadow semantic top-5, and process restart |
 | Production Hybrid cutover | PASSED | Production recall uses Hybrid DI after shadow passed; missing, stale, corrupt, or unavailable vectors permanently fall back to current Markdown lexical recall |
 | Room schema 16 / Task 8 cleanup | PASSED | Non-destructive populated and chained migrations, exact retained-schema comparison, in-place APK upgrade, Room reopen, Markdown preservation, and ObjectBox rebuild |
-| Room schema 17 consistency | PASSED | Non-destructive populated/chained migration, exact 13-table schema, legacy runtime removal, duplicate defense, canonical-live UI/export, and terminal receipt recovery |
+| Room schema 17 consistency | PASSED | Non-destructive populated/chained migration, exact 13-table schema, legacy runtime removal, duplicate defense, canonical-live UI/export, recovery-before-bootstrap, and repeated-startup terminal stability |
 | 32-bit ABI policy | OPEN | Separate support decision because packaged 32-bit ObjectBox LOAD alignment is `0x1000` |
 | Backup XML and restore simulation | PASSED | API 30 and API 31+ rules exclude only transient memory directories; restored receipt simulations preserve idempotent/terminal behavior |
 | LocalTransport backup-agent restore | PASSED | Real package backup, private-data clear, full version-matched restore, byte-identical canonical/Room/DataStore/daily recovery, transient/derived exclusion, and ObjectBox rebuild |
