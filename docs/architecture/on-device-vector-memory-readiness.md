@@ -1,10 +1,12 @@
 # On-Device Vector Memory Readiness
 
-Status updated on 2026-07-14 for schema 16 on branch
-`codex/task8-schema16-cleanup`. The Task 8 implementation baseline is
-`6db485ff8dfe7a4e225768260d8564a922aa73f7`; the earlier Task 7 evidence
-baseline remains `b267b269f1651286d6d06a1dcb5fb89ce2ad87fd`, and the 16 KB
-extension started from `dbc1148`.
+Status updated on 2026-07-14 for schema 17 on branch
+`codex/memory-consistency-risk-closure`. The schema 17 implementation baseline
+is `6e2f0c92f9afa43a05b420b765af61b85e79a097`. Historical Task 8/schema 16,
+Task 7, and 16 KB evidence remains below. The Task 8 implementation baseline is
+`6db485ff8dfe7a4e225768260d8564a922aa73f7`, the Task 7 evidence baseline is
+`b267b269f1651286d6d06a1dcb5fb89ce2ad87fd`, and the 16 KB extension started
+from `dbc1148`.
 
 ## Current Ownership
 
@@ -12,10 +14,10 @@ extension started from `dbc1148`.
   truth.
 - `filesDir/memory_store/memory/YYYY-MM-DD.md` is maintenance-only input until
   daily distillation commits selected content to `MEMORY.md`.
-- Room schema 16 retains chats, messages, providers, pending turns,
+- Room schema 17 retains chats, messages, providers, pending turns,
   checkpoints, maintenance jobs, activity logs, mutation receipts, corpus
-  generations, and distillation checkpoints. The retired derived-index tables
-  `memory_chunk` and `memory_document` are no longer part of Room.
+  generations, and distillation checkpoints. The retired derived-index and
+  legacy semantic tables are no longer part of Room.
 - ObjectBox 5.4.2 is a disposable HNSW store below
   `noBackupFilesDir/memory_vector_index`. Deleting or corrupting it must move
   derived state forward from current Markdown; it never rolls Markdown back.
@@ -26,7 +28,7 @@ extension started from `dbc1148`.
   checksum-provisioned from release assets, verified again below
   `noBackupFilesDir`, self-tested with ONNX Runtime, and published through a
   dynamic `MemoryEmbeddingCapability` only after it is `READY`.
-- Startup creates an idempotent schema 16 bootstrap receipt for the current
+- Startup creates an idempotent schema 17 bootstrap receipt for the current
   `MEMORY.md`; the existing recovery/index worker then builds the complete
   ObjectBox snapshot. Missing, corrupt, or mismatched artifacts remain
   `NOT_PROVISIONED` with no network, cloud, or fake fallback.
@@ -36,6 +38,142 @@ Schema 16 cleanup is complete under the explicit authorization in
 That authorization skipped the additional schema 15 soak period but did not
 relax non-destructive migration, business-data preservation, or runtime
 upgrade requirements.
+
+## Schema 17 Consistency Closure Evidence
+
+### Schema And Migration
+
+- `MIGRATION_16_17` contains only:
+
+```sql
+DROP TABLE IF EXISTS `chat_classification`;
+DROP TABLE IF EXISTS `personal_memory`;
+```
+
+It does not read or write Markdown, rebuild retained tables, or use destructive
+fallback.
+- Schema 17 contains exactly 13 retained tables, 151 fields, 37 indexes, and 6
+  foreign keys:
+
+```text
+chats_v2
+messages_v2
+platform_v2
+platform_model_v2
+chat_platform_model_v2
+memory_maintenance_job
+memory_mutation_group
+memory_mutation_receipt
+memory_corpus_state
+memory_distillation_checkpoint
+memory_chat_checkpoint
+memory_pending_turn
+memory_activity_log
+```
+
+- The schema 17 Room identity hash is
+  `44588a69a5805e538f86c014dbd6f8e8`. The LF-content SHA-256 of `17.json` is
+  `9BC3F36D510C472D06E4ACDEB55408E2BC20D21D8BB273E95E100B384A991779`.
+- `1.json` through `16.json` are unchanged from the implementation baseline.
+  The recorded `16.json` SHA-256,
+  `E2FC5D089F3DD6B29F55C51EC2387BD151329D068B63C8FD1672597DA71FCF67`,
+  is over the tracked Git blob/LF bytes, not a Windows CRLF working-tree copy.
+- Production Kotlin has zero references to `PersonalMemory`,
+  `PersonalMemoryDao`, `ChatClassification`, `ChatClassificationDao`,
+  `migrateActiveMemoriesToMarkdown`, or the retired `MemoryMarkdownCodec`.
+  Historical migration SQL and exported schema history remain intact.
+
+### Consistency Matrix
+
+| Gate | Result |
+| --- | --- |
+| Full JVM suite | 91 suites, 671 tests, 0 failures/errors/skips |
+| Duplicate writes | same-proposal normalized duplicate `CREATE` rejects the proposal; a later exact-text `CREATE` is a byte-identical no-op |
+| Duplicate recall | lexical, Hybrid, fallback, prompt packing, and token-budget boundaries retain one highest-ranked normalized text |
+| Large duplicate corpus | 13 real ObjectBox tests cover 401 and 601 entries, exact cosine ordering, query limits, and a unique candidate after historical duplicates |
+| Canonical UI/export | one long-term revision subscription refreshes the view; export performs a fresh canonical read |
+| Terminal receipt recovery | missing, invalid, and hash-mismatched staging become persisted conflicts; transient I/O remains retryable; crash-window source-job finalization is replayed exactly once |
+| Provider prompt assembly | all six provider families retain tools/search/system/context content and merge the memory prompt exactly once |
+| Backup rules and simulation | API 30 backup rules, API 31+ cloud/device-transfer rules, and restored-receipt simulation exclude transient memory directories and preserve terminal recovery semantics |
+| Final connected integration | 9 tests passed across Room migration, schema 17 startup, backup rules, restored-receipt simulation, and Memory ViewModel refresh/export |
+| Production release Hybrid shadow | 2 tests passed with real model/ObjectBox state transitions and `MEMORY_HYBRID_SHADOW_OK` |
+| Build and formatting | Kotlin/AndroidTest compilation, debug, release R8, lint vital, and ktlint 1.3.1 passed |
+
+Normal production recall remains bound to `HybridMemoryRetriever`, maintenance
+working-set reads remain lexical, and the global retrieval default remains
+lexical. Missing, corrupt, stale, or identity-mismatched vector state continues
+to fail closed to current Markdown lexical recall.
+
+### Runtime Upgrade And Rebuild
+
+The final runtime gate used `emulator-5560`, API 35 x86_64, with
+`PAGE_SIZE=16384` and Wi-Fi disabled for AVD stability. The exact artifacts
+were:
+
+| Artifact | Bytes | SHA-256 |
+| --- | ---: | --- |
+| Saved schema 16 baseline debug APK | 212,408,807 | `07B2713A46E3F1F9ABFB757FB92491D4AF33864948C0080AB40A43941B0E38B9` |
+| Final schema 17 debug APK | 231,383,296 | `F6A6F477AFB15B4D30CF700B32B173D12121C7A0510C10A7F55470AA60113868` |
+| Final release unsigned APK | 153,875,546 | `0B8EF959C94BE2983F296BB403F26B88E76466336CFF4201745326715754E064` |
+
+The final production Hybrid shadow used a signed release target with SHA-256
+`A73EB2B1B5A989A0D419FC14B9A8CE410771CBB5C24D51BBEDC07CEFB1F917C9`
+and test APK SHA-256
+`9454AB3CA01F4D174DEDB22424BC605514202E91DB2339D0CB6C99C15A558C69`.
+
+The baseline APK created one synthetic sentinel in every schema 16 table, with
+all platform tokens null. Before upgrade, Room reported 15 tables, 185 fields,
+37 indexes, 6 foreign keys, identity
+`f932278bc936f80dea6a122f5a046403`, zero `foreign_key_check` rows, and
+`integrity_check=ok`.
+
+`adb install -r` installed the final APK without uninstalling or clearing app
+data. Before first launch the database was still schema 16 and the APK install
+time, database/file hashes, and inodes were unchanged. First cold launch then
+migrated to schema 17. All 13 retained table sentinels and the pending turn
+remained, both legacy tables were absent, all platform tokens remained null,
+and the exact 13-table/151-field/37-index/6-foreign-key schema reopened with
+clean FK and integrity checks.
+
+Before and after migration, repeated force-stop/cold-start cycles, and derived
+index deletion, `MEMORY.md` SHA-256 remained
+`633EA02D15E3651DD099974B3CE0D74BE26ED6A51742F4AE13F8F5E42982F7AF`.
+Its inode and the memory-enabled DataStore hash/inode also remained unchanged.
+The Memory page and export dialog both displayed the complete current canonical
+content on the final APK. Seeded job/group/receipt attempts and row versions did
+not churn across repeated starts.
+
+Deleting only `noBackupFilesDir/memory_vector_index` while the app was stopped
+left canonical Markdown, Room, and DataStore unchanged. The next cold start
+rebuilt ObjectBox `data.mdb` and `lock.mdb`; corpus and indexed generation were
+both 7, source/indexed hashes matched current `MEMORY.md`, and `last_error` was
+empty.
+
+### Backup Boundary
+
+Both backup XML formats exclude only `memory_store/.staging/` and
+`memory_store/.backups/`. ObjectBox and installed model files remain derived
+state under `noBackupFilesDir`. The rules intentionally do not change the
+existing eligibility of Room, DataStore, SharedPreferences, or platform
+credentials; that broader credential backup policy remains a separate product
+decision.
+
+A real Android backup-agent cycle passed with
+`com.android.localtransport/.LocalTransport`: package-level `backupnow`
+succeeded, `pm clear` removed all private data on the disposable emulator, and
+`bmgr restore` completed a full, version-matched package restore. An earlier
+attempt while Android still marked the package stopped was rejected and
+discarded before any data clear; only the later package-level success was used.
+Before first launch, the Room database, `MEMORY.md`, the memory-enabled
+DataStore, and the daily Markdown file matched their source hashes byte for
+byte. Synthetic files under `.staging/` and `.backups/` and the entire ObjectBox
+directory were absent. Cold launch rebuilt ObjectBox from restored Markdown;
+the restored Memory UI, 13 table sentinels, pending turn, FK/integrity checks,
+and seeded receipt/job row versions remained correct. The original GMS
+transport and disabled Backup Manager state were restored after the test.
+
+This LocalTransport result is device-local backup-agent evidence only. No real
+cloud transport restore was performed, so cloud restore remains OPEN.
 
 ## Task 8 / Schema 16 Evidence
 
@@ -232,6 +370,15 @@ lexical recall.
 | Populated Room `14 -> 15 -> 16` upgrade | real Room instrumentation migration with business/recovery data retained |
 | Populated Room `15 -> 16` upgrade | all retained rows/columns preserved; only two derived tables/indexes removed; real Room reopen passed |
 | Persisted legacy Room-index job after schema 16 | migration dismissal plus startup repair test; no retry or notification loop in runtime smoke |
+| Populated Room `16 -> 17` upgrade | all 13 retained tables and sentinels preserved; only `chat_classification` and `personal_memory` removed; FK/integrity clean |
+| Duplicate normalized `CREATE` operations | strict same-proposal rejection plus cross-batch byte-identical no-op tests |
+| Historical exact-text duplicates in recall | lexical, Hybrid, fallback, prompt-packing, and 401/601-entry ObjectBox tests |
+| Background canonical update while Memory is open | long-term revision Flow instrumentation plus fresh-export instrumentation |
+| Missing, invalid, or hash-mismatched staging | persisted receipt/group conflict, exact terminal source-job reason, repeated-startup no-churn tests |
+| Process death after conflict persistence | persisted conflict scan completes source-job finalization once; exact terminal state is skipped thereafter |
+| Transient staging I/O | receipt remains PREPARED and bounded repair remains scheduled |
+| Restored PREPARED receipt without transient files | restore simulation terminates missing staging once or completes an already-written target idempotently |
+| Backup of transient memory directories | both Android backup XML formats exclude only `.staging/` and `.backups/` within `memory_store` |
 
 ## Release Gates
 
@@ -242,11 +389,15 @@ lexical recall.
 | Production embedding provisioning/quality | PASSED | Immutable revision/hash contract, 72 tokenizer fixtures, release asset/install checks, real ONNX inference, shadow semantic top-5, and process restart |
 | Production Hybrid cutover | PASSED | Production recall uses Hybrid DI after shadow passed; missing, stale, corrupt, or unavailable vectors permanently fall back to current Markdown lexical recall |
 | Room schema 16 / Task 8 cleanup | PASSED | Non-destructive populated and chained migrations, exact retained-schema comparison, in-place APK upgrade, Room reopen, Markdown preservation, and ObjectBox rebuild |
+| Room schema 17 consistency | PASSED | Non-destructive populated/chained migration, exact 13-table schema, legacy runtime removal, duplicate defense, canonical-live UI/export, and terminal receipt recovery |
 | 32-bit ABI policy | OPEN | Separate support decision because packaged 32-bit ObjectBox LOAD alignment is `0x1000` |
-| Backup/restore integration | OPEN | Separate real backup-agent restore validation |
+| Backup XML and restore simulation | PASSED | API 30 and API 31+ rules exclude only transient memory directories; restored receipt simulations preserve idempotent/terminal behavior |
+| LocalTransport backup-agent restore | PASSED | Real package backup, private-data clear, full version-matched restore, byte-identical canonical/Room/DataStore/daily recovery, transient/derived exclusion, and ObjectBox rebuild |
+| Cloud backup restore | OPEN | No real cloud transport restore has been performed; LocalTransport cannot close this gate |
 
-The schema 16 cleanup, production provisioning, Hybrid shadow/cutover, and 16
-KB page-size compatibility gates have passed. The real ARM64 gate remains only
-a final performance/OEM supplement; 32-bit support and real backup-agent
-restore remain separate OPEN decisions. Keep ObjectBox rebuildable and preserve
-lexical fallback permanently.
+The schema 16 cleanup, schema 17 consistency closure, LocalTransport restore,
+production provisioning, Hybrid shadow/cutover, and 16 KB page-size
+compatibility gates have passed. The real ARM64 gate remains only a final
+performance/OEM supplement; 32-bit support and real cloud restore remain
+separate OPEN decisions. Keep ObjectBox rebuildable and preserve lexical
+fallback permanently.
