@@ -29,6 +29,21 @@ import org.junit.Test
 class MemoryVectorIndexBootstrapServiceTest {
 
     @Test
+    fun `fresh header only memory bootstraps without changing canonical bytes`() = runBlocking {
+        val fixture = Fixture(replaceInitialContent = false)
+        val contentBefore = fixture.fileStore.readLongTermMemory().getOrThrow()
+        val hashBefore = fixture.sourceHash()
+
+        val result = fixture.service().bootstrap()
+
+        assertTrue(result is MemoryVectorIndexBootstrapResult.Scheduled)
+        assertEquals(contentBefore, fixture.fileStore.readLongTermMemory().getOrThrow())
+        assertEquals(hashBefore, fixture.sourceHash())
+        assertEquals(hashBefore, fixture.corpus().sourceHash)
+        assertEquals(hashBefore, fixture.receipt(fixture.corpus()).targetSourceHash)
+    }
+
+    @Test
     fun `existing memory without corpus identity creates content unchanged local receipt`() = runBlocking {
         val fixture = Fixture()
         val contentBefore = fixture.fileStore.readLongTermMemory().getOrThrow()
@@ -214,7 +229,9 @@ class MemoryVectorIndexBootstrapServiceTest {
         assertEquals(MemoryMutationState.INDEX_PENDING, fixture.receipt(fixture.corpus()).state)
     }
 
-    private class Fixture {
+    private class Fixture(
+        replaceInitialContent: Boolean = true
+    ) {
         val root = Files.createTempDirectory("memory-vector-bootstrap").toFile()
         val paths = MemoryFilePaths(root)
         val fileStore = MemoryFileStore(paths, FIXED_CLOCK)
@@ -225,7 +242,9 @@ class MemoryVectorIndexBootstrapServiceTest {
 
         init {
             fileStore.ensureStore().getOrThrow()
-            fileStore.replaceLongTermMemory(INITIAL_MARKDOWN).getOrThrow()
+            if (replaceInitialContent) {
+                fileStore.replaceLongTermMemory(INITIAL_MARKDOWN).getOrThrow()
+            }
         }
 
         fun service(fingerprint: String = FINGERPRINT_A) = MemoryVectorIndexBootstrapService(

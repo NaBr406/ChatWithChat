@@ -154,7 +154,13 @@ class MemoryFileStore(
             if (!sourceFile.isFile) {
                 error("Memory file does not exist: ${sourceFile.absolutePath}")
             }
-            val targetBytes = normalizeFullFileContent(content).toByteArray(StandardCharsets.UTF_8)
+            val sourceBytes = Files.readAllBytes(sourceFile.toPath())
+            val requestedBytes = content.toByteArray(StandardCharsets.UTF_8)
+            val targetBytes = if (requestedBytes.contentEquals(sourceBytes)) {
+                sourceBytes
+            } else {
+                normalizeFullFileContent(content).toByteArray(StandardCharsets.UTF_8)
+            }
             val targetHash = sha256(targetBytes)
             val stagedTargetFile = paths.stagedTargetFile(stagingId)
             if (stagedTargetFile.exists()) {
@@ -173,7 +179,7 @@ class MemoryFileStore(
             StagedMemoryFile(
                 sourcePath = sourcePath,
                 stagedTargetPath = paths.relativePath(stagedTargetFile),
-                baseSourceHash = sha256(Files.readAllBytes(sourceFile.toPath())),
+                baseSourceHash = sha256(sourceBytes),
                 targetSourceHash = targetHash
             )
         }
