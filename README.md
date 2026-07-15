@@ -20,7 +20,7 @@
 
 ChatWithChat 是基于 GPT Mobile 深度改造的 Android AI 聊天应用。当前分支已经从“设置好平台再进入传统会话列表”的体验，调整为更接近 ChatGPT / Gemini 手机端的工作流：首屏就是聊天输入，左侧抽屉管理历史会话，顶部直接切换模型。
 
-这个仓库的用户可见品牌、README、图标资源和本地构建产物名称已经面向 ChatWithChat 调整；为了降低迁移风险，内部包名、部分类名、数据库名和 Android `applicationId` 仍保留 `dev.chungjungsoo.gptmobile` / `GPTMobile` 相关命名。
+这个仓库的用户可见品牌与内部 Android 身份现已统一为 ChatWithChat，`namespace`、`applicationId` 和项目源码包均为 `cn.nabr.chatwithchat`。Room 数据库文件名 `chat` / `chat_v2` 保持不变，避免把身份迁移误变成存储 schema 变更。
 
 ## 截图
 
@@ -132,8 +132,8 @@ Windows 本机也提供了两个辅助脚本：
 
 ## 代码结构
 
-- `app/src/main/kotlin/dev/chungjungsoo/gptmobile/data/`：Room、DataStore、Repository、网络和记忆逻辑。
-- `app/src/main/kotlin/dev/chungjungsoo/gptmobile/presentation/`：Compose UI、导航、主题和图标。
+- `app/src/main/kotlin/cn/nabr/chatwithchat/data/`：Room、DataStore、Repository、网络和记忆逻辑。
+- `app/src/main/kotlin/cn/nabr/chatwithchat/presentation/`：Compose UI、导航、主题和图标。
 - `app/src/main/res/`：Android 资源、字符串、图标和启动页配置。
 - `app/src/test/kotlin/`：单元测试。
 - `docs/superpowers/`：阶段性设计文档和实施计划。

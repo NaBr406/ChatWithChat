@@ -4,7 +4,7 @@ This file provides guidance to AI coding agents working on this Android codebase
 
 ## Project Overview
 
-GPT Mobile is an Android chat app supporting multiple AI providers (OpenAI, Anthropic, Google, Groq, Ollama, OpenRouter). Built with Kotlin, Jetpack Compose, MVVM architecture, and Hilt DI.
+ChatWithChat is an Android chat app supporting multiple AI providers (OpenAI, Anthropic, Google, Groq, Ollama, OpenRouter). Built with Kotlin, Jetpack Compose, MVVM architecture, and Hilt DI.
 
 ## Build Commands
 
@@ -20,16 +20,16 @@ GPT Mobile is an Android chat app supporting multiple AI providers (OpenAI, Anth
 ./gradlew test
 
 # Run a single test class
-./gradlew test --tests "dev.chungjungsoo.gptmobile.ExampleUnitTest"
+./gradlew test --tests "cn.nabr.chatwithchat.ExampleUnitTest"
 
 # Run a single test method
-./gradlew test --tests "dev.chungjungsoo.gptmobile.ExampleUnitTest.addition_isCorrect"
+./gradlew test --tests "cn.nabr.chatwithchat.ExampleUnitTest.addition_isCorrect"
 
 # Instrumented tests (requires device/emulator)
 ./gradlew connectedAndroidTest
 
 # Run single instrumented test
-./gradlew connectedAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=dev.chungjungsoo.gptmobile.ExampleInstrumentedTest
+./gradlew connectedAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=cn.nabr.chatwithchat.ExampleInstrumentedTest
 
 # Clean build
 ./gradlew clean assembleDebug
@@ -62,7 +62,7 @@ Order imports as follows (alphabetically within each group):
 2. AndroidX imports (`androidx.*`)
 3. Third-party libraries (`ai.koog.*`, `com.*`, `io.ktor.*`)
 4. Dagger/Hilt (`dagger.*`)
-5. Project imports (`dev.chungjungsoo.gptmobile.*`)
+5. Project imports (`cn.nabr.chatwithchat.*`)
 6. Java stdlib (`java.*`)
 7. Javax (`javax.*`)
 8. Kotlin/Kotlinx (`kotlin.*`, `kotlinx.*`)

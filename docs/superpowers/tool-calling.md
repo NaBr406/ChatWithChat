@@ -4,7 +4,7 @@ This guide describes the provider-neutral tool platform and its safety boundarie
 
 ## Architecture
 
-Core types live in `app/src/main/kotlin/dev/chungjungsoo/gptmobile/data/tool/`:
+Core types live in `app/src/main/kotlin/cn/nabr/chatwithchat/data/tool/`:
 
 - `ToolDefinition`: model-facing name, description, and JSON parameter schema.
 - `ToolProvider`: owns one definition, settings metadata, effect/security policy, runtime permissions, execution policy, progress label, execution, and source mapping.
@@ -193,9 +193,9 @@ For any future write tool, also test:
 Useful commands:
 
 ```powershell
-./gradlew.bat :app:testDebugUnitTest --tests "dev.chungjungsoo.gptmobile.data.tool.*"
-./gradlew.bat :app:testDebugUnitTest --tests "dev.chungjungsoo.gptmobile.data.tool.provider.*"
-./gradlew.bat :app:testDebugUnitTest --tests "dev.chungjungsoo.gptmobile.data.repository.ChatRepositoryImplTest"
+./gradlew.bat :app:testDebugUnitTest --tests "cn.nabr.chatwithchat.data.tool.*"
+./gradlew.bat :app:testDebugUnitTest --tests "cn.nabr.chatwithchat.data.tool.provider.*"
+./gradlew.bat :app:testDebugUnitTest --tests "cn.nabr.chatwithchat.data.repository.ChatRepositoryImplTest"
 ./gradlew.bat :app:compileDebugKotlin
 ```
 
