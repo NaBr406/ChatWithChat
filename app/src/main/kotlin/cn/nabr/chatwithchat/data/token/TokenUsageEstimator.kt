@@ -31,8 +31,7 @@ object TokenUsageEstimator {
         requestText: String,
         outputText: String,
         platform: PlatformV2,
-        label: String,
-        isToolRelated: Boolean
+        label: String
     ): TokenUsageRecord {
         val inputTokens = estimateText(requestText, platform)
         val outputTokens = estimateText(outputText, platform)
@@ -42,16 +41,13 @@ object TokenUsageEstimator {
             outputTokens = outputTokens,
             totalTokens = inputTokens + outputTokens,
             isEstimated = true,
-            isToolRelated = isToolRelated
+            isToolRelated = false
         )
 
         return TokenUsageRecord(
             inputTokens = inputTokens,
             outputTokens = outputTokens,
             totalTokens = inputTokens + outputTokens,
-            toolInputTokens = if (isToolRelated) inputTokens else 0,
-            toolOutputTokens = if (isToolRelated) outputTokens else 0,
-            toolTotalTokens = if (isToolRelated) inputTokens + outputTokens else 0,
             isEstimated = true,
             provider = platform.name,
             platformUid = platform.uid,

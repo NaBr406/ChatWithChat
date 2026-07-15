@@ -281,15 +281,21 @@
     <string name="chat_model_for_platform">%1$s 的模型</string>
     <string name="update_chat_models">更新模型</string>
     <string name="reasoning_mode">思考强度</string>
+    <string name="reasoning_control">思考</string>
     <string name="reasoning_mode_current">思考：%1$s</string>
+    <string name="reasoning_mode_model_default">模型默认</string>
+    <string name="reasoning_mode_default_only">模型默认思考</string>
+    <string name="reasoning_mode_unknown">能力未识别，保持模型默认</string>
     <string name="reasoning_mode_auto">自动</string>
     <string name="reasoning_mode_off">关闭</string>
+    <string name="reasoning_mode_on">开启</string>
     <string name="reasoning_mode_low">快速</string>
     <string name="reasoning_mode_medium">平衡</string>
     <string name="reasoning_mode_high">深入</string>
     <string name="reasoning_mode_max">最强</string>
     <string name="reasoning_mode_auto_description">由模型自动选择</string>
     <string name="reasoning_mode_off_description">直接回答，减少思考开销</string>
+    <string name="reasoning_mode_on_description">使用模型思考</string>
     <string name="reasoning_mode_low_description">更快回答日常问题</string>
     <string name="reasoning_mode_medium_description">适合回答大多数问题</string>
     <string name="reasoning_mode_high_description">擅长解决复杂问题</string>
@@ -431,6 +437,7 @@
     <string name="large_images_resized_before_upload">上传前已压缩大图。</string>
     <string name="failed_to_prepare_attachment">附件处理失败。</string>
     <string name="failed_to_copy_attachment">附件复制失败。</string>
+    <string name="attachment_batch_rejected">%1$d 张图片未能添加，请检查图片格式和 50 MB 限制。</string>
     <string name="settings_section_web_search">联网搜索</string>
     <string name="settings_section_tool_calling">工具调用</string>
     <string name="settings_section_callable_tools">可调用工具</string>
@@ -504,4 +511,5 @@
     <string name="tool_running">正在使用工具</string>
     <string name="tool_finished">工具已完成</string>
     <string name="tool_failed">工具执行失败</string>
+    <string name="initial_request_interrupted">请求已中断，请重试。</string>
 </resources>

@@ -289,4 +289,12 @@
     <string name="large_images_resized_before_upload">上传前已压缩大图。</string>
     <string name="failed_to_prepare_attachment">附件处理失败。</string>
     <string name="failed_to_copy_attachment">附件复制失败。</string>
+    <string name="attachment_batch_rejected">No se pudieron añadir %1$d imágenes. Comprueba el formato y el límite de 50 MB.</string>
+    <string name="reasoning_control">Razonamiento</string>
+    <string name="reasoning_mode_model_default">Predeterminado del modelo</string>
+    <string name="reasoning_mode_default_only">Razonamiento predeterminado del modelo</string>
+    <string name="reasoning_mode_unknown">Capacidad no reconocida; se mantiene el valor predeterminado del modelo</string>
+    <string name="reasoning_mode_on">Activado</string>
+    <string name="reasoning_mode_on_description">Usar el razonamiento del modelo</string>
+    <string name="initial_request_interrupted">La solicitud se interrumpió. Inténtalo de nuevo.</string>
 </resources>

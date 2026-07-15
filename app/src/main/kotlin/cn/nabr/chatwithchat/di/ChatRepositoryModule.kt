@@ -7,6 +7,7 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import cn.nabr.chatwithchat.data.context.ContextBuilder
+import cn.nabr.chatwithchat.data.database.ChatDatabaseV2
 import cn.nabr.chatwithchat.data.database.dao.ChatPlatformModelV2Dao
 import cn.nabr.chatwithchat.data.database.dao.ChatRoomDao
 import cn.nabr.chatwithchat.data.database.dao.ChatRoomV2Dao
@@ -34,6 +35,7 @@ object ChatRepositoryModule {
         @ApplicationContext context: Context,
         chatRoomDao: ChatRoomDao,
         messageDao: MessageDao,
+        chatDatabaseV2: ChatDatabaseV2,
         chatRoomV2Dao: ChatRoomV2Dao,
         messageV2Dao: MessageV2Dao,
         chatPlatformModelV2Dao: ChatPlatformModelV2Dao,
@@ -63,6 +65,7 @@ object ChatRepositoryModule {
         contextBuilder,
         toolLoopOrchestrator,
         searchDecisionService = searchDecisionService,
-        memoryTurnBatchScheduler = memoryTurnBatchScheduler
+        memoryTurnBatchScheduler = memoryTurnBatchScheduler,
+        chatDatabaseV2 = chatDatabaseV2
     )
 }

@@ -33,4 +33,76 @@ class ChatLaunchStateTest {
         assertFalse(launchState.initialQuestionConsumed)
         assertFalse(launchState.initialAttachmentsConsumed)
     }
+
+    @Test
+    fun initialRequest_isConsumedOnlyAfterPersistenceIsRecorded() {
+        val launchState = ChatLaunchState(SavedStateHandle(), routeChatRoomId = 0)
+
+        assertFalse(launchState.initialQuestionConsumed)
+        assertFalse(launchState.initialAttachmentsConsumed)
+
+        launchState.recordInitialRequestPersisted()
+
+        assertTrue(launchState.initialQuestionConsumed)
+        assertTrue(launchState.initialAttachmentsConsumed)
+    }
+
+    @Test
+    fun initialRequestRecovery_requiresStableMarkerAndInitialPayload() {
+        assertTrue(
+            shouldRecoverInitialRequest(
+                routeChatRoomId = 0,
+                initialRequestId = -42,
+                initialQuestion = "hello",
+                initialAttachmentPaths = emptyList()
+            )
+        )
+        assertFalse(
+            shouldRecoverInitialRequest(
+                routeChatRoomId = 0,
+                initialRequestId = 0,
+                initialQuestion = "hello",
+                initialAttachmentPaths = emptyList()
+            )
+        )
+        assertFalse(
+            shouldRecoverInitialRequest(
+                routeChatRoomId = 17,
+                initialRequestId = -42,
+                initialQuestion = "hello",
+                initialAttachmentPaths = emptyList()
+            )
+        )
+    }
+
+    @Test
+    fun recoveredInitialRequest_withoutAssistantPayload_isVisibleAndRetryable() {
+        assertTrue(
+            shouldShowInterruptedInitialRequest(
+                initialRequestId = -42,
+                assistantContent = "",
+                assistantThoughts = "",
+                hasAttachments = false,
+                isLoading = false
+            )
+        )
+        assertFalse(
+            shouldShowInterruptedInitialRequest(
+                initialRequestId = -42,
+                assistantContent = "answer",
+                assistantThoughts = "",
+                hasAttachments = false,
+                isLoading = false
+            )
+        )
+        assertFalse(
+            shouldShowInterruptedInitialRequest(
+                initialRequestId = -42,
+                assistantContent = "",
+                assistantThoughts = "",
+                hasAttachments = false,
+                isLoading = true
+            )
+        )
+    }
 }

@@ -289,4 +289,12 @@
     <string name="large_images_resized_before_upload">上传前已压缩大图。</string>
     <string name="failed_to_prepare_attachment">附件处理失败。</string>
     <string name="failed_to_copy_attachment">附件复制失败。</string>
+    <string name="attachment_batch_rejected">%1$d resim eklenemedi. Resim biçimini ve 50 MB sınırını kontrol edin.</string>
+    <string name="reasoning_control">Akıl yürütme</string>
+    <string name="reasoning_mode_model_default">Model varsayılanı</string>
+    <string name="reasoning_mode_default_only">Model varsayılan akıl yürütmesi</string>
+    <string name="reasoning_mode_unknown">Yetenek tanınmadı; model varsayılanı korunacak</string>
+    <string name="reasoning_mode_on">Açık</string>
+    <string name="reasoning_mode_on_description">Model akıl yürütmesini kullan</string>
+    <string name="initial_request_interrupted">İstek kesintiye uğradı. Tekrar deneyin.</string>
 </resources>

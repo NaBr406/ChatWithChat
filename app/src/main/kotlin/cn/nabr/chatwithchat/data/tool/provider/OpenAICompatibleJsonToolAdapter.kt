@@ -32,6 +32,8 @@ class OpenAICompatibleJsonToolAdapter(
         config: ToolLoopConfig
     ): Result<JsonToolModelOutput> = jsonToolCallParser.parse(rawText, config)
 
+    override fun hasToolCallIntent(rawText: String): Boolean = jsonToolCallParser.hasToolCallIntent(rawText)
+
     override fun renderToolResults(
         results: List<ToolResult>,
         config: ToolLoopConfig

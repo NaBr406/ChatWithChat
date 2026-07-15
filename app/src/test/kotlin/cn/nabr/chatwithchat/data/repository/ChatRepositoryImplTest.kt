@@ -6,6 +6,7 @@ import cn.nabr.chatwithchat.data.database.entity.MessageSourceMetadata
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.dto.ApiState
+import cn.nabr.chatwithchat.data.dto.ProviderUsage
 import cn.nabr.chatwithchat.data.dto.anthropic.common.ToolResultContent
 import cn.nabr.chatwithchat.data.dto.anthropic.common.ToolUseContent
 import cn.nabr.chatwithchat.data.dto.anthropic.request.AnthropicToolChoice
@@ -14,7 +15,14 @@ import cn.nabr.chatwithchat.data.dto.anthropic.response.ContentBlock
 import cn.nabr.chatwithchat.data.dto.anthropic.response.ContentBlockType
 import cn.nabr.chatwithchat.data.dto.anthropic.response.ContentDeltaResponseChunk
 import cn.nabr.chatwithchat.data.dto.anthropic.response.ContentStartResponseChunk
+import cn.nabr.chatwithchat.data.dto.anthropic.response.MessageDeltaResponseChunk
+import cn.nabr.chatwithchat.data.dto.anthropic.response.MessageResponse
 import cn.nabr.chatwithchat.data.dto.anthropic.response.MessageResponseChunk
+import cn.nabr.chatwithchat.data.dto.anthropic.response.MessageStartResponseChunk
+import cn.nabr.chatwithchat.data.dto.anthropic.response.StopReason
+import cn.nabr.chatwithchat.data.dto.anthropic.response.StopReasonDelta
+import cn.nabr.chatwithchat.data.dto.anthropic.response.Usage
+import cn.nabr.chatwithchat.data.dto.anthropic.response.UsageDelta
 import cn.nabr.chatwithchat.data.dto.google.common.Content
 import cn.nabr.chatwithchat.data.dto.google.common.Part
 import cn.nabr.chatwithchat.data.dto.google.common.Role as GoogleRole
@@ -22,6 +30,7 @@ import cn.nabr.chatwithchat.data.dto.google.request.GenerateContentRequest
 import cn.nabr.chatwithchat.data.dto.google.request.GoogleToolConfig
 import cn.nabr.chatwithchat.data.dto.google.response.Candidate
 import cn.nabr.chatwithchat.data.dto.google.response.GenerateContentResponse
+import cn.nabr.chatwithchat.data.dto.google.response.UsageMetadata
 import cn.nabr.chatwithchat.data.dto.groq.request.GroqChatCompletionRequest
 import cn.nabr.chatwithchat.data.dto.groq.response.GroqChatCompletionChunk
 import cn.nabr.chatwithchat.data.dto.groq.response.GroqChoice
@@ -40,8 +49,13 @@ import cn.nabr.chatwithchat.data.dto.openai.response.ChatCompletionFunctionCallD
 import cn.nabr.chatwithchat.data.dto.openai.response.ChatCompletionToolCallDelta
 import cn.nabr.chatwithchat.data.dto.openai.response.Choice
 import cn.nabr.chatwithchat.data.dto.openai.response.Delta
+import cn.nabr.chatwithchat.data.dto.openai.response.ErrorDetail
 import cn.nabr.chatwithchat.data.dto.openai.response.FunctionCallArgumentsDoneEvent
 import cn.nabr.chatwithchat.data.dto.openai.response.OutputTextDeltaEvent
+import cn.nabr.chatwithchat.data.dto.openai.response.ResponseCompletedEvent
+import cn.nabr.chatwithchat.data.dto.openai.response.ResponseError
+import cn.nabr.chatwithchat.data.dto.openai.response.ResponseFailedEvent
+import cn.nabr.chatwithchat.data.dto.openai.response.ResponseObject
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponsesStreamEvent
 import cn.nabr.chatwithchat.data.model.ChatAttachment
 import cn.nabr.chatwithchat.data.model.ClientType
@@ -51,6 +65,7 @@ import cn.nabr.chatwithchat.data.network.GoogleAPI
 import cn.nabr.chatwithchat.data.network.GroqAPI
 import cn.nabr.chatwithchat.data.network.OpenAIAPI
 import cn.nabr.chatwithchat.data.network.UploadedProviderFile
+import cn.nabr.chatwithchat.data.token.TokenUsageRecord
 import cn.nabr.chatwithchat.data.tool.BuiltInTools
 import cn.nabr.chatwithchat.data.tool.ToolCall
 import cn.nabr.chatwithchat.data.tool.ToolCallingMode
@@ -65,18 +80,22 @@ import cn.nabr.chatwithchat.data.tool.ToolResult
 import cn.nabr.chatwithchat.data.tool.ToolSecurityPolicy
 import cn.nabr.chatwithchat.data.tool.ToolSource
 import cn.nabr.chatwithchat.data.websearch.SearchDecisionModelClient
+import cn.nabr.chatwithchat.data.websearch.SearchDecisionModelResponse
 import cn.nabr.chatwithchat.data.websearch.SearchDecisionService
 import cn.nabr.chatwithchat.data.websearch.WebPageExtractor
 import cn.nabr.chatwithchat.data.websearch.WebSearchMode
 import cn.nabr.chatwithchat.data.websearch.WebSearchRepository
 import cn.nabr.chatwithchat.data.websearch.WebSearchResult
 import java.io.File
+import java.io.IOException
 import java.lang.reflect.InvocationHandler
 import java.lang.reflect.Proxy
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
@@ -86,6 +105,7 @@ import kotlinx.serialization.json.buildJsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -163,6 +183,38 @@ class ChatRepositoryImplTest {
         assertTrue(states.any { it is ApiState.UsageUpdated })
         assertEquals(1, groqAPI.streamCalls)
         assertEquals(0, openAIAPI.streamChatCompletionCalls)
+    }
+
+    @Test
+    fun `responses failure retains exact provider usage`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            responsesResponses = mutableListOf(
+                flowOf(
+                    ResponseFailedEvent(
+                        response = ResponseObject(
+                            id = "resp_failed",
+                            status = "failed",
+                            error = ResponseError(message = "provider failure"),
+                            usage = ProviderUsage(inputTokens = 13, outputTokens = 2, totalTokens = 15)
+                        )
+                    )
+                )
+            )
+        )
+        val repository = createRepository(openAIAPI = openAIAPI)
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "Hi", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = openAIPlatform()
+        ).toList()
+        val usage = states.filterIsInstance<ApiState.UsageUpdated>().single().usage
+
+        assertTrue(states.any { it == ApiState.Error("provider failure") })
+        assertEquals(13, usage.inputTokens)
+        assertEquals(2, usage.outputTokens)
+        assertEquals(15, usage.totalTokens)
+        assertFalse(usage.isEstimated)
     }
 
     @Test
@@ -890,7 +942,11 @@ class ChatRepositoryImplTest {
                 assertTrue(prompt.contains("latest Kotlin release"))
                 assertTrue(prompt.contains("Runtime context"))
                 assertTrue(prompt.contains("Current local date/time"))
-                Result.success("""{"shouldSearch":true,"queries":["latest Kotlin release"],"reason":"latest requested"}""")
+                Result.success(
+                    SearchDecisionModelResponse(
+                        """{"shouldSearch":true,"queries":["latest Kotlin release"],"reason":"latest requested"}"""
+                    )
+                )
             }
         )
         val repository = createRepository(
@@ -918,6 +974,358 @@ class ChatRepositoryImplTest {
         assertEquals(1, openAIAPI.streamChatCompletionCalls)
         assertTrue(openAIAPI.chatCompletionRequests.single().systemText().contains("Tool results are available"))
         assertTrue(openAIAPI.chatCompletionRequests.single().systemText().contains("https://example.com/source"))
+    }
+
+    @Test
+    fun `auto search decision and final answer aggregate once across all execution paths`() = runBlocking {
+        searchDecisionUsageScenarios().forEach { scenario ->
+            val usage = scenario.collectSingleUsage()
+
+            assertEquals("${scenario.name} visible input", 20, usage.inputTokens)
+            assertEquals("${scenario.name} visible output", 7, usage.outputTokens)
+            assertEquals("${scenario.name} visible total", 27, usage.totalTokens)
+            assertEquals("${scenario.name} aggregate input", 30, usage.toolInputTokens)
+            assertEquals("${scenario.name} aggregate output", 12, usage.toolOutputTokens)
+            assertEquals("${scenario.name} aggregate total", 42, usage.toolTotalTokens)
+            assertEquals("${scenario.name} must not duplicate final usage", 42, usage.details.sumOf { it.totalTokens })
+            assertTrue("${scenario.name} details should be tool related", usage.details.all { it.isToolRelated })
+            assertFalse("${scenario.name} should prefer exact provider usage", usage.isEstimated)
+        }
+    }
+
+    @Test
+    fun `malformed nonempty fallback tool envelopes retain full loop usage`() = runBlocking {
+        listOf(
+            "malformed" to """{"type":"tool_calls","tool_calls":[{""",
+            "missing discriminator" to """{"tool_calls":[{"name":"web_search"}]}"""
+        ).forEach { (name, envelope) ->
+            val openAIAPI = RecordingOpenAIAPI(
+                chatCompletionResponses = mutableListOf(
+                    chatCompletionFlow(envelope, ProviderUsage(promptTokens = 10, completionTokens = 5, totalTokens = 15)),
+                    chatCompletionFlow("Final answer", ProviderUsage(promptTokens = 20, completionTokens = 7, totalTokens = 27))
+                )
+            )
+            val repository = createRepository(
+                openAIAPI = openAIAPI,
+                settingRepository = settingRepository(
+                    webSearchMode = WebSearchMode.Off,
+                    toolCallingMode = ToolCallingMode.Auto
+                )
+            )
+
+            val usage = UsageScenario(name, repository, customPlatform()).collectSingleUsage()
+
+            assertEquals("$name visible answer", 27, usage.totalTokens)
+            assertEquals("$name full loop", 42, usage.toolTotalTokens)
+            assertEquals("$name no duplicate rounds", 42, usage.details.sumOf { it.totalTokens })
+            assertTrue("$name tool classification", usage.details.all { it.isToolRelated })
+        }
+    }
+
+    @Test
+    fun `empty fallback tool envelope remains ordinary`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatCompletionFlow(
+                    """{"type":"tool_calls","tool_calls":[]}""",
+                    ProviderUsage(promptTokens = 10, completionTokens = 5, totalTokens = 15)
+                ),
+                chatCompletionFlow(
+                    "Final answer",
+                    ProviderUsage(promptTokens = 20, completionTokens = 7, totalTokens = 27)
+                )
+            )
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Off,
+                toolCallingMode = ToolCallingMode.Auto
+            )
+        )
+
+        val usage = UsageScenario("empty fallback envelope", repository, customPlatform()).collectSingleUsage()
+
+        assertEquals(27, usage.totalTokens)
+        assertEquals(0, usage.toolTotalTokens)
+        assertEquals(27, usage.details.sumOf { detail -> detail.totalTokens })
+        assertTrue(usage.details.none { detail -> detail.isToolRelated })
+    }
+
+    @Test
+    fun `oversized native tool calls retain aggregated usage across providers`() = runBlocking {
+        val config = ToolLoopConfig(maxToolArgumentChars = 4)
+        val settings = settingRepository(
+            webSearchMode = WebSearchMode.Off,
+            toolCallingMode = ToolCallingMode.Auto
+        )
+
+        fun repository(
+            openAIAPI: OpenAIAPI = RecordingOpenAIAPI(),
+            anthropicAPI: AnthropicAPI = RecordingAnthropicAPI(),
+            googleAPI: GoogleAPI = RecordingGoogleAPI()
+        ): ChatRepositoryImpl {
+            val searchRepository = RecordingWebSearchRepository()
+            return createRepository(
+                openAIAPI = openAIAPI,
+                anthropicAPI = anthropicAPI,
+                googleAPI = googleAPI,
+                settingRepository = settings,
+                webSearchRepository = searchRepository,
+                toolLoopOrchestrator = toolLoopOrchestrator(searchRepository, config)
+            )
+        }
+
+        val openAIResponsesAPI = RecordingOpenAIAPI(
+            responsesResponses = mutableListOf(
+                flowOf(
+                    FunctionCallArgumentsDoneEvent(
+                        itemId = "function_1",
+                        outputIndex = 0,
+                        callId = "call_1",
+                        name = ToolDefinition.CurrentDateTime.name,
+                        arguments = "12345"
+                    )
+                )
+            )
+        )
+        val openRouterAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatToolCallFlow("call_1", ToolDefinition.CurrentDateTime.name, "12345")
+            )
+        )
+        val anthropicAPI = RecordingAnthropicAPI(
+            responses = mutableListOf(
+                flowOf(
+                    ContentStartResponseChunk(
+                        index = 0,
+                        contentBlock = ContentBlock(
+                            type = ContentBlockType.TOOL_USE,
+                            id = "toolu_1",
+                            name = ToolDefinition.CurrentDateTime.name,
+                            input = buildJsonObject { put("value", JsonPrimitive("12345")) }
+                        )
+                    )
+                )
+            )
+        )
+        val googleAPI = RecordingGoogleAPI(
+            responses = mutableListOf(
+                flowOf(
+                    GenerateContentResponse(
+                        candidates = listOf(
+                            Candidate(
+                                content = Content(
+                                    role = GoogleRole.MODEL,
+                                    parts = listOf(
+                                        Part.functionCall(
+                                            id = "function_1",
+                                            name = ToolDefinition.CurrentDateTime.name,
+                                            args = buildJsonObject { put("value", JsonPrimitive("12345")) }
+                                        )
+                                    )
+                                )
+                            )
+                        ),
+                        usageMetadata = UsageMetadata(
+                            promptTokenCount = 10,
+                            candidatesTokenCount = 2,
+                            totalTokenCount = 12
+                        )
+                    )
+                )
+            )
+        )
+        val scenarios = listOf(
+            UsageScenario("OpenAI Responses", repository(openAIAPI = openAIResponsesAPI), openAIPlatform()),
+            UsageScenario("OpenRouter Chat Completions", repository(openAIAPI = openRouterAPI), openRouterPlatform()),
+            UsageScenario("Anthropic native", repository(anthropicAPI = anthropicAPI), anthropicPlatform()),
+            UsageScenario("Google native", repository(googleAPI = googleAPI), googlePlatform())
+        )
+
+        scenarios.forEach { scenario ->
+            val states = scenario.repository.completeChat(
+                userMessages = listOf(MessageV2(content = "What time is it?", platformType = null)),
+                assistantMessages = emptyList(),
+                platform = scenario.platform
+            ).toList()
+            val usage = states.filterIsInstance<ApiState.UsageUpdated>().single().usage
+
+            assertTrue(
+                "${scenario.name} should expose the tool limit error",
+                states.filterIsInstance<ApiState.Error>().any { it.message == "tool_arguments_too_large" }
+            )
+            assertTrue("${scenario.name} should retain usage", usage.toolTotalTokens > 0)
+            assertEquals("${scenario.name} has no visible answer", 0, usage.totalTokens)
+            assertEquals(
+                "${scenario.name} should not duplicate usage",
+                usage.toolTotalTokens,
+                usage.details.sumOf { it.totalTokens }
+            )
+            assertTrue("${scenario.name} details should be tool related", usage.details.all { it.isToolRelated })
+        }
+    }
+
+    @Test
+    fun `native transport failures retain prior and failed round usage without duplication`() = runBlocking {
+        val settings = settingRepository(
+            webSearchMode = WebSearchMode.Off,
+            toolCallingMode = ToolCallingMode.Auto
+        )
+        val firstUsage = ProviderUsage(promptTokens = 10, completionTokens = 5, totalTokens = 15)
+        val scenarios = listOf(
+            UsageScenario(
+                name = "OpenAI Responses",
+                repository = createRepository(
+                    openAIAPI = RecordingOpenAIAPI(
+                        responsesResponses = mutableListOf(
+                            responseToolCallFlow(firstUsage),
+                            flow { throw IOException("native transport failure") }
+                        )
+                    ),
+                    settingRepository = settings
+                ),
+                platform = openAIPlatform()
+            ),
+            UsageScenario(
+                name = "OpenRouter Chat Completions",
+                repository = createRepository(
+                    openAIAPI = RecordingOpenAIAPI(
+                        chatCompletionResponses = mutableListOf(
+                            chatToolCallFlow("call_1", ToolDefinition.CurrentDateTime.name, "{}", firstUsage),
+                            flow { throw IOException("native transport failure") }
+                        )
+                    ),
+                    settingRepository = settings
+                ),
+                platform = openRouterPlatform()
+            ),
+            UsageScenario(
+                name = "Anthropic native",
+                repository = createRepository(
+                    anthropicAPI = RecordingAnthropicAPI(
+                        responses = mutableListOf(
+                            anthropicToolCallFlow(
+                                inputTokens = 8,
+                                cacheCreationInputTokens = 2,
+                                cacheReadInputTokens = 1,
+                                outputTokens = 5,
+                                includeProviderUsage = true
+                            ),
+                            flow { throw IOException("native transport failure") }
+                        )
+                    ),
+                    settingRepository = settings
+                ),
+                platform = anthropicPlatform()
+            ),
+            UsageScenario(
+                name = "Google native",
+                repository = createRepository(
+                    googleAPI = RecordingGoogleAPI(
+                        responses = mutableListOf(
+                            googleToolCallFlow(
+                                UsageMetadata(
+                                    promptTokenCount = 10,
+                                    candidatesTokenCount = 2,
+                                    totalTokenCount = 12
+                                )
+                            ),
+                            flow { throw IOException("native transport failure") }
+                        )
+                    ),
+                    settingRepository = settings
+                ),
+                platform = googlePlatform()
+            )
+        )
+
+        scenarios.forEach { scenario ->
+            val states = scenario.repository.completeChat(
+                userMessages = listOf(MessageV2(content = "What time is it?", platformType = null)),
+                assistantMessages = emptyList(),
+                platform = scenario.platform
+            ).toList()
+            val usage = states.filterIsInstance<ApiState.UsageUpdated>().single().usage
+
+            assertTrue(
+                "${scenario.name} should surface the transport error",
+                states.filterIsInstance<ApiState.Error>().any { state -> state.message == "native transport failure" }
+            )
+            assertEquals("${scenario.name} has no visible final answer", 0, usage.totalTokens)
+            assertEquals("${scenario.name} should retain exactly two rounds", 2, usage.details.size)
+            assertFalse("${scenario.name} first round should stay exact", usage.details.first().isEstimated)
+            assertTrue("${scenario.name} failed round should be estimated", usage.details.last().isEstimated)
+            assertEquals(
+                "${scenario.name} must not duplicate a round",
+                usage.toolTotalTokens,
+                usage.details.sumOf { detail -> detail.totalTokens }
+            )
+            assertTrue(
+                "${scenario.name} should include the failed request cost",
+                usage.toolTotalTokens > usage.details.first().totalTokens
+            )
+        }
+    }
+
+    @Test
+    fun `native transport cancellation remains cooperative`() {
+        val repository = createRepository(
+            openAIAPI = RecordingOpenAIAPI(
+                responsesResponses = mutableListOf(
+                    flow<ResponsesStreamEvent> { throw CancellationException("cancel native round") }
+                )
+            ),
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Off,
+                toolCallingMode = ToolCallingMode.Auto
+            )
+        )
+
+        assertThrows(CancellationException::class.java) {
+            runBlocking {
+                repository.completeChat(
+                    userMessages = listOf(MessageV2(content = "Hello", platformType = null)),
+                    assistantMessages = emptyList(),
+                    platform = openAIPlatform()
+                ).toList()
+            }
+        }
+    }
+
+    @Test
+    fun `fallback final failure estimates the missing round inside the tool aggregate`() = runBlocking {
+        val firstUsage = ProviderUsage(promptTokens = 10, completionTokens = 5, totalTokens = 15)
+        val secondUsage = ProviderUsage(promptTokens = 20, completionTokens = 7, totalTokens = 27)
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatCompletionFlow(toolCallProtocol(), firstUsage),
+                chatCompletionFlow(directAnswerProtocol(), secondUsage),
+                flowOf(ChatCompletionChunk(error = ErrorDetail(message = "final provider failure")))
+            )
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Off,
+                toolCallingMode = ToolCallingMode.Auto
+            )
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "What time is it?", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform()
+        ).toList()
+        val usage = states.filterIsInstance<ApiState.UsageUpdated>().single().usage
+
+        assertTrue(states.contains(ApiState.Error("final provider failure")))
+        assertEquals(0, usage.totalTokens)
+        assertEquals(3, usage.details.size)
+        assertTrue(usage.details.last().isEstimated)
+        assertTrue(usage.details.all { detail -> detail.isToolRelated })
+        assertEquals(usage.toolTotalTokens, usage.details.sumOf { detail -> detail.totalTokens })
+        assertTrue(usage.toolTotalTokens > firstUsage.totalTokens!! + secondUsage.totalTokens!!)
     }
 
     @Test
@@ -1376,6 +1784,106 @@ class ChatRepositoryImplTest {
     }
 
     @Test
+    fun `tools available direct answers remain ordinary across provider paths`() = runBlocking {
+        directUsageScenarios(includeProviderUsage = true).forEach { scenario ->
+            val usage = scenario.collectSingleUsage()
+
+            assertEquals("${scenario.name} input", 11, usage.inputTokens)
+            assertEquals("${scenario.name} output", 7, usage.outputTokens)
+            assertEquals("${scenario.name} total", 18, usage.totalTokens)
+            assertEquals("${scenario.name} tool input", 0, usage.toolInputTokens)
+            assertEquals("${scenario.name} tool output", 0, usage.toolOutputTokens)
+            assertEquals("${scenario.name} tool total", 0, usage.toolTotalTokens)
+            assertFalse("${scenario.name} should use provider usage", usage.isEstimated)
+            assertTrue("${scenario.name} details should remain ordinary", usage.details.all { detail -> !detail.isToolRelated })
+        }
+    }
+
+    @Test
+    fun `actual tool calls aggregate each provider round exactly once`() = runBlocking {
+        toolUsageScenarios().forEach { scenario ->
+            val usage = scenario.usageScenario.collectSingleUsage()
+
+            assertEquals("${scenario.usageScenario.name} answer input", scenario.answerInputTokens, usage.inputTokens)
+            assertEquals("${scenario.usageScenario.name} answer output", scenario.answerOutputTokens, usage.outputTokens)
+            assertEquals("${scenario.usageScenario.name} answer total", scenario.answerTotalTokens, usage.totalTokens)
+            assertEquals("${scenario.usageScenario.name} tool input", scenario.toolInputTokens, usage.toolInputTokens)
+            assertEquals("${scenario.usageScenario.name} tool output", scenario.toolOutputTokens, usage.toolOutputTokens)
+            assertEquals("${scenario.usageScenario.name} tool total", scenario.toolTotalTokens, usage.toolTotalTokens)
+            assertFalse("${scenario.usageScenario.name} should use provider usage", usage.isEstimated)
+            assertTrue("${scenario.usageScenario.name} should classify the full loop", usage.details.all { detail -> detail.isToolRelated })
+            assertEquals(
+                "${scenario.usageScenario.name} detail totals must not duplicate rounds",
+                scenario.toolTotalTokens,
+                usage.details.sumOf { detail -> detail.totalTokens }
+            )
+        }
+    }
+
+    @Test
+    fun `missing usage stays estimated and ordinary for direct answers across provider paths`() = runBlocking {
+        directUsageScenarios(includeProviderUsage = false).forEach { scenario ->
+            val usage = scenario.collectSingleUsage()
+
+            assertTrue("${scenario.name} should estimate missing usage", usage.isEstimated)
+            assertTrue("${scenario.name} should estimate input", usage.inputTokens > 0)
+            assertTrue("${scenario.name} should estimate output", usage.outputTokens > 0)
+            assertEquals("${scenario.name} tool input", 0, usage.toolInputTokens)
+            assertEquals("${scenario.name} tool output", 0, usage.toolOutputTokens)
+            assertEquals("${scenario.name} tool total", 0, usage.toolTotalTokens)
+            assertTrue("${scenario.name} estimated detail should remain ordinary", usage.details.all { detail -> !detail.isToolRelated })
+        }
+    }
+
+    @Test
+    fun `missing usage estimates the complete loop only after an actual tool call`() = runBlocking {
+        toolUsageScenarios(includeProviderUsage = false).forEach { scenario ->
+            val usage = scenario.usageScenario.collectSingleUsage()
+
+            assertTrue("${scenario.usageScenario.name} should estimate missing loop usage", usage.isEstimated)
+            assertTrue("${scenario.usageScenario.name} should retain visible answer usage", usage.totalTokens > 0)
+            assertTrue("${scenario.usageScenario.name} should aggregate the tool loop", usage.toolTotalTokens >= usage.totalTokens)
+            assertEquals(
+                "${scenario.usageScenario.name} estimated rounds must not duplicate",
+                usage.toolTotalTokens,
+                usage.details.sumOf { detail -> detail.totalTokens }
+            )
+            assertTrue("${scenario.usageScenario.name} estimated details should be tool related", usage.details.all { detail -> detail.isToolRelated })
+        }
+    }
+
+    @Test
+    fun `tool calling off emits ordinary provider usage`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatCompletionFlow(
+                    content = "Normal answer",
+                    usage = ProviderUsage(promptTokens = 11, completionTokens = 7, totalTokens = 18)
+                )
+            )
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Off,
+                toolCallingMode = ToolCallingMode.Off
+            )
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "Hello", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform()
+        ).toList()
+        val usage = states.filterIsInstance<ApiState.UsageUpdated>().single().usage
+
+        assertEquals(18, usage.totalTokens)
+        assertEquals(0, usage.toolTotalTokens)
+        assertTrue(usage.details.all { detail -> !detail.isToolRelated })
+        assertFalse(openAIAPI.chatCompletionRequests.single().systemText().contains("Available tools:"))
+    }
+
+    @Test
     fun `mergeSystemPrompt keeps base prompt and memory prompt`() {
         val merged = mergeSystemPrompt(
             basePrompt = "Base system prompt.",
@@ -1488,6 +1996,324 @@ class ChatRepositoryImplTest {
         assertProviderPromptSections(provider = "Google", prompt = prompt)
     }
 
+    private fun directUsageScenarios(includeProviderUsage: Boolean): List<UsageScenario> {
+        val providerUsage = ProviderUsage(
+            promptTokens = 11,
+            completionTokens = 7,
+            totalTokens = 18
+        ).takeIf { includeProviderUsage }
+        val openAIResponsesAPI = RecordingOpenAIAPI(
+            responsesResponses = mutableListOf(responseTextFlow("Direct answer", providerUsage))
+        )
+        val openRouterAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(chatCompletionFlow("Direct answer", providerUsage))
+        )
+        val anthropicAPI = RecordingAnthropicAPI(
+            responses = mutableListOf(
+                anthropicTextFlow(
+                    content = "Direct answer",
+                    inputTokens = 8,
+                    cacheCreationInputTokens = 2,
+                    cacheReadInputTokens = 1,
+                    outputTokens = 7,
+                    includeProviderUsage = includeProviderUsage
+                )
+            )
+        )
+        val googleAPI = RecordingGoogleAPI(
+            responses = mutableListOf(
+                googleTextFlow(
+                    content = "Direct answer",
+                    usage = UsageMetadata(
+                        promptTokenCount = 11,
+                        candidatesTokenCount = 5,
+                        thoughtsTokenCount = 2,
+                        totalTokenCount = 18
+                    ).takeIf { includeProviderUsage }
+                )
+            )
+        )
+        val groqAPI = FakeGroqAPI(
+            responses = mutableListOf(groqCompletionFlow(directAnswerProtocol(), providerUsage))
+        )
+        val customAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(chatCompletionFlow(directAnswerProtocol(), providerUsage))
+        )
+        val ollamaAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(chatCompletionFlow(directAnswerProtocol(), providerUsage))
+        )
+        val settings = settingRepository(
+            webSearchMode = WebSearchMode.Off,
+            toolCallingMode = ToolCallingMode.Auto
+        )
+
+        return listOf(
+            UsageScenario("OpenAI Responses", createRepository(openAIAPI = openAIResponsesAPI, settingRepository = settings), openAIPlatform()),
+            UsageScenario("OpenRouter Chat Completions", createRepository(openAIAPI = openRouterAPI, settingRepository = settings), openRouterPlatform()),
+            UsageScenario("Anthropic native", createRepository(anthropicAPI = anthropicAPI, settingRepository = settings), anthropicPlatform()),
+            UsageScenario("Google native", createRepository(googleAPI = googleAPI, settingRepository = settings), googlePlatform()),
+            UsageScenario("Groq fallback", createRepository(groqAPI = groqAPI, settingRepository = settings), groqPlatform(reasoning = false, model = "llama-3.3-70b-versatile")),
+            UsageScenario("Custom fallback", createRepository(openAIAPI = customAPI, settingRepository = settings), customPlatform()),
+            UsageScenario("Ollama fallback", createRepository(openAIAPI = ollamaAPI, settingRepository = settings), ollamaPlatform())
+        )
+    }
+
+    private fun searchDecisionUsageScenarios(): List<UsageScenario> {
+        val decisionUsage = ProviderUsage(promptTokens = 10, completionTokens = 5, totalTokens = 15)
+        val finalUsage = ProviderUsage(promptTokens = 20, completionTokens = 7, totalTokens = 27)
+        val searchDecisionService = SearchDecisionService(
+            SearchDecisionModelClient { _, _ ->
+                Result.success(
+                    SearchDecisionModelResponse(
+                        content = """{"shouldSearch":true,"queries":["current facts"],"reason":"current"}""",
+                        usage = decisionUsage
+                    )
+                )
+            }
+        )
+        val settings = settingRepository(
+            webSearchMode = WebSearchMode.Auto,
+            toolCallingMode = ToolCallingMode.Auto
+        )
+
+        fun repository(
+            openAIAPI: OpenAIAPI = RecordingOpenAIAPI(),
+            anthropicAPI: AnthropicAPI = RecordingAnthropicAPI(),
+            googleAPI: GoogleAPI = RecordingGoogleAPI()
+        ): ChatRepositoryImpl {
+            val searchRepository = RecordingWebSearchRepository(Result.success(listOf(webSearchResult())))
+            return createRepository(
+                openAIAPI = openAIAPI,
+                anthropicAPI = anthropicAPI,
+                googleAPI = googleAPI,
+                settingRepository = settings,
+                webSearchRepository = searchRepository,
+                searchDecisionService = searchDecisionService
+            )
+        }
+
+        val openAIResponsesAPI = RecordingOpenAIAPI(
+            responsesResponses = mutableListOf(responseTextFlow("Final answer", finalUsage))
+        )
+        val openRouterAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(chatCompletionFlow("Final answer", finalUsage))
+        )
+        val anthropicAPI = RecordingAnthropicAPI(
+            responses = mutableListOf(
+                anthropicTextFlow(
+                    content = "Final answer",
+                    inputTokens = 20,
+                    cacheCreationInputTokens = 0,
+                    cacheReadInputTokens = 0,
+                    outputTokens = 7,
+                    includeProviderUsage = true
+                )
+            )
+        )
+        val googleAPI = RecordingGoogleAPI(
+            responses = mutableListOf(
+                googleTextFlow(
+                    content = "Final answer",
+                    usage = UsageMetadata(
+                        promptTokenCount = 20,
+                        candidatesTokenCount = 7,
+                        totalTokenCount = 27
+                    )
+                )
+            )
+        )
+        val customAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(chatCompletionFlow("Final answer", finalUsage))
+        )
+
+        return listOf(
+            UsageScenario("OpenAI Responses", repository(openAIAPI = openAIResponsesAPI), openAIPlatform()),
+            UsageScenario("OpenRouter Chat Completions", repository(openAIAPI = openRouterAPI), openRouterPlatform()),
+            UsageScenario("Anthropic native", repository(anthropicAPI = anthropicAPI), anthropicPlatform()),
+            UsageScenario("Google native", repository(googleAPI = googleAPI), googlePlatform()),
+            UsageScenario("JSON fallback", repository(openAIAPI = customAPI), customPlatform())
+        )
+    }
+
+    private fun toolUsageScenarios(includeProviderUsage: Boolean = true): List<ToolUsageScenario> {
+        val firstUsage = ProviderUsage(promptTokens = 10, completionTokens = 5, totalTokens = 15)
+            .takeIf { includeProviderUsage }
+        val secondUsage = ProviderUsage(promptTokens = 20, completionTokens = 7, totalTokens = 27)
+            .takeIf { includeProviderUsage }
+        val finalUsage = ProviderUsage(promptTokens = 30, completionTokens = 10, totalTokens = 40)
+            .takeIf { includeProviderUsage }
+        val settings = settingRepository(
+            webSearchMode = WebSearchMode.Off,
+            toolCallingMode = ToolCallingMode.Auto
+        )
+
+        val openAIResponsesAPI = RecordingOpenAIAPI(
+            responsesResponses = mutableListOf(
+                responseToolCallFlow(firstUsage),
+                responseTextFlow("Final answer", secondUsage)
+            )
+        )
+        val openRouterAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatToolCallFlow("call_1", ToolDefinition.CurrentDateTime.name, "{}", firstUsage),
+                chatCompletionFlow("Final answer", secondUsage)
+            )
+        )
+        val anthropicAPI = RecordingAnthropicAPI(
+            responses = mutableListOf(
+                anthropicToolCallFlow(
+                    inputTokens = 8,
+                    cacheCreationInputTokens = 2,
+                    cacheReadInputTokens = 1,
+                    outputTokens = 5,
+                    includeProviderUsage = includeProviderUsage
+                ),
+                anthropicTextFlow(
+                    content = "Final answer",
+                    inputTokens = 14,
+                    cacheCreationInputTokens = 4,
+                    cacheReadInputTokens = 2,
+                    outputTokens = 7,
+                    includeProviderUsage = includeProviderUsage
+                )
+            )
+        )
+        val googleAPI = RecordingGoogleAPI(
+            responses = mutableListOf(
+                googleToolCallFlow(
+                    UsageMetadata(
+                        promptTokenCount = 10,
+                        candidatesTokenCount = 0,
+                        toolUsePromptTokenCount = 6,
+                        thoughtsTokenCount = 2,
+                        totalTokenCount = 12
+                    ).takeIf { includeProviderUsage }
+                ),
+                googleTextFlow(
+                    content = "Final answer",
+                    usage = UsageMetadata(
+                        promptTokenCount = 20,
+                        candidatesTokenCount = 7,
+                        toolUsePromptTokenCount = 9,
+                        thoughtsTokenCount = 3,
+                        totalTokenCount = 30
+                    ).takeIf { includeProviderUsage }
+                )
+            )
+        )
+        val fallbackResponses = {
+            mutableListOf(
+                chatCompletionFlow(toolCallProtocol(), firstUsage),
+                chatCompletionFlow(directAnswerProtocol(), secondUsage),
+                chatCompletionFlow("Final answer", finalUsage)
+            )
+        }
+        val groqAPI = FakeGroqAPI(
+            responses = mutableListOf(
+                groqCompletionFlow(toolCallProtocol(), firstUsage),
+                groqCompletionFlow(directAnswerProtocol(), secondUsage),
+                groqCompletionFlow("Final answer", finalUsage)
+            )
+        )
+        val customAPI = RecordingOpenAIAPI(chatCompletionResponses = fallbackResponses())
+        val ollamaAPI = RecordingOpenAIAPI(chatCompletionResponses = fallbackResponses())
+
+        return listOf(
+            ToolUsageScenario(
+                usageScenario = UsageScenario("OpenAI Responses", createRepository(openAIAPI = openAIResponsesAPI, settingRepository = settings), openAIPlatform()),
+                answerInputTokens = 20,
+                answerOutputTokens = 7,
+                answerTotalTokens = 27,
+                toolInputTokens = 30,
+                toolOutputTokens = 12,
+                toolTotalTokens = 42
+            ),
+            ToolUsageScenario(
+                usageScenario = UsageScenario("OpenRouter Chat Completions", createRepository(openAIAPI = openRouterAPI, settingRepository = settings), openRouterPlatform()),
+                answerInputTokens = 20,
+                answerOutputTokens = 7,
+                answerTotalTokens = 27,
+                toolInputTokens = 30,
+                toolOutputTokens = 12,
+                toolTotalTokens = 42
+            ),
+            ToolUsageScenario(
+                usageScenario = UsageScenario("Anthropic native", createRepository(anthropicAPI = anthropicAPI, settingRepository = settings), anthropicPlatform()),
+                answerInputTokens = 20,
+                answerOutputTokens = 7,
+                answerTotalTokens = 27,
+                toolInputTokens = 31,
+                toolOutputTokens = 12,
+                toolTotalTokens = 43
+            ),
+            ToolUsageScenario(
+                usageScenario = UsageScenario("Google native", createRepository(googleAPI = googleAPI, settingRepository = settings), googlePlatform()),
+                answerInputTokens = 20,
+                answerOutputTokens = 10,
+                answerTotalTokens = 30,
+                toolInputTokens = 30,
+                toolOutputTokens = 12,
+                toolTotalTokens = 42
+            ),
+            fallbackToolUsageScenario(
+                name = "Groq fallback",
+                repository = createRepository(groqAPI = groqAPI, settingRepository = settings),
+                platform = groqPlatform(reasoning = false, model = "llama-3.3-70b-versatile")
+            ),
+            fallbackToolUsageScenario(
+                name = "Custom fallback",
+                repository = createRepository(openAIAPI = customAPI, settingRepository = settings),
+                platform = customPlatform()
+            ),
+            fallbackToolUsageScenario(
+                name = "Ollama fallback",
+                repository = createRepository(openAIAPI = ollamaAPI, settingRepository = settings),
+                platform = ollamaPlatform()
+            )
+        )
+    }
+
+    private fun fallbackToolUsageScenario(
+        name: String,
+        repository: ChatRepositoryImpl,
+        platform: PlatformV2
+    ): ToolUsageScenario = ToolUsageScenario(
+        usageScenario = UsageScenario(name, repository, platform),
+        answerInputTokens = 30,
+        answerOutputTokens = 10,
+        answerTotalTokens = 40,
+        toolInputTokens = 60,
+        toolOutputTokens = 22,
+        toolTotalTokens = 82
+    )
+
+    private suspend fun UsageScenario.collectSingleUsage(): TokenUsageRecord {
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "What time is it?", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = platform
+        ).toList()
+        val usageStates = states.filterIsInstance<ApiState.UsageUpdated>()
+        assertEquals("$name should emit one final usage record", 1, usageStates.size)
+        return usageStates.single().usage
+    }
+
+    private data class UsageScenario(
+        val name: String,
+        val repository: ChatRepositoryImpl,
+        val platform: PlatformV2
+    )
+
+    private data class ToolUsageScenario(
+        val usageScenario: UsageScenario,
+        val answerInputTokens: Int,
+        val answerOutputTokens: Int,
+        val answerTotalTokens: Int,
+        val toolInputTokens: Int,
+        val toolOutputTokens: Int,
+        val toolTotalTokens: Int
+    )
+
     private fun createRepository(
         groqAPI: GroqAPI = FakeGroqAPI(emptyFlow()),
         openAIAPI: OpenAIAPI = RecordingOpenAIAPI(),
@@ -1530,7 +2356,9 @@ class ChatRepositoryImplTest {
         val searchDecisionService = SearchDecisionService(
             SearchDecisionModelClient { _, _ ->
                 Result.success(
-                    """{"shouldSearch":true,"queries":["provider prompt assembly evidence"],"reason":"test evidence"}"""
+                    SearchDecisionModelResponse(
+                        """{"shouldSearch":true,"queries":["provider prompt assembly evidence"],"reason":"test evidence"}"""
+                    )
                 )
             }
         )
@@ -1790,7 +2618,10 @@ class ChatRepositoryImplTest {
             config = config
         )
 
-    private fun chatCompletionFlow(content: String): Flow<ChatCompletionChunk> = flowOf(
+    private fun chatCompletionFlow(
+        content: String,
+        usage: ProviderUsage? = null
+    ): Flow<ChatCompletionChunk> = flowOf(
         ChatCompletionChunk(
             choices = listOf(
                 Choice(
@@ -1798,13 +2629,15 @@ class ChatRepositoryImplTest {
                     delta = Delta(content = content)
                 )
             )
-        )
+        ),
+        *usage?.let { providerUsage -> arrayOf(ChatCompletionChunk(usage = providerUsage)) }.orEmpty()
     )
 
     private fun chatToolCallFlow(
         callId: String,
         name: String,
-        arguments: String
+        arguments: String,
+        usage: ProviderUsage? = null
     ): Flow<ChatCompletionChunk> = flowOf(
         ChatCompletionChunk(
             choices = listOf(
@@ -1826,8 +2659,195 @@ class ChatRepositoryImplTest {
                     finishReason = "tool_calls"
                 )
             )
+        ),
+        *usage?.let { providerUsage -> arrayOf(ChatCompletionChunk(usage = providerUsage)) }.orEmpty()
+    )
+
+    private fun responseTextFlow(
+        content: String,
+        usage: ProviderUsage?
+    ): Flow<ResponsesStreamEvent> = flowOf(
+        OutputTextDeltaEvent(
+            itemId = "message_1",
+            outputIndex = 0,
+            contentIndex = 0,
+            delta = content
+        ),
+        *usage?.let { providerUsage ->
+            arrayOf(
+                ResponseCompletedEvent(
+                    ResponseObject(
+                        id = "response_1",
+                        status = "completed",
+                        usage = providerUsage
+                    )
+                )
+            )
+        }.orEmpty()
+    )
+
+    private fun responseToolCallFlow(usage: ProviderUsage?): Flow<ResponsesStreamEvent> = flowOf(
+        FunctionCallArgumentsDoneEvent(
+            itemId = "function_1",
+            outputIndex = 0,
+            callId = "call_1",
+            name = ToolDefinition.CurrentDateTime.name,
+            arguments = "{}"
+        ),
+        *usage?.let { providerUsage ->
+            arrayOf(
+                ResponseCompletedEvent(
+                    ResponseObject(
+                        id = "response_1",
+                        status = "completed",
+                        usage = providerUsage
+                    )
+                )
+            )
+        }.orEmpty()
+    )
+
+    private fun anthropicTextFlow(
+        content: String,
+        inputTokens: Int,
+        cacheCreationInputTokens: Int,
+        cacheReadInputTokens: Int,
+        outputTokens: Int,
+        includeProviderUsage: Boolean
+    ): Flow<MessageResponseChunk> {
+        val chunks = mutableListOf<MessageResponseChunk>()
+        if (includeProviderUsage) {
+            chunks += anthropicMessageStart(
+                inputTokens = inputTokens,
+                cacheCreationInputTokens = cacheCreationInputTokens,
+                cacheReadInputTokens = cacheReadInputTokens
+            )
+        }
+        chunks += ContentDeltaResponseChunk(
+            index = 0,
+            delta = ContentBlock(
+                type = ContentBlockType.DELTA,
+                text = content
+            )
+        )
+        if (includeProviderUsage) {
+            chunks += anthropicMessageDelta(outputTokens, StopReason.END_TURN)
+        }
+        return flowOf(*chunks.toTypedArray())
+    }
+
+    private fun anthropicToolCallFlow(
+        inputTokens: Int,
+        cacheCreationInputTokens: Int,
+        cacheReadInputTokens: Int,
+        outputTokens: Int,
+        includeProviderUsage: Boolean
+    ): Flow<MessageResponseChunk> {
+        val chunks = mutableListOf<MessageResponseChunk>()
+        if (includeProviderUsage) {
+            chunks += anthropicMessageStart(
+                inputTokens = inputTokens,
+                cacheCreationInputTokens = cacheCreationInputTokens,
+                cacheReadInputTokens = cacheReadInputTokens
+            )
+        }
+        chunks += ContentStartResponseChunk(
+            index = 0,
+            contentBlock = ContentBlock(
+                type = ContentBlockType.TOOL_USE,
+                id = "toolu_1",
+                name = ToolDefinition.CurrentDateTime.name,
+                input = buildJsonObject {}
+            )
+        )
+        if (includeProviderUsage) {
+            chunks += anthropicMessageDelta(outputTokens, StopReason.TOOL_USE)
+        }
+        return flowOf(*chunks.toTypedArray())
+    }
+
+    private fun anthropicMessageStart(
+        inputTokens: Int,
+        cacheCreationInputTokens: Int,
+        cacheReadInputTokens: Int
+    ): MessageStartResponseChunk = MessageStartResponseChunk(
+        message = MessageResponse(
+            id = "message_1",
+            content = emptyList(),
+            model = "claude-sonnet",
+            usage = Usage(
+                inputTokens = inputTokens,
+                cacheCreationInputTokens = cacheCreationInputTokens,
+                cacheReadInputTokens = cacheReadInputTokens,
+                outputTokens = 0
+            )
         )
     )
+
+    private fun anthropicMessageDelta(
+        outputTokens: Int,
+        stopReason: StopReason
+    ): MessageDeltaResponseChunk = MessageDeltaResponseChunk(
+        delta = StopReasonDelta(stopReason = stopReason),
+        usage = UsageDelta(outputTokens = outputTokens)
+    )
+
+    private fun googleTextFlow(
+        content: String,
+        usage: UsageMetadata?
+    ): Flow<GenerateContentResponse> = flowOf(
+        GenerateContentResponse(
+            candidates = listOf(
+                Candidate(
+                    content = Content(
+                        role = GoogleRole.MODEL,
+                        parts = listOf(Part.text(content))
+                    )
+                )
+            ),
+            usageMetadata = usage
+        )
+    )
+
+    private fun googleToolCallFlow(usage: UsageMetadata?): Flow<GenerateContentResponse> = flowOf(
+        GenerateContentResponse(
+            candidates = listOf(
+                Candidate(
+                    content = Content(
+                        role = GoogleRole.MODEL,
+                        parts = listOf(
+                            Part.functionCall(
+                                id = "function_1",
+                                name = ToolDefinition.CurrentDateTime.name,
+                                args = buildJsonObject {}
+                            )
+                        )
+                    )
+                )
+            ),
+            usageMetadata = usage
+        )
+    )
+
+    private fun groqCompletionFlow(
+        content: String,
+        usage: ProviderUsage?
+    ): Flow<GroqChatCompletionChunk> = flowOf(
+        GroqChatCompletionChunk(
+            choices = listOf(
+                GroqChoice(
+                    index = 0,
+                    delta = GroqDelta(content = content)
+                )
+            )
+        ),
+        *usage?.let { providerUsage -> arrayOf(GroqChatCompletionChunk(usage = providerUsage)) }.orEmpty()
+    )
+
+    private fun directAnswerProtocol(): String = """{"type":"final_answer","content":"Direct answer"}"""
+
+    private fun toolCallProtocol(): String =
+        """{"type":"tool_calls","tool_calls":[{"id":"call_1","name":"current_datetime","arguments":{}}]}"""
 
     @Suppress("UNCHECKED_CAST")
     private inline fun <reified T> proxy(): T {
@@ -1867,7 +2887,8 @@ class ChatRepositoryImplTest {
     }
 
     private class FakeGroqAPI(
-        private val chunks: Flow<GroqChatCompletionChunk>
+        private val chunks: Flow<GroqChatCompletionChunk> = emptyFlow(),
+        private val responses: MutableList<Flow<GroqChatCompletionChunk>> = mutableListOf()
     ) : GroqAPI {
         var streamCalls = 0
         var lastRequest: GroqChatCompletionRequest? = null
@@ -1880,7 +2901,11 @@ class ChatRepositoryImplTest {
         ): Flow<GroqChatCompletionChunk> {
             streamCalls += 1
             lastRequest = request
-            return chunks
+            return if (responses.isNotEmpty()) {
+                responses.removeAt(0)
+            } else {
+                chunks
+            }
         }
     }
 

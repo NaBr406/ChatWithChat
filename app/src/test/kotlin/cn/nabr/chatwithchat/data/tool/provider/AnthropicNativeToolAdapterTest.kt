@@ -147,6 +147,27 @@ class AnthropicNativeToolAdapterTest {
     }
 
     @Test
+    fun `blank anthropic tool use still exposes raw tool intent`() {
+        val chunk = json.decodeFromString<MessageResponseChunk>(
+            """
+            {
+              "type": "content_block_start",
+              "index": 0,
+              "content_block": {
+                "type": "tool_use",
+                "id": "toolu_1",
+                "name": "",
+                "input": {}
+              }
+            }
+            """.trimIndent()
+        )
+
+        assertTrue(adapter.hasToolCallIntent(listOf(chunk)))
+        assertTrue(adapter.toolCallsFromChunks(listOf(chunk)).isEmpty())
+    }
+
+    @Test
     fun `streamed anthropic arguments stop accumulating at configured limit`() {
         val chunk = json.decodeFromString<MessageResponseChunk>(
             """

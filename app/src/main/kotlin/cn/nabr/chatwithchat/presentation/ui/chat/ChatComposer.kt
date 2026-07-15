@@ -6,6 +6,7 @@ import android.os.Environment
 import android.provider.OpenableColumns
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
@@ -45,10 +46,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -72,8 +75,15 @@ import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.presentation.common.AppleBlue
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.theme.ChatWithChatTheme
+import cn.nabr.chatwithchat.util.FileUtils
 import java.io.File
+import java.nio.file.FileAlreadyExistsException
+import java.nio.file.Files
+import java.security.MessageDigest
+import java.util.Collections
+import java.util.UUID
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -83,8 +93,9 @@ fun ChatComposer(
     chatEnabled: Boolean = true,
     sendButtonEnabled: Boolean = true,
     showAttachmentButton: Boolean = true,
+    isAttachmentImportInProgress: Boolean = false,
     selectedAttachments: List<ChatAttachmentDraft> = emptyList(),
-    onFileSelected: (String) -> Unit = {},
+    onFilesSelected: (List<String>, Int) -> Unit = { _, _ -> },
     onFileRemoved: (String) -> Unit = {},
     onSendButtonClick: () -> Unit = {}
 ) {
@@ -95,26 +106,47 @@ fun ChatComposer(
     val materialColors = settingsMaterialColors()
     val chatInputLineLimits = TextFieldLineLimits.MultiLine(maxHeightInLines = 5)
     val hasQuestionText = inputState.text.isNotBlank()
-    val hasSendableAttachment = selectedAttachments.any {
-        it.status == ChatAttachmentDraft.Status.Ready || it.status == ChatAttachmentDraft.Status.Preparing
-    }
-    val canSend = chatEnabled && sendButtonEnabled && (hasQuestionText || hasSendableAttachment)
+    val hasSendableAttachment = selectedAttachments.any { it.status == ChatAttachmentDraft.Status.Ready }
+    val hasUnreadyAttachment = selectedAttachments.any { it.status != ChatAttachmentDraft.Status.Ready }
     var isAttachmentMenuExpanded by remember { mutableStateOf(false) }
-    var pendingCameraPhotoPath by remember { mutableStateOf<String?>(null) }
+    var isCopyingPickedImages by remember { mutableStateOf(false) }
+    var pendingCameraPhotoPath by rememberSaveable { mutableStateOf<String?>(null) }
+    val isAttachmentBusy = isAttachmentImportInProgress || isCopyingPickedImages
+    val canSend = canSubmitChatMessage(
+        chatEnabled = chatEnabled,
+        sendButtonEnabled = sendButtonEnabled,
+        hasQuestionText = hasQuestionText,
+        hasSendableAttachment = hasSendableAttachment,
+        hasUnreadyAttachment = hasUnreadyAttachment,
+        isAttachmentBusy = isAttachmentBusy
+    )
     val attachmentButtonColor by animateColorAsState(
         targetValue = materialColors.controlFill.copy(alpha = if (isAttachmentMenuExpanded) 0.44f else 0f),
         label = "attachmentButtonColor"
     )
 
+    LaunchedEffect(pendingCameraPhotoPath) {
+        withContext(Dispatchers.IO) {
+            cleanupAbandonedCameraPhotoFiles(
+                pendingDirectory = cameraPendingDirectory(context),
+                protectedPath = pendingCameraPhotoPath
+            )
+        }
+    }
+
     val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri ->
-        uri?.let {
+        contract = ActivityResultContracts.PickMultipleVisualMedia()
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            isCopyingPickedImages = true
             scope.launch {
-                val filePath = withContext(Dispatchers.IO) {
-                    copyFileToAppDirectory(context, it)
+                try {
+                    copyPickedImages(context, uris) { result ->
+                        onFilesSelected(result.copiedPaths, result.failedCount)
+                    }
+                } finally {
+                    isCopyingPickedImages = false
                 }
-                filePath?.let { path -> onFileSelected(path) }
             }
         }
     }
@@ -126,11 +158,17 @@ fun ChatComposer(
         pendingCameraPhotoPath = null
         if (photoPath == null) return@rememberLauncherForActivityResult
 
-        val photoFile = File(photoPath)
-        if (isSaved && photoFile.exists() && photoFile.length() > 0L) {
-            onFileSelected(photoPath)
+        val pendingPhotoFile = File(photoPath)
+        if (isSaved && pendingPhotoFile.exists() && pendingPhotoFile.length() > 0L) {
+            val promotedPhoto = promoteCameraPhotoFile(context, pendingPhotoFile)
+            if (promotedPhoto != null) {
+                onFilesSelected(listOf(promotedPhoto.absolutePath), 0)
+            } else {
+                pendingPhotoFile.delete()
+                Toast.makeText(context, context.getString(R.string.failed_to_prepare_attachment), Toast.LENGTH_SHORT).show()
+            }
         } else {
-            photoFile.delete()
+            pendingPhotoFile.delete()
         }
     }
 
@@ -201,7 +239,7 @@ fun ChatComposer(
                                         .background(attachmentButtonColor, CircleShape)
                                 )
                                 IconButton(
-                                    enabled = chatEnabled,
+                                    enabled = chatEnabled && !isAttachmentBusy,
                                     onClick = { isAttachmentMenuExpanded = true },
                                     colors = IconButtonDefaults.iconButtonColors(
                                         contentColor = if (isAttachmentMenuExpanded) AppleBlue else materialColors.secondaryLabel,
@@ -242,7 +280,9 @@ fun ChatComposer(
                                         },
                                         onClick = {
                                             isAttachmentMenuExpanded = false
-                                            filePickerLauncher.launch("image/*")
+                                            filePickerLauncher.launch(
+                                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                            )
                                         }
                                     )
                                     DropdownMenuItem(
@@ -315,6 +355,19 @@ fun ChatComposer(
         )
     }
 }
+
+internal fun canSubmitChatMessage(
+    chatEnabled: Boolean,
+    sendButtonEnabled: Boolean,
+    hasQuestionText: Boolean,
+    hasSendableAttachment: Boolean,
+    hasUnreadyAttachment: Boolean,
+    isAttachmentBusy: Boolean
+): Boolean = chatEnabled &&
+    sendButtonEnabled &&
+    !hasUnreadyAttachment &&
+    !isAttachmentBusy &&
+    (hasQuestionText || hasSendableAttachment)
 
 @Composable
 internal fun FileThumbnailRow(
@@ -452,37 +505,150 @@ internal fun FileThumbnail(
 }
 
 internal fun createCameraPhotoFile(context: Context): File? {
-    val picturesDir = context.getExternalFilesDir(Environment.DIRECTORY_PICTURES) ?: return null
-    val attachmentsDir = File(picturesDir, "attachments")
-    if (!attachmentsDir.exists() && !attachmentsDir.mkdirs()) return null
+    val pendingDirectory = cameraPendingDirectory(context) ?: return null
+    if (!pendingDirectory.exists() && !pendingDirectory.mkdirs()) return null
 
     return runCatching {
-        File.createTempFile("camera_photo_", ".jpg", attachmentsDir)
+        File.createTempFile(CAMERA_PENDING_PREFIX, ".jpg", pendingDirectory)
     }.getOrNull()
 }
 
-internal fun copyFileToAppDirectory(context: Context, uri: Uri): String? {
+internal fun promoteCameraPhotoFile(context: Context, pendingPhotoFile: File): File? {
+    val picturesDir = context.getExternalFilesDir(Environment.DIRECTORY_PICTURES) ?: return null
+    val attachmentsDir = File(picturesDir, "attachments")
+    if (!attachmentsDir.exists() && !attachmentsDir.mkdirs()) return null
+    val target = File(attachmentsDir, "camera_photo_${UUID.randomUUID()}.jpg")
+    return target.takeIf { pendingPhotoFile.renameTo(it) }
+}
+
+internal fun cleanupAbandonedCameraPhotoFiles(
+    pendingDirectory: File?,
+    protectedPath: String?
+): Int {
+    val protectedCanonicalPath = protectedPath
+        ?.let(::File)
+        ?.let { file -> runCatching { file.canonicalPath }.getOrNull() }
+    return pendingDirectory
+        ?.listFiles { file -> file.isFile && file.name.startsWith(CAMERA_PENDING_PREFIX) }
+        .orEmpty()
+        .count { file ->
+            val canonicalPath = runCatching { file.canonicalPath }.getOrNull()
+            canonicalPath != protectedCanonicalPath && file.delete()
+        }
+}
+
+private fun cameraPendingDirectory(context: Context): File? = context
+    .getExternalFilesDir(Environment.DIRECTORY_PICTURES)
+    ?.let { picturesDir -> File(picturesDir, "attachment-pending-camera") }
+
+internal data class AttachmentCopyBatchResult(
+    val copiedPaths: List<String>,
+    val failedCount: Int
+)
+
+internal fun copyFilesToAppDirectory(
+    context: Context,
+    uris: List<Uri>,
+    onFileCreated: (String) -> Unit = {}
+): AttachmentCopyBatchResult {
+    val copiedPaths = mutableListOf<String>()
+    var failedCount = 0
+
+    uris.distinctBy(Uri::toString).forEach { uri ->
+        val copiedPath = copyFileToAppDirectory(context, uri)
+        if (copiedPath == null) {
+            failedCount += 1
+        } else {
+            onFileCreated(copiedPath)
+            val copiedIdentity = attachmentIdentity(copiedPath)
+            if (copiedPaths.any { path -> attachmentIdentity(path) == copiedIdentity }) {
+                File(copiedPath).delete()
+            } else {
+                copiedPaths += copiedPath
+            }
+        }
+    }
+
+    return AttachmentCopyBatchResult(
+        copiedPaths = copiedPaths,
+        failedCount = failedCount
+    )
+}
+
+internal suspend fun copyPickedImages(
+    context: Context,
+    uris: List<Uri>,
+    onResult: (AttachmentCopyBatchResult) -> Unit
+) {
+    val createdPaths = Collections.synchronizedSet(mutableSetOf<String>())
+    var delivered = false
+    try {
+        val result = withContext(Dispatchers.IO) {
+            copyFilesToAppDirectory(context, uris, createdPaths::add)
+        }
+        onResult(result)
+        delivered = true
+    } finally {
+        if (!delivered) {
+            withContext(NonCancellable + Dispatchers.IO) {
+                createdPaths.forEach { filePath -> File(filePath).delete() }
+            }
+        }
+    }
+}
+
+internal fun copyFileToAppDirectory(
+    context: Context,
+    uri: Uri,
+    maxBytes: Long = FileUtils.MAX_UPLOAD_SIZE_BYTES
+): String? {
+    val attachmentsDir = File(context.filesDir, "attachments")
+    if (!attachmentsDir.exists() && !attachmentsDir.mkdirs()) return null
+    val temporaryFile = runCatching {
+        File.createTempFile("attachment_copy_", ".tmp", attachmentsDir)
+    }.getOrNull() ?: return null
+
     return try {
-        val inputStream = context.contentResolver.openInputStream(uri) ?: return null
         val rawFileName = getFileName(context, uri)
         val sanitizedFileName = sanitizeFileName(rawFileName)
+        val extension = attachmentExtension(
+            fileName = sanitizedFileName,
+            mimeType = context.contentResolver.getType(uri)
+        )
+        val digest = MessageDigest.getInstance("SHA-256")
 
-        val attachmentsDir = File(context.filesDir, "attachments")
-        attachmentsDir.mkdirs()
-
-        var targetFile = File(attachmentsDir, sanitizedFileName)
-
-        // If file exists, append timestamp to avoid overwrites.
-        if (targetFile.exists()) {
-            val nameWithoutExt = sanitizedFileName.substringBeforeLast(".")
-            val ext = sanitizedFileName.substringAfterLast(".", "")
-            val uniqueName = if (ext.isNotEmpty()) {
-                "${nameWithoutExt}_${System.currentTimeMillis()}.$ext"
-            } else {
-                "${sanitizedFileName}_${System.currentTimeMillis()}"
+        var copiedBytes = 0L
+        var exceededCopyLimit = false
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            temporaryFile.outputStream().buffered().use { output ->
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    if (wouldExceedAttachmentCopyLimit(copiedBytes, count, maxBytes)) {
+                        exceededCopyLimit = true
+                        break
+                    }
+                    digest.update(buffer, 0, count)
+                    output.write(buffer, 0, count)
+                    copiedBytes += count
+                }
             }
-            targetFile = File(attachmentsDir, uniqueName)
+        } ?: return null.also { temporaryFile.delete() }
+        if (exceededCopyLimit || copiedBytes <= 0L) return null.also { temporaryFile.delete() }
+
+        val digestHex = digest.digest().joinToString("") { byte -> "%02x".format(byte) }
+        val targetName = buildString {
+            append("attachment_")
+            append(digestHex)
+            append('_')
+            append(UUID.randomUUID())
+            if (extension.isNotEmpty()) {
+                append('.')
+                append(extension)
+            }
         }
+        val targetFile = File(attachmentsDir, targetName)
 
         // Verify canonical path is within attachments directory to prevent path traversal.
         val attachmentsDirCanonical = attachmentsDir.canonicalPath
@@ -490,17 +656,23 @@ internal fun copyFileToAppDirectory(context: Context, uri: Uri): String? {
         if (!targetFileCanonical.startsWith(attachmentsDirCanonical + File.separator) &&
             targetFileCanonical != attachmentsDirCanonical
         ) {
-            return null
+            return null.also { temporaryFile.delete() }
         }
 
-        inputStream.use { input ->
-            targetFile.outputStream().use { output ->
-                input.copyTo(output)
+        if (targetFile.exists()) {
+            temporaryFile.delete()
+            targetFile.absolutePath
+        } else {
+            try {
+                Files.move(temporaryFile.toPath(), targetFile.toPath())
+                targetFile.absolutePath
+            } catch (_: FileAlreadyExistsException) {
+                temporaryFile.delete()
+                targetFile.takeIf(File::exists)?.absolutePath
             }
         }
-
-        targetFile.absolutePath
-    } catch (e: Exception) {
+    } catch (_: Exception) {
+        temporaryFile.delete()
         null
     }
 }
@@ -533,6 +705,28 @@ private fun sanitizeFileName(fileName: String): String {
 
     return sanitized.ifEmpty { "attachment_${System.currentTimeMillis()}" }
 }
+
+internal fun attachmentExtension(fileName: String, mimeType: String?): String {
+    val fileNameExtension = fileName
+        .substringAfterLast('.', "")
+        .filter(Char::isLetterOrDigit)
+        .take(MAX_ATTACHMENT_EXTENSION_LENGTH)
+    if (fileNameExtension.isNotEmpty()) return fileNameExtension
+
+    val normalizedMimeType = mimeType?.trim()?.lowercase().orEmpty()
+    if (!normalizedMimeType.startsWith("image/")) return ""
+    val subtype = normalizedMimeType
+        .substringAfter('/')
+        .substringBefore('+')
+        .removePrefix("x-")
+    return when (subtype) {
+        "jpeg", "pjpeg" -> "jpg"
+        else -> subtype.filter(Char::isLetterOrDigit).take(MAX_ATTACHMENT_EXTENSION_LENGTH)
+    }
+}
+
+private const val MAX_ATTACHMENT_EXTENSION_LENGTH = 12
+private const val CAMERA_PENDING_PREFIX = "camera_pending_"
 
 @Preview
 @Composable

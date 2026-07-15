@@ -2,6 +2,7 @@ package cn.nabr.chatwithchat.presentation.ui.chat
 
 import android.content.Context
 import android.net.Uri
+import android.os.Environment
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.text.input.clearText
 import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
@@ -38,13 +39,17 @@ import cn.nabr.chatwithchat.util.AttachmentPayloadCache
 import cn.nabr.chatwithchat.util.FileUtils
 import cn.nabr.chatwithchat.util.getPlatformName
 import cn.nabr.chatwithchat.util.handleStates
+import java.util.Collections
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 @HiltViewModel
@@ -106,6 +111,7 @@ class ChatViewModel @Inject constructor(
     private val enabledPlatformString: String = checkNotNull(savedStateHandle["enabledPlatforms"])
     private val initialQuestion: String = Uri.decode(savedStateHandle.get<String>("initialQuestion").orEmpty())
     private val initialModel: String = Uri.decode(savedStateHandle.get<String>("initialModel").orEmpty())
+    private val initialRequestId: Int = savedStateHandle["initialRequestId"] ?: 0
     private val initialAttachmentPaths: List<String> = Uri.decode(savedStateHandle.get<String>("initialAttachments").orEmpty())
         .lineSequence()
         .map { it.trim() }
@@ -161,6 +167,12 @@ class ChatViewModel @Inject constructor(
 
     private val _attachmentNotice = MutableStateFlow<String?>(null)
     val attachmentNotice = _attachmentNotice.asStateFlow()
+    private val _pendingSelectedAttachmentBatches = MutableStateFlow(0)
+    val pendingSelectedAttachmentBatches = _pendingSelectedAttachmentBatches.asStateFlow()
+    private val _pendingMessageEditAttachmentBatches = MutableStateFlow(0)
+    val pendingMessageEditAttachmentBatches = _pendingMessageEditAttachmentBatches.asStateFlow()
+    private val attachmentBatchMutex = Mutex()
+    private val pendingOwnedAttachmentPaths = Collections.synchronizedSet(mutableSetOf<String>())
 
     // Chat messages currently in the chat room
     private val _groupedMessages = MutableStateFlow(GroupedMessages())
@@ -174,6 +186,9 @@ class ChatViewModel @Inject constructor(
     // Loading states for each platform
     private val _loadingStates = MutableStateFlow(List<LoadingState>(initialEnabledPlatformsInChat.size) { LoadingState.Idle })
     val loadingStates = _loadingStates.asStateFlow()
+    private val _isPersistingCompletion = MutableStateFlow(false)
+    val isPersistingCompletion = _isPersistingCompletion.asStateFlow()
+    private val loadingCompletionLock = Any()
 
     private val _toolProgressStates = MutableStateFlow<Map<String, List<ToolProgressState>>>(emptyMap())
     val toolProgressStates = _toolProgressStates.asStateFlow()
@@ -188,8 +203,17 @@ class ChatViewModel @Inject constructor(
 
     private var pendingQuestionText: String? = null
     private var pendingMemoryTurnActivityAt: Long? = null
+    private var isInitialRequestInFlight = false
+    private var initialRequestRecoveryComplete = !shouldRecoverInitialRequest(
+        routeChatRoomId = routeChatRoomId,
+        initialRequestId = initialRequestId,
+        initialQuestion = initialQuestion,
+        initialAttachmentPaths = initialAttachmentPaths
+    )
+    private var messageEditSessionVersion = 0L
 
     init {
+        recoverInitialRequestIfNeeded()
         fetchChatRoom()
         viewModelScope.launch { fetchMessages() }
         fetchEnabledPlatformsInApp()
@@ -210,6 +234,13 @@ class ChatViewModel @Inject constructor(
 
     fun askQuestion() {
         val questionText = question.text.toString()
+        if (_isPersistingCompletion.value) return
+        if (_pendingSelectedAttachmentBatches.value > 0) {
+            pendingQuestionText = questionText
+            question.clearText()
+            _loadingStates.update { List(enabledPlatformsInChat.size) { LoadingState.Loading } }
+            return
+        }
         val hasReadyAttachments = _selectedAttachments.value.any { it.status == ChatAttachmentDraft.Status.Ready }
         val hasPreparingAttachments = _selectedAttachments.value.any { it.status == ChatAttachmentDraft.Status.Preparing }
         if (questionText.isBlank() && !hasReadyAttachments && !hasPreparingAttachments) return
@@ -230,6 +261,16 @@ class ChatViewModel @Inject constructor(
     }
 
     override fun onCleared() {
+        val selectedDrafts = _selectedAttachments.value
+        val editDrafts = _messageEditSession.value?.attachments.orEmpty()
+        val pendingPaths = synchronized(pendingOwnedAttachmentPaths) {
+            pendingOwnedAttachmentPaths.toList().also { pendingOwnedAttachmentPaths.clear() }
+        }
+        _selectedAttachments.value = emptyList()
+        _messageEditSession.value = null
+        selectedDrafts.forEach(::deleteDraftFiles)
+        editDrafts.forEach(::deleteDraftFiles)
+        pendingPaths.forEach { filePath -> java.io.File(filePath).delete() }
         AttachmentPayloadCache.clear()
         super.onCleared()
     }
@@ -237,16 +278,16 @@ class ChatViewModel @Inject constructor(
     fun closeChatTitleDialog() = _isChatTitleDialogOpen.update { false }
 
     fun discardMessageEditDialog() {
+        messageEditSessionVersion += 1
         _messageEditSession.value?.attachments?.forEach { attachment ->
-            if (attachment.cleanupOnDiscard) {
-                attachment.preparedFilePath?.let { AttachmentPayloadCache.remove(it) }
-                deleteDraftFiles(attachment)
-            }
+            attachment.preparedFilePath?.let { AttachmentPayloadCache.remove(it) }
+            deleteDraftFiles(attachment)
         }
         _messageEditSession.update { null }
     }
 
     fun finishMessageEditDialog() {
+        messageEditSessionVersion += 1
         _messageEditSession.update { null }
     }
 
@@ -258,6 +299,7 @@ class ChatViewModel @Inject constructor(
     fun openChatTitleDialog() = _isChatTitleDialogOpen.update { true }
 
     fun openUserMessageEditDialog(question: MessageV2) {
+        messageEditSessionVersion += 1
         _messageEditSession.update {
             MessageEditSession(
                 message = question,
@@ -272,6 +314,7 @@ class ChatViewModel @Inject constructor(
             .getOrNull(turnIndex)
             ?.getOrNull(platformIndex)
             ?: return
+        messageEditSessionVersion += 1
         _messageEditSession.update {
             MessageEditSession(
                 message = assistantMessage,
@@ -291,6 +334,7 @@ class ChatViewModel @Inject constructor(
     fun generateDefaultChatTitle(): String? = chatRepository.generateDefaultChatTitle(_groupedMessages.value.userMessages)
 
     fun retryChat(turnIndex: Int, platformIndex: Int) {
+        if (_isPersistingCompletion.value) return
         if (turnIndex !in _groupedMessages.value.assistantMessages.indices) return
         if (platformIndex >= enabledPlatformsInChat.size || platformIndex < 0) return
         val platform = _enabledPlatformsInApp.value.firstOrNull { it.uid == enabledPlatformsInChat[platformIndex] } ?: return
@@ -329,7 +373,7 @@ class ChatViewModel @Inject constructor(
                 turnIndex = turnIndex,
                 platformIdx = platformIndex,
                 onLoadingComplete = {
-                    _loadingStates.update { it.toMutableList().apply { this[platformIndex] = LoadingState.Idle } }
+                    markPlatformLoadingComplete(platformIndex)
                 },
                 revisionToAppendOnSuccess = revisionToAppendOnSuccess,
                 onToolProgress = { progress -> updateToolProgress(turnIndex, platformIndex, progress) }
@@ -360,36 +404,93 @@ class ChatViewModel @Inject constructor(
     }
 
     fun addSelectedFile(filePath: String) {
-        addDraftFile(
+        addSelectedFiles(listOf(filePath), 0)
+    }
+
+    fun addSelectedFiles(filePaths: List<String>, copyFailureCount: Int = 0) {
+        enqueueSelectedFiles(filePaths, copyFailureCount)
+    }
+
+    private fun enqueueSelectedFiles(
+        filePaths: List<String>,
+        copyFailureCount: Int = 0,
+        onAdmissionComplete: () -> Unit = {}
+    ) {
+        if (filePaths.isEmpty() && copyFailureCount <= 0) return
+        _pendingSelectedAttachmentBatches.update { it + 1 }
+        addDraftFiles(
             currentAttachments = { _selectedAttachments.value },
-            updateAttachments = { attachments -> _selectedAttachments.update { attachments } },
-            filePath = filePath,
-            onNotice = { notice -> _attachmentNotice.update { notice } }
+            mutateAttachments = { transform -> _selectedAttachments.update(transform) },
+            filePaths = filePaths,
+            copyFailureCount = copyFailureCount,
+            onNotice = { notice -> _attachmentNotice.update { notice } },
+            onAdmissionComplete = onAdmissionComplete,
+            onFinished = {
+                _pendingSelectedAttachmentBatches.update { (it - 1).coerceAtLeast(0) }
+                trySendPendingQuestionIfReady()
+            }
         )
     }
 
     fun removeSelectedFile(filePath: String) {
         removeDraftFile(
             currentAttachments = { _selectedAttachments.value },
-            updateAttachments = { attachments -> _selectedAttachments.update { attachments } },
+            mutateAttachments = { transform -> _selectedAttachments.update(transform) },
             filePath = filePath
         )
         trySendPendingQuestionIfReady()
     }
 
     fun addMessageEditFile(filePath: String) {
-        addDraftFile(
-            currentAttachments = { _messageEditSession.value?.attachments.orEmpty() },
-            updateAttachments = ::updateMessageEditAttachments,
-            filePath = filePath,
-            onNotice = { notice -> _attachmentNotice.update { notice } }
+        addMessageEditFiles(listOf(filePath), 0)
+    }
+
+    fun addMessageEditFiles(filePaths: List<String>, copyFailureCount: Int = 0) {
+        if (filePaths.isEmpty() && copyFailureCount <= 0) return
+        val targetSessionVersion = messageEditSessionVersion
+        if (_messageEditSession.value == null) {
+            filePaths.forEach { filePath ->
+                if (isAppOwnedAttachmentPath(filePath)) java.io.File(filePath).delete()
+            }
+            return
+        }
+        _pendingMessageEditAttachmentBatches.update { it + 1 }
+        addDraftFiles(
+            currentAttachments = {
+                _messageEditSession.value
+                    ?.takeIf { messageEditSessionVersion == targetSessionVersion }
+                    ?.attachments
+                    .orEmpty()
+            },
+            mutateAttachments = { transform ->
+                _messageEditSession.update { session ->
+                    if (session == null || messageEditSessionVersion != targetSessionVersion) {
+                        session
+                    } else {
+                        session.copy(attachments = transform(session.attachments))
+                    }
+                }
+            },
+            filePaths = filePaths,
+            copyFailureCount = copyFailureCount,
+            isTargetActive = {
+                _messageEditSession.value != null && messageEditSessionVersion == targetSessionVersion
+            },
+            onNotice = { notice -> _attachmentNotice.update { notice } },
+            onFinished = {
+                _pendingMessageEditAttachmentBatches.update { (it - 1).coerceAtLeast(0) }
+            }
         )
     }
 
     fun removeMessageEditFile(filePath: String) {
         removeDraftFile(
             currentAttachments = { _messageEditSession.value?.attachments.orEmpty() },
-            updateAttachments = ::updateMessageEditAttachments,
+            mutateAttachments = { transform ->
+                _messageEditSession.update { session ->
+                    session?.copy(attachments = transform(session.attachments))
+                }
+            },
             filePath = filePath
         )
     }
@@ -405,14 +506,11 @@ class ChatViewModel @Inject constructor(
         _attachmentNotice.update { null }
     }
 
-    fun notifyAttachmentCopyFailed() {
-        _attachmentNotice.update { context.getString(R.string.failed_to_copy_attachment) }
-    }
-
     fun saveUserMessageEdit(
         editedMessage: MessageV2,
         attachments: List<ChatAttachmentDraft>
     ): Boolean {
+        if (_isPersistingCompletion.value || _pendingMessageEditAttachmentBatches.value > 0) return false
         if (attachments.any { it.status != ChatAttachmentDraft.Status.Ready }) {
             _attachmentNotice.update { context.getString(R.string.wait_for_attachments_before_saving) }
             return false
@@ -471,6 +569,7 @@ class ChatViewModel @Inject constructor(
         thoughts: String,
         attachments: List<ChatAttachmentDraft>
     ): Boolean {
+        if (_isPersistingCompletion.value || _pendingMessageEditAttachmentBatches.value > 0) return false
         if (attachments.any { it.status != ChatAttachmentDraft.Status.Ready }) {
             _attachmentNotice.update { context.getString(R.string.wait_for_attachments_before_saving) }
             return false
@@ -598,7 +697,7 @@ class ChatViewModel @Inject constructor(
                         turnIndex = turnIndex,
                         platformIdx = idx,
                         onLoadingComplete = {
-                            _loadingStates.update { it.toMutableList().apply { this[idx] = LoadingState.Idle } }
+                            markPlatformLoadingComplete(idx)
                         },
                         onToolProgress = { progress -> updateToolProgress(turnIndex, idx, progress) }
                     )
@@ -739,109 +838,159 @@ class ChatViewModel @Inject constructor(
         return enabled
     }
 
-    private fun updateMessageEditAttachments(attachments: List<ChatAttachmentDraft>) {
-        _messageEditSession.update { session ->
-            session?.copy(attachments = attachments)
+    private fun addDraftFiles(
+        currentAttachments: () -> List<ChatAttachmentDraft>,
+        mutateAttachments: ((List<ChatAttachmentDraft>) -> List<ChatAttachmentDraft>) -> Unit,
+        filePaths: List<String>,
+        copyFailureCount: Int = 0,
+        isTargetActive: () -> Boolean = { true },
+        onNotice: (String?) -> Unit = {},
+        onAdmissionComplete: () -> Unit = {},
+        onFinished: () -> Unit = {}
+    ) {
+        if (filePaths.isEmpty() && copyFailureCount <= 0) return
+
+        val existingPathsAtHandoff = currentAttachments().mapTo(mutableSetOf()) { it.sourceFilePath }
+        val handedOffOwnedPaths = filePaths
+            .asSequence()
+            .filterNot { it in existingPathsAtHandoff }
+            .filter(::isAppOwnedAttachmentPath)
+            .distinct()
+            .toList()
+        pendingOwnedAttachmentPaths.addAll(handedOffOwnedPaths)
+
+        viewModelScope.launch {
+            try {
+                attachmentBatchMutex.withLock {
+                    val current = currentAttachments()
+                    val existingCandidates = withContext(Dispatchers.IO) {
+                        current.map { attachment -> attachment.sourceFilePath.toAdmissionCandidate() }
+                    }
+                    val candidates = withContext(Dispatchers.IO) {
+                        filePaths.map { filePath -> filePath.toAdmissionCandidate() }
+                    }
+                    val admission = admitAttachmentBatch(
+                        existingIdentities = existingCandidates.mapTo(mutableSetOf()) { it.identity },
+                        existingBytes = existingCandidates.sumOf { it.sizeBytes.coerceAtLeast(0L) },
+                        candidates = candidates,
+                        maxBytes = FileUtils.MAX_UPLOAD_SIZE_BYTES
+                    )
+                    val existingPaths = current.mapTo(mutableSetOf()) { it.sourceFilePath }
+                    attachmentPathsToDiscard(existingPaths, candidates, admission).forEach { filePath ->
+                        if (isAppOwnedAttachmentPath(filePath)) java.io.File(filePath).delete()
+                        pendingOwnedAttachmentPaths.remove(filePath)
+                    }
+
+                    if (admission.accepted.isNotEmpty()) {
+                        val acceptedDrafts = admission.accepted.map { candidate ->
+                            ChatAttachmentDraft(
+                                sourceFilePath = candidate.path,
+                                cleanupOnDiscard = isAppOwnedAttachmentPath(candidate.path)
+                            )
+                        }
+                        if (isTargetActive()) {
+                            mutateAttachments { latest ->
+                                latest + acceptedDrafts.filterNot { accepted ->
+                                    latest.any { attachment -> attachment.sourceFilePath == accepted.sourceFilePath }
+                                }
+                            }
+                        }
+                        admission.accepted.forEach { candidate ->
+                            if (
+                                isTargetActive() &&
+                                currentAttachments().any { attachment -> attachment.sourceFilePath == candidate.path }
+                            ) {
+                                pendingOwnedAttachmentPaths.remove(candidate.path)
+                                preprocessDraftAttachment(
+                                    currentAttachments = currentAttachments,
+                                    mutateAttachments = mutateAttachments,
+                                    filePath = candidate.path,
+                                    isTargetActive = isTargetActive,
+                                    onNotice = onNotice
+                                )
+                            }
+                        }
+                    }
+
+                    val totalRejectedCount = admission.totalRejectedCount(copyFailureCount)
+                    if (totalRejectedCount > 0) {
+                        onNotice(
+                            context.getString(R.string.attachment_batch_rejected, totalRejectedCount)
+                        )
+                    }
+
+                    if (admission.accepted.isEmpty() && totalRejectedCount > 0) {
+                        trySendPendingQuestionIfReady()
+                    }
+                    onAdmissionComplete()
+                }
+            } finally {
+                handedOffOwnedPaths.forEach { filePath ->
+                    if (pendingOwnedAttachmentPaths.remove(filePath)) {
+                        java.io.File(filePath).delete()
+                    }
+                }
+                onFinished()
+            }
         }
     }
 
-    private fun addDraftFile(
-        currentAttachments: () -> List<ChatAttachmentDraft>,
-        updateAttachments: (List<ChatAttachmentDraft>) -> Unit,
-        filePath: String,
-        onNotice: (String?) -> Unit = {}
-    ) {
-        if (currentAttachments().any { it.sourceFilePath == filePath }) return
-
-        updateAttachments(currentAttachments() + ChatAttachmentDraft(sourceFilePath = filePath))
-        preprocessDraftAttachment(
-            currentAttachments = currentAttachments,
-            updateAttachments = updateAttachments,
-            filePath = filePath,
-            onNotice = onNotice
+    private fun String.toAdmissionCandidate(): AttachmentAdmissionCandidate {
+        val mimeType = FileUtils.getMimeType(context, this)
+        return AttachmentAdmissionCandidate(
+            path = this,
+            identity = attachmentIdentity(this),
+            sizeBytes = FileUtils.getFileSize(context, this),
+            isSupported = FileUtils.isSupportedUploadMimeType(mimeType)
         )
+    }
+
+    private fun isAppOwnedAttachmentPath(filePath: String): Boolean {
+        val canonicalPath = runCatching { java.io.File(filePath).canonicalPath }.getOrNull() ?: return false
+        val roots = buildList {
+            add(java.io.File(context.filesDir, "attachments"))
+            context.getExternalFilesDir(Environment.DIRECTORY_PICTURES)?.let { picturesDir ->
+                add(java.io.File(picturesDir, "attachments"))
+            }
+        }
+        return roots.any { root ->
+            val canonicalRoot = runCatching { root.canonicalPath }.getOrNull() ?: return@any false
+            canonicalPath == canonicalRoot || canonicalPath.startsWith(canonicalRoot + java.io.File.separator)
+        }
     }
 
     private fun removeDraftFile(
         currentAttachments: () -> List<ChatAttachmentDraft>,
-        updateAttachments: (List<ChatAttachmentDraft>) -> Unit,
+        mutateAttachments: ((List<ChatAttachmentDraft>) -> List<ChatAttachmentDraft>) -> Unit,
         filePath: String
     ) {
         val removedAttachment = currentAttachments().firstOrNull { it.sourceFilePath == filePath }
         removedAttachment?.preparedFilePath?.let { AttachmentPayloadCache.remove(it) }
-        if (removedAttachment?.cleanupOnDiscard == true) {
-            removedAttachment.let(::deleteDraftFiles)
-        }
-        updateAttachments(currentAttachments().filter { it.sourceFilePath != filePath })
+        removedAttachment?.let(::deleteDraftFiles)
+        mutateAttachments { attachments -> attachments.filter { it.sourceFilePath != filePath } }
     }
 
     private fun preprocessDraftAttachment(
         currentAttachments: () -> List<ChatAttachmentDraft>,
-        updateAttachments: (List<ChatAttachmentDraft>) -> Unit,
+        mutateAttachments: ((List<ChatAttachmentDraft>) -> List<ChatAttachmentDraft>) -> Unit,
         filePath: String,
+        isTargetActive: () -> Boolean,
         onNotice: (String?) -> Unit = {}
     ) {
         viewModelScope.launch {
-            val mimeType = withContext(Dispatchers.IO) {
-                FileUtils.getMimeType(context, filePath)
-            }
-
-            if (!FileUtils.isSupportedUploadMimeType(mimeType)) {
-                rejectDraftAttachment(
-                    currentAttachments = currentAttachments,
-                    updateAttachments = updateAttachments,
-                    filePath = filePath,
-                    notice = context.getString(R.string.only_image_attachments_supported)
-                )
-                trySendPendingQuestionIfReady()
-                return@launch
-            }
-
-            val fileSize = withContext(Dispatchers.IO) {
-                FileUtils.getFileSize(context, filePath)
-            }
-
-            if (fileSize > FileUtils.MAX_UPLOAD_SIZE_BYTES) {
-                rejectDraftAttachment(
-                    currentAttachments = currentAttachments,
-                    updateAttachments = updateAttachments,
-                    filePath = filePath,
-                    notice = context.getString(R.string.files_larger_than_50_mb_cannot_be_attached)
-                )
-                trySendPendingQuestionIfReady()
-                return@launch
-            }
-
-            val currentDraftBytes = withContext(Dispatchers.IO) {
-                currentAttachments()
-                    .filter { it.sourceFilePath != filePath }
-                    .sumOf { FileUtils.getFileSize(context, it.sourceFilePath).coerceAtLeast(0L) }
-            }
-
-            if (FileUtils.wouldExceedTotalUploadLimit(currentDraftBytes, fileSize)) {
-                rejectDraftAttachment(
-                    currentAttachments = currentAttachments,
-                    updateAttachments = updateAttachments,
-                    filePath = filePath,
-                    notice = context.getString(R.string.total_attachments_cannot_exceed_50_mb)
-                )
-                trySendPendingQuestionIfReady()
-                return@launch
-            }
-
             val preparationResult = withContext(Dispatchers.IO) {
                 attachmentUploadCoordinator.prepareLocalAttachment(context, filePath)
             }
 
-            if (currentAttachments().none { it.sourceFilePath == filePath }) {
+            if (!isTargetActive() || currentAttachments().none { it.sourceFilePath == filePath }) {
                 if (preparationResult != null && preparationResult.preparedFilePath != filePath) {
                     java.io.File(preparationResult.preparedFilePath).delete()
                 }
                 return@launch
             }
 
-            updateAttachments(
-                currentAttachments().map { attachment ->
+            mutateAttachments { attachments ->
+                attachments.map { attachment ->
                     if (attachment.sourceFilePath != filePath) {
                         attachment
                     } else if (preparationResult == null) {
@@ -855,7 +1004,7 @@ class ChatViewModel @Inject constructor(
                             preparedFilePath = preparationResult.preparedFilePath,
                             mimeType = preparationResult.mimeType,
                             status = ChatAttachmentDraft.Status.Ready,
-                            cleanupOnDiscard = true,
+                            cleanupPreparedOnDiscard = preparationResult.preparedFilePath != filePath,
                             notice = if (preparationResult.wasResized) {
                                 context.getString(R.string.large_images_resized_before_upload)
                             } else {
@@ -865,7 +1014,7 @@ class ChatViewModel @Inject constructor(
                         )
                     }
                 }
-            )
+            }
 
             if (preparationResult?.wasResized == true) {
                 onNotice(context.getString(R.string.large_images_resized_before_upload))
@@ -879,6 +1028,7 @@ class ChatViewModel @Inject constructor(
 
     private fun trySendPendingQuestionIfReady() {
         val queuedQuestion = pendingQuestionText ?: return
+        if (_pendingSelectedAttachmentBatches.value > 0) return
         val attachments = _selectedAttachments.value
 
         if (attachments.any { it.status == ChatAttachmentDraft.Status.Failed }) {
@@ -908,6 +1058,7 @@ class ChatViewModel @Inject constructor(
             chatId = chatRoomId,
             content = questionText,
             attachments = attachments.mapNotNull { it.attachment },
+            linkedMessageId = initialRequestId.takeIf { isInitialRequestInFlight } ?: 0,
             platformType = null,
             createdAt = activityAt
         ).let { addMessage(it) }
@@ -915,22 +1066,22 @@ class ChatViewModel @Inject constructor(
         recordUserActivityIfEnabled(_chatRoom.value.id, activityAt)
         question.clearText()
         clearSelectedFiles()
-        completeChat()
-    }
-
-    private fun rejectDraftAttachment(
-        currentAttachments: () -> List<ChatAttachmentDraft>,
-        updateAttachments: (List<ChatAttachmentDraft>) -> Unit,
-        filePath: String,
-        notice: String
-    ) {
-        val rejectedAttachment = currentAttachments().firstOrNull { it.sourceFilePath == filePath }
-        rejectedAttachment?.preparedFilePath?.let { AttachmentPayloadCache.remove(it) }
-        if (rejectedAttachment?.cleanupOnDiscard == true) {
-            rejectedAttachment.let(::deleteDraftFiles)
+        if (isInitialRequestInFlight) {
+            _loadingStates.update { List(enabledPlatformsInChat.size) { LoadingState.Loading } }
+            viewModelScope.launch {
+                try {
+                    persistInitialRequestBeforeCompletion()
+                    completeChat()
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Throwable) {
+                    _attachmentNotice.update { error.message ?: error::class.simpleName.orEmpty() }
+                    _loadingStates.update { List(enabledPlatformsInChat.size) { LoadingState.Idle } }
+                }
+            }
+        } else {
+            completeChat()
         }
-        updateAttachments(currentAttachments().filter { it.sourceFilePath != filePath })
-        _attachmentNotice.update { notice }
     }
 
     private fun restoreQueuedQuestion(questionText: String) {
@@ -939,11 +1090,9 @@ class ChatViewModel @Inject constructor(
     }
 
     private fun deleteDraftFiles(attachment: ChatAttachmentDraft) {
-        if (!attachment.cleanupOnDiscard) return
-        java.io.File(attachment.sourceFilePath).delete()
-        attachment.preparedFilePath
-            ?.takeIf { it != attachment.sourceFilePath }
-            ?.let { java.io.File(it).delete() }
+        attachment.ownedPathsToDeleteOnDiscard().forEach { filePath ->
+            java.io.File(filePath).delete()
+        }
     }
 
     /**
@@ -1018,6 +1167,54 @@ class ChatViewModel @Inject constructor(
         return GroupedMessages(userMessages, normalizedAssistantMessages)
     }
 
+    private fun recoverInitialRequestIfNeeded() {
+        if (initialRequestRecoveryComplete) return
+        viewModelScope.launch {
+            try {
+                val recovered = withContext(Dispatchers.IO) {
+                    val recoveredChatId = chatRepository.findChatIdByInitialRequestId(initialRequestId)
+                        ?.takeIf { it > 0 }
+                        ?: return@withContext null
+                    val recoveredChatRoom = chatRepository.fetchChatListV2()
+                        .firstOrNull { it.id == recoveredChatId }
+                        ?: return@withContext null
+                    recoveredChatRoom to fetchGroupedMessages(recoveredChatId)
+                }
+                if (recovered != null) {
+                    val (recoveredChatRoom, recoveredMessages) = recovered
+                    launchState.recordPersistedChatRoomId(recoveredChatRoom.id)
+                    launchState.recordInitialRequestPersisted()
+                    _chatRoom.value = recoveredChatRoom
+                    _groupedMessages.value = recoveredMessages
+                    _indexStates.value = List(recoveredMessages.assistantMessages.size) { 0 }
+                    _loadingStates.value = List(enabledPlatformsInChat.size) { LoadingState.Idle }
+                    _isLoaded.value = true
+                }
+            } finally {
+                initialRequestRecoveryComplete = true
+                maybeSendInitialQuestion()
+            }
+        }
+    }
+
+    private suspend fun persistInitialRequestBeforeCompletion() {
+        val snapshot = _groupedMessages.value
+        val savedChatRoom = withContext(Dispatchers.IO) {
+            chatRepository.saveChat(
+                chatRoom = _chatRoom.value,
+                messages = persistableMessages(snapshot),
+                chatPlatformModels = _chatPlatformModels.value
+            )
+        }
+        launchState.recordPersistedChatRoomId(savedChatRoom.id)
+        launchState.recordInitialRequestPersisted()
+        _chatRoom.value = savedChatRoom
+        isInitialRequestInFlight = false
+        _groupedMessages.value = withContext(Dispatchers.IO) {
+            fetchGroupedMessages(savedChatRoom.id)
+        }
+    }
+
     private fun fetchChatRoom() {
         viewModelScope.launch {
             _chatRoom.update {
@@ -1047,7 +1244,9 @@ class ChatViewModel @Inject constructor(
     }
 
     private fun maybeSendInitialQuestion() {
+        if (!initialRequestRecoveryComplete) return
         if (launchState.initialQuestionConsumed) return
+        if (isInitialRequestInFlight) return
         if (chatRoomId != 0) return
         if (initialQuestion.isBlank() && initialAttachmentPaths.isEmpty()) return
         if (_chatRoom.value.id == -1) return
@@ -1055,15 +1254,23 @@ class ChatViewModel @Inject constructor(
         val enabledPlatformUids = _enabledPlatformsInApp.value.map { it.uid }.toSet()
         if ((enabledPlatformsInChat.toSet() - enabledPlatformUids).isNotEmpty()) return
 
-        launchState.initialQuestionConsumed = true
+        isInitialRequestInFlight = true
+        val sendInitialQuestion = {
+            if (initialQuestion.isNotBlank()) {
+                question.setTextAndPlaceCursorAtEnd(initialQuestion)
+            }
+            askQuestion()
+        }
         if (!launchState.initialAttachmentsConsumed) {
-            launchState.initialAttachmentsConsumed = true
-            initialAttachmentPaths.forEach(::addSelectedFile)
+            if (initialAttachmentPaths.isNotEmpty()) {
+                enqueueSelectedFiles(
+                    filePaths = initialAttachmentPaths,
+                    onAdmissionComplete = sendInitialQuestion
+                )
+                return
+            }
         }
-        if (initialQuestion.isNotBlank()) {
-            question.setTextAndPlaceCursorAtEnd(initialQuestion)
-        }
-        askQuestion()
+        sendInitialQuestion()
     }
 
     private suspend fun initializeChatPlatformModels(availableModels: List<AvailableChatModel>) {
@@ -1160,6 +1367,23 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    private fun markPlatformLoadingComplete(platformIndex: Int) {
+        synchronized(loadingCompletionLock) {
+            val current = _loadingStates.value
+            if (platformIndex !in current.indices) return
+            val next = current.toMutableList().apply { this[platformIndex] = LoadingState.Idle }
+            val completionNeedsPersistence = current[platformIndex] == LoadingState.Loading &&
+                next.all { it == LoadingState.Idle } &&
+                _chatRoom.value.id != -1 &&
+                _groupedMessages.value.userMessages.isNotEmpty() &&
+                _groupedMessages.value.userMessages.size == _groupedMessages.value.assistantMessages.size
+            if (completionNeedsPersistence) {
+                _isPersistingCompletion.value = true
+            }
+            _loadingStates.value = next
+        }
+    }
+
     private fun observeStateChanges() {
         viewModelScope.launch {
             _loadingStates.collect { states ->
@@ -1168,51 +1392,59 @@ class ChatViewModel @Inject constructor(
                     (_groupedMessages.value.userMessages.isNotEmpty() && _groupedMessages.value.assistantMessages.isNotEmpty()) &&
                     (_groupedMessages.value.userMessages.size == _groupedMessages.value.assistantMessages.size)
                 ) {
-                    val chatRoom = _chatRoom.value
-                    val groupedMessages = _groupedMessages.value
-                    val chatPlatformModels = _chatPlatformModels.value
-                    val activityAt = pendingMemoryTurnActivityAt
-                    val preferredMemoryPlatformUid = preferredMemoryPlatform()?.uid
+                    try {
+                        val chatRoom = _chatRoom.value
+                        val groupedMessages = _groupedMessages.value
+                        val chatPlatformModels = _chatPlatformModels.value
+                        val activityAt = pendingMemoryTurnActivityAt
+                        val preferredMemoryPlatformUid = preferredMemoryPlatform()?.uid
 
-                    val (savedChatRoom, persistedGroupedMessages) = withContext(Dispatchers.IO) {
-                        val saved = chatRepository.saveChat(
-                            chatRoom = chatRoom,
-                            messages = persistableMessages(groupedMessages),
-                            chatPlatformModels = chatPlatformModels
-                        )
-                        saved to fetchGroupedMessages(saved.id)
-                    }
-                    launchState.recordPersistedChatRoomId(savedChatRoom.id)
-                    _chatRoom.update { currentChatRoom ->
-                        if (currentChatRoom.id == chatRoom.id && chatRoom.id == 0) {
-                            savedChatRoom
-                        } else {
-                            currentChatRoom
+                        val (savedChatRoom, persistedGroupedMessages) = withContext(Dispatchers.IO) {
+                            val saved = chatRepository.saveChat(
+                                chatRoom = chatRoom,
+                                messages = persistableMessages(groupedMessages),
+                                chatPlatformModels = chatPlatformModels
+                            )
+                            saved to fetchGroupedMessages(saved.id)
                         }
-                    }
-                    if (activityAt != null) {
-                        pendingMemoryTurnActivityAt = null
-                        val userMessage = persistedGroupedMessages.userMessages.lastOrNull()
-                        val assistantMessages = persistedGroupedMessages.assistantMessages.lastOrNull().orEmpty()
-                        if (refreshMemoryEnabled() && userMessage != null) {
-                            applicationScope.launch(Dispatchers.IO) {
-                                memoryRepository.recordUserActivity(savedChatRoom.id, activityAt)
-                                memoryRepository.recordCompletedTurn(
-                                    MemoryCompletedTurnInput(
-                                        chatRoom = savedChatRoom,
-                                        userMessage = userMessage,
-                                        assistantMessages = assistantMessages,
-                                        preferredPlatformUid = preferredMemoryPlatformUid,
-                                        stablePlatformOrder = savedChatRoom.enabledPlatform,
-                                        completedAt = currentTimeStamp
-                                    )
-                                )
+                        launchState.recordPersistedChatRoomId(savedChatRoom.id)
+                        _chatRoom.update { currentChatRoom ->
+                            if (currentChatRoom.id == chatRoom.id && chatRoom.id == 0) {
+                                savedChatRoom
+                            } else {
+                                currentChatRoom
                             }
                         }
-                    }
+                        if (activityAt != null) {
+                            pendingMemoryTurnActivityAt = null
+                            val userMessage = persistedGroupedMessages.userMessages.lastOrNull()
+                            val assistantMessages = persistedGroupedMessages.assistantMessages.lastOrNull().orEmpty()
+                            if (refreshMemoryEnabled() && userMessage != null) {
+                                applicationScope.launch(Dispatchers.IO) {
+                                    memoryRepository.recordUserActivity(savedChatRoom.id, activityAt)
+                                    memoryRepository.recordCompletedTurn(
+                                        MemoryCompletedTurnInput(
+                                            chatRoom = savedChatRoom,
+                                            userMessage = userMessage,
+                                            assistantMessages = assistantMessages,
+                                            preferredPlatformUid = preferredMemoryPlatformUid,
+                                            stablePlatformOrder = savedChatRoom.enabledPlatform,
+                                            completedAt = currentTimeStamp
+                                        )
+                                    )
+                                }
+                            }
+                        }
 
-                    // Sync message ids
-                    fetchMessages()
+                        // Sync message ids
+                        _groupedMessages.value = persistedGroupedMessages
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Throwable) {
+                        _attachmentNotice.update { error.message ?: error::class.simpleName.orEmpty() }
+                    } finally {
+                        _isPersistingCompletion.value = false
+                    }
                 }
             }
         }
@@ -1270,6 +1502,15 @@ class ChatViewModel @Inject constructor(
         fun toolProgressKey(turnIndex: Int, platformIndex: Int): String = "$turnIndex:$platformIndex"
     }
 }
+
+internal fun shouldRecoverInitialRequest(
+    routeChatRoomId: Int,
+    initialRequestId: Int,
+    initialQuestion: String,
+    initialAttachmentPaths: List<String>
+): Boolean = routeChatRoomId == 0 &&
+    initialRequestId < 0 &&
+    (initialQuestion.isNotBlank() || initialAttachmentPaths.isNotEmpty())
 
 internal suspend fun prepareMemoryPromptWhenEnabled(
     memoryEnabled: Boolean,

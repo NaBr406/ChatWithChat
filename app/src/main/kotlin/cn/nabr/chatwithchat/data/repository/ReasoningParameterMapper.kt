@@ -2,37 +2,25 @@ package cn.nabr.chatwithchat.data.repository
 
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.model.ClientType
+import cn.nabr.chatwithchat.data.model.ReasoningCapability
 import cn.nabr.chatwithchat.data.model.ReasoningMode
 import cn.nabr.chatwithchat.data.model.coerceReasoningModeForModel
 import cn.nabr.chatwithchat.data.model.isExplicitReasoningEnabled
 import cn.nabr.chatwithchat.data.model.isGptOssModel
-
-internal data class ReasoningRequestParameters(
-    val mode: ReasoningMode,
-    val openAIEffort: String? = null,
-    val anthropicBudgetTokens: Int? = null,
-    val anthropicMaxTokens: Int? = null,
-    val googleThinkingBudget: Int? = null,
-    val googleIncludeThoughts: Boolean? = null,
-    val groqReasoningEffort: String? = null,
-    val groqReasoningFormat: String? = null,
-    val groqIncludeReasoning: Boolean? = null,
-    val openAICompatibleReasoningEffort: String? = null
-) {
-    val hasExplicitReasoning: Boolean = mode.isExplicitReasoningEnabled()
-}
+import cn.nabr.chatwithchat.data.model.reasoningCapabilityForModel
 
 internal fun mapReasoningMode(
     platform: PlatformV2,
     requestedMode: ReasoningMode
 ): ReasoningRequestParameters {
+    val capability = platform.reasoningCapabilityForModel()
     val mode = platform.coerceReasoningModeForModel(requestedMode)
     val effort = mode.toEffort()
 
     return when (platform.compatibleType) {
         ClientType.OPENAI -> ReasoningRequestParameters(
             mode = mode,
-            openAIEffort = effort
+            openAIEffort = effort.takeIf { capability.capability == ReasoningCapability.EFFORT }
         )
 
         ClientType.ANTHROPIC -> {
@@ -70,7 +58,9 @@ internal fun mapReasoningMode(
 
         ClientType.OPENROUTER, ClientType.CUSTOM -> ReasoningRequestParameters(
             mode = mode,
-            openAICompatibleReasoningEffort = effort.takeIf { mode.isExplicitReasoningEnabled() }
+            openAICompatibleReasoningEffort = effort.takeIf {
+                mode.isExplicitReasoningEnabled() && capability.capability == ReasoningCapability.EFFORT
+            }
         )
 
         ClientType.OLLAMA -> ReasoningRequestParameters(mode = mode)

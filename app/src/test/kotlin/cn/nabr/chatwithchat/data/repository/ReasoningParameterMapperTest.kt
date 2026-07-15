@@ -44,6 +44,18 @@ class ReasoningParameterMapperTest {
     }
 
     @Test
+    fun `anthropic off preserves disabled mode without a thinking budget`() {
+        val params = mapReasoningMode(
+            platform = platform(ClientType.ANTHROPIC, "claude-opus-4-20250514"),
+            requestedMode = ReasoningMode.OFF
+        )
+
+        assertEquals(ReasoningMode.OFF, params.mode)
+        assertNull(params.anthropicBudgetTokens)
+        assertNull(params.anthropicMaxTokens)
+    }
+
+    @Test
     fun `google off maps to zero thinking budget without thoughts`() {
         val params = mapReasoningMode(
             platform = platform(ClientType.GOOGLE, "gemini-2.5-pro"),
@@ -88,6 +100,33 @@ class ReasoningParameterMapperTest {
 
         assertEquals(ReasoningMode.AUTO, params.mode)
         assertNull(params.openAICompatibleReasoningEffort)
+    }
+
+    @Test
+    fun `deepseek v4 keeps model defaults without compatible reasoning effort`() {
+        listOf(ClientType.OPENROUTER, ClientType.CUSTOM).forEach { clientType ->
+            val params = mapReasoningMode(
+                platform = platform(clientType, "deepseek-v4"),
+                requestedMode = ReasoningMode.HIGH
+            )
+
+            assertEquals(ReasoningMode.AUTO, params.mode)
+            assertNull(params.openAICompatibleReasoningEffort)
+            assertEquals(false, params.hasExplicitReasoning)
+        }
+    }
+
+    @Test
+    fun `compatible providers do not infer effort from model name`() {
+        listOf(ClientType.OPENROUTER, ClientType.CUSTOM).forEach { clientType ->
+            val params = mapReasoningMode(
+                platform = platform(clientType, "gpt-5.4-mini"),
+                requestedMode = ReasoningMode.HIGH
+            )
+
+            assertEquals(ReasoningMode.AUTO, params.mode)
+            assertNull(params.openAICompatibleReasoningEffort)
+        }
     }
 
     private fun platform(

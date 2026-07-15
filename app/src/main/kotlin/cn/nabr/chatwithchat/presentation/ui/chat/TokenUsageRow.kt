@@ -27,7 +27,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
@@ -53,7 +52,6 @@ fun TokenUsageRow(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .alpha(0.82f)
     ) {
         FlowRow(
             modifier = Modifier
@@ -78,7 +76,8 @@ fun TokenUsageRow(
                 contentDescription = if (isExpanded) "收起 token 用量" else "展开 token 用量",
                 modifier = Modifier
                     .size(16.dp)
-                    .rotate(rotation)
+                    .rotate(rotation),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
 
@@ -131,7 +130,8 @@ private fun UsageMetric(
         Icon(
             imageVector = icon,
             contentDescription = contentDescription,
-            modifier = Modifier.size(14.dp)
+            modifier = Modifier.size(14.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Text(
             text = "$prefix$value",

@@ -1,6 +1,7 @@
 package cn.nabr.chatwithchat.presentation.ui.chat
 
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -42,9 +43,7 @@ import cn.nabr.chatwithchat.data.database.entity.effectiveThoughts
 import cn.nabr.chatwithchat.presentation.common.AppleBlue
 import cn.nabr.chatwithchat.presentation.common.HigActionDialog
 import cn.nabr.chatwithchat.presentation.common.settingsTextFieldColors
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 @Composable
 fun ChatTitleDialog(
@@ -114,8 +113,8 @@ internal fun normalizeChatTitle(title: String): String = title
 fun UserMessageEditDialog(
     initialQuestion: MessageV2,
     attachments: List<ChatAttachmentDraft>,
-    onFileSelected: (String) -> Unit,
-    onCopyFailed: () -> Unit,
+    isAttachmentImportInProgress: Boolean,
+    onFilesSelected: (List<String>, Int) -> Unit,
     onFileRemoved: (String) -> Unit,
     onDismissRequest: () -> Unit,
     onConfirmRequest: (MessageV2) -> Unit
@@ -126,19 +125,21 @@ fun UserMessageEditDialog(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var question by remember { mutableStateOf(initialQuestion.content) }
+    var isCopyingPickedImages by remember { mutableStateOf(false) }
+    val isAttachmentBusy = isAttachmentImportInProgress || isCopyingPickedImages
     val questionFieldMaxLines = 8
     val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri ->
-        uri?.let {
+        contract = ActivityResultContracts.PickMultipleVisualMedia()
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            isCopyingPickedImages = true
             scope.launch {
-                val filePath = withContext(Dispatchers.IO) {
-                    copyFileToAppDirectory(context, it)
-                }
-                if (filePath != null) {
-                    onFileSelected(filePath)
-                } else {
-                    onCopyFailed()
+                try {
+                    copyPickedImages(context, uris) { result ->
+                        onFilesSelected(result.copiedPaths, result.failedCount)
+                    }
+                } finally {
+                    isCopyingPickedImages = false
                 }
             }
         }
@@ -165,7 +166,12 @@ fun UserMessageEditDialog(
                 )
                 AttachmentEditorSection(
                     attachments = attachments,
-                    onAttachFileClick = { filePickerLauncher.launch("image/*") },
+                    enabled = !isAttachmentBusy,
+                    onAttachFileClick = {
+                        filePickerLauncher.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        )
+                    },
                     onFileRemoved = onFileRemoved
                 )
             }
@@ -174,7 +180,8 @@ fun UserMessageEditDialog(
         confirmButton = {
             val hasPendingOrFailedAttachments = attachments.any { it.status != ChatAttachmentDraft.Status.Ready }
             TextButton(
-                enabled = !hasPendingOrFailedAttachments &&
+                enabled = !isAttachmentBusy &&
+                    !hasPendingOrFailedAttachments &&
                     (question.isNotBlank() || attachments.isNotEmpty()) &&
                     (question != initialQuestion.content || attachments.mapNotNull { it.attachment } != initialQuestion.attachments),
                 onClick = { onConfirmRequest(initialQuestion.copy(content = question)) }
@@ -196,8 +203,8 @@ fun UserMessageEditDialog(
 fun AssistantMessageEditDialog(
     initialMessage: MessageV2,
     attachments: List<ChatAttachmentDraft>,
-    onFileSelected: (String) -> Unit,
-    onCopyFailed: () -> Unit,
+    isAttachmentImportInProgress: Boolean,
+    onFilesSelected: (List<String>, Int) -> Unit,
     onFileRemoved: (String) -> Unit,
     onDismissRequest: () -> Unit,
     onConfirmRequest: (MessageV2, String) -> Unit
@@ -209,18 +216,20 @@ fun AssistantMessageEditDialog(
     val scope = rememberCoroutineScope()
     var responseText by remember { mutableStateOf(initialMessage.effectiveContent()) }
     var thoughtsText by remember { mutableStateOf(initialMessage.effectiveThoughts()) }
+    var isCopyingPickedImages by remember { mutableStateOf(false) }
+    val isAttachmentBusy = isAttachmentImportInProgress || isCopyingPickedImages
     val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri ->
-        uri?.let {
+        contract = ActivityResultContracts.PickMultipleVisualMedia()
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            isCopyingPickedImages = true
             scope.launch {
-                val filePath = withContext(Dispatchers.IO) {
-                    copyFileToAppDirectory(context, it)
-                }
-                if (filePath != null) {
-                    onFileSelected(filePath)
-                } else {
-                    onCopyFailed()
+                try {
+                    copyPickedImages(context, uris) { result ->
+                        onFilesSelected(result.copiedPaths, result.failedCount)
+                    }
+                } finally {
+                    isCopyingPickedImages = false
                 }
             }
         }
@@ -258,7 +267,12 @@ fun AssistantMessageEditDialog(
                 )
                 AttachmentEditorSection(
                     attachments = attachments,
-                    onAttachFileClick = { filePickerLauncher.launch("image/*") },
+                    enabled = !isAttachmentBusy,
+                    onAttachFileClick = {
+                        filePickerLauncher.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        )
+                    },
                     onFileRemoved = onFileRemoved
                 )
             }
@@ -267,7 +281,8 @@ fun AssistantMessageEditDialog(
         confirmButton = {
             val hasPendingOrFailedAttachments = attachments.any { it.status != ChatAttachmentDraft.Status.Ready }
             TextButton(
-                enabled = !hasPendingOrFailedAttachments &&
+                enabled = !isAttachmentBusy &&
+                    !hasPendingOrFailedAttachments &&
                     (responseText.isNotBlank() || thoughtsText.isNotBlank() || attachments.isNotEmpty()) &&
                     (
                         responseText != initialMessage.effectiveContent() ||
@@ -295,6 +310,7 @@ fun AssistantMessageEditDialog(
 @Composable
 private fun AttachmentEditorSection(
     attachments: List<ChatAttachmentDraft>,
+    enabled: Boolean,
     onAttachFileClick: () -> Unit,
     onFileRemoved: (String) -> Unit
 ) {
@@ -306,6 +322,7 @@ private fun AttachmentEditorSection(
     }
     TextButton(
         modifier = Modifier.padding(horizontal = 12.dp),
+        enabled = enabled,
         onClick = onAttachFileClick
     ) {
         Text(text = stringResource(R.string.attach_file))

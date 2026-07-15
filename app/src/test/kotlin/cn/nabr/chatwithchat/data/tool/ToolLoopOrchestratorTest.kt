@@ -29,6 +29,42 @@ class ToolLoopOrchestratorTest {
     }
 
     @Test
+    fun `malformed tool envelope preserves tool interaction intent`() = runBlocking {
+        val orchestrator = ToolLoopOrchestrator(recordingExecutor(mutableListOf()))
+
+        val result = orchestrator.runLoop(tools = orchestrator.toolDefinitions) {
+            Result.success("""{"type":"tool_calls","tool_calls":[{""")
+        }
+
+        assertTrue(result is ToolLoopResult.Failed)
+        assertTrue((result as ToolLoopResult.Failed).hadToolInteraction)
+    }
+
+    @Test
+    fun `tool calls member without discriminator preserves tool interaction intent`() = runBlocking {
+        val orchestrator = ToolLoopOrchestrator(recordingExecutor(mutableListOf()))
+
+        val result = orchestrator.runLoop(tools = orchestrator.toolDefinitions) {
+            Result.success("""{"tool_calls":[{"name":"web_search"}]}""")
+        }
+
+        assertTrue(result is ToolLoopResult.Failed)
+        assertTrue((result as ToolLoopResult.Failed).hadToolInteraction)
+    }
+
+    @Test
+    fun `empty tool call envelope does not create tool interaction`() = runBlocking {
+        val orchestrator = ToolLoopOrchestrator(recordingExecutor(mutableListOf()))
+
+        val result = orchestrator.runLoop(tools = orchestrator.toolDefinitions) {
+            Result.success("""{"type":"tool_calls","tool_calls":[]}""")
+        }
+
+        assertTrue(result is ToolLoopResult.Failed)
+        assertFalse((result as ToolLoopResult.Failed).hadToolInteraction)
+    }
+
+    @Test
     fun `provider owned progress label is used for test tool`() = runBlocking {
         val progress = mutableListOf<ApiState>()
         val provider = object : ToolProvider {

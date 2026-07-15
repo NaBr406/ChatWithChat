@@ -289,4 +289,12 @@
     <string name="large_images_resized_before_upload">上传前已压缩大图。</string>
     <string name="failed_to_prepare_attachment">附件处理失败。</string>
     <string name="failed_to_copy_attachment">附件复制失败。</string>
+    <string name="attachment_batch_rejected">Не удалось добавить %1$d изображений. Проверьте формат изображений и ограничение 50 МБ.</string>
+    <string name="reasoning_control">Рассуждение</string>
+    <string name="reasoning_mode_model_default">По умолчанию модели</string>
+    <string name="reasoning_mode_default_only">Рассуждение по умолчанию модели</string>
+    <string name="reasoning_mode_unknown">Возможность не распознана, используется настройка модели по умолчанию</string>
+    <string name="reasoning_mode_on">Включено</string>
+    <string name="reasoning_mode_on_description">Использовать рассуждение модели</string>
+    <string name="initial_request_interrupted">Запрос был прерван. Повторите попытку.</string>
 </resources>

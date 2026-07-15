@@ -21,6 +21,7 @@ import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.presentation.ui.chat.ChatScreen
 import cn.nabr.chatwithchat.presentation.ui.chat.ChatShellScreen
 import cn.nabr.chatwithchat.presentation.ui.chat.EmptyChatScreen
+import cn.nabr.chatwithchat.presentation.ui.main.MainLaunchDestination
 import cn.nabr.chatwithchat.presentation.ui.memory.MemoryScreen
 import cn.nabr.chatwithchat.presentation.ui.migrate.MigrateScreen
 import cn.nabr.chatwithchat.presentation.ui.setting.AboutScreen
@@ -38,13 +39,16 @@ import cn.nabr.chatwithchat.presentation.ui.setup.SetupPlatformWizardScreen
 import cn.nabr.chatwithchat.presentation.ui.setup.SetupViewModelV2
 
 @Composable
-fun SetupNavGraph(navController: NavHostController) {
+fun SetupNavGraph(
+    navController: NavHostController,
+    startDestination: MainLaunchDestination
+) {
     NavHost(
         modifier = Modifier
             .fillMaxSize()
             .background(settingsMaterialColors().canvas),
         navController = navController,
-        startDestination = Route.CHAT_LIST
+        startDestination = startDestination.route
     ) {
         homeScreenNavigation(navController)
         migrationScreenNavigation(navController)
@@ -53,6 +57,13 @@ fun SetupNavGraph(navController: NavHostController) {
         chatScreenNavigation(navController)
     }
 }
+
+private val MainLaunchDestination.route: String
+    get() = when (this) {
+        MainLaunchDestination.Setup -> Route.SETUP_ROUTE
+        MainLaunchDestination.Home -> Route.CHAT_LIST
+        MainLaunchDestination.Migrate -> Route.MIGRATE_V2
+    }
 
 fun NavGraphBuilder.migrationScreenNavigation(navController: NavHostController) {
     composable(Route.MIGRATE_V2) {
@@ -127,10 +138,10 @@ fun NavGraphBuilder.homeScreenNavigation(navController: NavHostController) {
             onExistingChatClick = { chatRoom ->
                 navController.navigateToChatRoom(chatRoom.id, chatRoom.enabledPlatform)
             },
-            navigateToNewChat = { enabledPlatforms, initialQuestion, initialModel, initialAttachmentPaths ->
-                navController.navigateToChatRoom(0, enabledPlatforms, initialQuestion, initialModel, initialAttachmentPaths)
+            navigateToNewChat = { enabledPlatforms, initialQuestion, initialModel, initialAttachmentPaths, initialRequestId ->
+                navController.navigateToChatRoom(0, enabledPlatforms, initialQuestion, initialModel, initialAttachmentPaths, initialRequestId)
             }
-        ) { openDrawer, homeViewModel, startNewChat, openModelPicker ->
+        ) { openDrawer, homeViewModel, startNewChat ->
             EmptyChatScreen(
                 homeViewModel = homeViewModel,
                 onOpenDrawer = openDrawer,
@@ -146,7 +157,8 @@ private fun NavHostController.navigateToChatRoom(
     enabledPlatforms: List<String>,
     initialQuestion: String? = null,
     initialModel: String? = null,
-    initialAttachmentPaths: List<String> = emptyList()
+    initialAttachmentPaths: List<String> = emptyList(),
+    initialRequestId: Int = 0
 ) {
     val enabledPlatformString = enabledPlatforms.joinToString(",")
     val encodedInitialQuestion = Uri.encode(initialQuestion.orEmpty())
@@ -159,6 +171,7 @@ private fun NavHostController.navigateToChatRoom(
             .replace(oldValue = "{initialQuestion}", newValue = encodedInitialQuestion)
             .replace(oldValue = "{initialModel}", newValue = encodedInitialModel)
             .replace(oldValue = "{initialAttachments}", newValue = encodedInitialAttachments)
+            .replace(oldValue = "{initialRequestId}", newValue = "$initialRequestId")
     )
 }
 
@@ -170,7 +183,11 @@ fun NavGraphBuilder.chatScreenNavigation(navController: NavHostController) {
             navArgument("enabledPlatforms") { defaultValue = "" },
             navArgument("initialQuestion") { defaultValue = "" },
             navArgument("initialModel") { defaultValue = "" },
-            navArgument("initialAttachments") { defaultValue = "" }
+            navArgument("initialAttachments") { defaultValue = "" },
+            navArgument("initialRequestId") {
+                type = NavType.IntType
+                defaultValue = 0
+            }
         )
     ) {
         ChatShellScreen(
@@ -179,10 +196,10 @@ fun NavGraphBuilder.chatScreenNavigation(navController: NavHostController) {
             onExistingChatClick = { chatRoom ->
                 navController.navigateToChatRoom(chatRoom.id, chatRoom.enabledPlatform)
             },
-            navigateToNewChat = { enabledPlatforms, initialQuestion, initialModel, initialAttachmentPaths ->
-                navController.navigateToChatRoom(0, enabledPlatforms, initialQuestion, initialModel, initialAttachmentPaths)
+            navigateToNewChat = { enabledPlatforms, initialQuestion, initialModel, initialAttachmentPaths, initialRequestId ->
+                navController.navigateToChatRoom(0, enabledPlatforms, initialQuestion, initialModel, initialAttachmentPaths, initialRequestId)
             }
-        ) { openDrawer, _, _, _ ->
+        ) { openDrawer, _, _ ->
             ChatScreen(
                 onBackAction = openDrawer,
                 navigationIcon = Icons.Rounded.Menu,

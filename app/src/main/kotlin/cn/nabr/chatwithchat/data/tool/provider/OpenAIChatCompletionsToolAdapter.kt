@@ -66,6 +66,12 @@ class OpenAIChatCompletionsToolAdapter {
             .mapNotNull { accumulator -> accumulator.toToolCall(config.maxToolArgumentChars) }
     }
 
+    fun hasToolCallIntent(chunks: List<ChatCompletionChunk>): Boolean = chunks.any { chunk ->
+        chunk.choices.orEmpty().any { choice ->
+            choice.delta.toolCalls.orEmpty().isNotEmpty()
+        }
+    }
+
     fun continuationMessages(
         calls: List<ToolCall>,
         results: List<ToolResult>,

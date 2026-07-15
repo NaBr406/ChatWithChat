@@ -289,4 +289,12 @@
     <string name="large_images_resized_before_upload">上传前已压缩大图。</string>
     <string name="failed_to_prepare_attachment">附件处理失败。</string>
     <string name="failed_to_copy_attachment">附件复制失败。</string>
+    <string name="attachment_batch_rejected">افزودن %1$d تصویر ممکن نشد. قالب تصویر و محدودیت ۵۰ مگابایت را بررسی کنید.</string>
+    <string name="reasoning_control">استدلال</string>
+    <string name="reasoning_mode_model_default">پیش‌فرض مدل</string>
+    <string name="reasoning_mode_default_only">استدلال پیش‌فرض مدل</string>
+    <string name="reasoning_mode_unknown">قابلیت شناسایی نشد؛ پیش‌فرض مدل حفظ می‌شود</string>
+    <string name="reasoning_mode_on">روشن</string>
+    <string name="reasoning_mode_on_description">استفاده از استدلال مدل</string>
+    <string name="initial_request_interrupted">درخواست متوقف شد. دوباره تلاش کنید.</string>
 </resources>

@@ -289,4 +289,12 @@
     <string name="large_images_resized_before_upload">上传前已压缩大图。</string>
     <string name="failed_to_prepare_attachment">附件处理失败。</string>
     <string name="failed_to_copy_attachment">附件复制失败。</string>
+    <string name="attachment_batch_rejected">تعذر إضافة %1$d من الصور. تحقق من تنسيق الصور وحد 50 ميغابايت.</string>
+    <string name="reasoning_control">التفكير</string>
+    <string name="reasoning_mode_model_default">الإعداد الافتراضي للنموذج</string>
+    <string name="reasoning_mode_default_only">تفكير النموذج الافتراضي</string>
+    <string name="reasoning_mode_unknown">القدرة غير معروفة؛ سيتم استخدام الإعداد الافتراضي للنموذج</string>
+    <string name="reasoning_mode_on">تشغيل</string>
+    <string name="reasoning_mode_on_description">استخدام تفكير النموذج</string>
+    <string name="initial_request_interrupted">تمت مقاطعة الطلب. أعد المحاولة.</string>
 </resources>

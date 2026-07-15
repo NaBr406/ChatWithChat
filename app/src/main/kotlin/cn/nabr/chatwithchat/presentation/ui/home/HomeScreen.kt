@@ -88,15 +88,16 @@ fun HomeScreen(
     val listState = rememberLazyListState()
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     val chatListState by homeViewModel.chatListState.collectAsStateWithLifecycle()
-    val showDeleteWarningDialog by homeViewModel.showDeleteWarningDialog.collectAsStateWithLifecycle()
     val platformState by homeViewModel.platformState.collectAsStateWithLifecycle()
     val lastSelectedModel by homeViewModel.lastSelectedModel.collectAsStateWithLifecycle()
-    val availableChatModels by homeViewModel.availableChatModels.collectAsStateWithLifecycle()
+    val homeModelsState by homeViewModel.homeModelsState.collectAsStateWithLifecycle()
+    val availableChatModels = homeModelsState.modelsOrEmpty()
     val searchQuery by homeViewModel.searchQuery.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
     val lifecycleState by lifecycleOwner.lifecycle.currentStateFlow.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val startNewChat = {
+    val startNewChat = startNewChat@{
+        if (homeModelsState is HomeModelsState.Loading) return@startNewChat
         val model = lastSelectedModel?.let { selectedModel ->
             availableChatModels.firstOrNull { model ->
                 model.platformUid == selectedModel.platformUid && model.modelId == selectedModel.model
@@ -231,7 +232,7 @@ fun HomeScreen(
             }
         }
 
-        if (showDeleteWarningDialog) {
+        if (chatListState.showDeleteWarningDialog) {
             DeleteWarningDialog(
                 selectedCount = chatListState.selectedChats.count { it },
                 onDismissRequest = homeViewModel::closeDeleteWarningDialog,

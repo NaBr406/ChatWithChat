@@ -127,6 +127,25 @@ class GoogleNativeToolAdapterTest {
     }
 
     @Test
+    fun `blank google function call still exposes raw tool intent`() {
+        val response = NetworkClient.json.decodeFromString<GenerateContentResponse>(
+            """
+            {
+              "candidates": [{
+                "content": {
+                  "role": "model",
+                  "parts": [{"functionCall": {"id": "func_1", "name": "", "args": {}}}]
+                }
+              }]
+            }
+            """.trimIndent()
+        )
+
+        assertTrue(adapter.hasToolCallIntent(listOf(response)))
+        assertTrue(adapter.toolCallsFromResponses(listOf(response)).isEmpty())
+    }
+
+    @Test
     fun `google function arguments enforce configured limit before tool call creation`() {
         val response = NetworkClient.json.decodeFromString<GenerateContentResponse>(
             """

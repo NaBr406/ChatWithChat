@@ -52,6 +52,7 @@ class ToolLoopOrchestrator(
         val scratchpad = mutableListOf<ToolMessage>()
         val allCalls = mutableListOf<ToolCall>()
         val allResults = mutableListOf<ToolResult>()
+        var hadToolInteraction = false
         val executionSession = createExecutionSession()
 
         repeat(maxRounds) {
@@ -65,15 +66,18 @@ class ToolLoopOrchestrator(
                     adapter = adapter,
                     allCalls = allCalls,
                     allResults = allResults,
-                    failure = "tool_loop_model_failed:${throwable.message ?: throwable::class.simpleName.orEmpty()}"
+                    failure = "tool_loop_model_failed:${throwable.message ?: throwable::class.simpleName.orEmpty()}",
+                    hadToolInteraction = hadToolInteraction
                 )
             }
+            hadToolInteraction = hadToolInteraction || adapter.hasToolCallIntent(modelText)
             val modelOutput = adapter.parseModelOutput(modelText, config).getOrElse { throwable ->
                 return fallbackOrFailure(
                     adapter = adapter,
                     allCalls = allCalls,
                     allResults = allResults,
-                    failure = "tool_loop_parse_failed:${throwable.message ?: throwable::class.simpleName.orEmpty()}"
+                    failure = "tool_loop_parse_failed:${throwable.message ?: throwable::class.simpleName.orEmpty()}",
+                    hadToolInteraction = hadToolInteraction
                 )
             }
 
@@ -94,6 +98,7 @@ class ToolLoopOrchestrator(
                     }
                 }
                 is JsonToolModelOutput.ToolCalls -> {
+                    hadToolInteraction = hadToolInteraction || modelOutput.calls.isNotEmpty()
                     val calls = boundToolCalls(modelOutput.calls)
                     val availableCalls = calls.selectAvailable(activeToolNames)
                     val (allowedCalls, budgetRejectedCalls) = executionSession.select(availableCalls.allowed)
@@ -103,7 +108,8 @@ class ToolLoopOrchestrator(
                             adapter = adapter,
                             allCalls = allCalls,
                             allResults = allResults,
-                            failure = "tool_loop_no_tool_calls"
+                            failure = "tool_loop_no_tool_calls",
+                            hadToolInteraction = hadToolInteraction
                         )
                     }
 
@@ -128,7 +134,8 @@ class ToolLoopOrchestrator(
             adapter = adapter,
             allCalls = allCalls,
             allResults = allResults,
-            failure = "tool_loop_max_rounds_reached"
+            failure = "tool_loop_max_rounds_reached",
+            hadToolInteraction = hadToolInteraction
         )
     }
 
@@ -190,7 +197,8 @@ class ToolLoopOrchestrator(
         adapter: ToolCallingAdapter,
         allCalls: List<ToolCall>,
         allResults: List<ToolResult>,
-        failure: String
+        failure: String,
+        hadToolInteraction: Boolean
     ): ToolLoopResult = if (allResults.isNotEmpty()) {
         ToolLoopResult.ToolResults(
             calls = allCalls,
@@ -198,7 +206,7 @@ class ToolLoopOrchestrator(
             finalAnswerPrompt = buildFinalAnswerPrompt(adapter = adapter, results = allResults)
         )
     } else {
-        ToolLoopResult.Failed(failure)
+        ToolLoopResult.Failed(failure, hadToolInteraction)
     }
 
     private fun buildFinalAnswerPrompt(

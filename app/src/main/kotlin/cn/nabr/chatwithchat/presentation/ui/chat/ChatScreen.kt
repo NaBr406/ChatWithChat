@@ -72,6 +72,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -104,7 +105,6 @@ import cn.nabr.chatwithchat.data.model.ReasoningMode
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import java.io.File
 import kotlin.math.abs
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -124,6 +124,9 @@ fun ChatScreen(
     val groupedMessages by chatViewModel.groupedMessages.collectAsStateWithLifecycle()
     val indexStates by chatViewModel.indexStates.collectAsStateWithLifecycle()
     val loadingStates by chatViewModel.loadingStates.collectAsStateWithLifecycle()
+    val isPersistingCompletion by chatViewModel.isPersistingCompletion.collectAsStateWithLifecycle()
+    val pendingSelectedAttachmentBatches by chatViewModel.pendingSelectedAttachmentBatches.collectAsStateWithLifecycle()
+    val pendingMessageEditAttachmentBatches by chatViewModel.pendingMessageEditAttachmentBatches.collectAsStateWithLifecycle()
     val toolProgressStates by chatViewModel.toolProgressStates.collectAsStateWithLifecycle()
     val isChatTitleDialogOpen by chatViewModel.isChatTitleDialogOpen.collectAsStateWithLifecycle()
     val messageEditSession by chatViewModel.messageEditSession.collectAsStateWithLifecycle()
@@ -138,6 +141,7 @@ fun ChatScreen(
     val currentReasoningMode by chatViewModel.currentReasoningMode.collectAsStateWithLifecycle()
     val enabledPlatformLookup = remember(appEnabledPlatforms) { appEnabledPlatforms.associateBy { it.uid } }
     val isIdle = loadingStates.all { it == ChatViewModel.LoadingState.Idle }
+    val canSubmitOrEdit = isIdle && !isPersistingCompletion
     val currentModelOptions = remember(availableChatModels, lastSelectedModel) {
         buildModelSelectionOptions(
             models = availableChatModels,
@@ -171,6 +175,8 @@ fun ChatScreen(
         enabledPlatformLookup = enabledPlatformLookup,
         canUseChat = canUseChat,
         isIdle = isIdle,
+        canSubmitOrEdit = canSubmitOrEdit,
+        isAttachmentImportInProgress = pendingSelectedAttachmentBatches > 0,
         isLoaded = isLoaded,
         inputState = chatViewModel.question,
         selectedAttachments = selectedAttachments,
@@ -189,7 +195,7 @@ fun ChatScreen(
         onRetry = chatViewModel::retryChat,
         onShowPreviousRevision = chatViewModel::showPreviousAssistantRevision,
         onShowNextRevision = chatViewModel::showNextAssistantRevision,
-        onFileSelected = chatViewModel::addSelectedFile,
+        onFilesSelected = chatViewModel::addSelectedFiles,
         onFileRemoved = chatViewModel::removeSelectedFile,
         onSendButtonClick = chatViewModel::askQuestion,
         onModelOptionSelected = { option ->
@@ -215,8 +221,8 @@ fun ChatScreen(
                 UserMessageEditDialog(
                     initialQuestion = session.message,
                     attachments = session.attachments,
-                    onFileSelected = chatViewModel::addMessageEditFile,
-                    onCopyFailed = chatViewModel::notifyAttachmentCopyFailed,
+                    isAttachmentImportInProgress = pendingMessageEditAttachmentBatches > 0,
+                    onFilesSelected = chatViewModel::addMessageEditFiles,
                     onFileRemoved = chatViewModel::removeMessageEditFile,
                     onDismissRequest = chatViewModel::discardMessageEditDialog,
                     onConfirmRequest = { question ->
@@ -231,8 +237,8 @@ fun ChatScreen(
                 AssistantMessageEditDialog(
                     initialMessage = session.message,
                     attachments = session.attachments,
-                    onFileSelected = chatViewModel::addMessageEditFile,
-                    onCopyFailed = chatViewModel::notifyAttachmentCopyFailed,
+                    isAttachmentImportInProgress = pendingMessageEditAttachmentBatches > 0,
+                    onFilesSelected = chatViewModel::addMessageEditFiles,
                     onFileRemoved = chatViewModel::removeMessageEditFile,
                     onDismissRequest = chatViewModel::discardMessageEditDialog,
                     onConfirmRequest = { message, thoughts ->
@@ -276,6 +282,8 @@ private fun ChatContent(
     enabledPlatformLookup: Map<String, PlatformV2>,
     canUseChat: Boolean,
     isIdle: Boolean,
+    canSubmitOrEdit: Boolean,
+    isAttachmentImportInProgress: Boolean,
     isLoaded: Boolean,
     inputState: TextFieldState,
     selectedAttachments: List<ChatAttachmentDraft>,
@@ -292,7 +300,7 @@ private fun ChatContent(
     onRetry: (Int, Int) -> Unit,
     onShowPreviousRevision: (Int, Int) -> Unit,
     onShowNextRevision: (Int, Int) -> Unit,
-    onFileSelected: (String) -> Unit,
+    onFilesSelected: (List<String>, Int) -> Unit,
     onFileRemoved: (String) -> Unit,
     onSendButtonClick: () -> Unit,
     navigationIcon: ImageVector,
@@ -361,28 +369,35 @@ private fun ChatContent(
         }
     }
     val scope = rememberCoroutineScope()
-    var autoFollowToBottom by remember { mutableStateOf(true) }
+    val currentBottomItemIndex by rememberUpdatedState(bottomItemIndex)
+    val turnKeyRegistry = remember { ChatTurnKeyRegistry() }
+    val turnKeys = remember(groupedMessages.userMessages) {
+        turnKeyRegistry.update(
+            groupedMessages.userMessages.map { message ->
+                ChatTurnIdentity(persistedMessageId = message.id)
+            }
+        )
+    }
+    var scrollIntent by rememberSaveable(stateSaver = chatScrollIntentSaver) {
+        mutableStateOf<ChatScrollIntent>(ChatScrollIntent.FollowingLatest)
+    }
     var programmaticScrollInProgress by remember { mutableStateOf(false) }
     var previousBottomItemIndex by remember { mutableStateOf(bottomItemIndex) }
-    var previousIsIdle by remember { mutableStateOf(isIdle) }
-    var latestManualStreamingAnchor by remember { mutableStateOf<Pair<Int, Int>?>(null) }
-    var pendingPostStreamAnchor by remember { mutableStateOf<Pair<Int, Int>?>(null) }
-    var pendingPostStreamBottomRestore by remember { mutableStateOf(false) }
-    var hasHandledInitialLoad by remember { mutableStateOf(false) }
+    var hasHandledInitialLoad by rememberSaveable { mutableStateOf(false) }
     var isRoundNavigatorOpen by remember { mutableStateOf(false) }
     BackHandler(enabled = isRoundNavigatorOpen) {
         isRoundNavigatorOpen = false
     }
-    val currentBottomItemIndex by rememberUpdatedState(bottomItemIndex)
     val showScrollToBottomButton by remember {
         derivedStateOf {
             listState.canScrollForward &&
-                !autoFollowToBottom &&
+                scrollIntent is ChatScrollIntent.ReadingHistory &&
                 !programmaticScrollInProgress
         }
     }
 
     suspend fun scrollToLatestMessage(animated: Boolean) {
+        scrollIntent = reduceChatScrollIntent(scrollIntent, ChatScrollEvent.FollowLatestRequested)
         programmaticScrollInProgress = true
         try {
             if (animated) {
@@ -390,25 +405,48 @@ private fun ChatContent(
             } else {
                 listState.scrollToItem(currentBottomItemIndex)
             }
-            autoFollowToBottom = true
         } finally {
             programmaticScrollInProgress = false
         }
     }
 
     LaunchedEffect(listState) {
-        snapshotFlow { listState.isScrollInProgress to listState.canScrollForward }
-            .collect { (isScrolling, canScrollForward) ->
-                if (!canScrollForward) {
-                    autoFollowToBottom = true
-                } else if (isScrolling && !programmaticScrollInProgress) {
-                    autoFollowToBottom = false
+        snapshotFlow {
+            val firstVisibleTurn = listState.layoutInfo.visibleItemsInfo
+                .firstOrNull { item -> item.key != CHAT_BOTTOM_KEY }
+            ChatScrollViewport(
+                isScrollInProgress = listState.isScrollInProgress,
+                canScrollForward = listState.canScrollForward,
+                anchor = (firstVisibleTurn?.key as? String)?.let { turnKey ->
+                    ChatScrollAnchor(
+                        turnKey = turnKey,
+                        offset = listState.firstVisibleItemScrollOffset
+                    )
                 }
+            )
+        }.collect { viewport ->
+            if (!programmaticScrollInProgress && viewport.isScrollInProgress) {
+                scrollIntent = reduceChatScrollIntent(
+                    current = scrollIntent,
+                    event = ChatScrollEvent.UserScrolled(
+                        canScrollForward = viewport.canScrollForward,
+                        anchor = viewport.anchor
+                    )
+                )
+            } else if (
+                scrollIntent.shouldRestoreFollowingViewport(
+                    isScrollInProgress = viewport.isScrollInProgress,
+                    canScrollForward = viewport.canScrollForward,
+                    isProgrammaticScrollInProgress = programmaticScrollInProgress
+                )
+            ) {
+                scrollToLatestMessage(animated = false)
             }
+        }
     }
 
     LaunchedEffect(isLoaded) {
-        if (isLoaded && !hasHandledInitialLoad && autoFollowToBottom) {
+        if (isLoaded && !hasHandledInitialLoad && scrollIntent == ChatScrollIntent.FollowingLatest) {
             hasHandledInitialLoad = true
             scrollToLatestMessage(animated = false)
         }
@@ -417,78 +455,48 @@ private fun ChatContent(
     LaunchedEffect(bottomItemIndex) {
         val previousIndex = previousBottomItemIndex
         previousBottomItemIndex = bottomItemIndex
-        if (bottomItemIndex > previousIndex && autoFollowToBottom) {
+        if (bottomItemIndex > previousIndex && scrollIntent == ChatScrollIntent.FollowingLatest) {
             scrollToLatestMessage(animated = false)
         }
     }
 
     LaunchedEffect(latestStreamingContentVersion) {
-        if (!isIdle && autoFollowToBottom) {
+        if (scrollIntent.shouldFollowStreaming(isStreaming = !isIdle)) {
             scrollToLatestMessage(animated = false)
         }
     }
 
-    LaunchedEffect(isIdle, autoFollowToBottom) {
-        if (!isIdle && !autoFollowToBottom) {
-            snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
-                .collect { anchor -> latestManualStreamingAnchor = anchor }
-        } else if (!isIdle) {
-            latestManualStreamingAnchor = null
-        }
-    }
-
     LaunchedEffect(isIdle) {
-        val wasStreaming = !previousIsIdle
-        previousIsIdle = isIdle
-        if (wasStreaming && isIdle) {
-            if (autoFollowToBottom) {
-                pendingPostStreamAnchor = null
-                pendingPostStreamBottomRestore = true
-            } else {
-                pendingPostStreamAnchor =
-                    latestManualStreamingAnchor ?: (listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset)
-                pendingPostStreamBottomRestore = false
-            }
-            latestManualStreamingAnchor = null
-        } else if (!isIdle) {
-            pendingPostStreamAnchor = null
-            pendingPostStreamBottomRestore = false
+        if (isIdle) {
+            scrollIntent = reduceChatScrollIntent(scrollIntent, ChatScrollEvent.StreamCompleted)
         }
     }
 
-    LaunchedEffect(pendingPostStreamAnchor, pendingPostStreamBottomRestore) {
-        val anchor = pendingPostStreamAnchor
-        if (anchor == null && !pendingPostStreamBottomRestore) return@LaunchedEffect
-        val firstVisibleIndex = anchor?.first ?: currentBottomItemIndex
-        val firstVisibleOffset = anchor?.second ?: 0
-        repeat(POST_STREAM_ANCHOR_RESTORE_ATTEMPTS) {
-            delay(POST_STREAM_ANCHOR_RESTORE_INTERVAL_MILLIS)
-            val jumpedBeforeAnchor =
-                listState.firstVisibleItemIndex < firstVisibleIndex ||
-                    (
-                        listState.firstVisibleItemIndex == firstVisibleIndex &&
-                            listState.firstVisibleItemScrollOffset < firstVisibleOffset
-                        )
-            if (jumpedBeforeAnchor && (firstVisibleIndex > 0 || firstVisibleOffset > 0)) {
-                if (pendingPostStreamBottomRestore) {
-                    scrollToLatestMessage(animated = false)
-                } else {
-                    listState.scrollToItem(firstVisibleIndex, firstVisibleOffset)
-                }
-                pendingPostStreamAnchor = null
-                pendingPostStreamBottomRestore = false
-                return@LaunchedEffect
-            }
+    LaunchedEffect(turnKeys) {
+        val readingIntent = scrollIntent as? ChatScrollIntent.ReadingHistory ?: return@LaunchedEffect
+        val anchorIndex = turnKeys.indexOf(readingIntent.anchor.turnKey).takeIf { it >= 0 }
+            ?: return@LaunchedEffect
+        val visibleTurnKey = listState.layoutInfo.visibleItemsInfo
+            .firstOrNull { item -> item.key != CHAT_BOTTOM_KEY }
+            ?.key as? String
+        if (
+            visibleTurnKey == readingIntent.anchor.turnKey &&
+            listState.firstVisibleItemScrollOffset == readingIntent.anchor.offset
+        ) {
+            return@LaunchedEffect
         }
-        pendingPostStreamAnchor = null
-        pendingPostStreamBottomRestore = false
+
+        programmaticScrollInProgress = true
+        try {
+            listState.scrollToItem(anchorIndex, readingIntent.anchor.offset)
+        } finally {
+            programmaticScrollInProgress = false
+        }
     }
 
     val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     LaunchedEffect(imeVisible) {
         if (imeVisible) {
-            autoFollowToBottom = true
-            delay(100)
             scrollToLatestMessage(animated = false)
         }
     }
@@ -501,6 +509,7 @@ private fun ChatContent(
             ) { focusManager.clearFocus() },
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         containerColor = settingsMaterialColors().canvas,
+        contentColor = MaterialTheme.colorScheme.onSurface,
         topBar = {
             ChatTopBar(
                 title = title,
@@ -543,7 +552,7 @@ private fun ChatContent(
 
                     items(
                         count = historicalMessageCount,
-                        key = { index -> chatMessagePairKey(groupedMessages.userMessages[index], index) }
+                        key = { index -> turnKeys[index] }
                     ) { index ->
                         ChatMessagePair(
                             messageIndex = index,
@@ -556,6 +565,7 @@ private fun ChatContent(
                             enabledPlatformLookup = enabledPlatformLookup,
                             canUseChat = canUseChat,
                             isIdle = isIdle,
+                            canSubmitOrEdit = canSubmitOrEdit,
                             isActiveMessage = false,
                             maximumUserChatBubbleWidth = maximumUserChatBubbleWidth,
                             maximumOpponentChatBubbleWidth = maximumOpponentChatBubbleWidth,
@@ -568,7 +578,7 @@ private fun ChatContent(
                             onShowPreviousRevision = onShowPreviousRevision,
                             onShowNextRevision = onShowNextRevision,
                             onStreamingTextDisplayed = {
-                                if (autoFollowToBottom) {
+                                if (scrollIntent.shouldFollowStreaming(isStreaming = !isIdle)) {
                                     scope.launch {
                                         scrollToLatestMessage(animated = false)
                                     }
@@ -578,7 +588,7 @@ private fun ChatContent(
                     }
 
                     if (lastMessageIndex >= 0) {
-                        item(key = chatMessagePairKey(groupedMessages.userMessages[lastMessageIndex], lastMessageIndex)) {
+                        item(key = turnKeys[lastMessageIndex]) {
                             ChatMessagePair(
                                 messageIndex = lastMessageIndex,
                                 message = groupedMessages.userMessages[lastMessageIndex],
@@ -590,6 +600,7 @@ private fun ChatContent(
                                 enabledPlatformLookup = enabledPlatformLookup,
                                 canUseChat = canUseChat,
                                 isIdle = isIdle,
+                                canSubmitOrEdit = canSubmitOrEdit,
                                 isActiveMessage = true,
                                 maximumUserChatBubbleWidth = maximumUserChatBubbleWidth,
                                 maximumOpponentChatBubbleWidth = maximumOpponentChatBubbleWidth,
@@ -602,7 +613,7 @@ private fun ChatContent(
                                 onShowPreviousRevision = onShowPreviousRevision,
                                 onShowNextRevision = onShowNextRevision,
                                 onStreamingTextDisplayed = {
-                                    if (autoFollowToBottom) {
+                                    if (scrollIntent.shouldFollowStreaming(isStreaming = !isIdle)) {
                                         scope.launch {
                                             scrollToLatestMessage(animated = false)
                                         }
@@ -612,7 +623,7 @@ private fun ChatContent(
                         }
                     }
 
-                    item(key = "chat-bottom") {
+                    item(key = CHAT_BOTTOM_KEY) {
                         Spacer(modifier = Modifier.height(1.dp))
                     }
                 }
@@ -626,7 +637,6 @@ private fun ChatContent(
                     ) {
                         ScrollToBottomButton {
                             scope.launch {
-                                autoFollowToBottom = true
                                 scrollToLatestMessage(animated = true)
                             }
                         }
@@ -653,8 +663,13 @@ private fun ChatContent(
                         onDismiss = { isRoundNavigatorOpen = false },
                         onTurnClick = { turnIndex ->
                             isRoundNavigatorOpen = false
+                            val turnKey = turnKeys.getOrNull(turnIndex)
+                            if (turnKey != null) {
+                                scrollIntent = ChatScrollIntent.ReadingHistory(
+                                    ChatScrollAnchor(turnKey = turnKey, offset = 0)
+                                )
+                            }
                             scope.launch {
-                                autoFollowToBottom = false
                                 programmaticScrollInProgress = true
                                 try {
                                     listState.animateScrollToItem(turnIndex)
@@ -670,12 +685,13 @@ private fun ChatContent(
             ChatComposer(
                 inputState = inputState,
                 chatEnabled = canUseChat,
-                sendButtonEnabled = isIdle,
+                sendButtonEnabled = canSubmitOrEdit,
+                isAttachmentImportInProgress = isAttachmentImportInProgress,
                 selectedAttachments = selectedAttachments,
-                onFileSelected = onFileSelected,
+                onFilesSelected = onFilesSelected,
                 onFileRemoved = onFileRemoved
             ) {
-                autoFollowToBottom = true
+                scrollIntent = reduceChatScrollIntent(scrollIntent, ChatScrollEvent.FollowLatestRequested)
                 onSendButtonClick()
                 focusManager.clearFocus()
             }
@@ -695,6 +711,7 @@ private fun ChatMessagePair(
     enabledPlatformLookup: Map<String, PlatformV2>,
     canUseChat: Boolean,
     isIdle: Boolean,
+    canSubmitOrEdit: Boolean,
     isActiveMessage: Boolean,
     maximumUserChatBubbleWidth: Dp,
     maximumOpponentChatBubbleWidth: Dp,
@@ -725,6 +742,18 @@ private fun ChatMessagePair(
     val selectedToolProgressStates = toolProgressStates[ChatViewModel.toolProgressKey(messageIndex, platformIndexState)].orEmpty()
     val isCurrentPlatformLoading =
         loadingStates.getOrElse(platformIndexState) { ChatViewModel.LoadingState.Idle } == ChatViewModel.LoadingState.Loading
+    val isInterruptedInitialRequest = shouldShowInterruptedInitialRequest(
+        initialRequestId = message.linkedMessageId,
+        assistantContent = assistantContent,
+        assistantThoughts = assistantThoughts,
+        hasAttachments = selectedAssistantMessage?.attachments?.isNotEmpty() == true,
+        isLoading = isCurrentPlatformLoading
+    )
+    val displayedAssistantContent = if (isInterruptedInitialRequest) {
+        stringResource(R.string.initial_request_interrupted)
+    } else {
+        assistantContent
+    }
     var isDropDownMenuExpanded by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -743,7 +772,7 @@ private fun ChatMessagePair(
                 )
                 ChatBubbleDropdownMenu(
                     isChatBubbleDropdownMenuExpanded = isDropDownMenuExpanded,
-                    canEdit = canUseChat && isIdle,
+                    canEdit = canUseChat && canSubmitOrEdit,
                     onDismissRequest = { isDropDownMenuExpanded = false },
                     onEditItemClick = { onEditQuestion(message) },
                     onCopyItemClick = { onCopyText(message.content) }
@@ -792,18 +821,19 @@ private fun ChatMessagePair(
                 modifier = Modifier
                     .fillMaxWidth()
                     .widthIn(max = maximumOpponentChatBubbleWidth),
-                canEdit = canUseChat && isIdle,
+                canEdit = canUseChat && canSubmitOrEdit && !isInterruptedInitialRequest,
                 canRetry = canUseChat && isActiveMessage && !isCurrentPlatformLoading,
                 isLoading = isActiveMessage && isCurrentPlatformLoading,
                 showPendingIndicator = selectedToolProgressStates.none { state ->
                     state.status == ChatViewModel.ToolProgressStatus.Running
                 },
-                text = assistantContent,
+                isError = isInterruptedInitialRequest,
+                text = displayedAssistantContent,
                 thoughts = assistantThoughts,
                 attachments = selectedAssistantMessage?.attachments.orEmpty().map { it.filePathForDisplay },
                 sourceMetadata = selectedAssistantMessage?.sourceMetadata.orEmpty(),
                 contentIdentity = "$messageIndex:$selectedPlatformUid",
-                revisionIndexLabel = selectedAssistantMessage?.let { assistantMessage ->
+                revisionIndexLabel = selectedAssistantMessage?.takeUnless { isInterruptedInitialRequest }?.let { assistantMessage ->
                     val totalRevisions = assistantMessage.revisions.size + 1
                     if (assistantMessage.activeRevisionIndex == ACTIVE_REVISION_LATEST) {
                         stringResource(
@@ -821,8 +851,8 @@ private fun ChatMessagePair(
                 },
                 canShowPreviousRevision = canShowPreviousRevision,
                 canShowNextRevision = canShowNextRevision,
-                onCopyClick = { onCopyText(assistantContent) },
-                onSelectClick = { onSelectText(assistantContent) },
+                onCopyClick = { onCopyText(displayedAssistantContent) },
+                onSelectClick = { onSelectText(displayedAssistantContent) },
                 onRetryClick = { onRetry(messageIndex, platformIndexState) },
                 onEditClick = { onEditAssistant(messageIndex, platformIndexState) },
                 onShowPreviousRevision = { onShowPreviousRevision(messageIndex, platformIndexState) },
@@ -840,17 +870,13 @@ private fun ChatMessagePair(
     }
 }
 
-private fun chatMessagePairKey(message: MessageV2, index: Int): String {
-    // New chats sync Room ids and can refresh message fields after streaming,
-    // so the list key must not depend on persistence-managed values.
-    val attachmentSignature = message.attachments.fold(0) { signature, attachment ->
-        31 * signature + attachment.filePathForDisplay.hashCode()
-    }
-    return "message-$index-$attachmentSignature"
-}
+private const val CHAT_BOTTOM_KEY = "chat-bottom"
 
-private const val POST_STREAM_ANCHOR_RESTORE_ATTEMPTS = 40
-private const val POST_STREAM_ANCHOR_RESTORE_INTERVAL_MILLIS = 50L
+private data class ChatScrollViewport(
+    val isScrollInProgress: Boolean,
+    val canScrollForward: Boolean,
+    val anchor: ChatScrollAnchor?
+)
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)

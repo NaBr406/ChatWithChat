@@ -14,6 +14,7 @@ import cn.nabr.chatwithchat.data.model.defaultReasoningMode
 import cn.nabr.chatwithchat.data.repository.ChatRepository
 import cn.nabr.chatwithchat.data.repository.SettingRepository
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -25,6 +26,26 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+sealed interface HomeModelsState {
+    data object Loading : HomeModelsState
+
+    data class Ready(
+        val models: List<AvailableChatModel>,
+        val hasConfiguredPlatforms: Boolean = models.isNotEmpty(),
+        val loadFailed: Boolean = false
+    ) : HomeModelsState
+}
+
+internal fun HomeModelsState.modelsOrEmpty(): List<AvailableChatModel> = when (this) {
+    HomeModelsState.Loading -> emptyList()
+    is HomeModelsState.Ready -> models
+}
+
+internal fun HomeModelsState.canStartChat(): Boolean = this is HomeModelsState.Ready && models.isNotEmpty()
+
+internal fun HomeModelsState.shouldShowAddProvider(): Boolean =
+    this is HomeModelsState.Ready && models.isEmpty() && !hasConfiguredPlatforms && !loadFailed
+
 @OptIn(FlowPreview::class)
 @HiltViewModel
 class HomeViewModel @Inject constructor(
@@ -34,13 +55,15 @@ class HomeViewModel @Inject constructor(
 
     companion object {
         private const val SEARCH_DEBOUNCE_MS = 300L
+        private const val TAG = "HomeViewModel"
     }
 
     data class ChatListState(
         val chats: List<ChatRoomV2> = listOf(),
         val isSelectionMode: Boolean = false,
         val isSearchMode: Boolean = false,
-        val selectedChats: List<Boolean> = listOf()
+        val selectedChats: List<Boolean> = listOf(),
+        val showDeleteWarningDialog: Boolean = false
     )
 
     private val _chatListState = MutableStateFlow(ChatListState())
@@ -52,14 +75,11 @@ class HomeViewModel @Inject constructor(
     private val _lastSelectedModel = MutableStateFlow<LastSelectedModel?>(null)
     val lastSelectedModel = _lastSelectedModel.asStateFlow()
 
-    private val _availableChatModels = MutableStateFlow(listOf<AvailableChatModel>())
-    val availableChatModels = _availableChatModels.asStateFlow()
+    private val _homeModelsState = MutableStateFlow<HomeModelsState>(HomeModelsState.Loading)
+    val homeModelsState: StateFlow<HomeModelsState> = _homeModelsState.asStateFlow()
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery = _searchQuery.asStateFlow()
-
-    private val _showDeleteWarningDialog = MutableStateFlow(false)
-    val showDeleteWarningDialog: StateFlow<Boolean> = _showDeleteWarningDialog.asStateFlow()
 
     init {
         // Set up debounced search
@@ -87,11 +107,11 @@ class HomeViewModel @Inject constructor(
     }
 
     fun openDeleteWarningDialog() {
-        _showDeleteWarningDialog.update { true }
+        _chatListState.update { it.copy(showDeleteWarningDialog = true) }
     }
 
     fun closeDeleteWarningDialog() {
-        _showDeleteWarningDialog.update { false }
+        _chatListState.update { it.copy(showDeleteWarningDialog = false) }
     }
 
     fun deleteSelectedChats() {
@@ -120,12 +140,11 @@ class HomeViewModel @Inject constructor(
     }
 
     fun disableSelectionMode() {
-        _chatListState.update {
-            it.copy(
-                selectedChats = List(it.chats.size) { false },
-                isSelectionMode = false
-            )
-        }
+        resetDrawerSelection()
+    }
+
+    fun resetDrawerSelection() {
+        _chatListState.update(::resetDrawerSelectionState)
     }
 
     fun disableSearchMode() {
@@ -161,18 +180,32 @@ class HomeViewModel @Inject constructor(
 
     fun fetchPlatformStatus() {
         viewModelScope.launch {
-            val platforms = settingRepository.fetchPlatformV2s()
-            val availableModels = settingRepository.fetchEnabledChatModels()
-            val lastSelectedModel = settingRepository.fetchLastSelectedModel()
-            _platformState.update { platforms }
-            _availableChatModels.update { availableModels }
-            _lastSelectedModel.update {
-                selectUsableLastSelectedModel(
+            var platforms = emptyList<PlatformV2>()
+            var availableModels = emptyList<AvailableChatModel>()
+            var selectedModel: LastSelectedModel? = null
+            var loadFailed = false
+            try {
+                platforms = settingRepository.fetchPlatformV2s()
+                availableModels = settingRepository.fetchEnabledChatModels()
+                val lastSelectedModel = settingRepository.fetchLastSelectedModel()
+                selectedModel = selectUsableLastSelectedModel(
                     availableModels = availableModels,
                     lastSelectedModel = lastSelectedModel,
                     defaultModel = settingRepository.resolveDefaultChatModel()
                 )
+            } catch (exception: CancellationException) {
+                throw exception
+            } catch (exception: Exception) {
+                loadFailed = true
+                Log.e(TAG, "Failed to load home platform models", exception)
             }
+            _platformState.value = platforms
+            _lastSelectedModel.value = selectedModel
+            _homeModelsState.value = HomeModelsState.Ready(
+                models = availableModels,
+                hasConfiguredPlatforms = platforms.isNotEmpty() || availableModels.isNotEmpty(),
+                loadFailed = loadFailed
+            )
         }
     }
 
@@ -180,7 +213,7 @@ class HomeViewModel @Inject constructor(
         val sanitizedModel = model.trim()
         if (platformUid.isBlank() || sanitizedModel.isBlank()) return
 
-        val selectedModel = _availableChatModels.value.firstOrNull { availableModel ->
+        val selectedModel = _homeModelsState.value.modelsOrEmpty().firstOrNull { availableModel ->
             availableModel.platformUid == platformUid && availableModel.modelId == sanitizedModel
         }
         val nextReasoningMode = selectedModel?.let { availableModel ->
@@ -203,7 +236,7 @@ class HomeViewModel @Inject constructor(
     }
 
     fun updateLastSelectedReasoningMode(reasoningMode: ReasoningMode) {
-        val selectedModel = _lastSelectedModel.value ?: _availableChatModels.value.firstOrNull()?.let { availableModel ->
+        val selectedModel = _lastSelectedModel.value ?: _homeModelsState.value.modelsOrEmpty().firstOrNull()?.let { availableModel ->
             LastSelectedModel(
                 platformUid = availableModel.platformUid,
                 model = availableModel.modelId,
@@ -266,3 +299,14 @@ class HomeViewModel @Inject constructor(
         }
     }
 }
+
+internal fun resetDrawerSelectionState(state: HomeViewModel.ChatListState): HomeViewModel.ChatListState = state.copy(
+    selectedChats = List(state.chats.size) { false },
+    isSelectionMode = false,
+    showDeleteWarningDialog = false
+)
+
+internal fun shouldResetSelectionAfterDrawerTransition(
+    wasOpenOrOpening: Boolean,
+    isFullyClosed: Boolean
+): Boolean = wasOpenOrOpening && isFullyClosed

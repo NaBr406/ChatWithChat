@@ -10,6 +10,7 @@ data class ChatAttachmentDraft(
     val mimeType: String = "",
     val status: Status = Status.Preparing,
     val cleanupOnDiscard: Boolean = true,
+    val cleanupPreparedOnDiscard: Boolean = false,
     val notice: String? = null,
     val errorMessage: String? = null
 ) {
@@ -29,7 +30,8 @@ data class ChatAttachmentDraft(
             attachment = attachment,
             mimeType = attachment.mimeType,
             status = Status.Ready,
-            cleanupOnDiscard = false
+            cleanupOnDiscard = false,
+            cleanupPreparedOnDiscard = false
         )
     }
 }

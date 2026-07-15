@@ -1,5 +1,6 @@
 package cn.nabr.chatwithchat.data.tool
 
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -25,6 +26,20 @@ class JsonToolCallParser {
             )
             else -> throw IllegalArgumentException("tool_response_type_unknown")
         }
+    }
+
+    fun hasToolCallIntent(rawText: String): Boolean {
+        val parsedPayload = rawText.extractJsonObject()
+            ?.let { jsonText ->
+                runCatching {
+                    toolProtocolJson.parseToJsonElement(jsonText)
+                        .jsonObject
+                }.getOrNull()
+            }
+        if (parsedPayload != null) {
+            return (parsedPayload["tool_calls"] as? JsonArray)?.isNotEmpty() == true
+        }
+        return NON_EMPTY_TOOL_CALLS_PATTERN.containsMatchIn(rawText)
     }
 
     private fun String.extractJsonObject(): String? {
@@ -54,6 +69,7 @@ class JsonToolCallParser {
     private companion object {
         private const val FINAL_ANSWER_TYPE = "final_answer"
         private const val TOOL_CALLS_TYPE = "tool_calls"
+        private val NON_EMPTY_TOOL_CALLS_PATTERN = Regex("""(?<!\\)"tool_calls"\s*:\s*\[\s*[^\]\s]""")
     }
 }
 

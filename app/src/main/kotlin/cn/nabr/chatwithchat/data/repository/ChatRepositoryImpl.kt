@@ -1,11 +1,13 @@
 package cn.nabr.chatwithchat.data.repository
 
 import android.content.Context
+import androidx.room.withTransaction
 import dagger.hilt.android.qualifiers.ApplicationContext
 import cn.nabr.chatwithchat.data.context.ContextBuilder
 import cn.nabr.chatwithchat.data.context.ConversationContext
 import cn.nabr.chatwithchat.data.context.ConversationTurn
 import cn.nabr.chatwithchat.data.context.ProviderContextPolicy
+import cn.nabr.chatwithchat.data.database.ChatDatabaseV2
 import cn.nabr.chatwithchat.data.database.dao.ChatPlatformModelV2Dao
 import cn.nabr.chatwithchat.data.database.dao.ChatRoomDao
 import cn.nabr.chatwithchat.data.database.dao.ChatRoomV2Dao
@@ -92,7 +94,6 @@ import cn.nabr.chatwithchat.data.network.NetworkClient
 import cn.nabr.chatwithchat.data.network.OpenAIAPI
 import cn.nabr.chatwithchat.data.token.TokenUsageEstimator
 import cn.nabr.chatwithchat.data.token.TokenUsageRecord
-import cn.nabr.chatwithchat.data.token.sumTokenUsage
 import cn.nabr.chatwithchat.data.tool.ToolArgumentStreamLimiter
 import cn.nabr.chatwithchat.data.tool.ToolCall
 import cn.nabr.chatwithchat.data.tool.ToolCallingMode
@@ -122,10 +123,12 @@ import cn.nabr.chatwithchat.util.AttachmentPayloadCache
 import cn.nabr.chatwithchat.util.FileUtils
 import cn.nabr.chatwithchat.util.isAssistantErrorMessage
 import cn.nabr.chatwithchat.util.stripAssistantErrorNote
+import java.io.IOException
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -162,7 +165,8 @@ class ChatRepositoryImpl @Inject constructor(
     private val openAICompatibleJsonToolAdapter: ToolCallingAdapter = OpenAICompatibleJsonToolAdapter(),
     private val anthropicToolAdapter: ToolCallingAdapter = AnthropicToolAdapter(),
     private val googleToolAdapter: ToolCallingAdapter = GoogleToolAdapter(),
-    private val memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null
+    private val memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null,
+    private val chatDatabaseV2: ChatDatabaseV2? = null
 ) : ChatRepository {
 
     private fun isImageFile(extension: String): Boolean = extension in setOf("jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff", "svg")
@@ -298,28 +302,69 @@ class ChatRepositoryImpl @Inject constructor(
         platform: PlatformV2,
         memoryPrompt: String?,
         reasoningMode: ReasoningMode,
-        extraPrompt: String? = null
+        extraPrompt: String? = null,
+        emitEstimatedUsageWithoutOutput: Boolean = false
     ): Flow<ApiState> = when (platform.compatibleType) {
         ClientType.OPENAI -> {
             // Use Responses API for OpenAI (supports reasoning/thinking)
-            completeChatWithOpenAIResponses(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode, extraPrompt)
+            completeChatWithOpenAIResponses(
+                userMessages,
+                assistantMessages,
+                platform,
+                memoryPrompt,
+                reasoningMode,
+                extraPrompt,
+                emitEstimatedUsageWithoutOutput
+            )
         }
 
         ClientType.GROQ -> {
-            completeChatWithGroq(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode, extraPrompt)
+            completeChatWithGroq(
+                userMessages,
+                assistantMessages,
+                platform,
+                memoryPrompt,
+                reasoningMode,
+                extraPrompt,
+                emitEstimatedUsageWithoutOutput
+            )
         }
 
         ClientType.OLLAMA, ClientType.OPENROUTER, ClientType.CUSTOM -> {
             // Use Chat Completions API for OpenAI-compatible services
-            completeChatWithOpenAIChatCompletions(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode, extraPrompt)
+            completeChatWithOpenAIChatCompletions(
+                userMessages,
+                assistantMessages,
+                platform,
+                memoryPrompt,
+                reasoningMode,
+                extraPrompt,
+                emitEstimatedUsageWithoutOutput
+            )
         }
 
         ClientType.ANTHROPIC -> {
-            completeChatWithAnthropic(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode, extraPrompt)
+            completeChatWithAnthropic(
+                userMessages,
+                assistantMessages,
+                platform,
+                memoryPrompt,
+                reasoningMode,
+                extraPrompt,
+                emitEstimatedUsageWithoutOutput
+            )
         }
 
         ClientType.GOOGLE -> {
-            completeChatWithGoogle(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode, extraPrompt)
+            completeChatWithGoogle(
+                userMessages,
+                assistantMessages,
+                platform,
+                memoryPrompt,
+                reasoningMode,
+                extraPrompt,
+                emitEstimatedUsageWithoutOutput
+            )
         }
     }
 
@@ -332,22 +377,23 @@ class ChatRepositoryImpl @Inject constructor(
         activeToolDefinitions: List<ToolDefinition>
     ): Flow<ApiState> = flow {
         emit(ApiState.Loading)
-        val searchDecisionPrompt = executeSearchDecisionIfNeeded(
+        val searchDecisionExecution = executeSearchDecisionIfNeeded(
             userMessages = userMessages,
             assistantMessages = assistantMessages,
             platform = platform,
             activeToolDefinitions = activeToolDefinitions
         )
-        if (searchDecisionPrompt != null) {
-            emitProviderStatesSkippingLoading(
+        if (searchDecisionExecution != null) {
+            emitSearchDecisionFinalStates(
                 completeChatByProvider(
                     userMessages = userMessages,
                     assistantMessages = assistantMessages,
                     platform = platform,
                     memoryPrompt = memoryPrompt,
                     reasoningMode = reasoningMode,
-                    extraPrompt = searchDecisionPrompt
-                )
+                    extraPrompt = searchDecisionExecution.finalAnswerPrompt
+                ),
+                searchDecisionExecution.usage
             )
             return@flow
         }
@@ -367,11 +413,12 @@ class ChatRepositoryImpl @Inject constructor(
                         platform = platform,
                         memoryPrompt = memoryPrompt,
                         reasoningMode = reasoningMode,
-                        extraPrompt = toolPrompt
+                        extraPrompt = toolPrompt,
+                        emitEstimatedUsageWithoutOutput = true
                     ),
                     maxChars = config.maxToolProtocolResponseChars()
                 ) { usage ->
-                    toolUsageRecords += usage.asToolRelated()
+                    toolUsageRecords += usage
                 }
             }
         )
@@ -381,12 +428,7 @@ class ChatRepositoryImpl @Inject constructor(
                 loopResult.content.takeIf { it.isNotBlank() }?.let { content ->
                     emit(ApiState.Success(content))
                 }
-                aggregateToolUsage(
-                    currentAnswerUsage = toolUsageRecords.lastOrNull(),
-                    toolUsages = toolUsageRecords,
-                    platform = platform,
-                    label = "工具请求合计"
-                )?.let { usage -> emit(ApiState.UsageUpdated(usage)) }
+                toolUsageRecords.lastOrNull()?.let { usage -> emit(ApiState.UsageUpdated(usage)) }
                 emit(ApiState.Done)
             }
             is ToolLoopResult.ToolResults -> {
@@ -396,6 +438,7 @@ class ChatRepositoryImpl @Inject constructor(
                         emit(ApiState.SourcesUpdated(sources))
                     }
                 var finalAnswerUsage: TokenUsageRecord? = null
+                var hasVisibleFinalAnswer = false
                 var isDone = false
                 completeChatByProvider(
                     userMessages = userMessages,
@@ -403,24 +446,26 @@ class ChatRepositoryImpl @Inject constructor(
                     platform = platform,
                     memoryPrompt = memoryPrompt,
                     reasoningMode = reasoningMode,
-                    extraPrompt = loopResult.finalAnswerPrompt
+                    extraPrompt = loopResult.finalAnswerPrompt,
+                    emitEstimatedUsageWithoutOutput = true
                 ).collect { state ->
                     when (state) {
                         is ApiState.Loading -> {}
                         is ApiState.UsageUpdated -> {
-                            val relatedUsage = state.usage.asToolRelated()
-                            finalAnswerUsage = relatedUsage
-                            toolUsageRecords += relatedUsage
+                            finalAnswerUsage = state.usage
+                            toolUsageRecords += state.usage
+                        }
+                        is ApiState.Success -> {
+                            hasVisibleFinalAnswer = hasVisibleFinalAnswer || state.textChunk.isNotBlank()
+                            emit(state)
                         }
                         ApiState.Done -> isDone = true
                         else -> emit(state)
                     }
                 }
                 aggregateToolUsage(
-                    currentAnswerUsage = finalAnswerUsage,
-                    toolUsages = toolUsageRecords,
-                    platform = platform,
-                    label = "工具请求合计"
+                    currentAnswerUsage = finalAnswerUsage.takeIf { hasVisibleFinalAnswer },
+                    toolUsages = toolUsageRecords
                 )?.let { usage -> emit(ApiState.UsageUpdated(usage)) }
                 if (isDone) emit(ApiState.Done)
             }
@@ -428,7 +473,24 @@ class ChatRepositoryImpl @Inject constructor(
                 val limitErrorCode = loopResult.message.toolLimitErrorCodeOrNull()
                 if (limitErrorCode != null) {
                     emit(ApiState.Error(limitErrorCode))
+                    if (loopResult.hadToolInteraction) {
+                        aggregateToolUsage(currentAnswerUsage = null, toolUsages = toolUsageRecords)?.let { usage ->
+                            emit(ApiState.UsageUpdated(usage))
+                        }
+                    }
                     emit(ApiState.Done)
+                } else if (loopResult.hadToolInteraction) {
+                    emitToolAggregatedProviderStates(
+                        states = completeChatByProvider(
+                            userMessages = userMessages,
+                            assistantMessages = assistantMessages,
+                            platform = platform,
+                            memoryPrompt = memoryPrompt,
+                            reasoningMode = reasoningMode,
+                            emitEstimatedUsageWithoutOutput = true
+                        ),
+                        initialToolUsages = toolUsageRecords
+                    )
                 } else {
                     emitProviderStatesSkippingLoading(
                         completeChatByProvider(
@@ -443,6 +505,7 @@ class ChatRepositoryImpl @Inject constructor(
             }
         }
     }.catch { e ->
+        if (e is CancellationException) throw e
         emit(ApiState.Error(e.message ?: "鏈煡閿欒"))
         emit(ApiState.Done)
     }
@@ -462,23 +525,23 @@ class ChatRepositoryImpl @Inject constructor(
         assistantMessages: List<List<MessageV2>>,
         platform: PlatformV2,
         activeToolDefinitions: List<ToolDefinition>
-    ): String? {
+    ): SearchDecisionExecution? {
         if (activeToolDefinitions.none { definition -> definition.name == ToolDefinition.WebSearch.name }) {
             return null
         }
 
-        val decision = runCatching {
-            searchDecisionService?.decide(
+        val outcome = runCatching {
+            searchDecisionService?.decideWithUsage(
                 platform = platform,
                 latestUserMessage = userMessages.lastOrNull()?.content.orEmpty(),
                 recentContext = searchDecisionRecentContext(userMessages, assistantMessages, platform),
                 runtimeContext = currentRuntimeContextPrompt()
             )
         }.getOrNull()
-            ?.takeIf { it.shouldSearch }
+            ?.takeIf { it.decision.shouldSearch }
             ?: return null
 
-        val calls = decision.toWebSearchToolCalls()
+        val calls = outcome.decision.toWebSearchToolCalls()
         if (calls.isEmpty()) return null
 
         val results = toolLoopOrchestrator.executeToolCalls(
@@ -491,11 +554,47 @@ class ChatRepositoryImpl @Inject constructor(
                 emit(ApiState.SourcesUpdated(sources))
             }
 
-        return openAICompatibleJsonToolAdapter.buildFinalAnswerPrompt(
+        val finalAnswerPrompt = openAICompatibleJsonToolAdapter.buildFinalAnswerPrompt(
             results = results,
             draftFinalAnswer = null,
             config = toolLoopOrchestrator.configuration
-        )
+        ) ?: return null
+        val usage = outcome.usage ?: return null
+        return SearchDecisionExecution(finalAnswerPrompt = finalAnswerPrompt, usage = usage)
+    }
+
+    private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.emitSearchDecisionFinalStates(
+        states: Flow<ApiState>,
+        decisionUsage: TokenUsageRecord
+    ) = emitToolAggregatedProviderStates(states, listOf(decisionUsage))
+
+    private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.emitToolAggregatedProviderStates(
+        states: Flow<ApiState>,
+        initialToolUsages: List<TokenUsageRecord>
+    ) {
+        val toolUsages = initialToolUsages.toMutableList()
+        var finalAnswerUsage: TokenUsageRecord? = null
+        var hasVisibleFinalAnswer = false
+        var isDone = false
+        states.collect { state ->
+            when (state) {
+                is ApiState.Loading -> {}
+                is ApiState.UsageUpdated -> {
+                    finalAnswerUsage = state.usage
+                    toolUsages += state.usage
+                }
+                is ApiState.Success -> {
+                    hasVisibleFinalAnswer = hasVisibleFinalAnswer || state.textChunk.isNotBlank()
+                    emit(state)
+                }
+                ApiState.Done -> isDone = true
+                else -> emit(state)
+            }
+        }
+        aggregateToolUsage(finalAnswerUsage.takeIf { hasVisibleFinalAnswer }, toolUsages)?.let { usage ->
+            emit(ApiState.UsageUpdated(usage))
+        }
+        if (isDone) emit(ApiState.Done)
     }
 
     private fun searchDecisionRecentContext(
@@ -595,25 +694,27 @@ class ChatRepositoryImpl @Inject constructor(
         val continuationItems = mutableListOf<ResponseInputItem>()
         val allResults = mutableListOf<ToolResult>()
         val toolUsageRecords = mutableListOf<TokenUsageRecord>()
+        var hasToolInteraction = false
         val toolExecutionSession = toolLoopOrchestrator.createExecutionSession()
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)
 
-        val searchDecisionPrompt = executeSearchDecisionIfNeeded(
+        val searchDecisionExecution = executeSearchDecisionIfNeeded(
             userMessages = userMessages,
             assistantMessages = assistantMessages,
             platform = platform,
             activeToolDefinitions = activeToolDefinitions
         )
-        if (searchDecisionPrompt != null) {
-            emitProviderStatesSkippingLoading(
+        if (searchDecisionExecution != null) {
+            emitSearchDecisionFinalStates(
                 completeChatWithOpenAIResponses(
                     userMessages = userMessages,
                     assistantMessages = assistantMessages,
                     platform = platform,
                     memoryPrompt = memoryPrompt,
                     reasoningMode = reasoningMode,
-                    extraPrompt = searchDecisionPrompt
-                )
+                    extraPrompt = searchDecisionExecution.finalAnswerPrompt
+                ),
+                searchDecisionExecution.usage
             )
             return@flow
         }
@@ -630,29 +731,39 @@ class ChatRepositoryImpl @Inject constructor(
                 label = "工具请求 ${roundIndex + 1}",
                 config = config
             )
+            round.usage?.let { toolUsageRecords += it }
+            hasToolInteraction = hasToolInteraction || openAIResponsesToolAdapter.hasToolCallIntent(round.events)
             if (round.errorMessage != null) {
-                if (allResults.isEmpty()) {
+                if (!hasToolInteraction) {
                     emitProviderStatesSkippingLoading(
                         completeChatWithOpenAIResponses(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
                     )
                 } else {
                     emit(ApiState.Error(round.errorMessage))
+                    aggregateToolUsage(currentAnswerUsage = null, toolUsages = toolUsageRecords)?.let { usage ->
+                        emit(ApiState.UsageUpdated(usage))
+                    }
                     emit(ApiState.Done)
                 }
                 return@flow
             }
-            round.usage?.let { toolUsageRecords += it }
 
             val calls = toolLoopOrchestrator.boundToolCalls(
                 openAIResponsesToolAdapter.toolCallsFromEvents(round.events, config)
             )
             if (calls.isEmpty()) {
-                aggregateToolUsage(round.usage, toolUsageRecords, platform, "工具请求合计")?.let { usage ->
+                val usage = if (hasToolInteraction) {
+                    aggregateToolUsage(round.usage, toolUsageRecords)
+                } else {
+                    round.usage
+                }
+                usage?.let { usage ->
                     emit(ApiState.UsageUpdated(usage))
                 }
                 emit(ApiState.Done)
                 return@flow
             }
+            hasToolInteraction = true
 
             val results = toolLoopOrchestrator.executeBoundedToolCalls(
                 calls = calls,
@@ -691,11 +802,12 @@ class ChatRepositoryImpl @Inject constructor(
         finalRound.errorMessage?.let { message ->
             emit(ApiState.Error(message))
         }
-        aggregateToolUsage(finalRound.usage, toolUsageRecords, platform, "工具请求合计")?.let { usage ->
+        aggregateToolUsage(finalRound.usage, toolUsageRecords)?.let { usage ->
             emit(ApiState.UsageUpdated(usage))
         }
         emit(ApiState.Done)
     }.catch { e ->
+        if (e is CancellationException) throw e
         emit(ApiState.Error(e.message ?: "鏈煡閿欒"))
         emit(ApiState.Done)
     }
@@ -716,60 +828,63 @@ class ChatRepositoryImpl @Inject constructor(
         var emittedOutputTextDelta = false
         val outputText = StringBuilder()
 
-        openAIAPI.streamResponses(request, timeoutSeconds).collect { event ->
-            when (event) {
-                is FunctionCallArgumentsDeltaEvent -> argumentLimiter.append(event.outputIndex, event.delta)
-                is FunctionCallArgumentsDoneEvent -> argumentLimiter.checkComplete(event.outputIndex, event.arguments)
-                is OutputItemDoneEvent -> if (event.item.type == OPENAI_FUNCTION_CALL_TYPE) {
-                    argumentLimiter.checkComplete(event.outputIndex, event.item.arguments ?: "{}")
-                }
-                else -> {}
-            }
-            events += event
-            when (event) {
-                is ReasoningSummaryTextDeltaEvent -> emit(ApiState.Thinking(event.delta))
-
-                is OutputTextDeltaEvent -> {
-                    emittedOutputTextDelta = true
-                    outputText.append(event.delta)
-                    emit(ApiState.Success(event.delta))
-                }
-
-                is OutputTextDoneEvent -> {
-                    if (!emittedOutputTextDelta && event.text.isNotBlank()) {
-                        emittedOutputTextDelta = true
-                        outputText.append(event.text)
-                        emit(ApiState.Success(event.text))
+        try {
+            openAIAPI.streamResponses(request, timeoutSeconds).collect { event ->
+                events += event
+                when (event) {
+                    is FunctionCallArgumentsDeltaEvent -> argumentLimiter.append(event.outputIndex, event.delta)
+                    is FunctionCallArgumentsDoneEvent -> argumentLimiter.checkComplete(event.outputIndex, event.arguments)
+                    is OutputItemDoneEvent -> if (event.item.type == OPENAI_FUNCTION_CALL_TYPE) {
+                        argumentLimiter.checkComplete(event.outputIndex, event.item.arguments ?: "{}")
                     }
+                    else -> {}
                 }
+                when (event) {
+                    is ReasoningSummaryTextDeltaEvent -> emit(ApiState.Thinking(event.delta))
 
-                is ResponseFailedEvent -> {
-                    errorMessage = event.response.error?.message ?: event.response.status ?: "鍝嶅簲澶辫触"
+                    is OutputTextDeltaEvent -> {
+                        emittedOutputTextDelta = true
+                        outputText.append(event.delta)
+                        emit(ApiState.Success(event.delta))
+                    }
+
+                    is OutputTextDoneEvent -> {
+                        if (!emittedOutputTextDelta && event.text.isNotBlank()) {
+                            emittedOutputTextDelta = true
+                            outputText.append(event.text)
+                            emit(ApiState.Success(event.text))
+                        }
+                    }
+
+                    is ResponseFailedEvent -> {
+                        errorMessage = event.response.error?.message ?: event.response.status ?: "鍝嶅簲澶辫触"
+                    }
+
+                    is ResponseErrorEvent -> {
+                        errorMessage = event.message
+                    }
+
+                    else -> {}
                 }
-
-                is ResponseErrorEvent -> {
-                    errorMessage = event.message
-                }
-
-                else -> {}
             }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: IllegalArgumentException) {
+            errorMessage = error.message?.toolLimitErrorCodeOrNull() ?: throw error
+        } catch (error: IOException) {
+            errorMessage = error.message ?: "provider_stream_failed"
         }
 
         return OpenAIResponsesNativeRound(
             events = events,
             errorMessage = errorMessage,
-            usage = if (errorMessage == null) {
-                openAIResponsesUsageFromEvents(
-                    events = events,
-                    request = request,
-                    outputText = outputText.toString().ifBlank { events.joinToString(separator = "\n") },
-                    platform = platform,
-                    label = label,
-                    isToolRelated = true
-                )
-            } else {
-                null
-            }
+            usage = openAIResponsesUsageFromEvents(
+                events = events,
+                request = request,
+                outputText = outputText.toString().ifBlank { events.joinToString(separator = "\n") },
+                platform = platform,
+                label = label
+            )
         )
     }
 
@@ -785,22 +900,23 @@ class ChatRepositoryImpl @Inject constructor(
         openAIAPI.setToken(platform.token)
         openAIAPI.setAPIUrl(platform.apiUrl)
 
-        val searchDecisionPrompt = executeSearchDecisionIfNeeded(
+        val searchDecisionExecution = executeSearchDecisionIfNeeded(
             userMessages = userMessages,
             assistantMessages = assistantMessages,
             platform = platform,
             activeToolDefinitions = activeToolDefinitions
         )
-        if (searchDecisionPrompt != null) {
-            emitProviderStatesSkippingLoading(
+        if (searchDecisionExecution != null) {
+            emitSearchDecisionFinalStates(
                 completeChatWithOpenAIChatCompletions(
                     userMessages = userMessages,
                     assistantMessages = assistantMessages,
                     platform = platform,
                     memoryPrompt = memoryPrompt,
                     reasoningMode = reasoningMode,
-                    extraPrompt = searchDecisionPrompt
-                )
+                    extraPrompt = searchDecisionExecution.finalAnswerPrompt
+                ),
+                searchDecisionExecution.usage
             )
             return@flow
         }
@@ -833,6 +949,7 @@ class ChatRepositoryImpl @Inject constructor(
         val continuationMessages = mutableListOf<ChatMessage>()
         val allResults = mutableListOf<ToolResult>()
         val toolUsageRecords = mutableListOf<TokenUsageRecord>()
+        var hasToolInteraction = false
         val toolExecutionSession = toolLoopOrchestrator.createExecutionSession()
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)
 
@@ -848,29 +965,39 @@ class ChatRepositoryImpl @Inject constructor(
                 label = "工具请求 ${roundIndex + 1}",
                 config = config
             )
+            round.usage?.let { toolUsageRecords += it }
+            hasToolInteraction = hasToolInteraction || openAIChatCompletionsToolAdapter.hasToolCallIntent(round.chunks)
             if (round.errorMessage != null) {
-                if (allResults.isEmpty()) {
+                if (!hasToolInteraction) {
                     emitProviderStatesSkippingLoading(
                         completeChatWithOpenAIChatCompletions(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
                     )
                 } else {
                     emit(ApiState.Error(round.errorMessage))
+                    aggregateToolUsage(currentAnswerUsage = null, toolUsages = toolUsageRecords)?.let { usage ->
+                        emit(ApiState.UsageUpdated(usage))
+                    }
                     emit(ApiState.Done)
                 }
                 return@flow
             }
-            round.usage?.let { toolUsageRecords += it }
 
             val calls = toolLoopOrchestrator.boundToolCalls(
                 openAIChatCompletionsToolAdapter.toolCallsFromChunks(round.chunks, config)
             )
             if (calls.isEmpty()) {
-                aggregateToolUsage(round.usage, toolUsageRecords, platform, "工具请求合计")?.let { usage ->
+                val usage = if (hasToolInteraction) {
+                    aggregateToolUsage(round.usage, toolUsageRecords)
+                } else {
+                    round.usage
+                }
+                usage?.let { usage ->
                     emit(ApiState.UsageUpdated(usage))
                 }
                 emit(ApiState.Done)
                 return@flow
             }
+            hasToolInteraction = true
 
             val results = toolLoopOrchestrator.executeBoundedToolCalls(
                 calls = calls,
@@ -909,11 +1036,12 @@ class ChatRepositoryImpl @Inject constructor(
         finalRound.errorMessage?.let { message ->
             emit(ApiState.Error(message))
         }
-        aggregateToolUsage(finalRound.usage, toolUsageRecords, platform, "工具请求合计")?.let { usage ->
+        aggregateToolUsage(finalRound.usage, toolUsageRecords)?.let { usage ->
             emit(ApiState.UsageUpdated(usage))
         }
         emit(ApiState.Done)
     }.catch { e ->
+        if (e is CancellationException) throw e
         emit(ApiState.Error(e.message ?: "鏈煡閿欒"))
         emit(ApiState.Done)
     }
@@ -933,43 +1061,46 @@ class ChatRepositoryImpl @Inject constructor(
         var errorMessage: String? = null
         val outputText = StringBuilder()
 
-        openAIAPI.streamChatCompletion(request, timeoutSeconds).collect { chunk ->
-            chunk.choices.orEmpty().forEach { choice ->
-                choice.delta.toolCalls.orEmpty().forEachIndexed { position, call ->
-                    argumentLimiter.register(choice.index to (call.index ?: position))
-                    call.function?.arguments?.let { fragment ->
-                        argumentLimiter.append(choice.index to (call.index ?: position), fragment)
+        try {
+            openAIAPI.streamChatCompletion(request, timeoutSeconds).collect { chunk ->
+                chunks += chunk
+                chunk.choices.orEmpty().forEach { choice ->
+                    choice.delta.toolCalls.orEmpty().forEachIndexed { position, call ->
+                        argumentLimiter.register(choice.index to (call.index ?: position))
+                        call.function?.arguments?.let { fragment ->
+                            argumentLimiter.append(choice.index to (call.index ?: position), fragment)
+                        }
                     }
                 }
-            }
-            chunks += chunk
-            when {
-                chunk.error != null -> errorMessage = chunk.error.message
+                when {
+                    chunk.error != null -> errorMessage = chunk.error.message
 
-                else -> chunk.choices.orEmpty().forEach { choice ->
-                    choice.delta.content?.let { content ->
-                        outputText.append(content)
-                        emit(ApiState.Success(content))
+                    else -> chunk.choices.orEmpty().forEach { choice ->
+                        choice.delta.content?.let { content ->
+                            outputText.append(content)
+                            emit(ApiState.Success(content))
+                        }
                     }
                 }
             }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: IllegalArgumentException) {
+            errorMessage = error.message?.toolLimitErrorCodeOrNull() ?: throw error
+        } catch (error: IOException) {
+            errorMessage = error.message ?: "provider_stream_failed"
         }
 
         return OpenAIChatCompletionsNativeRound(
             chunks = chunks,
             errorMessage = errorMessage,
-            usage = if (errorMessage == null) {
-                openAIChatUsageFromChunks(
-                    chunks = chunks,
-                    request = request,
-                    outputText = outputText.toString().ifBlank { chunks.joinToString(separator = "\n") },
-                    platform = platform,
-                    label = label,
-                    isToolRelated = true
-                )
-            } else {
-                null
-            }
+            usage = openAIChatUsageFromChunks(
+                chunks = chunks,
+                request = request,
+                outputText = outputText.toString().ifBlank { chunks.joinToString(separator = "\n") },
+                platform = platform,
+                label = label
+            )
         )
     }
 
@@ -985,22 +1116,23 @@ class ChatRepositoryImpl @Inject constructor(
         anthropicAPI.setToken(platform.token)
         anthropicAPI.setAPIUrl(platform.apiUrl)
 
-        val searchDecisionPrompt = executeSearchDecisionIfNeeded(
+        val searchDecisionExecution = executeSearchDecisionIfNeeded(
             userMessages = userMessages,
             assistantMessages = assistantMessages,
             platform = platform,
             activeToolDefinitions = activeToolDefinitions
         )
-        if (searchDecisionPrompt != null) {
-            emitProviderStatesSkippingLoading(
+        if (searchDecisionExecution != null) {
+            emitSearchDecisionFinalStates(
                 completeChatWithAnthropic(
                     userMessages = userMessages,
                     assistantMessages = assistantMessages,
                     platform = platform,
                     memoryPrompt = memoryPrompt,
                     reasoningMode = reasoningMode,
-                    extraPrompt = searchDecisionPrompt
-                )
+                    extraPrompt = searchDecisionExecution.finalAnswerPrompt
+                ),
+                searchDecisionExecution.usage
             )
             return@flow
         }
@@ -1036,6 +1168,7 @@ class ChatRepositoryImpl @Inject constructor(
         val continuationMessages = mutableListOf<InputMessage>()
         val allResults = mutableListOf<ToolResult>()
         val toolUsageRecords = mutableListOf<TokenUsageRecord>()
+        var hasToolInteraction = false
         val toolExecutionSession = toolLoopOrchestrator.createExecutionSession()
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)
 
@@ -1051,29 +1184,39 @@ class ChatRepositoryImpl @Inject constructor(
                 label = "工具请求 ${roundIndex + 1}",
                 config = config
             )
+            round.usage?.let { toolUsageRecords += it }
+            hasToolInteraction = hasToolInteraction || anthropicNativeToolAdapter.hasToolCallIntent(round.chunks)
             if (round.errorMessage != null) {
-                if (allResults.isEmpty()) {
+                if (!hasToolInteraction) {
                     emitProviderStatesSkippingLoading(
                         completeChatWithAnthropic(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
                     )
                 } else {
                     emit(ApiState.Error(round.errorMessage))
+                    aggregateToolUsage(currentAnswerUsage = null, toolUsages = toolUsageRecords)?.let { usage ->
+                        emit(ApiState.UsageUpdated(usage))
+                    }
                     emit(ApiState.Done)
                 }
                 return@flow
             }
-            round.usage?.let { toolUsageRecords += it }
 
             val calls = toolLoopOrchestrator.boundToolCalls(
                 anthropicNativeToolAdapter.toolCallsFromChunks(round.chunks, config)
             )
             if (calls.isEmpty()) {
-                aggregateToolUsage(round.usage, toolUsageRecords, platform, "工具请求合计")?.let { usage ->
+                val usage = if (hasToolInteraction) {
+                    aggregateToolUsage(round.usage, toolUsageRecords)
+                } else {
+                    round.usage
+                }
+                usage?.let { usage ->
                     emit(ApiState.UsageUpdated(usage))
                 }
                 emit(ApiState.Done)
                 return@flow
             }
+            hasToolInteraction = true
 
             val results = toolLoopOrchestrator.executeBoundedToolCalls(
                 calls = calls,
@@ -1112,11 +1255,12 @@ class ChatRepositoryImpl @Inject constructor(
         finalRound.errorMessage?.let { message ->
             emit(ApiState.Error(message))
         }
-        aggregateToolUsage(finalRound.usage, toolUsageRecords, platform, "工具请求合计")?.let { usage ->
+        aggregateToolUsage(finalRound.usage, toolUsageRecords)?.let { usage ->
             emit(ApiState.UsageUpdated(usage))
         }
         emit(ApiState.Done)
     }.catch { e ->
+        if (e is CancellationException) throw e
         emit(ApiState.Error(e.message ?: "鏈煡閿欒"))
         emit(ApiState.Done)
     }
@@ -1136,60 +1280,63 @@ class ChatRepositoryImpl @Inject constructor(
         var errorMessage: String? = null
         val outputText = StringBuilder()
 
-        anthropicAPI.streamChatMessage(request, timeoutSeconds).collect { chunk ->
-            when (chunk) {
-                is ContentStartResponseChunk -> if (chunk.contentBlock.type == ContentBlockType.TOOL_USE) {
-                    argumentLimiter.checkComplete(chunk.index, chunk.contentBlock.input?.toString() ?: "{}")
-                }
-                is ContentDeltaResponseChunk -> if (chunk.delta.type == ContentBlockType.INPUT_JSON_DELTA) {
-                    chunk.delta.partialJson?.let { fragment ->
-                        argumentLimiter.append(chunk.index, fragment)
+        try {
+            anthropicAPI.streamChatMessage(request, timeoutSeconds).collect { chunk ->
+                chunks += chunk
+                when (chunk) {
+                    is ContentStartResponseChunk -> if (chunk.contentBlock.type == ContentBlockType.TOOL_USE) {
+                        argumentLimiter.checkComplete(chunk.index, chunk.contentBlock.input?.toString() ?: "{}")
                     }
-                }
-                else -> {}
-            }
-            chunks += chunk
-            when (chunk) {
-                is ContentDeltaResponseChunk -> {
-                    when (chunk.delta.type) {
-                        ContentBlockType.THINKING_DELTA -> {
-                            chunk.delta.thinking?.let { emit(ApiState.Thinking(it)) }
+                    is ContentDeltaResponseChunk -> if (chunk.delta.type == ContentBlockType.INPUT_JSON_DELTA) {
+                        chunk.delta.partialJson?.let { fragment ->
+                            argumentLimiter.append(chunk.index, fragment)
                         }
-
-                        ContentBlockType.DELTA -> {
-                            chunk.delta.text?.let {
-                                outputText.append(it)
-                                emit(ApiState.Success(it))
+                    }
+                    else -> {}
+                }
+                when (chunk) {
+                    is ContentDeltaResponseChunk -> {
+                        when (chunk.delta.type) {
+                            ContentBlockType.THINKING_DELTA -> {
+                                chunk.delta.thinking?.let { emit(ApiState.Thinking(it)) }
                             }
+
+                            ContentBlockType.DELTA -> {
+                                chunk.delta.text?.let {
+                                    outputText.append(it)
+                                    emit(ApiState.Success(it))
+                                }
+                            }
+
+                            else -> {}
                         }
-
-                        else -> {}
                     }
-                }
 
-                is ErrorResponseChunk -> {
-                    errorMessage = chunk.error.message
-                }
+                    is ErrorResponseChunk -> {
+                        errorMessage = chunk.error.message
+                    }
 
-                else -> {}
+                    else -> {}
+                }
             }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: IllegalArgumentException) {
+            errorMessage = error.message?.toolLimitErrorCodeOrNull() ?: throw error
+        } catch (error: IOException) {
+            errorMessage = error.message ?: "provider_stream_failed"
         }
 
         return AnthropicNativeRound(
             chunks = chunks,
             errorMessage = errorMessage,
-            usage = if (errorMessage == null) {
-                anthropicUsageFromChunks(
-                    chunks = chunks,
-                    request = request,
-                    outputText = outputText.toString().ifBlank { chunks.joinToString(separator = "\n") },
-                    platform = platform,
-                    label = label,
-                    isToolRelated = true
-                )
-            } else {
-                null
-            }
+            usage = anthropicUsageFromChunks(
+                chunks = chunks,
+                request = request,
+                outputText = outputText.toString().ifBlank { chunks.joinToString(separator = "\n") },
+                platform = platform,
+                label = label
+            )
         )
     }
 
@@ -1205,22 +1352,23 @@ class ChatRepositoryImpl @Inject constructor(
         googleAPI.setToken(platform.token)
         googleAPI.setAPIUrl(platform.apiUrl)
 
-        val searchDecisionPrompt = executeSearchDecisionIfNeeded(
+        val searchDecisionExecution = executeSearchDecisionIfNeeded(
             userMessages = userMessages,
             assistantMessages = assistantMessages,
             platform = platform,
             activeToolDefinitions = activeToolDefinitions
         )
-        if (searchDecisionPrompt != null) {
-            emitProviderStatesSkippingLoading(
+        if (searchDecisionExecution != null) {
+            emitSearchDecisionFinalStates(
                 completeChatWithGoogle(
                     userMessages = userMessages,
                     assistantMessages = assistantMessages,
                     platform = platform,
                     memoryPrompt = memoryPrompt,
                     reasoningMode = reasoningMode,
-                    extraPrompt = searchDecisionPrompt
-                )
+                    extraPrompt = searchDecisionExecution.finalAnswerPrompt
+                ),
+                searchDecisionExecution.usage
             )
             return@flow
         }
@@ -1260,6 +1408,7 @@ class ChatRepositoryImpl @Inject constructor(
         val continuationContents = mutableListOf<Content>()
         val allResults = mutableListOf<ToolResult>()
         val toolUsageRecords = mutableListOf<TokenUsageRecord>()
+        var hasToolInteraction = false
         val toolExecutionSession = toolLoopOrchestrator.createExecutionSession()
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)
 
@@ -1276,29 +1425,39 @@ class ChatRepositoryImpl @Inject constructor(
                 label = "工具请求 ${roundIndex + 1}",
                 config = config
             )
+            round.usage?.let { toolUsageRecords += it }
+            hasToolInteraction = hasToolInteraction || googleNativeToolAdapter.hasToolCallIntent(round.responses)
             if (round.errorMessage != null) {
-                if (allResults.isEmpty()) {
+                if (!hasToolInteraction) {
                     emitProviderStatesSkippingLoading(
                         completeChatWithGoogle(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
                     )
                 } else {
                     emit(ApiState.Error(round.errorMessage))
+                    aggregateToolUsage(currentAnswerUsage = null, toolUsages = toolUsageRecords)?.let { usage ->
+                        emit(ApiState.UsageUpdated(usage))
+                    }
                     emit(ApiState.Done)
                 }
                 return@flow
             }
-            round.usage?.let { toolUsageRecords += it }
 
             val calls = toolLoopOrchestrator.boundToolCalls(
                 googleNativeToolAdapter.toolCallsFromResponses(round.responses, config)
             )
             if (calls.isEmpty()) {
-                aggregateToolUsage(round.usage, toolUsageRecords, platform, "工具请求合计")?.let { usage ->
+                val usage = if (hasToolInteraction) {
+                    aggregateToolUsage(round.usage, toolUsageRecords)
+                } else {
+                    round.usage
+                }
+                usage?.let { usage ->
                     emit(ApiState.UsageUpdated(usage))
                 }
                 emit(ApiState.Done)
                 return@flow
             }
+            hasToolInteraction = true
 
             val results = toolLoopOrchestrator.executeBoundedToolCalls(
                 calls = calls,
@@ -1338,11 +1497,12 @@ class ChatRepositoryImpl @Inject constructor(
         finalRound.errorMessage?.let { message ->
             emit(ApiState.Error(message))
         }
-        aggregateToolUsage(finalRound.usage, toolUsageRecords, platform, "工具请求合计")?.let { usage ->
+        aggregateToolUsage(finalRound.usage, toolUsageRecords)?.let { usage ->
             emit(ApiState.UsageUpdated(usage))
         }
         emit(ApiState.Done)
     }.catch { e ->
+        if (e is CancellationException) throw e
         emit(ApiState.Error(e.message ?: "鏈煡閿欒"))
         emit(ApiState.Done)
     }
@@ -1364,50 +1524,53 @@ class ChatRepositoryImpl @Inject constructor(
         val outputText = StringBuilder()
         var functionCallIndex = 0
 
-        googleAPI.streamGenerateContent(request, model, timeoutSeconds).collect { response ->
-            response.candidates.orEmpty().forEach { candidate ->
-                candidate.content.parts.forEach { part ->
-                    part.functionCall?.let { call ->
-                        argumentLimiter.checkComplete(functionCallIndex, call.args.toString())
-                        functionCallIndex += 1
+        try {
+            googleAPI.streamGenerateContent(request, model, timeoutSeconds).collect { response ->
+                responses += response
+                response.candidates.orEmpty().forEach { candidate ->
+                    candidate.content.parts.forEach { part ->
+                        part.functionCall?.let { call ->
+                            argumentLimiter.checkComplete(functionCallIndex, call.args.toString())
+                            functionCallIndex += 1
+                        }
                     }
                 }
-            }
-            responses += response
-            when {
-                response.error != null -> errorMessage = response.error.message
+                when {
+                    response.error != null -> errorMessage = response.error.message
 
-                response.candidates?.firstOrNull()?.content?.parts != null -> {
-                    val parts = response.candidates.first().content.parts
-                    parts.forEach { part ->
-                        part.text?.let { text ->
-                            if (part.thought == true) {
-                                emit(ApiState.Thinking(text))
-                            } else {
-                                outputText.append(text)
-                                emit(ApiState.Success(text))
+                    response.candidates?.firstOrNull()?.content?.parts != null -> {
+                        val parts = response.candidates.first().content.parts
+                        parts.forEach { part ->
+                            part.text?.let { text ->
+                                if (part.thought == true) {
+                                    emit(ApiState.Thinking(text))
+                                } else {
+                                    outputText.append(text)
+                                    emit(ApiState.Success(text))
+                                }
                             }
                         }
                     }
                 }
             }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: IllegalArgumentException) {
+            errorMessage = error.message?.toolLimitErrorCodeOrNull() ?: throw error
+        } catch (error: IOException) {
+            errorMessage = error.message ?: "provider_stream_failed"
         }
 
         return GoogleNativeRound(
             responses = responses,
             errorMessage = errorMessage,
-            usage = if (errorMessage == null) {
-                googleUsageFromResponses(
-                    responses = responses,
-                    request = request,
-                    outputText = outputText.toString().ifBlank { responses.joinToString(separator = "\n") },
-                    platform = platform,
-                    label = label,
-                    isToolRelated = true
-                )
-            } else {
-                null
-            }
+            usage = googleUsageFromResponses(
+                responses = responses,
+                request = request,
+                outputText = outputText.toString().ifBlank { responses.joinToString(separator = "\n") },
+                platform = platform,
+                label = label
+            )
         )
     }
 
@@ -1417,7 +1580,8 @@ class ChatRepositoryImpl @Inject constructor(
         platform: PlatformV2,
         memoryPrompt: String?,
         reasoningMode: ReasoningMode,
-        extraPrompt: String? = null
+        extraPrompt: String? = null,
+        emitEstimatedUsageWithoutOutput: Boolean = false
     ): Flow<ApiState> = try {
         openAIAPI.setToken(platform.token)
         openAIAPI.setAPIUrl(platform.apiUrl)
@@ -1451,7 +1615,6 @@ class ChatRepositoryImpl @Inject constructor(
                     val events = mutableListOf<ResponsesStreamEvent>()
                     val outputText = StringBuilder()
                     var emittedOutputTextDelta = false
-                    var hasTerminalError = false
                     openAIAPI.streamResponses(prepared.request, platform.timeout).collect { event ->
                         events += event
                         when (event) {
@@ -1471,32 +1634,26 @@ class ChatRepositoryImpl @Inject constructor(
                             }
 
                             is ResponseFailedEvent -> {
-                                hasTerminalError = true
                                 val errorMessage = event.response.error?.message ?: "响应失败"
                                 emit(ApiState.Error(errorMessage))
                             }
 
                             is ResponseErrorEvent -> {
-                                hasTerminalError = true
                                 emit(ApiState.Error(event.message))
                             }
 
                             else -> {}
                         }
                     }
-                    if (!hasTerminalError && outputText.isNotBlank()) {
-                        emit(
-                            ApiState.UsageUpdated(
-                                openAIResponsesUsageFromEvents(
-                                    events = events,
-                                    request = prepared.request,
-                                    outputText = outputText.toString(),
-                                    platform = platform,
-                                    label = "OpenAI Responses",
-                                    isToolRelated = false
-                                )
-                            )
-                        )
+                    val usage = openAIResponsesUsageFromEvents(
+                        events = events,
+                        request = prepared.request,
+                        outputText = outputText.toString(),
+                        platform = platform,
+                        label = "OpenAI Responses"
+                    )
+                    if (outputText.isNotBlank() || !usage.isEstimated || emitEstimatedUsageWithoutOutput) {
+                        emit(ApiState.UsageUpdated(usage))
                     }
                 }
             },
@@ -1516,7 +1673,8 @@ class ChatRepositoryImpl @Inject constructor(
         platform: PlatformV2,
         memoryPrompt: String?,
         reasoningMode: ReasoningMode,
-        extraPrompt: String? = null
+        extraPrompt: String? = null,
+        emitEstimatedUsageWithoutOutput: Boolean = false
     ): Flow<ApiState> = try {
         streamPreparedApiState(
             prepare = {
@@ -1537,7 +1695,6 @@ class ChatRepositoryImpl @Inject constructor(
                     val parser = GroqReasoningParser()
                     val chunks = mutableListOf<cn.nabr.chatwithchat.data.dto.groq.response.GroqChatCompletionChunk>()
                     val outputText = StringBuilder()
-                    var hasTerminalError = false
                     groqAPI.streamChatCompletion(
                         request = prepared.request,
                         timeoutSeconds = platform.timeout,
@@ -1547,7 +1704,6 @@ class ChatRepositoryImpl @Inject constructor(
                         chunks += chunk
                         when {
                             chunk.error != null -> {
-                                hasTerminalError = true
                                 emit(ApiState.Error(chunk.error.message))
                             }
 
@@ -1572,19 +1728,15 @@ class ChatRepositoryImpl @Inject constructor(
                         }
                         emit(state)
                     }
-                    if (!hasTerminalError && outputText.isNotBlank()) {
-                        emit(
-                            ApiState.UsageUpdated(
-                                groqUsageFromChunks(
-                                    chunks = chunks,
-                                    request = prepared.request,
-                                    outputText = outputText.toString(),
-                                    platform = platform,
-                                    label = "Groq",
-                                    isToolRelated = false
-                                )
-                            )
-                        )
+                    val usage = groqUsageFromChunks(
+                        chunks = chunks,
+                        request = prepared.request,
+                        outputText = outputText.toString(),
+                        platform = platform,
+                        label = "Groq"
+                    )
+                    if (outputText.isNotBlank() || !usage.isEstimated || emitEstimatedUsageWithoutOutput) {
+                        emit(ApiState.UsageUpdated(usage))
                     }
                 }
             },
@@ -1604,7 +1756,8 @@ class ChatRepositoryImpl @Inject constructor(
         platform: PlatformV2,
         memoryPrompt: String?,
         reasoningMode: ReasoningMode,
-        extraPrompt: String? = null
+        extraPrompt: String? = null,
+        emitEstimatedUsageWithoutOutput: Boolean = false
     ): Flow<ApiState> = try {
         openAIAPI.setToken(platform.token)
         openAIAPI.setAPIUrl(platform.apiUrl)
@@ -1636,12 +1789,10 @@ class ChatRepositoryImpl @Inject constructor(
                 flow {
                     val chunks = mutableListOf<ChatCompletionChunk>()
                     val outputText = StringBuilder()
-                    var hasTerminalError = false
                     openAIAPI.streamChatCompletion(prepared.request, platform.timeout).collect { chunk ->
                         chunks += chunk
                         when {
                             chunk.error != null -> {
-                                hasTerminalError = true
                                 emit(ApiState.Error(chunk.error.message))
                             }
 
@@ -1652,19 +1803,15 @@ class ChatRepositoryImpl @Inject constructor(
                             }
                         }
                     }
-                    if (!hasTerminalError && outputText.isNotBlank()) {
-                        emit(
-                            ApiState.UsageUpdated(
-                                openAIChatUsageFromChunks(
-                                    chunks = chunks,
-                                    request = prepared.request,
-                                    outputText = outputText.toString(),
-                                    platform = platform,
-                                    label = "Chat Completions",
-                                    isToolRelated = false
-                                )
-                            )
-                        )
+                    val usage = openAIChatUsageFromChunks(
+                        chunks = chunks,
+                        request = prepared.request,
+                        outputText = outputText.toString(),
+                        platform = platform,
+                        label = "Chat Completions"
+                    )
+                    if (outputText.isNotBlank() || !usage.isEstimated || emitEstimatedUsageWithoutOutput) {
+                        emit(ApiState.UsageUpdated(usage))
                     }
                 }
             },
@@ -1915,7 +2062,8 @@ class ChatRepositoryImpl @Inject constructor(
         platform: PlatformV2,
         memoryPrompt: String?,
         reasoningMode: ReasoningMode,
-        extraPrompt: String? = null
+        extraPrompt: String? = null,
+        emitEstimatedUsageWithoutOutput: Boolean = false
     ): Flow<ApiState> = try {
         anthropicAPI.setToken(platform.token)
         anthropicAPI.setAPIUrl(platform.apiUrl)
@@ -1949,7 +2097,6 @@ class ChatRepositoryImpl @Inject constructor(
                 flow {
                     val chunks = mutableListOf<MessageResponseChunk>()
                     val outputText = StringBuilder()
-                    var hasTerminalError = false
                     anthropicAPI.streamChatMessage(prepared.request, platform.timeout).collect { chunk ->
                         chunks += chunk
                         when (chunk) {
@@ -1971,26 +2118,21 @@ class ChatRepositoryImpl @Inject constructor(
                             }
 
                             is cn.nabr.chatwithchat.data.dto.anthropic.response.ErrorResponseChunk -> {
-                                hasTerminalError = true
                                 emit(ApiState.Error(chunk.error.message))
                             }
 
                             else -> {}
                         }
                     }
-                    if (!hasTerminalError && outputText.isNotBlank()) {
-                        emit(
-                            ApiState.UsageUpdated(
-                                anthropicUsageFromChunks(
-                                    chunks = chunks,
-                                    request = prepared.request,
-                                    outputText = outputText.toString(),
-                                    platform = platform,
-                                    label = "Anthropic",
-                                    isToolRelated = false
-                                )
-                            )
-                        )
+                    val usage = anthropicUsageFromChunks(
+                        chunks = chunks,
+                        request = prepared.request,
+                        outputText = outputText.toString(),
+                        platform = platform,
+                        label = "Anthropic"
+                    )
+                    if (outputText.isNotBlank() || !usage.isEstimated || emitEstimatedUsageWithoutOutput) {
+                        emit(ApiState.UsageUpdated(usage))
                     }
                 }
             },
@@ -2049,7 +2191,8 @@ class ChatRepositoryImpl @Inject constructor(
         platform: PlatformV2,
         memoryPrompt: String?,
         reasoningMode: ReasoningMode,
-        extraPrompt: String? = null
+        extraPrompt: String? = null,
+        emitEstimatedUsageWithoutOutput: Boolean = false
     ): Flow<ApiState> = try {
         googleAPI.setToken(platform.token)
         googleAPI.setAPIUrl(platform.apiUrl)
@@ -2086,12 +2229,10 @@ class ChatRepositoryImpl @Inject constructor(
                 flow {
                     val responses = mutableListOf<GenerateContentResponse>()
                     val outputText = StringBuilder()
-                    var hasTerminalError = false
                     googleAPI.streamGenerateContent(prepared.request, platform.model, platform.timeout).collect { response ->
                         responses += response
                         when {
                             response.error != null -> {
-                                hasTerminalError = true
                                 emit(ApiState.Error(response.error.message))
                             }
 
@@ -2110,19 +2251,15 @@ class ChatRepositoryImpl @Inject constructor(
                             }
                         }
                     }
-                    if (!hasTerminalError && outputText.isNotBlank()) {
-                        emit(
-                            ApiState.UsageUpdated(
-                                googleUsageFromResponses(
-                                    responses = responses,
-                                    request = prepared.request,
-                                    outputText = outputText.toString(),
-                                    platform = platform,
-                                    label = "Google",
-                                    isToolRelated = false
-                                )
-                            )
-                        )
+                    val usage = googleUsageFromResponses(
+                        responses = responses,
+                        request = prepared.request,
+                        outputText = outputText.toString(),
+                        platform = platform,
+                        label = "Google"
+                    )
+                    if (outputText.isNotBlank() || !usage.isEstimated || emitEstimatedUsageWithoutOutput) {
+                        emit(ApiState.UsageUpdated(usage))
                     }
                 }
             },
@@ -2218,6 +2355,9 @@ class ChatRepositoryImpl @Inject constructor(
     override suspend fun fetchMessages(chatId: Int): List<Message> = messageDao.loadMessages(chatId)
 
     override suspend fun fetchMessagesV2(chatId: Int): List<MessageV2> = messageV2Dao.loadMessages(chatId)
+
+    override suspend fun findChatIdByInitialRequestId(initialRequestId: Int): Int? =
+        messageV2Dao.findChatIdByInitialRequestId(initialRequestId)
 
     override suspend fun fetchChatPlatformModels(chatId: Int): Map<String, ChatPlatformConfig> = chatPlatformModelV2Dao.getByChatId(chatId).associate {
         it.platformUid to ChatPlatformConfig(
@@ -2327,45 +2467,51 @@ class ChatRepositoryImpl @Inject constructor(
 
     override suspend fun saveChat(chatRoom: ChatRoomV2, messages: List<MessageV2>, chatPlatformModels: Map<String, ChatPlatformConfig>): ChatRoomV2 {
         if (chatRoom.id == 0) {
-            // New Chat
-            val chatId = chatRoomV2Dao.addChatRoom(chatRoom)
-            val updatedMessages = messages.map { it.copy(chatId = chatId.toInt()) }
-            messageV2Dao.addMessages(*updatedMessages.toTypedArray())
+            return runInChatTransaction {
+                val chatId = chatRoomV2Dao.addChatRoom(chatRoom)
+                val updatedMessages = messages.map { it.copy(chatId = chatId.toInt()) }
+                messageV2Dao.addMessages(*updatedMessages.toTypedArray())
+                saveChatPlatformModels(
+                    chatId = chatId.toInt(),
+                    models = chatPlatformModels.filterKeys { it in chatRoom.enabledPlatform }
+                )
+
+                val savedChatRoom = chatRoom.copy(id = chatId.toInt())
+                updateChatTitle(savedChatRoom, updatedMessages[0].content)
+
+                savedChatRoom.copy(title = updatedMessages[0].content.replace('\n', ' ').take(50))
+            }
+        }
+
+        return runInChatTransaction {
+            val savedMessages = fetchMessagesV2(chatRoom.id)
+            val updatedMessages = messages.map { it.copy(chatId = chatRoom.id) }
+
+            val shouldBeDeleted = savedMessages.filter { m ->
+                updatedMessages.firstOrNull { it.id == m.id } == null
+            }
+            val shouldBeUpdated = updatedMessages.filter { m ->
+                savedMessages.firstOrNull { it.id == m.id && it != m } != null
+            }
+            val shouldBeAdded = updatedMessages.filter { m ->
+                savedMessages.firstOrNull { it.id == m.id } == null
+            }
+
+            chatRoomV2Dao.editChatRoom(chatRoom)
+            messageV2Dao.deleteMessages(*shouldBeDeleted.toTypedArray())
+            messageV2Dao.editMessages(*shouldBeUpdated.toTypedArray())
+            messageV2Dao.addMessages(*shouldBeAdded.toTypedArray())
             saveChatPlatformModels(
-                chatId = chatId.toInt(),
+                chatId = chatRoom.id,
                 models = chatPlatformModels.filterKeys { it in chatRoom.enabledPlatform }
             )
 
-            val savedChatRoom = chatRoom.copy(id = chatId.toInt())
-            updateChatTitle(savedChatRoom, updatedMessages[0].content)
-
-            return savedChatRoom.copy(title = updatedMessages[0].content.replace('\n', ' ').take(50))
+            chatRoom
         }
-
-        val savedMessages = fetchMessagesV2(chatRoom.id)
-        val updatedMessages = messages.map { it.copy(chatId = chatRoom.id) }
-
-        val shouldBeDeleted = savedMessages.filter { m ->
-            updatedMessages.firstOrNull { it.id == m.id } == null
-        }
-        val shouldBeUpdated = updatedMessages.filter { m ->
-            savedMessages.firstOrNull { it.id == m.id && it != m } != null
-        }
-        val shouldBeAdded = updatedMessages.filter { m ->
-            savedMessages.firstOrNull { it.id == m.id } == null
-        }
-
-        chatRoomV2Dao.editChatRoom(chatRoom)
-        messageV2Dao.deleteMessages(*shouldBeDeleted.toTypedArray())
-        messageV2Dao.editMessages(*shouldBeUpdated.toTypedArray())
-        messageV2Dao.addMessages(*shouldBeAdded.toTypedArray())
-        saveChatPlatformModels(
-            chatId = chatRoom.id,
-            models = chatPlatformModels.filterKeys { it in chatRoom.enabledPlatform }
-        )
-
-        return chatRoom
     }
+
+    private suspend fun <T> runInChatTransaction(block: suspend () -> T): T =
+        chatDatabaseV2?.withTransaction { block() } ?: block()
 
     override suspend fun duplicateChatV2(chatRoom: ChatRoomV2): ChatRoomV2 {
         val duplicatedTitle = "${chatRoom.title}（副本）".take(50)
@@ -2447,6 +2593,11 @@ private const val OPENAI_NATIVE_FINAL_TOOL_INSTRUCTION =
 private data class ProviderRequestWithSources<T>(
     val request: T,
     val sources: List<MessageSourceMetadata>
+)
+
+private data class SearchDecisionExecution(
+    val finalAnswerPrompt: String,
+    val usage: TokenUsageRecord
 )
 
 private data class OpenAIResponsesNativeToolRequest(
@@ -2672,20 +2823,17 @@ private fun usageFromProviderOrEstimate(
     requestText: String,
     outputText: String,
     platform: PlatformV2,
-    label: String,
-    isToolRelated: Boolean
+    label: String
 ): TokenUsageRecord = providerUsage
     ?.toTokenUsageRecord(
         platform = platform,
-        label = label,
-        isToolRelated = isToolRelated
+        label = label
     )
     ?: TokenUsageEstimator.estimateRequestUsage(
         requestText = requestText,
         outputText = outputText,
         platform = platform,
-        label = label,
-        isToolRelated = isToolRelated
+        label = label
     )
 
 private fun openAIResponsesUsageFromEvents(
@@ -2693,19 +2841,19 @@ private fun openAIResponsesUsageFromEvents(
     request: ResponsesRequest,
     outputText: String,
     platform: PlatformV2,
-    label: String,
-    isToolRelated: Boolean
+    label: String
 ): TokenUsageRecord = usageFromProviderOrEstimate(
-    providerUsage = events
-        .filterIsInstance<ResponseCompletedEvent>()
-        .lastOrNull()
-        ?.response
-        ?.usage,
+    providerUsage = events.asReversed().firstNotNullOfOrNull { event ->
+        when (event) {
+            is ResponseCompletedEvent -> event.response.usage
+            is ResponseFailedEvent -> event.response.usage
+            else -> null
+        }
+    },
     requestText = NetworkClient.openAIJson.encodeToString(request),
     outputText = outputText,
     platform = platform,
-    label = label,
-    isToolRelated = isToolRelated
+    label = label
 )
 
 private fun openAIChatUsageFromChunks(
@@ -2713,15 +2861,13 @@ private fun openAIChatUsageFromChunks(
     request: ChatCompletionRequest,
     outputText: String,
     platform: PlatformV2,
-    label: String,
-    isToolRelated: Boolean
+    label: String
 ): TokenUsageRecord = usageFromProviderOrEstimate(
     providerUsage = chunks.lastOrNull { chunk -> chunk.usage != null }?.usage,
     requestText = NetworkClient.openAIJson.encodeToString(request),
     outputText = outputText,
     platform = platform,
-    label = label,
-    isToolRelated = isToolRelated
+    label = label
 )
 
 private fun groqUsageFromChunks(
@@ -2729,8 +2875,7 @@ private fun groqUsageFromChunks(
     request: GroqChatCompletionRequest,
     outputText: String,
     platform: PlatformV2,
-    label: String,
-    isToolRelated: Boolean
+    label: String
 ): TokenUsageRecord = usageFromProviderOrEstimate(
     providerUsage = chunks
         .mapNotNull { chunk -> chunk.usage ?: chunk.xGroq?.usage }
@@ -2738,8 +2883,7 @@ private fun groqUsageFromChunks(
     requestText = NetworkClient.openAIJson.encodeToString(request),
     outputText = outputText,
     platform = platform,
-    label = label,
-    isToolRelated = isToolRelated
+    label = label
 )
 
 private fun anthropicUsageFromChunks(
@@ -2747,8 +2891,7 @@ private fun anthropicUsageFromChunks(
     request: MessageRequest,
     outputText: String,
     platform: PlatformV2,
-    label: String,
-    isToolRelated: Boolean
+    label: String
 ): TokenUsageRecord {
     val startUsage = chunks
         .filterIsInstance<MessageStartResponseChunk>()
@@ -2776,8 +2919,7 @@ private fun anthropicUsageFromChunks(
         requestText = kotlinx.serialization.json.Json.encodeToString(request),
         outputText = outputText,
         platform = platform,
-        label = label,
-        isToolRelated = isToolRelated
+        label = label
     )
 }
 
@@ -2786,8 +2928,7 @@ private fun googleUsageFromResponses(
     request: GenerateContentRequest,
     outputText: String,
     platform: PlatformV2,
-    label: String,
-    isToolRelated: Boolean
+    label: String
 ): TokenUsageRecord {
     val usageMetadata = responses.lastOrNull { response -> response.usageMetadata != null }?.usageMetadata
     val providerUsage = usageMetadata?.let { metadata ->
@@ -2803,8 +2944,7 @@ private fun googleUsageFromResponses(
         requestText = NetworkClient.json.encodeToString(request),
         outputText = outputText,
         platform = platform,
-        label = label,
-        isToolRelated = isToolRelated
+        label = label
     )
 }
 
@@ -2832,22 +2972,15 @@ private fun TokenUsageRecord.asToolRelated(): TokenUsageRecord = copy(
 
 private fun aggregateToolUsage(
     currentAnswerUsage: TokenUsageRecord?,
-    toolUsages: List<TokenUsageRecord>,
-    platform: PlatformV2,
-    label: String
+    toolUsages: List<TokenUsageRecord>
 ): TokenUsageRecord? {
-    val answerUsage = currentAnswerUsage ?: toolUsages.lastOrNull()
-    if (answerUsage != null) return answerUsage.withToolAggregate(toolUsages)
-    if (toolUsages.isEmpty()) return null
-
-    return toolUsages
-        .map { usage -> usage.asToolRelated() }
-        .sumTokenUsage(
-            provider = platform.name,
-            platformUid = platform.uid,
-            model = platform.model,
-            label = label
-        )
+    val answerUsage = currentAnswerUsage ?: toolUsages.lastOrNull()?.copy(
+        inputTokens = 0,
+        outputTokens = 0,
+        totalTokens = 0,
+        details = emptyList()
+    )
+    return answerUsage?.withToolAggregate(toolUsages)
 }
 
 private fun chatCompletionStreamOptionsFor(platform: PlatformV2): ChatCompletionStreamOptions? = when (platform.compatibleType) {

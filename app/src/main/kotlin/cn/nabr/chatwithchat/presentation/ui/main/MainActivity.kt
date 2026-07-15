@@ -11,11 +11,18 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
 import dagger.hilt.android.AndroidEntryPoint
@@ -29,9 +36,11 @@ import cn.nabr.chatwithchat.presentation.common.Route
 import cn.nabr.chatwithchat.presentation.common.SetupNavGraph
 import cn.nabr.chatwithchat.presentation.common.ThemeSettingProvider
 import cn.nabr.chatwithchat.presentation.common.ToolPermissionRequester
+import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.theme.ChatWithChatTheme
 import javax.inject.Inject
-import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
@@ -43,15 +52,14 @@ class MainActivity : ComponentActivity() {
     private val mainViewModel: MainViewModel by viewModels()
     private lateinit var toolPermissionLauncher: ActivityResultLauncher<Array<String>>
     private lateinit var notificationPermissionLauncher: ActivityResultLauncher<String>
-    private val navigationRequests = MutableSharedFlow<String>(extraBufferCapacity = 1)
-    private var pendingStartRoute: String? = null
+    private val navigationRequests = createNavigationRequestChannel()
     private var pendingToolPermissionRequest: PendingToolPermissionRequest? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        pendingStartRoute = intent.startRoute()
+        intent.startRoute()?.let(::enqueueNavigationRequest)
         installSplashScreen().apply {
             setKeepOnScreenCondition {
-                !mainViewModel.isReady.value
+                mainViewModel.launchState.value is MainLaunchState.Loading
             }
         }
         enableEdgeToEdge()
@@ -72,9 +80,7 @@ class MainActivity : ComponentActivity() {
         // Prevent keyboard from pushing the entire view up - composable handles insets via imePadding()
         window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
         setContent {
-            val navController = rememberNavController()
-            navController.navigateFromStartupEvent()
-            navController.navigateFromNotificationIntents()
+            val launchState by mainViewModel.launchState.collectAsStateWithLifecycle()
 
             ThemeSettingProvider {
                 CompositionLocalProvider(
@@ -87,7 +93,26 @@ class MainActivity : ComponentActivity() {
                         dynamicTheme = LocalDynamicTheme.current,
                         themeMode = LocalThemeMode.current
                     ) {
-                        SetupNavGraph(navController)
+                        when (val state = launchState) {
+                            MainLaunchState.Loading -> {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(settingsMaterialColors().canvas)
+                                )
+                            }
+
+                            is MainLaunchState.Resolved -> {
+                                key(launchNavigationStateKey(state.destination)) {
+                                    val navController = rememberNavController()
+                                    SetupNavGraph(
+                                        navController = navController,
+                                        startDestination = state.destination
+                                    )
+                                    navController.navigateFromNotificationIntents()
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -97,7 +122,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        intent.startRoute()?.let { route -> navigationRequests.tryEmit(route) }
+        intent.startRoute()?.let(::enqueueNavigationRequest)
     }
 
     private fun requestToolRuntimePermissions(toolName: String, onResult: (Boolean) -> Unit) {
@@ -140,37 +165,14 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun NavHostController.navigateFromStartupEvent() {
+    private fun NavHostController.navigateFromNotificationIntents() {
         LaunchedEffect(this) {
-            mainViewModel.event.collect { event ->
-                when (event) {
-                    MainViewModel.SplashEvent.OpenSetup -> {
-                        navigate(Route.SETUP_ROUTE) {
-                            popUpTo(Route.CHAT_LIST) { inclusive = true }
-                        }
-                    }
-
-                    MainViewModel.SplashEvent.OpenMigrate -> {
-                        navigate(Route.MIGRATE_V2) {
-                            popUpTo(Route.CHAT_LIST) { inclusive = true }
-                        }
-                    }
-
-                    MainViewModel.SplashEvent.OpenHome -> Unit
-                }
-            }
+            navigationRequests.receiveAsFlow().collect { route -> navigateToStartRoute(route) }
         }
     }
 
-    @Composable
-    private fun NavHostController.navigateFromNotificationIntents() {
-        LaunchedEffect(this) {
-            pendingStartRoute?.let { route ->
-                pendingStartRoute = null
-                navigateToStartRoute(route)
-            }
-            navigationRequests.collect { route -> navigateToStartRoute(route) }
-        }
+    private fun enqueueNavigationRequest(route: String) {
+        navigationRequests.trySend(route).getOrThrow()
     }
 
     private fun NavHostController.navigateToStartRoute(route: String) {
@@ -192,3 +194,8 @@ class MainActivity : ComponentActivity() {
         val onResult: (Boolean) -> Unit
     )
 }
+
+internal fun launchNavigationStateKey(destination: MainLaunchDestination): String =
+    "launch-${destination.name}"
+
+internal fun createNavigationRequestChannel(): Channel<String> = Channel(Channel.UNLIMITED)

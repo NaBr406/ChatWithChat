@@ -25,13 +25,18 @@ data class ProviderUsage(
 ) {
     fun toTokenUsageRecord(
         platform: PlatformV2,
-        label: String,
-        isToolRelated: Boolean
+        label: String
     ): TokenUsageRecord? {
+        val hasProviderUsage = promptTokens != null ||
+            completionTokens != null ||
+            inputTokens != null ||
+            outputTokens != null ||
+            totalTokens != null
+        if (!hasProviderUsage) return null
+
         val input = inputTokens ?: promptTokens ?: 0
         val output = outputTokens ?: completionTokens ?: 0
         val total = totalTokens ?: (input + output)
-        if (input <= 0 && output <= 0 && total <= 0) return null
 
         val detail = TokenUsageDetail(
             label = label,
@@ -39,16 +44,13 @@ data class ProviderUsage(
             outputTokens = output,
             totalTokens = total,
             isEstimated = false,
-            isToolRelated = isToolRelated
+            isToolRelated = false
         )
 
         return TokenUsageRecord(
             inputTokens = input,
             outputTokens = output,
             totalTokens = total,
-            toolInputTokens = if (isToolRelated) input else 0,
-            toolOutputTokens = if (isToolRelated) output else 0,
-            toolTotalTokens = if (isToolRelated) total else 0,
             isEstimated = false,
             provider = platform.name,
             platformUid = platform.uid,

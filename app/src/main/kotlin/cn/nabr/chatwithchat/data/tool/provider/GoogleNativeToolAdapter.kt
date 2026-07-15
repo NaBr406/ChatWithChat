@@ -47,16 +47,24 @@ class GoogleNativeToolAdapter {
             .flatMap { response -> response.candidates.orEmpty().asSequence() }
             .flatMap { candidate -> candidate.content.parts.asSequence() }
             .mapNotNull { part -> part.functionCall }
-            .mapIndexed { index, functionCall ->
+            .mapIndexedNotNull { index, functionCall ->
+                val name = functionCall.name.trim()
+                if (name.isBlank()) return@mapIndexedNotNull null
                 val arguments = functionCall.args.toString().ifBlank { "{}" }
                 argumentLimiter.checkComplete(index, arguments)
                 ToolCall(
                     id = functionCall.id?.takeIf { it.isNotBlank() } ?: "function_${index + 1}",
-                    name = functionCall.name,
+                    name = name,
                     arguments = arguments.requireWithinToolArgumentLimit(config.maxToolArgumentChars)
                 )
             }
             .toList()
+    }
+
+    fun hasToolCallIntent(responses: List<GenerateContentResponse>): Boolean = responses.any { response ->
+        response.candidates.orEmpty().any { candidate ->
+            candidate.content.parts.any { part -> part.functionCall != null }
+        }
     }
 
     fun continuationContents(

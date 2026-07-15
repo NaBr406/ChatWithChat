@@ -14,6 +14,13 @@ interface MessageV2Dao {
     suspend fun loadMessages(chatInt: Int): List<MessageV2>
 
     @Query(
+        "SELECT chat_id FROM messages_v2 " +
+            "WHERE linked_message_id=:initialRequestId AND platform_type IS NULL " +
+            "ORDER BY message_id DESC LIMIT 1"
+    )
+    suspend fun findChatIdByInitialRequestId(initialRequestId: Int): Int?
+
+    @Query(
         "SELECT DISTINCT chat_id FROM messages_v2 " +
             "WHERE content LIKE '%' || :query || '%' OR " +
             "revisions LIKE '%' || :query || '%'"

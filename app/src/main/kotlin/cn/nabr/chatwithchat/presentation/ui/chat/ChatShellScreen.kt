@@ -11,6 +11,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -22,7 +23,11 @@ import cn.nabr.chatwithchat.data.database.entity.ChatRoomV2
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.ui.home.ChatHistoryDrawer
 import cn.nabr.chatwithchat.presentation.ui.home.DeleteWarningDialog
+import cn.nabr.chatwithchat.presentation.ui.home.HomeModelsState
 import cn.nabr.chatwithchat.presentation.ui.home.HomeViewModel
+import cn.nabr.chatwithchat.presentation.ui.home.modelsOrEmpty
+import cn.nabr.chatwithchat.presentation.ui.home.shouldResetSelectionAfterDrawerTransition
+import java.util.UUID
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -32,28 +37,25 @@ fun ChatShellScreen(
     settingOnClick: () -> Unit,
     onAboutClick: () -> Unit,
     onExistingChatClick: (ChatRoomV2) -> Unit,
-    navigateToNewChat: (enabledPlatforms: List<String>, initialQuestion: String?, initialModel: String?, initialAttachmentPaths: List<String>) -> Unit,
+    navigateToNewChat: (enabledPlatforms: List<String>, initialQuestion: String?, initialModel: String?, initialAttachmentPaths: List<String>, initialRequestId: Int) -> Unit,
     content: @Composable (
         openDrawer: () -> Unit,
         homeViewModel: HomeViewModel,
-        startNewChat: (initialQuestion: String?, initialAttachmentPaths: List<String>, preferPrimaryPlatform: Boolean) -> Unit,
-        openModelPicker: () -> Unit
+        startNewChat: (initialQuestion: String?, initialAttachmentPaths: List<String>, preferPrimaryPlatform: Boolean) -> Boolean
     ) -> Unit
 ) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val chatListState by homeViewModel.chatListState.collectAsStateWithLifecycle()
-    val showDeleteWarningDialog by homeViewModel.showDeleteWarningDialog.collectAsStateWithLifecycle()
     val platformState by homeViewModel.platformState.collectAsStateWithLifecycle()
-    val lastSelectedModel by homeViewModel.lastSelectedModel.collectAsStateWithLifecycle()
-    val availableChatModels by homeViewModel.availableChatModels.collectAsStateWithLifecycle()
     val searchQuery by homeViewModel.searchQuery.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
     val lifecycleState by lifecycleOwner.lifecycle.currentStateFlow.collectAsStateWithLifecycle()
     val materialColors = settingsMaterialColors()
 
     fun openDrawer() {
+        homeViewModel.resetDrawerSelection()
         scope.launch { drawerState.open() }
     }
 
@@ -61,26 +63,36 @@ fun ChatShellScreen(
         scope.launch { drawerState.close() }
     }
 
-    fun preferredModel() = lastSelectedModel?.let { selectedModel ->
-        availableChatModels.firstOrNull { model ->
-            model.platformUid == selectedModel.platformUid && model.modelId == selectedModel.model
-        }
-    } ?: availableChatModels.firstOrNull()
-
     fun startNewChat(
         initialQuestion: String?,
         initialAttachmentPaths: List<String>,
         preferPrimaryPlatform: Boolean
-    ) {
-        val model = preferredModel()
+    ): Boolean {
+        val currentModelsState = homeViewModel.homeModelsState.value
+        if (currentModelsState is HomeModelsState.Loading) {
+            return false
+        }
+        val availableChatModels = currentModelsState.modelsOrEmpty()
+        val lastSelectedModel = homeViewModel.lastSelectedModel.value
+        val model = lastSelectedModel?.let { selectedModel ->
+            availableChatModels.firstOrNull { availableModel ->
+                availableModel.platformUid == selectedModel.platformUid && availableModel.modelId == selectedModel.model
+            }
+        } ?: availableChatModels.firstOrNull()
         if (model == null) {
             Toast.makeText(context, context.getString(R.string.empty_chat_no_platforms), Toast.LENGTH_SHORT).show()
-            return
+            return false
         }
 
         homeViewModel.updateLastSelectedModel(model.platformUid, model.modelId, lastSelectedModel?.reasoningMode)
         closeDrawer()
-        navigateToNewChat(listOf(model.platformUid), initialQuestion, model.modelId, initialAttachmentPaths)
+        val initialRequestId = if (!initialQuestion.isNullOrBlank() || initialAttachmentPaths.isNotEmpty()) {
+            newInitialRequestId()
+        } else {
+            0
+        }
+        navigateToNewChat(listOf(model.platformUid), initialQuestion, model.modelId, initialAttachmentPaths, initialRequestId)
+        return true
     }
 
     LaunchedEffect(lifecycleState) {
@@ -88,6 +100,19 @@ fun ChatShellScreen(
             homeViewModel.fetchChats()
             homeViewModel.fetchPlatformStatus()
         }
+    }
+
+    LaunchedEffect(drawerState) {
+        var wasOpenOrOpening = drawerState.currentValue == DrawerValue.Open || drawerState.targetValue == DrawerValue.Open
+        snapshotFlow { drawerState.currentValue to drawerState.targetValue }
+            .collect { (currentValue, targetValue) ->
+                val isOpenOrOpening = currentValue == DrawerValue.Open || targetValue == DrawerValue.Open
+                val isFullyClosed = currentValue == DrawerValue.Closed && targetValue == DrawerValue.Closed
+                if (shouldResetSelectionAfterDrawerTransition(wasOpenOrOpening, isFullyClosed)) {
+                    homeViewModel.resetDrawerSelection()
+                }
+                wasOpenOrOpening = if (isFullyClosed) false else wasOpenOrOpening || isOpenOrOpening
+            }
     }
 
     BackHandler(enabled = drawerState.currentValue == DrawerValue.Open) {
@@ -152,12 +177,11 @@ fun ChatShellScreen(
         content(
             ::openDrawer,
             homeViewModel,
-            ::startNewChat,
-            {}
+            ::startNewChat
         )
     }
 
-    if (showDeleteWarningDialog) {
+    if (chatListState.showDeleteWarningDialog) {
         DeleteWarningDialog(
             selectedCount = chatListState.selectedChats.count { it },
             onDismissRequest = homeViewModel::closeDeleteWarningDialog,
@@ -169,4 +193,9 @@ fun ChatShellScreen(
             }
         )
     }
+}
+
+internal fun newInitialRequestId(): Int {
+    val hash = UUID.randomUUID().hashCode()
+    return if (hash < 0) hash else -hash.coerceAtLeast(1)
 }

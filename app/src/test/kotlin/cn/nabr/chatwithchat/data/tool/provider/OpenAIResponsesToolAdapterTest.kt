@@ -135,6 +135,25 @@ class OpenAIResponsesToolAdapterTest {
     }
 
     @Test
+    fun `blank openai function call still exposes raw tool intent`() {
+        val event = NetworkClient.openAIJson.decodeFromString<ResponsesStreamEvent>(
+            """
+            {
+              "type": "response.function_call_arguments.done",
+              "item_id": "fc_123",
+              "output_index": 0,
+              "call_id": "call_1",
+              "name": "",
+              "arguments": "{}"
+            }
+            """.trimIndent()
+        )
+
+        assertTrue(adapter.hasToolCallIntent(listOf(event)))
+        assertTrue(adapter.toolCallsFromEvents(listOf(event)).isEmpty())
+    }
+
+    @Test
     fun `openai response argument deltas enforce cumulative limit`() {
         val events = listOf("123", "45").map { delta ->
             NetworkClient.openAIJson.decodeFromString<ResponsesStreamEvent>(

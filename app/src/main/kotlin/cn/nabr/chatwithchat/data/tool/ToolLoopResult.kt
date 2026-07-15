@@ -12,6 +12,7 @@ sealed class ToolLoopResult {
     ) : ToolLoopResult()
 
     data class Failed(
-        val message: String
+        val message: String,
+        val hadToolInteraction: Boolean = false
     ) : ToolLoopResult()
 }

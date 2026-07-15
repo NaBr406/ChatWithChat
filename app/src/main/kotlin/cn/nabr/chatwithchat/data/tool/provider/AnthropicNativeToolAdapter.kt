@@ -8,7 +8,9 @@ import cn.nabr.chatwithchat.data.dto.anthropic.request.InputMessage
 import cn.nabr.chatwithchat.data.dto.anthropic.response.ContentBlockType
 import cn.nabr.chatwithchat.data.dto.anthropic.response.ContentDeltaResponseChunk
 import cn.nabr.chatwithchat.data.dto.anthropic.response.ContentStartResponseChunk
+import cn.nabr.chatwithchat.data.dto.anthropic.response.MessageDeltaResponseChunk
 import cn.nabr.chatwithchat.data.dto.anthropic.response.MessageResponseChunk
+import cn.nabr.chatwithchat.data.dto.anthropic.response.StopReason
 import cn.nabr.chatwithchat.data.tool.ToolArgumentStreamLimiter
 import cn.nabr.chatwithchat.data.tool.ToolCall
 import cn.nabr.chatwithchat.data.tool.ToolDefinition
@@ -76,6 +78,15 @@ class AnthropicNativeToolAdapter {
         return accumulators.values
             .sortedBy { it.index }
             .mapNotNull { accumulator -> accumulator.toToolCall(config.maxToolArgumentChars) }
+    }
+
+    fun hasToolCallIntent(chunks: List<MessageResponseChunk>): Boolean = chunks.any { chunk ->
+        when (chunk) {
+            is ContentStartResponseChunk -> chunk.contentBlock.type == ContentBlockType.TOOL_USE
+            is ContentDeltaResponseChunk -> chunk.delta.type == ContentBlockType.INPUT_JSON_DELTA
+            is MessageDeltaResponseChunk -> chunk.delta.stopReason == StopReason.TOOL_USE
+            else -> false
+        }
     }
 
     fun continuationMessages(

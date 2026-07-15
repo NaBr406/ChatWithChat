@@ -25,47 +25,68 @@ data class ChatPlatformConfig(
     val reasoningMode: ReasoningMode
 )
 
+enum class ReasoningCapability {
+    UNKNOWN,
+    DEFAULT_ONLY,
+    TOGGLE,
+    EFFORT,
+    UNSUPPORTED
+}
+
+data class ReasoningCapabilityProfile(
+    val capability: ReasoningCapability,
+    val supportedModes: List<ReasoningMode> = emptyList()
+) {
+    val isConfigurable: Boolean = supportedModes.isNotEmpty()
+}
+
 fun PlatformV2.defaultReasoningMode(): ReasoningMode = ReasoningMode.AUTO
 
-fun PlatformV2.reasoningModesForModel(modelId: String = model): List<ReasoningMode> = when (compatibleType) {
-    ClientType.OPENAI -> if (isOpenAIResponsesReasoningModel(modelId)) {
-        standardReasoningModes()
-    } else {
-        emptyList()
+fun PlatformV2.reasoningCapabilityForModel(modelId: String = model): ReasoningCapabilityProfile = when (compatibleType) {
+    ClientType.OPENAI -> when {
+        isOpenAIResponsesReasoningModel(modelId) -> effortCapability()
+        isDefaultOnlyReasoningModel(modelId) -> defaultOnlyCapability()
+        isKnownOrdinaryModel(modelId) -> unsupportedCapability()
+        else -> unknownCapability()
     }
 
-    ClientType.ANTHROPIC -> if (isAnthropicThinkingModel(modelId)) {
-        standardReasoningModes(includeMax = true)
-    } else {
-        emptyList()
+    ClientType.ANTHROPIC -> when {
+        isAnthropicThinkingModel(modelId) -> effortCapability(includeMax = true, includeOff = true)
+        isDefaultOnlyReasoningModel(modelId) -> defaultOnlyCapability()
+        isKnownOrdinaryModel(modelId) -> unsupportedCapability()
+        else -> unknownCapability()
     }
 
-    ClientType.GOOGLE -> if (isGoogleThinkingModel(modelId)) {
-        standardReasoningModes(includeMax = true)
-    } else {
-        emptyList()
+    ClientType.GOOGLE -> when {
+        isGoogleThinkingModel(modelId) -> effortCapability(includeMax = true, includeOff = true)
+        isDefaultOnlyReasoningModel(modelId) -> defaultOnlyCapability()
+        isKnownOrdinaryModel(modelId) -> unsupportedCapability()
+        else -> unknownCapability()
     }
 
     ClientType.GROQ -> when {
-        isGptOssModel(modelId) -> standardReasoningModes()
-        isGroqParsedReasoningModel(modelId) -> listOf(ReasoningMode.AUTO, ReasoningMode.OFF, ReasoningMode.MEDIUM)
-        else -> emptyList()
+        isGptOssModel(modelId) -> effortCapability(includeOff = true)
+        isGroqParsedReasoningModel(modelId) -> toggleCapability()
+        isDefaultOnlyReasoningModel(modelId) -> defaultOnlyCapability()
+        isKnownOrdinaryModel(modelId) -> unsupportedCapability()
+        else -> unknownCapability()
     }
 
-    ClientType.OPENROUTER, ClientType.CUSTOM -> if (isOpenAICompatibleReasoningModel(modelId)) {
-        standardReasoningModes()
-    } else {
-        emptyList()
+    ClientType.OPENROUTER, ClientType.CUSTOM, ClientType.OLLAMA -> when {
+        isRecognizedReasoningFamily(modelId) -> defaultOnlyCapability()
+        isKnownOrdinaryModel(modelId) -> unsupportedCapability()
+        else -> unknownCapability()
     }
-
-    ClientType.OLLAMA -> emptyList()
 }
+
+fun PlatformV2.reasoningModesForModel(modelId: String = model): List<ReasoningMode> =
+    reasoningCapabilityForModel(modelId).supportedModes
 
 fun PlatformV2.coerceReasoningModeForModel(
     mode: ReasoningMode,
     modelId: String = model
 ): ReasoningMode {
-    val supportedModes = reasoningModesForModel(modelId)
+    val supportedModes = reasoningCapabilityForModel(modelId).supportedModes
     if (supportedModes.isEmpty()) return ReasoningMode.AUTO
 
     return mode.takeIf { it in supportedModes }
@@ -85,25 +106,53 @@ fun ReasoningMode.isExplicitReasoningEnabled(): Boolean = when (this) {
 
 fun isGptOssModel(modelId: String): Boolean = modelId.contains("gpt-oss", ignoreCase = true)
 
-private fun standardReasoningModes(includeMax: Boolean = false): List<ReasoningMode> {
-    val modes = listOf(
-        ReasoningMode.AUTO,
-        ReasoningMode.OFF,
-        ReasoningMode.LOW,
-        ReasoningMode.MEDIUM,
-        ReasoningMode.HIGH
-    )
+private fun effortCapability(
+    includeMax: Boolean = false,
+    includeOff: Boolean = false
+): ReasoningCapabilityProfile {
+    val modes = buildList {
+        add(ReasoningMode.AUTO)
+        if (includeOff) add(ReasoningMode.OFF)
+        add(ReasoningMode.LOW)
+        add(ReasoningMode.MEDIUM)
+        add(ReasoningMode.HIGH)
+        if (includeMax) add(ReasoningMode.MAX)
+    }
 
-    return if (includeMax) modes + ReasoningMode.MAX else modes
+    return ReasoningCapabilityProfile(
+        capability = ReasoningCapability.EFFORT,
+        supportedModes = modes
+    )
 }
+
+private fun toggleCapability(): ReasoningCapabilityProfile = ReasoningCapabilityProfile(
+    capability = ReasoningCapability.TOGGLE,
+    supportedModes = listOf(ReasoningMode.AUTO, ReasoningMode.OFF, ReasoningMode.MEDIUM)
+)
+
+private fun defaultOnlyCapability(): ReasoningCapabilityProfile =
+    ReasoningCapabilityProfile(ReasoningCapability.DEFAULT_ONLY)
+
+private fun unsupportedCapability(): ReasoningCapabilityProfile =
+    ReasoningCapabilityProfile(ReasoningCapability.UNSUPPORTED)
+
+private fun unknownCapability(): ReasoningCapabilityProfile =
+    ReasoningCapabilityProfile(ReasoningCapability.UNKNOWN)
+
+private fun isRecognizedReasoningFamily(modelId: String): Boolean =
+    isOpenAIResponsesReasoningModel(modelId) ||
+        isGptOssModel(modelId) ||
+        isGroqParsedReasoningModel(modelId) ||
+        isAnthropicThinkingModel(modelId) ||
+        isGoogleThinkingModel(modelId) ||
+        isDeepSeekModel(modelId)
 
 private fun isOpenAIResponsesReasoningModel(modelId: String): Boolean {
     val normalized = modelId.trim().lowercase()
     return hasModelToken(normalized, "o1") ||
         hasModelToken(normalized, "o3") ||
         hasModelToken(normalized, "o4") ||
-        normalized.contains("gpt-5") ||
-        normalized.contains("reasoning")
+        normalized.contains("gpt-5")
 }
 
 private fun isAnthropicThinkingModel(modelId: String): Boolean {
@@ -120,24 +169,48 @@ private fun isGoogleThinkingModel(modelId: String): Boolean {
     val normalized = modelId.trim().lowercase()
     return normalized.contains("gemini-2.5") ||
         normalized.contains("gemini-3") ||
-        normalized.contains("thinking")
+        (
+            normalized.contains("gemini") &&
+                normalized.contains("thinking")
+            )
 }
 
 private fun isGroqParsedReasoningModel(modelId: String): Boolean {
     val normalized = modelId.trim().lowercase()
     return normalized.contains("qwen3") ||
         normalized.contains("qwq") ||
-        normalized.contains("deepseek-r1") ||
-        normalized.contains("reasoning")
+        normalized.contains("deepseek-r1")
 }
 
-private fun isOpenAICompatibleReasoningModel(modelId: String): Boolean {
+private fun isDefaultOnlyReasoningModel(modelId: String): Boolean {
     val normalized = modelId.trim().lowercase()
-    return isOpenAIResponsesReasoningModel(normalized) ||
+    return isDeepSeekModel(normalized) ||
         isGptOssModel(normalized) ||
         isGroqParsedReasoningModel(normalized) ||
         isAnthropicThinkingModel(normalized) ||
         isGoogleThinkingModel(normalized)
+}
+
+private fun isDeepSeekModel(modelId: String): Boolean =
+    modelId.contains("deepseek", ignoreCase = true)
+
+private fun isKnownOrdinaryModel(modelId: String): Boolean {
+    val normalized = modelId.trim().lowercase()
+    return normalized.contains("gpt-4o") ||
+        normalized.contains("gpt-4.1") ||
+        normalized.contains("gpt-4-turbo") ||
+        normalized.contains("gpt-3.5") ||
+        normalized.contains("claude-3-5") ||
+        normalized.contains("claude-3.5") ||
+        normalized.contains("claude-3-haiku") ||
+        normalized.contains("claude-3-sonnet") ||
+        normalized.contains("claude-3-opus") ||
+        normalized.contains("gemini-1.") ||
+        normalized.contains("gemini-2.0") ||
+        normalized.contains("llama-") ||
+        normalized.contains("mistral") ||
+        normalized.contains("mixtral") ||
+        normalized.contains("gemma")
 }
 
 private fun hasModelToken(modelId: String, token: String): Boolean =

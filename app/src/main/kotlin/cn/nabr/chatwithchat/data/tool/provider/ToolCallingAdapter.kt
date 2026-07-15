@@ -23,6 +23,8 @@ interface ToolCallingAdapter {
         config: ToolLoopConfig = ToolLoopConfig.Default
     ): Result<JsonToolModelOutput>
 
+    fun hasToolCallIntent(rawText: String): Boolean = false
+
     fun renderToolResults(
         results: List<ToolResult>,
         config: ToolLoopConfig

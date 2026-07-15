@@ -19,4 +19,14 @@ class SetupFlowPolicyTest {
     fun shouldOpenHome_refreshFailure_returnsFalse() {
         assertFalse(SaveStatus.Error(message = "failed", platformSaved = true).shouldOpenHome())
     }
+
+    @Test
+    fun hasPersistedPlatform_modelRefreshFailure_allowsLeavingSetup() {
+        assertTrue(SaveStatus.Error(message = "failed", platformSaved = true).hasPersistedPlatform())
+    }
+
+    @Test
+    fun hasPersistedPlatform_saveFailure_keepsWizardVisible() {
+        assertFalse(SaveStatus.Error(message = "failed", platformSaved = false).hasPersistedPlatform())
+    }
 }

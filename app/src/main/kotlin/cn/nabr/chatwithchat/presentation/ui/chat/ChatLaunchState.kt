@@ -21,6 +21,11 @@ internal class ChatLaunchState(
             savedStateHandle[INITIAL_ATTACHMENTS_CONSUMED_KEY] = value
         }
 
+    fun recordInitialRequestPersisted() {
+        initialQuestionConsumed = true
+        initialAttachmentsConsumed = true
+    }
+
     fun recordPersistedChatRoomId(chatRoomId: Int) {
         if (routeChatRoomId == 0 && chatRoomId > 0) {
             savedStateHandle[PERSISTED_CHAT_ROOM_ID_KEY] = chatRoomId
@@ -33,3 +38,15 @@ internal class ChatLaunchState(
         const val INITIAL_ATTACHMENTS_CONSUMED_KEY = "chat.launch.initialAttachmentsConsumed"
     }
 }
+
+internal fun shouldShowInterruptedInitialRequest(
+    initialRequestId: Int,
+    assistantContent: String,
+    assistantThoughts: String,
+    hasAttachments: Boolean,
+    isLoading: Boolean
+): Boolean = initialRequestId < 0 &&
+    !isLoading &&
+    assistantContent.isBlank() &&
+    assistantThoughts.isBlank() &&
+    !hasAttachments

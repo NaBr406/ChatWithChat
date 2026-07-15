@@ -289,4 +289,12 @@
     <string name="large_images_resized_before_upload">上传前已压缩大图。</string>
     <string name="failed_to_prepare_attachment">附件处理失败。</string>
     <string name="failed_to_copy_attachment">附件复制失败。</string>
+    <string name="attachment_batch_rejected">%1$d 枚の画像を追加できませんでした。画像形式と 50 MB の上限を確認してください。</string>
+    <string name="reasoning_control">思考</string>
+    <string name="reasoning_mode_model_default">モデルのデフォルト</string>
+    <string name="reasoning_mode_default_only">モデル既定の思考</string>
+    <string name="reasoning_mode_unknown">能力を識別できないため、モデルのデフォルトを使用します</string>
+    <string name="reasoning_mode_on">オン</string>
+    <string name="reasoning_mode_on_description">モデルの思考を使用</string>
+    <string name="initial_request_interrupted">リクエストが中断されました。再試行してください。</string>
 </resources>

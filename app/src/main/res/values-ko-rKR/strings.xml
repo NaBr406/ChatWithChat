@@ -289,4 +289,12 @@
     <string name="large_images_resized_before_upload">上传前已压缩大图。</string>
     <string name="failed_to_prepare_attachment">附件处理失败。</string>
     <string name="failed_to_copy_attachment">附件复制失败。</string>
+    <string name="attachment_batch_rejected">%1$d개의 이미지를 추가하지 못했습니다. 이미지 형식과 50MB 제한을 확인하세요.</string>
+    <string name="reasoning_control">추론</string>
+    <string name="reasoning_mode_model_default">모델 기본값</string>
+    <string name="reasoning_mode_default_only">모델 기본 추론</string>
+    <string name="reasoning_mode_unknown">기능을 인식할 수 없어 모델 기본값을 유지합니다</string>
+    <string name="reasoning_mode_on">켜기</string>
+    <string name="reasoning_mode_on_description">모델 추론 사용</string>
+    <string name="initial_request_interrupted">요청이 중단되었습니다. 다시 시도하세요.</string>
 </resources>

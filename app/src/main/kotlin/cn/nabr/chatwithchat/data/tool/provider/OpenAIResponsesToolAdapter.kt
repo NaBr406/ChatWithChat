@@ -8,6 +8,7 @@ import cn.nabr.chatwithchat.data.dto.openai.request.ResponseTool
 import cn.nabr.chatwithchat.data.dto.openai.response.FunctionCallArgumentsDeltaEvent
 import cn.nabr.chatwithchat.data.dto.openai.response.FunctionCallArgumentsDoneEvent
 import cn.nabr.chatwithchat.data.dto.openai.response.OutputItem
+import cn.nabr.chatwithchat.data.dto.openai.response.OutputItemAddedEvent
 import cn.nabr.chatwithchat.data.dto.openai.response.OutputItemDoneEvent
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponsesStreamEvent
 import cn.nabr.chatwithchat.data.tool.ToolArgumentStreamLimiter
@@ -58,6 +59,16 @@ class OpenAIResponsesToolAdapter {
             .filterIsInstance<OutputItemDoneEvent>()
             .mapNotNull { event -> event.item.toToolCall(config.maxToolArgumentChars) }
             .boundedDistinctById(config.maxToolCallsPerRound)
+    }
+
+    fun hasToolCallIntent(events: List<ResponsesStreamEvent>): Boolean = events.any { event ->
+        when (event) {
+            is FunctionCallArgumentsDeltaEvent,
+            is FunctionCallArgumentsDoneEvent -> true
+            is OutputItemAddedEvent -> event.item.type == FUNCTION_CALL_OUTPUT_TYPE
+            is OutputItemDoneEvent -> event.item.type == FUNCTION_CALL_OUTPUT_TYPE
+            else -> false
+        }
     }
 
     fun continuationInputItems(

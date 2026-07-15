@@ -71,7 +71,7 @@ fun SetupPlatformWizardScreen(
     val selectedClientType = selectedClientTypeState.value
     val saveStatus = saveStatusState.value
     val isSaving = saveStatus is SaveStatus.Saving || saveStatus is SaveStatus.RefreshingModels
-    val saveFinished = saveStatus is SaveStatus.Success || (saveStatus as? SaveStatus.Error)?.platformSaved == true
+    val saveFinished = saveStatus.hasPersistedPlatform()
     platformNameState.value
     apiUrlState.value
     apiKeyState.value
@@ -90,8 +90,6 @@ fun SetupPlatformWizardScreen(
 
     LaunchedEffect(saveStatus) {
         if (saveStatus.shouldOpenHome()) {
-            setupViewModel.clearSaveStatus()
-            setupViewModel.resetWizard()
             onComplete()
         }
     }
@@ -100,8 +98,6 @@ fun SetupPlatformWizardScreen(
     BackHandler {
         if (isSaving) return@BackHandler
         if (saveFinished) {
-            setupViewModel.clearSaveStatus()
-            setupViewModel.resetWizard()
             onComplete()
             return@BackHandler
         }
@@ -120,8 +116,6 @@ fun SetupPlatformWizardScreen(
                 backAction = {
                     if (isSaving) return@SetupAppBar
                     if (saveFinished) {
-                        setupViewModel.clearSaveStatus()
-                        setupViewModel.resetWizard()
                         onComplete()
                         return@SetupAppBar
                     }
@@ -191,11 +185,7 @@ fun SetupPlatformWizardScreen(
             SetupSaveStatusPanel(
                 saveStatus = saveStatus,
                 onRetry = setupViewModel::retrySavedPlatformModelRefresh,
-                onContinue = {
-                    setupViewModel.clearSaveStatus()
-                    setupViewModel.resetWizard()
-                    onComplete()
-                }
+                onContinue = onComplete
             )
 
             // Navigation buttons
@@ -272,6 +262,9 @@ private fun WizardProgressIndicator(
 }
 
 internal fun SaveStatus.shouldOpenHome(): Boolean = this is SaveStatus.Success && modelCount > 0
+
+internal fun SaveStatus.hasPersistedPlatform(): Boolean =
+    this is SaveStatus.Success || (this as? SaveStatus.Error)?.platformSaved == true
 
 @Composable
 private fun StepLabel(

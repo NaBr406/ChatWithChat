@@ -1,6 +1,7 @@
 package cn.nabr.chatwithchat.data.websearch
 
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
+import cn.nabr.chatwithchat.data.dto.ProviderUsage
 import cn.nabr.chatwithchat.data.model.ClientType
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -14,7 +15,7 @@ class SearchDecisionServiceTest {
     fun `time sensitive question can trigger search decision`() = runBlocking {
         val client = RecordingDecisionClient(
             Result.success(
-                """{"shouldSearch":true,"queries":["latest Android target SDK 2026"],"reason":"current version"}"""
+                response("""{"shouldSearch":true,"queries":["latest Android target SDK 2026"],"reason":"current version"}""")
             )
         )
         val service = SearchDecisionService(client)
@@ -39,7 +40,7 @@ class SearchDecisionServiceTest {
     fun `casual chat can skip search decision`() = runBlocking {
         val service = SearchDecisionService(
             RecordingDecisionClient(
-                Result.success("""{"shouldSearch":false,"queries":[],"reason":"casual chat"}""")
+                Result.success(response("""{"shouldSearch":false,"queries":[],"reason":"casual chat"}"""))
             )
         )
 
@@ -55,7 +56,7 @@ class SearchDecisionServiceTest {
 
     @Test
     fun `invalid json defaults to no search`() = runBlocking {
-        val service = SearchDecisionService(RecordingDecisionClient(Result.success("not json")))
+        val service = SearchDecisionService(RecordingDecisionClient(Result.success(response("not json"))))
 
         val decision = service.decide(platform(), "What happened today?", null)
 
@@ -68,7 +69,7 @@ class SearchDecisionServiceTest {
         val service = SearchDecisionService(
             RecordingDecisionClient(
                 Result.success(
-                    """{"shouldSearch":true,"queries":["one","two","three"],"reason":"needs current data"}"""
+                    response("""{"shouldSearch":true,"queries":["one","two","three"],"reason":"needs current data"}""")
                 )
             )
         )
@@ -83,7 +84,7 @@ class SearchDecisionServiceTest {
     fun `decision prompt instructs broad requests to use sensible default scopes`() = runBlocking {
         val client = RecordingDecisionClient(
             Result.success(
-                """{"shouldSearch":true,"queries":["2026-07-01 top news headlines","2026-07-01 international news"],"reason":"broad news request"}"""
+                response("""{"shouldSearch":true,"queries":["2026-07-01 top news headlines","2026-07-01 international news"],"reason":"broad news request"}""")
             )
         )
         val service = SearchDecisionService(client)
@@ -112,6 +113,49 @@ class SearchDecisionServiceTest {
         assertTrue(decision.queries.isEmpty())
     }
 
+    @Test
+    fun `decision usage prefers exact provider counts`() = runBlocking {
+        val service = SearchDecisionService(
+            RecordingDecisionClient(
+                Result.success(
+                    response(
+                        content = """{"shouldSearch":true,"queries":["current facts"],"reason":"current"}""",
+                        usage = ProviderUsage(promptTokens = 13, completionTokens = 5, totalTokens = 18)
+                    )
+                )
+            )
+        )
+
+        val outcome = service.decideWithUsage(platform(), "What happened today?", null)
+
+        assertEquals(13, outcome.usage?.inputTokens)
+        assertEquals(5, outcome.usage?.outputTokens)
+        assertEquals(18, outcome.usage?.totalTokens)
+        assertFalse(outcome.usage?.isEstimated ?: true)
+    }
+
+    @Test
+    fun `decision usage is estimated when provider omits counts`() = runBlocking {
+        val service = SearchDecisionService(
+            RecordingDecisionClient(
+                Result.success(response("""{"shouldSearch":false,"queries":[],"reason":"enough context"}"""))
+            )
+        )
+
+        val outcome = service.decideWithUsage(platform(), "Summarize this", null)
+
+        assertTrue(outcome.usage?.isEstimated == true)
+        assertTrue((outcome.usage?.totalTokens ?: 0) > 0)
+        assertTrue(outcome.usage?.details?.all { detail -> !detail.isToolRelated } == true)
+    }
+
+    @Test
+    fun `openrouter decision streaming requests usage without changing other compatible providers`() {
+        assertTrue(searchDecisionStreamOptionsFor(ClientType.OPENROUTER)?.includeUsage == true)
+        assertEquals(null, searchDecisionStreamOptionsFor(ClientType.CUSTOM))
+        assertEquals(null, searchDecisionStreamOptionsFor(ClientType.OLLAMA))
+    }
+
     private fun platform() = PlatformV2(
         name = "Custom",
         compatibleType = ClientType.CUSTOM,
@@ -120,13 +164,23 @@ class SearchDecisionServiceTest {
     )
 
     private class RecordingDecisionClient(
-        private val result: Result<String>
+        private val result: Result<SearchDecisionModelResponse>
     ) : SearchDecisionModelClient {
         var lastPrompt: String = ""
 
-        override suspend fun requestDecision(platform: PlatformV2, prompt: String): Result<String> {
+        override suspend fun requestDecision(
+            platform: PlatformV2,
+            prompt: String
+        ): Result<SearchDecisionModelResponse> {
             lastPrompt = prompt
             return result
         }
+    }
+
+    private companion object {
+        fun response(
+            content: String,
+            usage: ProviderUsage? = null
+        ) = SearchDecisionModelResponse(content = content, usage = usage)
     }
 }

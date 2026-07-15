@@ -26,6 +26,7 @@ interface ChatRepository {
     suspend fun searchChatsV2(query: String): List<ChatRoomV2>
     suspend fun fetchMessages(chatId: Int): List<Message>
     suspend fun fetchMessagesV2(chatId: Int): List<MessageV2>
+    suspend fun findChatIdByInitialRequestId(initialRequestId: Int): Int? = null
     suspend fun fetchChatPlatformModels(chatId: Int): Map<String, ChatPlatformConfig>
     suspend fun saveChatPlatformModels(chatId: Int, models: Map<String, ChatPlatformConfig>)
     suspend fun migrateToChatRoomV2MessageV2()

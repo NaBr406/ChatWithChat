@@ -159,6 +159,48 @@ class OpenAIChatCompletionsToolAdapterTest {
     }
 
     @Test
+    fun `empty chat completion tool array does not expose tool intent`() {
+        val chunk = NetworkClient.openAIJson.decodeFromString<ChatCompletionChunk>(
+            """
+            {
+              "choices": [{
+                "index": 0,
+                "delta": {"tool_calls": []},
+                "finish_reason": "tool_calls"
+              }]
+            }
+            """.trimIndent()
+        )
+
+        assertFalse(adapter.hasToolCallIntent(listOf(chunk)))
+        assertTrue(adapter.toolCallsFromChunks(listOf(chunk)).isEmpty())
+    }
+
+    @Test
+    fun `nonempty invalid chat completion call still exposes raw tool intent`() {
+        val chunk = NetworkClient.openAIJson.decodeFromString<ChatCompletionChunk>(
+            """
+            {
+              "choices": [{
+                "index": 0,
+                "delta": {
+                  "tool_calls": [{
+                    "index": 0,
+                    "id": "call_1",
+                    "function": {"name": "", "arguments": "{}"}
+                  }]
+                },
+                "finish_reason": "tool_calls"
+              }]
+            }
+            """.trimIndent()
+        )
+
+        assertTrue(adapter.hasToolCallIntent(listOf(chunk)))
+        assertTrue(adapter.toolCallsFromChunks(listOf(chunk)).isEmpty())
+    }
+
+    @Test
     fun `streamed tool arguments stop accumulating at configured limit`() {
         val chunk = NetworkClient.openAIJson.decodeFromString<ChatCompletionChunk>(
             """
