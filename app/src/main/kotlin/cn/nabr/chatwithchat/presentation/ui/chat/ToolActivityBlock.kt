@@ -58,7 +58,7 @@ import cn.nabr.chatwithchat.presentation.common.AppleRed
 import cn.nabr.chatwithchat.presentation.common.HigActionDialog
 import cn.nabr.chatwithchat.presentation.common.LocalToolPermissionRequester
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
-import cn.nabr.chatwithchat.presentation.theme.GPTMobileTheme
+import cn.nabr.chatwithchat.presentation.theme.ChatWithChatTheme
 
 private const val WEB_SEARCH_TOOL = "web_search"
 private const val FETCH_URL_TOOL = "fetch_url"
@@ -328,7 +328,7 @@ private fun String?.toReadableFailureDetail(): String? {
 @Preview
 @Composable
 private fun ToolActivityBlockPreview() {
-    GPTMobileTheme {
+    ChatWithChatTheme {
         ToolActivityBlock(
             progressStates = listOf(
                 ChatViewModel.ToolProgressState(

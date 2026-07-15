@@ -71,7 +71,7 @@ import androidx.core.content.FileProvider.getUriForFile
 import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.presentation.common.AppleBlue
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
-import cn.nabr.chatwithchat.presentation.theme.GPTMobileTheme
+import cn.nabr.chatwithchat.presentation.theme.ChatWithChatTheme
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -537,7 +537,7 @@ private fun sanitizeFileName(fileName: String): String {
 @Preview
 @Composable
 fun EmptyChatComposerPreview() {
-    GPTMobileTheme {
+    ChatWithChatTheme {
         ChatComposer()
     }
 }
@@ -545,7 +545,7 @@ fun EmptyChatComposerPreview() {
 @Preview
 @Composable
 fun PreparingAttachmentChatComposerPreview() {
-    GPTMobileTheme {
+    ChatWithChatTheme {
         ChatComposer(
             selectedAttachments = listOf(
                 ChatAttachmentDraft(
@@ -560,7 +560,7 @@ fun PreparingAttachmentChatComposerPreview() {
 @Preview
 @Composable
 fun FailedAttachmentChatComposerPreview() {
-    GPTMobileTheme {
+    ChatWithChatTheme {
         ChatComposer(
             selectedAttachments = listOf(
                 ChatAttachmentDraft(

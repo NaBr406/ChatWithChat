@@ -29,7 +29,7 @@ import cn.nabr.chatwithchat.presentation.common.Route
 import cn.nabr.chatwithchat.presentation.common.SetupNavGraph
 import cn.nabr.chatwithchat.presentation.common.ThemeSettingProvider
 import cn.nabr.chatwithchat.presentation.common.ToolPermissionRequester
-import cn.nabr.chatwithchat.presentation.theme.GPTMobileTheme
+import cn.nabr.chatwithchat.presentation.theme.ChatWithChatTheme
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
@@ -83,7 +83,7 @@ class MainActivity : ComponentActivity() {
                     ),
                     LocalToolPermissionRequester provides ToolPermissionRequester(::requestToolRuntimePermissions)
                 ) {
-                    GPTMobileTheme(
+                    ChatWithChatTheme(
                         dynamicTheme = LocalDynamicTheme.current,
                         themeMode = LocalThemeMode.current
                     ) {

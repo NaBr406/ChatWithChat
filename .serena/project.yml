@@ -83,7 +83,7 @@ excluded_tools: []
 # (contrary to the memories, which are loaded on demand).
 initial_prompt: ""
 # the name by which the project can be referenced within Serena
-project_name: "gpt_mobile"
+project_name: "chat_with_chat"
 
 # list of tools to include that would otherwise be disabled (particularly optional tools that are disabled by default)
 included_optional_tools: []

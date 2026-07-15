@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">ChatWithChat</string>
-    <string name="gpt_mobile_introduction_logo">ChatWithChat 介绍图标</string>
+    <string name="chat_with_chat_introduction_logo">ChatWithChat 介绍图标</string>
     <string name="welcome_title">可随身携带的\n强大 AI 助手</string>
     <string name="welcome_description">选择适合你的模型，随时提问。</string>
     <string name="get_started">开始使用</string>

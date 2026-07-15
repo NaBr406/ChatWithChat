@@ -68,7 +68,7 @@ import cn.nabr.chatwithchat.data.database.entity.safeDedupeKey
 import cn.nabr.chatwithchat.data.database.entity.safeNavigationTarget
 import cn.nabr.chatwithchat.presentation.common.AppleBlue
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
-import cn.nabr.chatwithchat.presentation.theme.GPTMobileTheme
+import cn.nabr.chatwithchat.presentation.theme.ChatWithChatTheme
 import java.io.File
 
 private val OutgoingMessageBlue = Color(0xFF0062CC)
@@ -546,7 +546,7 @@ fun UserChatBubblePreview() {
         How can I print hello world
         in Python?
     """.trimIndent()
-    GPTMobileTheme {
+    ChatWithChatTheme {
         UserChatBubble(text = sampleText, files = emptyList(), onLongPress = {})
     }
 }
@@ -569,7 +569,7 @@ fun AssistantChatBubblePreview() {
         - Or minuses
         + Or pluses
     """.trimIndent()
-    GPTMobileTheme {
+    ChatWithChatTheme {
         OpponentChatBubble(
             text = sampleText,
             canRetry = true,

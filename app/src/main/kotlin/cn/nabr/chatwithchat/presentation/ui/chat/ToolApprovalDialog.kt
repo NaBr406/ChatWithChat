@@ -7,7 +7,7 @@ import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.tool.ToolApprovalPreview
 import cn.nabr.chatwithchat.data.tool.ToolCall
 import cn.nabr.chatwithchat.presentation.common.HigActionDialog
-import cn.nabr.chatwithchat.presentation.theme.GPTMobileTheme
+import cn.nabr.chatwithchat.presentation.theme.ChatWithChatTheme
 
 @Composable
 fun ToolApprovalDialog(
@@ -47,7 +47,7 @@ private fun ToolApprovalDialogPreview() {
         fallbackDisplayName = "Device location",
         humanReadableArgumentSummary = "Read the current device location for this reply"
     ).getOrThrow()
-    GPTMobileTheme {
+    ChatWithChatTheme {
         ToolApprovalDialog(
             preview = preview,
             onApprove = {},

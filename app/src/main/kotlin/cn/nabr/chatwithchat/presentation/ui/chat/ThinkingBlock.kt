@@ -33,7 +33,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import cn.nabr.chatwithchat.R
-import cn.nabr.chatwithchat.presentation.theme.GPTMobileTheme
+import cn.nabr.chatwithchat.presentation.theme.ChatWithChatTheme
 
 @Composable
 fun ThinkingBlock(
@@ -148,7 +148,7 @@ private fun ThinkingBlockPreview() {
         This is a longer thinking process that shows how the AI reasons through the problem.
     """.trimIndent()
 
-    GPTMobileTheme {
+    ChatWithChatTheme {
         ThinkingBlock(
             thoughts = sampleThoughts,
             isLoading = false
@@ -159,7 +159,7 @@ private fun ThinkingBlockPreview() {
 @Preview
 @Composable
 private fun ThinkingBlockLoadingPreview() {
-    GPTMobileTheme {
+    ChatWithChatTheme {
         ThinkingBlock(
             thoughts = "Analyzing the problem...",
             isLoading = true

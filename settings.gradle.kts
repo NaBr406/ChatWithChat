@@ -20,5 +20,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "GPTMobile"
+rootProject.name = "ChatWithChat"
 include(":app")

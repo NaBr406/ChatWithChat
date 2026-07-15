@@ -12,7 +12,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
 @HiltAndroidApp
-class GPTMobileApp : Application() {
+class ChatWithChatApp : Application() {
     // TODO Delete when https://github.com/google/dagger/issues/3601 is resolved.
     @Inject
     @ApplicationContext
