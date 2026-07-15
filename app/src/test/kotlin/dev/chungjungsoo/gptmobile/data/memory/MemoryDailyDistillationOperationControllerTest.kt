@@ -62,7 +62,7 @@ class MemoryDailyDistillationOperationControllerTest {
     }
 
     @Test
-    fun `unknown evidence and duplicate create fail closed`() {
+    fun `unknown evidence and existing duplicate create fail closed`() {
         val existing = memoryEntry("mem_existing", "Existing stable preference.")
         val fixture = fixture(existing = listOf(existing))
 
@@ -76,12 +76,187 @@ class MemoryDailyDistillationOperationControllerTest {
         )
         assertTrue(
             runCatching {
-                controller.validate(
+                val operations = controller.validate(
                     fixture.input,
                     listOf(operation(MemoryDailyDistillationAction.CREATE, text = existing.text))
                 )
+                controller.render(fixture.input, fixture.baseMarkdown, operations)
             }.isFailure
         )
+    }
+
+    @Test
+    fun `create and replace cannot expand exact text multiplicity`() {
+        val existing = memoryEntry("mem_existing", "Original stable preference.")
+        val fixture = fixture(existing = listOf(existing))
+        val operations = controller.validate(
+            fixture.input,
+            listOf(
+                operation(MemoryDailyDistillationAction.CREATE, text = "Updated stable preference."),
+                operation(
+                    action = MemoryDailyDistillationAction.REPLACE,
+                    targetMemoryId = existing.id,
+                    text = "  UPDATED stable\npreference.  "
+                )
+            )
+        )
+
+        val failure = runCatching {
+            controller.render(fixture.input, fixture.baseMarkdown, operations)
+        }.exceptionOrNull()
+
+        assertEquals("duplicate_exact_memory_text", failure?.message)
+    }
+
+    @Test
+    fun `multiple replacements cannot expand exact text multiplicity`() {
+        val first = memoryEntry("mem_first", "First stable preference.")
+        val second = memoryEntry("mem_second", "Second stable preference.")
+        val fixture = fixture(existing = listOf(first, second))
+        val operations = controller.validate(
+            fixture.input,
+            listOf(
+                operation(
+                    action = MemoryDailyDistillationAction.REPLACE,
+                    targetMemoryId = first.id,
+                    text = "Shared stable preference."
+                ),
+                operation(
+                    action = MemoryDailyDistillationAction.REPLACE,
+                    targetMemoryId = second.id,
+                    text = "\u00a0SHARED stable\u3000preference.  "
+                )
+            )
+        )
+
+        val failure = runCatching {
+            controller.render(fixture.input, fixture.baseMarkdown, operations)
+        }.exceptionOrNull()
+
+        assertEquals("duplicate_exact_memory_text", failure?.message)
+    }
+
+    @Test
+    fun `replace cannot match another canonical entry`() {
+        val target = memoryEntry("mem_target", "Obsolete project context.")
+        val canonical = memoryEntry("mem_canonical", "Current project context.")
+        val fixture = fixture(existing = listOf(target, canonical))
+        val operations = controller.validate(
+            fixture.input,
+            listOf(
+                operation(
+                    action = MemoryDailyDistillationAction.REPLACE,
+                    targetMemoryId = target.id,
+                    text = "  CURRENT project\ncontext.  "
+                )
+            )
+        )
+
+        val failure = runCatching {
+            controller.render(fixture.input, fixture.baseMarkdown, operations)
+        }.exceptionOrNull()
+
+        assertEquals("duplicate_exact_memory_text", failure?.message)
+    }
+
+    @Test
+    fun `historical exact duplicates remain while unique create succeeds`() {
+        val first = memoryEntry("mem_duplicate_first", "Historical stable preference.")
+        val second = memoryEntry("mem_duplicate_second", "HISTORICAL stable\u3000preference.")
+        val fixture = fixture(existing = listOf(first, second))
+        val operations = controller.validate(
+            fixture.input,
+            listOf(operation(MemoryDailyDistillationAction.CREATE, text = "New unique preference."))
+        )
+
+        val rendered = controller.render(fixture.input, fixture.baseMarkdown, operations)
+        val entries = codec.parse(rendered.targets.single().targetContent).entries
+
+        assertEquals(1, rendered.writeCount)
+        assertEquals(
+            2,
+            entries.count { entry ->
+                normalizeExactMemoryText(entry.text) == normalizeExactMemoryText(first.text)
+            }
+        )
+        assertEquals(1, entries.count { entry -> entry.text == "New unique preference." })
+    }
+
+    @Test
+    fun `replace cannot expand historical exact duplicate multiplicity`() {
+        val first = memoryEntry("mem_duplicate_first", "Historical stable preference.")
+        val second = memoryEntry("mem_duplicate_second", "HISTORICAL stable\u3000preference.")
+        val target = memoryEntry("mem_target", "Unique project context.")
+        val fixture = fixture(existing = listOf(first, second, target))
+        val operations = controller.validate(
+            fixture.input,
+            listOf(
+                operation(
+                    action = MemoryDailyDistillationAction.REPLACE,
+                    targetMemoryId = target.id,
+                    text = "  historical stable\npreference.  "
+                )
+            )
+        )
+
+        val failure = runCatching {
+            controller.render(fixture.input, fixture.baseMarkdown, operations)
+        }.exceptionOrNull()
+
+        assertEquals("duplicate_exact_memory_text", failure?.message)
+    }
+
+    @Test
+    fun `replacements may swap exact texts without expanding multiplicity`() {
+        val first = memoryEntry("mem_first", "First stable preference.")
+        val second = memoryEntry("mem_second", "Second stable preference.")
+        val fixture = fixture(existing = listOf(first, second))
+        val operations = controller.validate(
+            fixture.input,
+            listOf(
+                operation(
+                    action = MemoryDailyDistillationAction.REPLACE,
+                    targetMemoryId = first.id,
+                    text = second.text
+                ),
+                operation(
+                    action = MemoryDailyDistillationAction.REPLACE,
+                    targetMemoryId = second.id,
+                    text = first.text
+                )
+            )
+        )
+
+        val rendered = controller.render(fixture.input, fixture.baseMarkdown, operations)
+        val entriesById = codec.parse(rendered.targets.single().targetContent).entries.associateBy { entry -> entry.id }
+
+        assertEquals(2, rendered.writeCount)
+        assertEquals(second.text, entriesById.getValue(first.id).text)
+        assertEquals(first.text, entriesById.getValue(second.id).text)
+    }
+
+    @Test
+    fun `create before replacement may move an exact text without expanding multiplicity`() {
+        val existing = memoryEntry("mem_existing", "Stable preference to move.")
+        val fixture = fixture(existing = listOf(existing))
+        val operations = controller.validate(
+            fixture.input,
+            listOf(
+                operation(MemoryDailyDistillationAction.CREATE, text = existing.text),
+                operation(
+                    action = MemoryDailyDistillationAction.REPLACE,
+                    targetMemoryId = existing.id,
+                    text = "Replacement preference."
+                )
+            )
+        )
+
+        val rendered = controller.render(fixture.input, fixture.baseMarkdown, operations)
+        val entries = codec.parse(rendered.targets.single().targetContent).entries
+
+        assertEquals(2, rendered.writeCount)
+        assertEquals(1, entries.count { entry -> entry.text == existing.text })
+        assertEquals("Replacement preference.", entries.single { entry -> entry.id == existing.id }.text)
     }
 
     @Test

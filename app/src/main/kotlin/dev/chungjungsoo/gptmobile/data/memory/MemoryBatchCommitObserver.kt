@@ -7,6 +7,8 @@ interface MemoryBatchCommitObserver {
 
     suspend fun afterBatchCompletion(jobId: String) = Unit
 
+    suspend fun afterSourceJobCompletion(jobId: String) = Unit
+
     data object None : MemoryBatchCommitObserver
 }
 

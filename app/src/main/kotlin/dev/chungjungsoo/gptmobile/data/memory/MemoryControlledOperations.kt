@@ -51,8 +51,6 @@ class MemoryDailyDistillationOperationController(
         val evidenceByKey = input.dailyEvidence.associateBy(MemoryDailyDistillationEvidence::evidenceKey)
         val existingById = input.existingMemories.associateBy(MemoryBatchExistingMemory::id)
         val targetedIds = mutableSetOf<String>()
-        val normalizedWriteTexts = mutableSetOf<String>()
-        val normalizedExistingTexts = input.existingMemories.map { memory -> normalizeExactMemoryText(memory.text) }.toSet()
 
         return operations.map { operation ->
             require(operation.action in VALID_ACTIONS)
@@ -74,7 +72,6 @@ class MemoryDailyDistillationOperationController(
                 MemoryDailyDistillationAction.REPLACE -> {
                     require(operation.evidenceKeys.isNotEmpty())
                     val normalizedText = normalizeWriteText(operation.text)
-                    require(normalizedWriteTexts.add(normalizeExactMemoryText(normalizedText)))
                     val target = if (operation.action == MemoryDailyDistillationAction.REPLACE) {
                         val targetId = requireNotNull(operation.targetMemoryId?.takeIf(String::isNotBlank))
                         require(targetedIds.add(targetId))
@@ -83,7 +80,6 @@ class MemoryDailyDistillationOperationController(
                         }
                     } else {
                         require(operation.targetMemoryId.isNullOrBlank())
-                        require(normalizeExactMemoryText(normalizedText) !in normalizedExistingTexts)
                         null
                     }
                     val evidence = operation.evidenceKeys.map(evidenceByKey::getValue)
@@ -129,10 +125,6 @@ class MemoryDailyDistillationOperationController(
                 MemoryDailyDistillationAction.CREATE -> {
                     val id = generatedEntryId(input.batchId, index)
                     val currentEntries = markdownMemoryCodec.parse(markdown).entries
-                    val duplicateText = currentEntries.any { entry ->
-                        normalizeExactMemoryText(entry.text) == normalizeExactMemoryText(operation.text)
-                    }
-                    require(!duplicateText)
                     currentEntries.firstOrNull { entry -> entry.id == id }?.let { existing ->
                         require(existing.text == operation.text)
                         return@forEachIndexed
@@ -166,6 +158,10 @@ class MemoryDailyDistillationOperationController(
             }
         }
         val normalizedTarget = if (writeCount == 0) baseMarkdown else markdown.trimEnd() + "\n"
+        validateNoExpandedExactTextMultiplicity(
+            originalMarkdown = baseMarkdown,
+            renderedMarkdown = normalizedTarget
+        )
         val targets = if (normalizedTarget == baseMarkdown) {
             emptyList()
         } else {
@@ -184,6 +180,23 @@ class MemoryDailyDistillationOperationController(
             targetSourceHash = normalizedTarget.toByteArray(Charsets.UTF_8).sha256Hex()
         )
     }
+
+    private fun validateNoExpandedExactTextMultiplicity(
+        originalMarkdown: String,
+        renderedMarkdown: String
+    ) {
+        val originalCounts = exactTextCounts(originalMarkdown)
+        exactTextCounts(renderedMarkdown).forEach { (normalizedText, renderedCount) ->
+            val allowedCount = maxOf(originalCounts[normalizedText] ?: 0, 1)
+            require(renderedCount <= allowedCount) { "duplicate_exact_memory_text" }
+        }
+    }
+
+    private fun exactTextCounts(markdown: String): Map<String, Int> = markdownMemoryCodec
+        .parse(markdown)
+        .entries
+        .groupingBy { entry -> normalizeExactMemoryText(entry.text) }
+        .eachCount()
 
     private fun normalizeWriteText(text: String): String {
         val normalized = text.trim().replace(WHITESPACE_REGEX, " ")

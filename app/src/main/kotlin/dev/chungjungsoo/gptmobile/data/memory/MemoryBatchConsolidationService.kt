@@ -8,6 +8,7 @@ import dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorIndexDefaults
 import dev.chungjungsoo.gptmobile.data.repository.SettingRepository
 import java.security.MessageDigest
 import java.time.Clock
+import java.time.LocalDate
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
@@ -284,10 +285,11 @@ class MemoryBatchConsolidationService(
             )
         }
         commitObserver.afterBatchCompletion(runningJob.jobId)
+        maintenanceScheduler.markSucceeded(runningJob)
+        commitObserver.afterSourceJobCompletion(runningJob.jobId)
         preparedMutation?.let { mutation ->
             memoryMutationCoordinator.acknowledgeSemanticCompletion(mutation.group.groupId)
         }
-        maintenanceScheduler.markSucceeded(runningJob)
         turnBatchScheduler.repairAndSchedule()
         finishOrganizationActivity(
             organizationLogId,
@@ -489,7 +491,7 @@ class MemoryBatchConsolidationService(
         val existingById = request.existingMemories.associateBy { it.id }
         val turnKeys = request.turns.map { it.turnKey }.toSet()
         val targetedIds = mutableSetOf<String>()
-        val normalizedCreateTextsByDestination = mutableMapOf<String, MutableSet<String>>()
+        val normalizedWriteTextsByTarget = mutableMapOf<String, MutableSet<String>>()
 
         operations.forEach { operation ->
             check(operation.destination in VALID_DESTINATIONS)
@@ -507,10 +509,10 @@ class MemoryBatchConsolidationService(
                 MemoryBatchAction.CREATE -> {
                     check(operation.targetMemoryId.isNullOrBlank())
                     validateWriteText(operation.text)
-                    check(
-                        normalizedCreateTextsByDestination
-                            .getOrPut(operation.destination) { mutableSetOf() }
-                            .add(normalizeExactMemoryText(operation.text))
+                    registerExactWrite(
+                        normalizedWriteTextsByTarget = normalizedWriteTextsByTarget,
+                        sourcePath = proposalPathForDestination(operation.destination),
+                        text = operation.text
                     )
                     check(operation.evidenceTurnKeys.isNotEmpty())
                 }
@@ -520,6 +522,11 @@ class MemoryBatchConsolidationService(
                     check(targetedIds.add(targetId))
                     check(operation.destination == destinationFor(existing.sourcePath))
                     validateWriteText(operation.text)
+                    registerExactWrite(
+                        normalizedWriteTextsByTarget = normalizedWriteTextsByTarget,
+                        sourcePath = existing.sourcePath,
+                        text = operation.text
+                    )
                     check(operation.evidenceTurnKeys.isNotEmpty())
                 }
                 MemoryBatchAction.REMOVE -> {
@@ -534,13 +541,28 @@ class MemoryBatchConsolidationService(
         }
 
         operations
-            .filter { it.action in setOf(MemoryBatchAction.CREATE, MemoryBatchAction.REPLACE) }
-            .groupBy { normalizeExactMemoryText(it.text) }
+            .filter { operation -> operation.action in setOf(MemoryBatchAction.CREATE, MemoryBatchAction.REPLACE) }
+            .groupBy { operation -> normalizeExactMemoryText(operation.text) }
             .values
             .forEach { sameTextOperations ->
-                check(sameTextOperations.map { it.destination }.distinct().size == 1)
+                check(sameTextOperations.map { operation -> operation.destination }.distinct().size == 1) {
+                    "cross_destination_exact_memory_text"
+                }
             }
+
         return operations
+    }
+
+    private fun registerExactWrite(
+        normalizedWriteTextsByTarget: MutableMap<String, MutableSet<String>>,
+        sourcePath: String,
+        text: String
+    ) {
+        check(
+            normalizedWriteTextsByTarget
+                .getOrPut(sourcePath) { mutableSetOf() }
+                .add(normalizeExactMemoryText(text))
+        ) { "duplicate_exact_memory_text" }
     }
 
     private fun validateWriteText(text: String) {
@@ -645,6 +667,12 @@ class MemoryBatchConsolidationService(
             }
         }
 
+        editedMarkdown.forEach { (sourcePath, markdown) ->
+            validateNoNewExactTextDuplicates(
+                originalMarkdown = checkNotNull(originalMarkdown[sourcePath]),
+                renderedMarkdown = markdown
+            )
+        }
         val changedMarkdown = editedMarkdown.filter { (sourcePath, markdown) -> markdown != originalMarkdown[sourcePath] }
         return RenderedMemoryBatch(
             targets = changedMarkdown.toSortedMap().map { (sourcePath, markdown) ->
@@ -679,8 +707,30 @@ class MemoryBatchConsolidationService(
         section = section
     )
 
+    private fun validateNoNewExactTextDuplicates(
+        originalMarkdown: String,
+        renderedMarkdown: String
+    ) {
+        val originalCounts = exactTextCounts(originalMarkdown)
+        exactTextCounts(renderedMarkdown).forEach { (normalizedText, renderedCount) ->
+            val allowedCount = maxOf(originalCounts[normalizedText] ?: 0, 1)
+            check(renderedCount <= allowedCount) { "duplicate_exact_memory_text" }
+        }
+    }
+
+    private fun exactTextCounts(markdown: String): Map<String, Int> = markdownMemoryCodec
+        .parse(markdown)
+        .entries
+        .groupingBy { entry -> normalizeExactMemoryText(entry.text) }
+        .eachCount()
+
     private fun pathForDestination(destination: String, todayPath: String): String =
         if (destination == MemoryBatchDestination.LONG_TERM) MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME else todayPath
+
+    private fun proposalPathForDestination(destination: String): String = pathForDestination(
+        destination = destination,
+        todayPath = "${MemoryFilePaths.DAILY_MEMORY_DIRECTORY_NAME}/${LocalDate.now(clock)}.md"
+    )
 
     private fun destinationFor(sourcePath: String): String =
         if (sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME) {

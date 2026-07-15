@@ -167,6 +167,213 @@ class MemoryBatchConsolidationServiceTest {
     }
 
     @Test
+    fun `create and replace with exact text in one target fail before rendering`() = runBlocking {
+        val existingEntry = longTermEntry(
+            id = "mem_mixed_target",
+            text = "The user originally preferred concise answers."
+        )
+        val duplicateText = "The user now prefers detailed answers."
+        val fixture = fixture(
+            proposal = MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        text = duplicateText
+                    ),
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        action = MemoryBatchAction.REPLACE,
+                        targetMemoryId = existingEntry.id,
+                        text = "  THE user now prefers\u3000detailed answers.  "
+                    )
+                )
+            ),
+            retrievalResults = listOf(retrievalResult(existingEntry))
+        )
+        fixture.fileStore.replaceLongTermMemory(
+            MarkdownMemoryCodec().renderLongTerm(listOf(existingEntry))
+        ).getOrThrow()
+        val before = fixture.fileStore.readLongTermMemory().getOrThrow()
+        val job = fixture.createFiveTurnBatch()
+
+        val result = fixture.service.process(job)
+
+        assertEquals(MemoryBatchProcessResult.STATUS_RETRYABLE, result.status)
+        assertEquals(before, fixture.fileStore.readLongTermMemory().getOrThrow())
+        assertEquals(0, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
+        assertEquals(null, fixture.recoveryDao.getMutationGroupBySemanticJobId(job.jobId))
+    }
+
+    @Test
+    fun `multiple replacements with exact text in one target fail before rendering`() = runBlocking {
+        val firstEntry = longTermEntry("mem_first_target", "The first project is active.")
+        val secondEntry = longTermEntry("mem_second_target", "The second project is active.")
+        val fixture = fixture(
+            proposal = MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        action = MemoryBatchAction.REPLACE,
+                        targetMemoryId = firstEntry.id,
+                        text = "Both projects share the same status."
+                    ),
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        action = MemoryBatchAction.REPLACE,
+                        targetMemoryId = secondEntry.id,
+                        text = "\u00a0BOTH projects share the same\nstatus.  "
+                    )
+                )
+            ),
+            retrievalResults = listOf(retrievalResult(firstEntry), retrievalResult(secondEntry))
+        )
+        fixture.fileStore.replaceLongTermMemory(
+            MarkdownMemoryCodec().renderLongTerm(listOf(firstEntry, secondEntry))
+        ).getOrThrow()
+        val before = fixture.fileStore.readLongTermMemory().getOrThrow()
+        val job = fixture.createFiveTurnBatch()
+
+        val result = fixture.service.process(job)
+
+        assertEquals(MemoryBatchProcessResult.STATUS_RETRYABLE, result.status)
+        assertEquals(before, fixture.fileStore.readLongTermMemory().getOrThrow())
+        assertEquals(0, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
+        assertEquals(null, fixture.recoveryDao.getMutationGroupBySemanticJobId(job.jobId))
+    }
+
+    @Test
+    fun `replace matching an unscoped canonical entry fails before prepare`() = runBlocking {
+        val replacementTarget = longTermEntry("mem_replacement_target", "An obsolete project detail.")
+        val canonicalOnlyEntry = longTermEntry("mem_canonical_only", "The canonical project detail.")
+        val fixture = fixture(
+            proposal = MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        action = MemoryBatchAction.REPLACE,
+                        targetMemoryId = replacementTarget.id,
+                        text = "  THE canonical\u3000project detail.  "
+                    )
+                )
+            ),
+            retrievalResults = listOf(retrievalResult(replacementTarget))
+        )
+        fixture.fileStore.replaceLongTermMemory(
+            MarkdownMemoryCodec().renderLongTerm(listOf(replacementTarget, canonicalOnlyEntry))
+        ).getOrThrow()
+        val before = fixture.fileStore.readLongTermMemory().getOrThrow()
+        val job = fixture.createFiveTurnBatch()
+
+        val result = fixture.service.process(job)
+
+        assertEquals(MemoryBatchProcessResult.STATUS_RETRYABLE, result.status)
+        assertEquals(before, fixture.fileStore.readLongTermMemory().getOrThrow())
+        assertEquals(0, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
+        assertEquals(null, fixture.recoveryDao.getMutationGroupBySemanticJobId(job.jobId))
+    }
+
+    @Test
+    fun `same proposal exact text writes across destinations fail closed`() = runBlocking {
+        val fixture = fixture(
+            MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.DAILY,
+                        text = "The user is tracking a cross-target fact."
+                    ),
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        text = "\u00a0THE user is tracking a\u3000cross-target fact.  "
+                    )
+                )
+            )
+        )
+        val beforeDaily = fixture.fileStore.readDailyMemory().getOrThrow()
+        val beforeLongTerm = fixture.fileStore.readLongTermMemory().getOrThrow()
+        val job = fixture.createFiveTurnBatch()
+
+        val result = fixture.service.process(job)
+
+        assertEquals(MemoryBatchProcessResult.STATUS_RETRYABLE, result.status)
+        assertEquals(0, result.dailyWriteCount + result.longTermWriteCount)
+        assertEquals(beforeDaily, fixture.fileStore.readDailyMemory().getOrThrow())
+        assertEquals(beforeLongTerm, fixture.fileStore.readLongTermMemory().getOrThrow())
+        assertEquals(0, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
+        assertEquals(null, fixture.recoveryDao.getMutationGroupBySemanticJobId(job.jobId))
+    }
+
+    @Test
+    fun `unique write does not expand historical canonical duplicates`() = runBlocking {
+        val firstDuplicate = longTermEntry("mem_historical_duplicate_one", "A historical duplicate remains visible.")
+        val secondDuplicate = longTermEntry(
+            "mem_historical_duplicate_two",
+            "\u00a0A historical\u3000duplicate remains visible.  "
+        )
+        val fixture = fixture(
+            MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        text = "A new unique canonical fact."
+                    )
+                )
+            )
+        )
+        fixture.fileStore.replaceLongTermMemory(
+            MarkdownMemoryCodec().renderLongTerm(listOf(firstDuplicate, secondDuplicate))
+        ).getOrThrow()
+        val job = fixture.createFiveTurnBatch()
+
+        val result = fixture.service.process(job)
+        val entries = MarkdownMemoryCodec().parse(fixture.fileStore.readLongTermMemory().getOrThrow()).entries
+
+        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(1, result.longTermWriteCount)
+        assertEquals(
+            2,
+            entries.count { entry ->
+                normalizeExactMemoryText(entry.text) == normalizeExactMemoryText(firstDuplicate.text)
+            }
+        )
+        assertEquals(1, entries.count { entry -> entry.text == "A new unique canonical fact." })
+    }
+
+    @Test
+    fun `replace cannot expand historical canonical duplicate count`() = runBlocking {
+        val firstDuplicate = longTermEntry("mem_duplicate_one", "A historical duplicate remains visible.")
+        val secondDuplicate = longTermEntry(
+            "mem_duplicate_two",
+            "\u00a0A historical\u3000duplicate remains visible.  "
+        )
+        val replacementTarget = longTermEntry("mem_unique_target", "A unique target before replacement.")
+        val fixture = fixture(
+            proposal = MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        action = MemoryBatchAction.REPLACE,
+                        targetMemoryId = replacementTarget.id,
+                        text = "  A HISTORICAL duplicate\nremains visible.  "
+                    )
+                )
+            ),
+            retrievalResults = listOf(retrievalResult(replacementTarget))
+        )
+        fixture.fileStore.replaceLongTermMemory(
+            MarkdownMemoryCodec().renderLongTerm(listOf(firstDuplicate, secondDuplicate, replacementTarget))
+        ).getOrThrow()
+        val before = fixture.fileStore.readLongTermMemory().getOrThrow()
+        val job = fixture.createFiveTurnBatch()
+
+        val result = fixture.service.process(job)
+
+        assertEquals(MemoryBatchProcessResult.STATUS_RETRYABLE, result.status)
+        assertEquals(before, fixture.fileStore.readLongTermMemory().getOrThrow())
+        assertEquals(0, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
+        assertEquals(null, fixture.recoveryDao.getMutationGroupBySemanticJobId(job.jobId))
+    }
+
+    @Test
     fun `create matching canonical text is a replayable byte identical no-op`() = runBlocking {
         val codec = MarkdownMemoryCodec()
         val existingEntry = MarkdownMemoryEntry(
@@ -517,6 +724,42 @@ class MemoryBatchConsolidationServiceTest {
     }
 
     @Test
+    fun `process death after source job completion leaves semantic acknowledgement recoverable`() = runBlocking {
+        val fixture = fixture(
+            proposal = MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        text = "Source completion remains recoverable before semantic acknowledgement."
+                    )
+                )
+            ),
+            commitObserver = OneShotCommitObserver(CommitInterruptionPoint.AFTER_SOURCE_JOB_COMPLETION)
+        )
+        val job = fixture.createFiveTurnBatch()
+
+        val failure = runCatching { fixture.service.process(job) }.exceptionOrNull()
+        val mutation = checkNotNull(fixture.mutationCoordinator.findBySemanticJobId(job.jobId))
+
+        assertTrue(failure is MemoryBatchCommitInterruptedException)
+        assertEquals(MemoryMaintenanceJobStatus.SUCCEEDED, fixture.jobDao.getById(job.jobId)?.status)
+        assertEquals(MemoryMutationState.SEMANTIC_ACK_PENDING, mutation.group.state)
+        assertTrue(fixture.turnDao.getTurnsClaimedByJob(job.jobId).isEmpty())
+        assertEquals(5, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
+
+        val recovery = MemoryMutationRecoveryService(
+            memoryMutationCoordinator = fixture.mutationCoordinator,
+            turnBatchDao = fixture.turnDao,
+            maintenanceScheduler = fixture.maintenanceScheduler
+        ).recoverIncomplete(scheduleRetry = false)
+
+        assertEquals(1, recovery.recoveredSemanticCount)
+        assertEquals(0, recovery.activeSourceJobCount)
+        assertEquals(MemoryMutationState.INDEX_PENDING, fixture.recoveryDao.getMutationGroup(mutation.group.groupId)?.state)
+        assertEquals(MemoryMaintenanceJobStatus.SUCCEEDED, fixture.jobDao.getById(job.jobId)?.status)
+    }
+
+    @Test
     fun `empty batch replay after completion uses checkpoint evidence without another semantic call`() = runBlocking {
         val clock = MutableBatchConsolidationClock(1_000L)
         val fixture = fixture(
@@ -853,6 +1096,31 @@ class MemoryBatchConsolidationServiceTest {
         reason = "Test operation"
     )
 
+    private fun longTermEntry(id: String, text: String): MarkdownMemoryEntry = MarkdownMemoryEntry(
+        id = id,
+        text = text,
+        type = "project_context",
+        sensitivity = MemorySensitivity.NORMAL,
+        source = MemorySource.EXPLICIT_USER_STATEMENT,
+        createdAt = 10L,
+        updatedAt = 10L,
+        section = "Project Context"
+    )
+
+    private fun retrievalResult(entry: MarkdownMemoryEntry): MemoryRetrievalResult = MemoryRetrievalResult(
+        chunkId = "${MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME}#${entry.id}#0",
+        entryId = entry.id,
+        sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+        text = entry.text,
+        type = entry.type,
+        sensitivity = entry.sensitivity,
+        source = entry.source,
+        contentHash = "hash-${entry.id}",
+        lexicalScore = 10f,
+        fusedScore = 10f,
+        updatedAt = entry.updatedAt
+    )
+
     private fun legacyJob(type: String, suffix: String, payloadJson: String) = MemoryMaintenanceJob(
         jobId = "legacy-job-$suffix",
         type = type,
@@ -981,7 +1249,8 @@ private class RecordingOrganizationActivityLogger : MemoryActivityLogger {
 private enum class CommitInterruptionPoint {
     AFTER_PREPARED,
     AFTER_CANONICAL_COMMIT,
-    AFTER_BATCH_COMPLETION
+    AFTER_BATCH_COMPLETION,
+    AFTER_SOURCE_JOB_COMPLETION
 }
 
 private class OneShotCommitObserver(
@@ -999,6 +1268,10 @@ private class OneShotCommitObserver(
 
     override suspend fun afterBatchCompletion(jobId: String) {
         interruptAt(CommitInterruptionPoint.AFTER_BATCH_COMPLETION)
+    }
+
+    override suspend fun afterSourceJobCompletion(jobId: String) {
+        interruptAt(CommitInterruptionPoint.AFTER_SOURCE_JOB_COMPLETION)
     }
 
     private fun interruptAt(point: CommitInterruptionPoint) {
