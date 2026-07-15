@@ -97,7 +97,14 @@ class MemoryMaintenanceScheduler(
         now: Long = now()
     ): Boolean = jobDao.hasRunnableJob(family, now)
 
+    internal fun currentEpochSecond(): Long = now()
+
     suspend fun jobType(jobId: String): String? = jobDao.getById(jobId)?.type
+
+    internal suspend fun isRecoveredSourceJobActive(jobId: String): Boolean {
+        val job = jobDao.getById(jobId) ?: return false
+        return job.status == MemoryMaintenanceJobStatus.RUNNING && job.hasActiveLease(now())
+    }
 
     internal suspend fun needsRecoveredConflictFinalization(jobId: String, reason: String): Boolean {
         val job = jobDao.getById(jobId) ?: return false
@@ -146,7 +153,15 @@ class MemoryMaintenanceScheduler(
     suspend fun markRecoveredSucceeded(jobId: String): MemoryRecoveredJobDisposition {
         val job = jobDao.getById(jobId) ?: return MemoryRecoveredJobDisposition.MISSING
         if (job.status == MemoryMaintenanceJobStatus.SUCCEEDED) return MemoryRecoveredJobDisposition.SUCCEEDED
-        if (job.status == MemoryMaintenanceJobStatus.RUNNING) return MemoryRecoveredJobDisposition.ACTIVE
+        if (job.status == MemoryMaintenanceJobStatus.RUNNING) {
+            if (job.hasActiveLease(now())) return MemoryRecoveredJobDisposition.ACTIVE
+            return transitionExpiredRecovered(
+                job = job,
+                status = MemoryMaintenanceJobStatus.SUCCEEDED,
+                lastError = null,
+                blockedReason = null
+            )
+        }
         transitionUnclaimed(
             job = job,
             status = MemoryMaintenanceJobStatus.SUCCEEDED,
@@ -162,7 +177,15 @@ class MemoryMaintenanceScheduler(
         reason: String
     ): MemoryRecoveredJobDisposition {
         val job = jobDao.getById(jobId) ?: return MemoryRecoveredJobDisposition.MISSING
-        if (job.status == MemoryMaintenanceJobStatus.RUNNING) return MemoryRecoveredJobDisposition.ACTIVE
+        if (job.status == MemoryMaintenanceJobStatus.RUNNING) {
+            if (job.hasActiveLease(now())) return MemoryRecoveredJobDisposition.ACTIVE
+            return transitionExpiredRecovered(
+                job = job,
+                status = MemoryMaintenanceJobStatus.FAILED_TERMINAL,
+                lastError = reason,
+                blockedReason = reason
+            )
+        }
         if (
             job.status == MemoryMaintenanceJobStatus.SUCCEEDED ||
             job.status == MemoryMaintenanceJobStatus.FAILED_TERMINAL
@@ -196,7 +219,15 @@ class MemoryMaintenanceScheduler(
         reason: String
     ): MemoryRecoveredJobDisposition {
         val job = jobDao.getById(jobId) ?: return MemoryRecoveredJobDisposition.MISSING
-        if (job.status == MemoryMaintenanceJobStatus.RUNNING) return MemoryRecoveredJobDisposition.ACTIVE
+        if (job.status == MemoryMaintenanceJobStatus.RUNNING) {
+            if (job.hasActiveLease(now())) return MemoryRecoveredJobDisposition.ACTIVE
+            return transitionExpiredRecovered(
+                job = job,
+                status = MemoryMaintenanceJobStatus.FAILED_TERMINAL,
+                lastError = reason,
+                blockedReason = reason
+            )
+        }
         if (job.isFinalizedRecoveredConflict(reason)) {
             return MemoryRecoveredJobDisposition.SUCCEEDED
         }
@@ -218,6 +249,51 @@ class MemoryMaintenanceScheduler(
             nextRunAt == null &&
             leaseOwner == null &&
             leaseExpiresAt == null
+
+    private fun MemoryMaintenanceJob.hasActiveLease(now: Long): Boolean =
+        !leaseOwner.isNullOrBlank() && leaseExpiresAt?.let { expiresAt -> expiresAt > now } == true
+
+    private suspend fun transitionExpiredRecovered(
+        job: MemoryMaintenanceJob,
+        status: String,
+        lastError: String?,
+        blockedReason: String?
+    ): MemoryRecoveredJobDisposition {
+        val now = now()
+        val changed = jobDao.reclaimExpiredLease(
+            jobId = job.jobId,
+            expectedLeaseOwner = job.leaseOwner,
+            expectedRowVersion = job.rowVersion,
+            now = now,
+            newStatus = status,
+            lastError = lastError?.take(MAX_ERROR_LENGTH),
+            blockedReason = blockedReason?.take(MAX_ERROR_LENGTH),
+            updatedAt = now,
+            nextRunAt = null
+        )
+        if (changed != 1) {
+            val current = jobDao.getById(job.jobId) ?: return MemoryRecoveredJobDisposition.MISSING
+            if (current.status == MemoryMaintenanceJobStatus.RUNNING && current.hasActiveLease(now)) {
+                return MemoryRecoveredJobDisposition.ACTIVE
+            }
+            if (
+                current.status == MemoryMaintenanceJobStatus.SUCCEEDED &&
+                status == MemoryMaintenanceJobStatus.SUCCEEDED
+            ) {
+                return MemoryRecoveredJobDisposition.SUCCEEDED
+            }
+            if (
+                status == MemoryMaintenanceJobStatus.FAILED_TERMINAL &&
+                current.isFinalizedRecoveredConflict(checkNotNull(lastError))
+            ) {
+                return MemoryRecoveredJobDisposition.SUCCEEDED
+            }
+            throw MemoryMaintenanceLeaseLostException(job.jobId)
+        }
+        val updated = checkNotNull(jobDao.getById(job.jobId))
+        emitStatusChanged(job, updated, now)
+        return MemoryRecoveredJobDisposition.SUCCEEDED
+    }
 
     suspend fun markFailedRetryable(
         job: MemoryMaintenanceJob,

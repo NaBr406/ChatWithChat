@@ -14,6 +14,7 @@ class MemoryMutationRecoveryService(
     suspend fun recoverIncomplete(scheduleRetry: Boolean = true): MemoryMutationRecoveryResult {
         val repair = memoryMutationCoordinator.reconcileIncomplete()
         var finalizationFailureCount = 0
+        var activeSourceJobCount = 0
         var recoveredSemanticCount = 0
         val retryGenerations = repair.failedGenerations.toMutableSet().apply {
             repair.continuationGeneration?.let(::add)
@@ -30,6 +31,10 @@ class MemoryMutationRecoveryService(
             .distinctBy(MemoryRecoveredSemanticMutation::groupId)
             .forEach { recovered ->
                 try {
+                    if (maintenanceScheduler.isRecoveredSourceJobActive(recovered.semanticJobId)) {
+                        activeSourceJobCount += 1
+                        return@forEach
+                    }
                     val finalizedDailyDistillation = dailyDistillationFinalizer
                         ?.finalizeRecoveredMutation(recovered)
                         ?: false
@@ -42,9 +47,13 @@ class MemoryMutationRecoveryService(
                     val sourceJobDisposition = recovered.terminalReason?.let { terminalReason ->
                         maintenanceScheduler.markRecoveredConflict(recovered.semanticJobId, terminalReason)
                     } ?: maintenanceScheduler.markRecoveredSucceeded(recovered.semanticJobId)
-                    if (sourceJobDisposition != MemoryRecoveredJobDisposition.ACTIVE) {
-                        memoryMutationCoordinator.acknowledgeSemanticCompletion(recovered.groupId)
-                        recoveredSemanticCount += 1
+                    when (sourceJobDisposition) {
+                        MemoryRecoveredJobDisposition.ACTIVE -> activeSourceJobCount += 1
+                        MemoryRecoveredJobDisposition.MISSING,
+                        MemoryRecoveredJobDisposition.SUCCEEDED -> {
+                            memoryMutationCoordinator.acknowledgeSemanticCompletion(recovered.groupId)
+                            recoveredSemanticCount += 1
+                        }
                     }
                 } catch (cancellation: CancellationException) {
                     throw cancellation
@@ -69,7 +78,8 @@ class MemoryMutationRecoveryService(
             failedCount = repair.failedCount + finalizationFailureCount,
             recoveredSemanticCount = recoveredSemanticCount,
             retryGenerations = retryGenerations,
-            hasMore = repair.hasMore
+            hasMore = repair.hasMore,
+            activeSourceJobCount = activeSourceJobCount
         )
     }
 
@@ -86,5 +96,12 @@ data class MemoryMutationRecoveryResult(
     val failedCount: Int,
     val recoveredSemanticCount: Int,
     val retryGenerations: Set<Long>,
-    val hasMore: Boolean
-)
+    val hasMore: Boolean,
+    val activeSourceJobCount: Int = 0
+) {
+    internal val allowsBootstrap: Boolean
+        get() = failedCount == 0 &&
+            retryGenerations.isEmpty() &&
+            !hasMore &&
+            activeSourceJobCount == 0
+}

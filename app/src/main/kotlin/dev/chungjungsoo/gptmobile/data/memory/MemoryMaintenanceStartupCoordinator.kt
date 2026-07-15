@@ -42,11 +42,7 @@ internal suspend fun runMemoryStartupTasks(
     runOptionalStartupStep(provision)
     val receiptsRecovered = runOptionalStartupStep {
         val result = recoverReceipts()
-        check(
-            result.failedCount == 0 &&
-                result.retryGenerations.isEmpty() &&
-                !result.hasMore
-        ) { "Memory receipt recovery did not complete before bootstrap" }
+        check(result.allowsBootstrap) { "Memory receipt recovery did not complete before bootstrap" }
     }
     if (receiptsRecovered) {
         runOptionalStartupStep(bootstrap)

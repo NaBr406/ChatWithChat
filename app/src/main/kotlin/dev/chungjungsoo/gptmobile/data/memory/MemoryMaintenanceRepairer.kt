@@ -7,6 +7,7 @@ class MemoryMaintenanceRepairer @Inject constructor(
     private val maintenanceScheduler: MemoryMaintenanceScheduler,
     private val workScheduler: MemoryMaintenanceWorkEnqueuer,
     private val memoryMutationRecoveryService: MemoryMutationRecoveryService? = null,
+    private val memoryVectorIndexBootstrapService: MemoryVectorIndexBootstrapService? = null,
     private val memoryVectorIndexRecoveryService: MemoryVectorIndexRecoveryService? = null,
     private val memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null,
     private val memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler? = null
@@ -14,16 +15,28 @@ class MemoryMaintenanceRepairer @Inject constructor(
     suspend fun repairAndEnqueue(
         reopenWaitingRepair: Boolean = false
     ): MemoryMaintenanceRepairResult {
-        val resetCount = maintenanceScheduler.resetExpiredRunningJobs()
+        val repairStartedAt = maintenanceScheduler.currentEpochSecond()
+        var schedulingSucceeded = true
+        var mutationRecoveryResult: MemoryMutationRecoveryResult? = null
+        if (memoryMutationRecoveryService != null) {
+            if (
+                !runSchedulingStep {
+                    mutationRecoveryResult = memoryMutationRecoveryService.recoverIncomplete()
+                }
+            ) {
+                schedulingSucceeded = false
+            }
+        }
+        val resetCount = maintenanceScheduler.resetExpiredRunningJobs(now = repairStartedAt)
         val reopenedCount = if (reopenWaitingRepair) {
             maintenanceScheduler.reopenWaitingRepairJobs()
         } else {
             0
         }
-        var schedulingSucceeded = true
         if (
-            memoryMutationRecoveryService != null &&
-            !runSchedulingStep { memoryMutationRecoveryService.recoverIncomplete() }
+            mutationRecoveryResult?.allowsBootstrap == true &&
+            memoryVectorIndexBootstrapService != null &&
+            !runSchedulingStep { memoryVectorIndexBootstrapService.bootstrap() }
         ) {
             schedulingSucceeded = false
         }

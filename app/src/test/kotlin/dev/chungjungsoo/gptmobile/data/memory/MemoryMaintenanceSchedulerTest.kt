@@ -182,6 +182,59 @@ class MemoryMaintenanceSchedulerTest {
     }
 
     @Test
+    fun `expired and legacy recovered sources transition without intermediate lease failure events`() = runBlocking {
+        val terminalReason = MEMORY_MUTATION_UNRECOVERABLE_STAGING_MISSING
+        listOf(
+            Triple("dead-owner-0", 90L, null),
+            Triple("dead-owner-1", null, null),
+            Triple(null, 150L, null),
+            Triple("dead-owner-3", 90L, terminalReason)
+        ).forEachIndexed { index, (leaseOwner, leaseExpiresAt, reason) ->
+            val sourceJob = job(
+                jobId = "expired-recovered-$index",
+                type = MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH,
+                status = MemoryMaintenanceJobStatus.RUNNING,
+                attempts = 3,
+                leaseOwner = leaseOwner,
+                leaseExpiresAt = leaseExpiresAt
+            )
+            val dao = InMemoryMaintenanceJobDao(listOf(sourceJob))
+            val eventSink = RecordingMemoryMaintenanceEventSink()
+            val scheduler = createScheduler(dao, eventSink)
+
+            val disposition = if (reason == null) {
+                scheduler.markRecoveredSucceeded(sourceJob.jobId)
+            } else {
+                scheduler.markRecoveredConflict(sourceJob.jobId, reason)
+            }
+
+            assertEquals(MemoryRecoveredJobDisposition.SUCCEEDED, disposition)
+            val recovered = checkNotNull(dao.getById(sourceJob.jobId))
+            assertEquals(
+                if (reason == null) MemoryMaintenanceJobStatus.SUCCEEDED else MemoryMaintenanceJobStatus.FAILED_TERMINAL,
+                recovered.status
+            )
+            assertEquals(reason, recovered.lastError)
+            assertEquals(reason, recovered.blockedReason)
+            assertNull(recovered.startedAt)
+            assertNull(recovered.nextRunAt)
+            assertNull(recovered.leaseOwner)
+            assertNull(recovered.leaseExpiresAt)
+            assertEquals(sourceJob.rowVersion + 1, recovered.rowVersion)
+            assertEquals(1, eventSink.events.size)
+            assertEquals(MemoryMaintenanceJobStatus.RUNNING, eventSink.events.single().oldStatus)
+            assertEquals(recovered.status, eventSink.events.single().newStatus)
+            assertTrue(
+                eventSink.events.none { event ->
+                    event.newStatus == MemoryMaintenanceJobStatus.FAILED_RETRYABLE ||
+                        event.newStatus == MemoryMaintenanceJobStatus.WAITING_REPAIR
+                }
+            )
+            assertEquals(0, scheduler.resetExpiredRunningJobs())
+        }
+    }
+
+    @Test
     fun `recovered conflict rewrites stale terminal dispositions exactly once`() = runBlocking {
         val exactReason = MEMORY_MUTATION_UNRECOVERABLE_STAGING_MISSING
         val staleJobs = listOf(

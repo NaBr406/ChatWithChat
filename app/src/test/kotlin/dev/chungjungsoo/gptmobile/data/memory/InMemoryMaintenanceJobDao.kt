@@ -187,7 +187,11 @@ internal class InMemoryMaintenanceJobDao(
         jobs
             .filter { job ->
                 job.status == MemoryMaintenanceJobStatus.RUNNING &&
-                    (job.leaseExpiresAt == null || job.leaseExpiresAt <= now)
+                    (
+                        job.leaseExpiresAt == null ||
+                            job.leaseExpiresAt <= now ||
+                            job.leaseOwner.isNullOrBlank()
+                        )
             }
             .sortedWith(compareBy<MemoryMaintenanceJob> { it.updatedAt }.thenBy { it.jobId })
             .take(limit)
@@ -198,7 +202,7 @@ internal class InMemoryMaintenanceJobDao(
         expectedRowVersion: Long,
         now: Long,
         newStatus: String,
-        lastError: String,
+        lastError: String?,
         blockedReason: String?,
         updatedAt: Long,
         nextRunAt: Long?
@@ -208,7 +212,11 @@ internal class InMemoryMaintenanceJobDao(
                 job.status == MemoryMaintenanceJobStatus.RUNNING &&
                 job.leaseOwner == expectedLeaseOwner &&
                 job.rowVersion == expectedRowVersion &&
-                (job.leaseExpiresAt == null || job.leaseExpiresAt <= now)
+                (
+                    job.leaseExpiresAt == null ||
+                        job.leaseExpiresAt <= now ||
+                        job.leaseOwner.isNullOrBlank()
+                    )
         }
         if (index == -1) return 0
         jobs[index] = jobs[index].copy(

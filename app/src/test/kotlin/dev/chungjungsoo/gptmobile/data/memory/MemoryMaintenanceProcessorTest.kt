@@ -18,6 +18,7 @@ import java.nio.file.Files
 import java.time.Clock
 import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.ZoneOffset
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -239,6 +240,174 @@ class MemoryMaintenanceProcessorTest {
     }
 
     @Test
+    fun `processor defers active source recovery to lease watchdog without retry churn`() = runBlocking {
+        val jobDao = InMemoryMaintenanceJobDao(
+            listOf(job(MemoryMaintenanceJobType.RECONCILE_MEMORY_MUTATIONS))
+        )
+        val scheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK)
+        val sourceJob = scheduler.enqueue(
+            type = MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH,
+            idempotencyKey = "active-recovery-source",
+            payloadJson = "{}",
+            jobId = "active-recovery-source"
+        )
+        val claimedSourceJob = checkNotNull(
+            scheduler.claimNextRunnable(
+                family = MemoryMaintenanceJobFamily.SEMANTIC,
+                leaseOwner = "active-recovery-owner"
+            )
+        )
+        val recoveryDao = InMemoryMemoryRecoveryDao()
+        val fileStore = MemoryFileStore(
+            MemoryFilePaths(Files.createTempDirectory("memory-active-repair-processor").toFile()),
+            FIXED_CLOCK
+        )
+        fileStore.ensureStore().getOrThrow()
+        val coordinator = MemoryMutationCoordinator(
+            recoveryDao = recoveryDao,
+            memoryFileStore = fileStore,
+            maintenanceScheduler = scheduler,
+            workEnqueuer = RecordingWorkEnqueuer(),
+            clock = FIXED_CLOCK
+        )
+        val prepared = coordinator.prepare(
+            semanticJobId = sourceJob.jobId,
+            semanticBatchId = "active-recovery-batch",
+            targets = emptyList()
+        )
+        val recoveryService = MemoryMutationRecoveryService(
+            memoryMutationCoordinator = coordinator,
+            turnBatchDao = InMemoryMemoryTurnBatchDao(),
+            maintenanceScheduler = scheduler,
+            clock = FIXED_CLOCK
+        )
+        val watchdog = RecordingLeaseWatchdog()
+        val processor = createProcessor(
+            jobDao = jobDao,
+            leaseWatchdog = watchdog,
+            memoryMutationRecoveryService = recoveryService
+        )
+
+        val result = processor.processRunnableJobs(MemoryMaintenanceJobFamily.REPAIR)
+
+        assertEquals(1, result.processedCount)
+        assertEquals(0, result.succeededCount)
+        assertEquals(0, result.retryableCount)
+        assertEquals(1, result.deferredCount)
+        assertEquals(2, watchdog.scheduleCount)
+        assertEquals(claimedSourceJob, jobDao.getById(sourceJob.jobId))
+        assertEquals(
+            MemoryMaintenanceJobStatus.SUCCEEDED,
+            jobDao.jobs.single { maintenanceJob ->
+                maintenanceJob.type == MemoryMaintenanceJobType.RECONCILE_MEMORY_MUTATIONS
+            }.status
+        )
+        assertEquals(
+            MemoryMutationState.SEMANTIC_ACK_PENDING,
+            checkNotNull(recoveryDao.getMutationGroup(prepared.group.groupId)).state
+        )
+    }
+
+    @Test
+    fun `reconcile processor finalizes newly expired source and bootstraps without failure events`() = runBlocking {
+        val clock = MutableMaintenanceProcessorClock(1_000L)
+        val jobDao = InMemoryMaintenanceJobDao(
+            listOf(job(MemoryMaintenanceJobType.RECONCILE_MEMORY_MUTATIONS))
+        )
+        val statusEvents = mutableListOf<MemoryMaintenanceStatusChangedEvent>()
+        val scheduler = MemoryMaintenanceScheduler(
+            jobDao = jobDao,
+            clock = clock,
+            eventSink = object : MemoryMaintenanceEventSink {
+                override suspend fun onStatusChanged(event: MemoryMaintenanceStatusChangedEvent) {
+                    statusEvents += event
+                }
+            }
+        )
+        val sourceJob = scheduler.enqueue(
+            type = MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH,
+            idempotencyKey = "processor-expiring-source",
+            payloadJson = "{}",
+            jobId = "processor-expiring-source"
+        )
+        val claimedSourceJob = checkNotNull(
+            scheduler.claimNextRunnable(
+                family = MemoryMaintenanceJobFamily.SEMANTIC,
+                leaseOwner = "processor-expiring-owner"
+            )
+        )
+        val recoveryDao = InMemoryMemoryRecoveryDao()
+        val fileStore = MemoryFileStore(
+            MemoryFilePaths(Files.createTempDirectory("memory-expired-repair-bootstrap").toFile()),
+            clock
+        )
+        fileStore.ensureStore().getOrThrow()
+        val workEnqueuer = RecordingWorkEnqueuer()
+        val coordinator = MemoryMutationCoordinator(
+            recoveryDao = recoveryDao,
+            memoryFileStore = fileStore,
+            maintenanceScheduler = scheduler,
+            workEnqueuer = workEnqueuer,
+            clock = clock
+        )
+        coordinator.prepare(
+            semanticJobId = sourceJob.jobId,
+            semanticBatchId = "processor-expiring-batch",
+            targets = emptyList()
+        )
+        val recoveryService = MemoryMutationRecoveryService(
+            memoryMutationCoordinator = coordinator,
+            turnBatchDao = InMemoryMemoryTurnBatchDao(),
+            maintenanceScheduler = scheduler,
+            clock = clock
+        )
+        val bootstrapService = MemoryVectorIndexBootstrapService(
+            recoveryDao = recoveryDao,
+            memoryFileStore = fileStore,
+            mutationCoordinator = coordinator
+        )
+        val repairer = MemoryMaintenanceRepairer(
+            maintenanceScheduler = scheduler,
+            workScheduler = workEnqueuer,
+            memoryMutationRecoveryService = recoveryService,
+            memoryVectorIndexBootstrapService = bootstrapService
+        )
+
+        repairer.repairAndEnqueue()
+
+        assertEquals(MemoryMaintenanceJobStatus.RUNNING, jobDao.getById(sourceJob.jobId)?.status)
+        assertEquals(null, recoveryDao.getCorpusState("chat_recall_long_term"))
+
+        clock.setEpochSecond(checkNotNull(claimedSourceJob.leaseExpiresAt) + 1L)
+        val processor = MemoryMaintenanceProcessor(
+            maintenanceScheduler = scheduler,
+            settingRepository = FakeMaintenanceSettingRepository(memoryEnabled = true),
+            leaseWatchdog = RecordingLeaseWatchdog(),
+            memoryMutationRecoveryService = recoveryService,
+            memoryVectorIndexBootstrapService = bootstrapService
+        )
+
+        val result = processor.processRunnableJobs(MemoryMaintenanceJobFamily.REPAIR)
+
+        assertEquals(
+            "result=$result source=${jobDao.getById(sourceJob.jobId)} repair=${jobDao.getById("job_${MemoryMaintenanceJobType.RECONCILE_MEMORY_MUTATIONS}")} events=$statusEvents",
+            1,
+            result.succeededCount
+        )
+        assertEquals(MemoryMaintenanceJobStatus.SUCCEEDED, jobDao.getById(sourceJob.jobId)?.status)
+        assertTrue(recoveryDao.getCorpusState("chat_recall_long_term") != null)
+        assertTrue(
+            statusEvents.none { event ->
+                event.newStatus in setOf(
+                    MemoryMaintenanceJobStatus.FAILED_RETRYABLE,
+                    MemoryMaintenanceJobStatus.FAILED_TERMINAL,
+                    MemoryMaintenanceJobStatus.WAITING_REPAIR
+                )
+            }
+        )
+    }
+
+    @Test
     fun `processor materializes a due daily distillation plan`() = runBlocking {
         val fileStore = MemoryFileStore(
             MemoryFilePaths(Files.createTempDirectory("memory-daily-plan-processor").toFile()),
@@ -417,6 +586,20 @@ private class RecordingLeaseWatchdog : MemoryMaintenanceLeaseWatchdog {
     override suspend fun scheduleLeaseWatchdog() {
         scheduleCount += 1
     }
+}
+
+private class MutableMaintenanceProcessorClock(epochSecond: Long) : Clock() {
+    private var currentInstant = Instant.ofEpochSecond(epochSecond)
+
+    fun setEpochSecond(epochSecond: Long) {
+        currentInstant = Instant.ofEpochSecond(epochSecond)
+    }
+
+    override fun getZone(): ZoneId = ZoneOffset.UTC
+
+    override fun withZone(zone: ZoneId): Clock = Clock.fixed(currentInstant, zone)
+
+    override fun instant(): Instant = currentInstant
 }
 
 private data object FailingRepairWorkEnqueuer : MemoryMaintenanceWorkEnqueuer {

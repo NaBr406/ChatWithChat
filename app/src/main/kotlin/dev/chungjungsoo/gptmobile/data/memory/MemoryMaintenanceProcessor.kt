@@ -17,6 +17,7 @@ class MemoryMaintenanceProcessor @Inject constructor(
     private val memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null,
     private val memoryBatchConsolidationService: MemoryBatchConsolidationService? = null,
     private val memoryMutationRecoveryService: MemoryMutationRecoveryService? = null,
+    private val memoryVectorIndexBootstrapService: MemoryVectorIndexBootstrapService? = null,
     private val memoryIndexSyncService: MemoryIndexSyncService? = null,
     private val memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler? = null,
     private val memoryDailyDistillationService: MemoryDailyDistillationService? = null
@@ -32,6 +33,7 @@ class MemoryMaintenanceProcessor @Inject constructor(
         var retryableCount = 0
         var terminalCount = 0
         var blockedCount = 0
+        var deferredCount = 0
 
         while (processedCount < limit) {
             val job = maintenanceScheduler.claimNextRunnable(
@@ -60,6 +62,7 @@ class MemoryMaintenanceProcessor @Inject constructor(
                 MemoryMaintenanceOutcome.RETRYABLE -> retryableCount += 1
                 MemoryMaintenanceOutcome.TERMINAL -> terminalCount += 1
                 MemoryMaintenanceOutcome.BLOCKED -> blockedCount += 1
+                MemoryMaintenanceOutcome.DEFERRED -> deferredCount += 1
                 MemoryMaintenanceOutcome.SKIPPED -> Unit
             }
         }
@@ -69,7 +72,8 @@ class MemoryMaintenanceProcessor @Inject constructor(
             succeededCount = succeededCount,
             retryableCount = retryableCount,
             terminalCount = terminalCount,
-            blockedCount = blockedCount
+            blockedCount = blockedCount,
+            deferredCount = deferredCount
         )
     }
 
@@ -179,12 +183,17 @@ class MemoryMaintenanceProcessor @Inject constructor(
             maintenanceScheduler.renewClaimedLease(job)
             val result = recoveryService.recoverIncomplete(scheduleRetry = false)
             maintenanceScheduler.renewClaimedLease(job)
-            if (result.failedCount > 0 || result.hasMore) {
+            if (result.failedCount > 0 || result.retryGenerations.isNotEmpty() || result.hasMore) {
                 maintenanceScheduler.markFailedRetryable(
                     job,
-                    "memory_mutation_reconciliation_incomplete:${result.failedCount}:has_more=${result.hasMore}"
+                    "memory_mutation_reconciliation_incomplete:${result.failedCount}:has_more=${result.hasMore}:retry_generations=${result.retryGenerations.size}"
                 ).toFailureOutcome()
+            } else if (result.activeSourceJobCount > 0) {
+                maintenanceScheduler.markSucceeded(job)
+                leaseWatchdog.scheduleLeaseWatchdog()
+                MemoryMaintenanceOutcome.DEFERRED
             } else {
+                memoryVectorIndexBootstrapService?.bootstrap()
                 maintenanceScheduler.markSucceeded(job)
                 MemoryMaintenanceOutcome.SUCCEEDED
             }
@@ -295,6 +304,7 @@ private enum class MemoryMaintenanceOutcome {
     RETRYABLE,
     TERMINAL,
     BLOCKED,
+    DEFERRED,
     SKIPPED
 }
 
@@ -303,5 +313,6 @@ data class MemoryMaintenanceProcessResult(
     val succeededCount: Int,
     val retryableCount: Int,
     val terminalCount: Int,
-    val blockedCount: Int
+    val blockedCount: Int,
+    val deferredCount: Int = 0
 )

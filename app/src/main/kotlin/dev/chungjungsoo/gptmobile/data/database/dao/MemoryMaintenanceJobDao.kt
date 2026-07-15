@@ -242,7 +242,12 @@ interface MemoryMaintenanceJobDao {
         """
         SELECT * FROM memory_maintenance_job
         WHERE status = 'running'
-            AND (lease_expires_at IS NULL OR lease_expires_at <= :now)
+            AND (
+                lease_expires_at IS NULL
+                OR lease_expires_at <= :now
+                OR lease_owner IS NULL
+                OR TRIM(lease_owner) = ''
+            )
         ORDER BY updated_at ASC, job_id ASC
         LIMIT :limit
         """
@@ -271,7 +276,12 @@ interface MemoryMaintenanceJobDao {
                 lease_owner = :expectedLeaseOwner
                 OR (lease_owner IS NULL AND :expectedLeaseOwner IS NULL)
             )
-            AND (lease_expires_at IS NULL OR lease_expires_at <= :now)
+            AND (
+                lease_expires_at IS NULL
+                OR lease_expires_at <= :now
+                OR lease_owner IS NULL
+                OR TRIM(lease_owner) = ''
+            )
         """
     )
     suspend fun reclaimExpiredLease(
@@ -280,7 +290,7 @@ interface MemoryMaintenanceJobDao {
         expectedRowVersion: Long,
         now: Long,
         newStatus: String,
-        lastError: String,
+        lastError: String?,
         blockedReason: String?,
         updatedAt: Long,
         nextRunAt: Long?
