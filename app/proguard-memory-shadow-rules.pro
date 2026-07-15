@@ -7,4 +7,4 @@
 -keep class kotlinx.coroutines.** { *; }
 
 # The shadow test reflects over these target classes before production Hybrid DI is enabled.
--keep class dev.chungjungsoo.gptmobile.data.memory.** { *; }
+-keep class cn.nabr.chatwithchat.data.memory.** { *; }

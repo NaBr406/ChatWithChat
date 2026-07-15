@@ -16,7 +16,7 @@
 -dontwarn org.apache.logging.log4j.**
 
 # The release compatibility harness calls this stable entry point after R8.
--keep class dev.chungjungsoo.gptmobile.data.memory.vector.MemoryVectorReleaseCompatibilityProbe {
+-keep class cn.nabr.chatwithchat.data.memory.vector.MemoryVectorReleaseCompatibilityProbe {
     public static *;
 }
 

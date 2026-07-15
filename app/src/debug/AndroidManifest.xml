@@ -6,7 +6,7 @@
             android:name=".debug.MemorySeedReceiver"
             android:exported="true">
             <intent-filter>
-                <action android:name="dev.chungjungsoo.gptmobile.DEBUG_SEED_MEMORY_CHAT" />
+                <action android:name="cn.nabr.chatwithchat.DEBUG_SEED_MEMORY_CHAT" />
             </intent-filter>
         </receiver>
     </application>

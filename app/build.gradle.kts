@@ -22,7 +22,7 @@ require(memoryTestBuildType == "debug" || memoryTestBuildType == "release") {
     "memoryTestBuildType must be either debug or release"
 }
 val defaultMemoryTestInstrumentationRunner = if (memoryTestBuildType == "release") {
-    "dev.chungjungsoo.gptmobile.data.memory.vector.Memory16KbReleaseCompatibilityInstrumentedTest"
+    "cn.nabr.chatwithchat.data.memory.vector.Memory16KbReleaseCompatibilityInstrumentedTest"
 } else {
     "androidx.test.runner.AndroidJUnitRunner"
 }
@@ -93,11 +93,11 @@ tasks.matching { task -> task.name == "preReleaseBuild" }.configureEach {
 }
 
 extensions.configure<ApplicationExtension> {
-    namespace = "dev.chungjungsoo.gptmobile"
+    namespace = "cn.nabr.chatwithchat"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "dev.chungjungsoo.gptmobile"
+        applicationId = "cn.nabr.chatwithchat"
         minSdk = 31
         targetSdk = 36
         versionCode = 21

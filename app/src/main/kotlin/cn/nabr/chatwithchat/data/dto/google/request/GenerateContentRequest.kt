@@ -1,0 +1,112 @@
+package cn.nabr.chatwithchat.data.dto.google.request
+
+import cn.nabr.chatwithchat.data.dto.google.common.Content
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
+
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+data class GenerateContentRequest(
+    @SerialName("contents")
+    val contents: List<Content>,
+
+    @SerialName("generationConfig")
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val generationConfig: GenerationConfig? = null,
+
+    @SerialName("systemInstruction")
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val systemInstruction: Content? = null,
+
+    @SerialName("tools")
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val tools: List<GoogleTool>? = null,
+
+    @SerialName("toolConfig")
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val toolConfig: GoogleToolConfig? = null
+)
+
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+data class GenerationConfig(
+    @SerialName("temperature")
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val temperature: Float? = null,
+
+    @SerialName("topP")
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val topP: Float? = null,
+
+    @SerialName("topK")
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val topK: Int? = null,
+
+    @SerialName("maxOutputTokens")
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val maxOutputTokens: Int? = null,
+
+    @SerialName("stopSequences")
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val stopSequences: List<String>? = null,
+
+    @SerialName("thinkingConfig")
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val thinkingConfig: ThinkingConfig? = null
+)
+
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+data class ThinkingConfig(
+    @SerialName("thinkingBudget")
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val thinkingBudget: Int = -1,
+
+    @SerialName("includeThoughts")
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val includeThoughts: Boolean = false
+)
+
+@Serializable
+data class GoogleTool(
+    @SerialName("functionDeclarations")
+    val functionDeclarations: List<GoogleFunctionDeclaration>
+)
+
+@Serializable
+data class GoogleFunctionDeclaration(
+    @SerialName("name")
+    val name: String,
+
+    @SerialName("description")
+    val description: String,
+
+    @SerialName("parameters")
+    val parameters: JsonObject
+)
+
+@Serializable
+data class GoogleToolConfig(
+    @SerialName("functionCallingConfig")
+    val functionCallingConfig: GoogleFunctionCallingConfig
+) {
+    companion object {
+        val Auto = GoogleToolConfig(GoogleFunctionCallingConfig(mode = "AUTO"))
+        val None = GoogleToolConfig(GoogleFunctionCallingConfig(mode = "NONE"))
+        val Any = GoogleToolConfig(GoogleFunctionCallingConfig(mode = "ANY"))
+    }
+}
+
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+data class GoogleFunctionCallingConfig(
+    @SerialName("mode")
+    val mode: String,
+
+    @SerialName("allowedFunctionNames")
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val allowedFunctionNames: List<String>? = null
+)
