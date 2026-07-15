@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-GPT Mobile is an Android chat application that supports chatting with multiple AI models simultaneously (OpenAI GPT, Anthropic Claude, Google Gemini, Groq, and Ollama). Built with 100% Kotlin, Jetpack Compose, and follows Modern Android App Architecture patterns.
+ChatWithChat is an Android chat application that supports chatting with multiple AI models simultaneously (OpenAI GPT, Anthropic Claude, Google Gemini, Groq, and Ollama). Built with 100% Kotlin, Jetpack Compose, and follows Modern Android App Architecture patterns.
 
 ## Build Commands
 
