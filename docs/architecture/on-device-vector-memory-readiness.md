@@ -116,6 +116,12 @@ memory_activity_log
   replacements, replacement with another canonical entry, and cross-destination
   duplicate proposals fail closed. Historical duplicates may remain but cannot
   expand; swaps and create-then-move transactions remain valid.
+- Batch rendering preserves each operation's original index and deterministic
+  ID while grouping by `sourcePath`. It applies `REPLACE`/`REMOVE` before
+  `CREATE`, then emits the single requested create when the current normalized
+  count is below `max(originalCount, 1)`. Tests cover create-before-replace,
+  replace-before-create, historical duplicate relocation, replacement swaps,
+  and create-plus-remove without silently reducing the requested text to zero.
 - Exact-content staging preserves the requested bytes when they already match
   canonical content. A fresh header-only `MEMORY.md` therefore bootstraps a
   receipt and corpus without changing its bytes or hash.
@@ -129,8 +135,8 @@ memory_activity_log
 
 | Gate | Result |
 | --- | --- |
-| Full JVM suite | 91 suites, 691 tests, 0 failures/errors/skips |
-| Duplicate writes | batch and daily final-target multiplicity checks reject mixed `CREATE`/`REPLACE`, multiple replacements, canonical collisions, cross-destination duplicates, and historical `n -> n+1`; a later exact-text `CREATE` remains a byte-identical no-op |
+| Full JVM suite | 91 suites, 696 tests, 0 failures/errors/skips |
+| Duplicate writes | batch and daily final-target multiplicity checks reject mixed `CREATE`/`REPLACE`, multiple replacements, canonical collisions, cross-destination duplicates, and historical `n -> n+1`; destructive-first rendering preserves original operation IDs and prevents a paired create from being skipped before replacement/removal |
 | Duplicate recall | lexical, Hybrid, fallback, prompt packing, and token-budget boundaries retain one highest-ranked normalized text |
 | Large duplicate corpus | 13 real ObjectBox tests cover 401 and 601 entries, exact cosine ordering, query limits, and a unique candidate after historical duplicates |
 | Canonical UI/export | a real index-scheduling failure still advances the canonical revision through repository Flow to the open ViewModel; export performs a fresh canonical read |
@@ -144,14 +150,15 @@ memory_activity_log
 | Production release Hybrid shadow | 2 tests passed with real model/ObjectBox state transitions and `MEMORY_HYBRID_SHADOW_OK` |
 | Build and formatting | Kotlin/AndroidTest compilation, debug, release R8, lint vital, and ktlint 1.3.1 passed |
 
-The post-review build produced a 232,115,352-byte debug APK with SHA-256
-`6CD43349D72826B8701FEBAEA9DB1E4BFF9617B73291B5DF26728E23BEDF2D9C`
+The post-review build from clean commit `b82d870` produced a 229,244,125-byte
+debug APK with SHA-256
+`36D0128A7536CB9F578CBBA2D9E2697919BDE6803F678BB3A8082CBEC919F687`
 and a 157,337,818-byte unsigned release APK with SHA-256
-`00252AF999190AF41128566233A8F67CBF75DA82CC4F8C92B582530189A1B3A0`.
+`45937CB1395FA85C61DE88F278BB8795C85C609D8C8238622634CF731B8137BF`.
 The release Hybrid shadow rerun passed two tests with checkpoint
 `MEMORY_HYBRID_SHADOW_OK`; its signed target and instrumentation APK hashes are
-`FCDB35B88F26C95E3DB3AB45329015F19587A6FE6274EC1548650CE0AF7D0BBE` and
-`7D1D2F4CACFB801EF93C223FACF84F31462E1D721DD4BA6B733EC564A91DF551`.
+`4671C04907EE821A830AFF6AF4BB7863CD3252C2924E873B92F6DB399EB4D696` and
+`AD01B7BEBF513A9E5EF101924CD3F0ED4709BDBB1DE6D39060C8918B06D2FCF3`.
 The same API 35 x86_64 16 KB AVD used a temporary 4 GB RAM launch override for
 this rerun after the 2 GB configuration caused Android LMKD, not application
 code, to kill the instrumentation process during ONNX startup.
@@ -428,7 +435,7 @@ lexical recall.
 | Populated Room `15 -> 16` upgrade | all retained rows/columns preserved; only two derived tables/indexes removed; real Room reopen passed |
 | Persisted legacy Room-index job after schema 16 | migration dismissal plus startup repair test; no retry or notification loop in runtime smoke |
 | Populated Room `16 -> 17` upgrade | all 13 retained tables and sentinels preserved; only `chat_classification` and `personal_memory` removed; FK/integrity clean |
-| Mixed `CREATE`/`REPLACE` exact-text multiplicity | batch and daily final-target checks reject `0 -> 2`, `1 -> 2`, and historical `n -> n+1` while allowing swaps and create-then-move transactions |
+| Mixed `CREATE`/`REPLACE` exact-text multiplicity | batch and daily final-target checks reject `0 -> 2`, `1 -> 2`, and historical `n -> n+1`; batch destructive-first rendering also preserves original operation IDs and covers both operation orders, historical relocation, swaps, and create-plus-remove without `1 -> 0` loss |
 | Historical exact-text duplicates in recall | lexical, Hybrid, fallback, prompt-packing, and 401/601-entry ObjectBox tests |
 | Background canonical update while Memory is open | real FileStore commit with failed index enqueue -> revision -> repository Flow -> ViewModel, plus fresh-export instrumentation |
 | Missing, invalid, or hash-mismatched staging | persisted receipt/group conflict, exact terminal source-job reason, recovery-before-bootstrap, and repeated-startup no-churn tests |
@@ -450,7 +457,7 @@ lexical recall.
 | Production embedding provisioning/quality | PASSED | Immutable revision/hash contract, 72 tokenizer fixtures, release asset/install checks, real ONNX inference, shadow semantic top-5, and process restart |
 | Production Hybrid cutover | PASSED | Production recall uses Hybrid DI after shadow passed; missing, stale, corrupt, or unavailable vectors permanently fall back to current Markdown lexical recall |
 | Room schema 16 / Task 8 cleanup | PASSED | Non-destructive populated and chained migrations, exact retained-schema comparison, in-place APK upgrade, Room reopen, Markdown preservation, and ObjectBox rebuild |
-| Room schema 17 consistency | PASSED | Non-destructive populated/chained migration, exact 13-table schema, legacy runtime removal, final-target multiplicity defense, canonical-live UI/export, active/expired lease recovery, source-success/ack recovery, header-only bootstrap, and checked schema 17 seed verification |
+| Room schema 17 consistency | PASSED | Non-destructive populated/chained migration, exact 13-table schema, legacy runtime removal, final-target multiplicity and relocation defense, canonical-live UI/export, active/expired lease recovery, source-success/ack recovery, header-only bootstrap, and checked schema 17 seed verification |
 | 32-bit ABI policy | OPEN | Separate support decision because packaged 32-bit ObjectBox LOAD alignment is `0x1000` |
 | Backup XML and restore simulation | PASSED | API 30 and API 31+ rules exclude only transient memory directories; restored receipt simulations preserve idempotent/terminal behavior |
 | LocalTransport backup-agent restore | PASSED | Real package backup, private-data clear, full version-matched restore, byte-identical canonical/Room/DataStore/daily recovery, transient/derived exclusion, and ObjectBox rebuild |
