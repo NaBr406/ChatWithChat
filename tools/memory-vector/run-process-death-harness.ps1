@@ -9,9 +9,9 @@ $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $Gradle = Join-Path $ProjectRoot "gradlew.bat"
 $AppApk = Join-Path $ProjectRoot "app/build/outputs/apk/debug/app-debug.apk"
 $TestApk = Join-Path $ProjectRoot "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
-$AppPackage = "dev.chungjungsoo.gptmobile"
-$InstrumentationComponent = "dev.chungjungsoo.gptmobile.test/androidx.test.runner.AndroidJUnitRunner"
-$TestClass = "dev.chungjungsoo.gptmobile.data.memory.MemoryMutationProcessDeathInstrumentedTest"
+$AppPackage = "cn.nabr.chatwithchat"
+$InstrumentationComponent = "cn.nabr.chatwithchat.test/androidx.test.runner.AndroidJUnitRunner"
+$TestClass = "cn.nabr.chatwithchat.data.memory.MemoryMutationProcessDeathInstrumentedTest"
 
 function Invoke-Checked {
     param(

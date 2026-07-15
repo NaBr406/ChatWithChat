@@ -3,7 +3,7 @@ param(
     [string]$User = "Please remember that I prefer direct, natural replies and I dislike preachy answers.",
     [string]$Assistant = "Got it. I will keep replies direct, natural, and not preachy.",
     [ValidatePattern("^[A-Za-z][A-Za-z0-9_.]*$")]
-    [string]$PackageName = "dev.chungjungsoo.gptmobile"
+    [string]$PackageName = "cn.nabr.chatwithchat"
 )
 
 $ErrorActionPreference = "Stop"
@@ -166,7 +166,7 @@ function Start-DebugApplication {
         [string]$PackageName
     )
 
-    $component = "$PackageName/dev.chungjungsoo.gptmobile.presentation.ui.main.MainActivity"
+    $component = "$PackageName/cn.nabr.chatwithchat.presentation.ui.main.MainActivity"
     $null = Invoke-AdbShell `
         -AdbPath $AdbPath `
         -Serial $Serial `
@@ -412,8 +412,8 @@ function Invoke-MemorySeedVerification {
     Write-Host "==> Sending debug memory seed broadcast to '$serial'"
     $broadcastCommand = @(
         "am broadcast",
-        "-a dev.chungjungsoo.gptmobile.DEBUG_SEED_MEMORY_CHAT",
-        "-n $PackageName/dev.chungjungsoo.gptmobile.debug.MemorySeedReceiver",
+        "-a cn.nabr.chatwithchat.DEBUG_SEED_MEMORY_CHAT",
+        "-n $PackageName/cn.nabr.chatwithchat.debug.MemorySeedReceiver",
         "--es user $(Quote-AdbShellArg $seedUser)",
         "--es assistant $(Quote-AdbShellArg $Assistant)",
         "--ez memory_enabled true"

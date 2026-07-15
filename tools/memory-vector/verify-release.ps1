@@ -81,19 +81,19 @@ try {
     if ($RunDeviceTests) {
         Invoke-Checked "ObjectBox device tests" {
             & $Gradle :app:connectedDebugAndroidTest `
-                "-Pandroid.testInstrumentationRunnerArguments.class=dev.chungjungsoo.gptmobile.data.memory.vector.ObjectBoxMemoryVectorStoreInstrumentedTest"
+                "-Pandroid.testInstrumentationRunnerArguments.class=cn.nabr.chatwithchat.data.memory.vector.ObjectBoxMemoryVectorStoreInstrumentedTest"
         }
         Invoke-Checked "Room 14 to 15 migration device test" {
             & $Gradle :app:connectedDebugAndroidTest `
-                "-Pandroid.testInstrumentationRunnerArguments.class=dev.chungjungsoo.gptmobile.data.database.ChatDatabaseV2MigrationInstrumentedTest"
+                "-Pandroid.testInstrumentationRunnerArguments.class=cn.nabr.chatwithchat.data.database.ChatDatabaseV2MigrationInstrumentedTest"
         }
         Invoke-Checked "Room recovery, lease, and WorkManager device tests" {
             & $Gradle :app:connectedDebugAndroidTest `
-                "-Pandroid.testInstrumentationRunnerArguments.class=dev.chungjungsoo.gptmobile.data.database.MemoryRecoveryDaoInstrumentedTest,dev.chungjungsoo.gptmobile.data.database.MemoryMaintenanceClaimInstrumentedTest,dev.chungjungsoo.gptmobile.data.memory.MemoryMaintenanceWorkSchedulerInstrumentedTest"
+                "-Pandroid.testInstrumentationRunnerArguments.class=cn.nabr.chatwithchat.data.database.MemoryRecoveryDaoInstrumentedTest,cn.nabr.chatwithchat.data.database.MemoryMaintenanceClaimInstrumentedTest,cn.nabr.chatwithchat.data.memory.MemoryMaintenanceWorkSchedulerInstrumentedTest"
         }
         Invoke-Checked "ONNX Runtime device canary" {
             & $Gradle :app:connectedDebugAndroidTest `
-                "-Pandroid.testInstrumentationRunnerArguments.class=dev.chungjungsoo.gptmobile.data.memory.vector.OnnxRuntimeBuildCanaryInstrumentedTest"
+                "-Pandroid.testInstrumentationRunnerArguments.class=cn.nabr.chatwithchat.data.memory.vector.OnnxRuntimeBuildCanaryInstrumentedTest"
         }
     }
 

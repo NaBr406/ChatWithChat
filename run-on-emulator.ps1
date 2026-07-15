@@ -2,7 +2,7 @@ param(
     [string]$AvdName,
     [string]$DeviceSerial,
     [string]$JavaHome,
-    [string]$PackageName = "dev.chungjungsoo.gptmobile",
+    [string]$PackageName = "cn.nabr.chatwithchat",
     [string]$ActivityName = ".presentation.ui.main.MainActivity",
     [int]$BootTimeoutSeconds = 480,
     [switch]$NoBuild,

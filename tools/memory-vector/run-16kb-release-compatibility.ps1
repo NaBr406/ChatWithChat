@@ -14,15 +14,15 @@ $ReleaseTestApk = Join-Path $ProjectRoot "app/build/outputs/apk/androidTest/rele
 $EvidenceDirectory = Join-Path $ProjectRoot "app/build/outputs/apk/memory16k"
 $SignedReleaseApk = Join-Path $EvidenceDirectory "app-release-memory16k-test-signed.apk"
 $SignedReleaseTestApk = Join-Path $EvidenceDirectory "app-release-androidTest-memory16k-signed.apk"
-$AppPackage = "dev.chungjungsoo.gptmobile"
-$TestPackage = "dev.chungjungsoo.gptmobile.test"
-$InstrumentationRunner = "dev.chungjungsoo.gptmobile.data.memory.vector.Memory16KbReleaseCompatibilityInstrumentedTest"
+$AppPackage = "cn.nabr.chatwithchat"
+$TestPackage = "cn.nabr.chatwithchat.test"
+$InstrumentationRunner = "cn.nabr.chatwithchat.data.memory.vector.Memory16KbReleaseCompatibilityInstrumentedTest"
 $InstrumentationComponent = "$TestPackage/$InstrumentationRunner"
 $ExpectedPageSize = "16384"
 $PhaseOneCheckpoint = "MEMORY_16KB_PHASE1_READY"
 $PhaseTwoCheckpoint = "MEMORY_16KB_PHASE2_OK"
-$ObjectBoxLoadPattern = 'Load .*/dev\.chungjungsoo\.gptmobile-[^/]+/base\.apk!/lib/[^/]+/libobjectbox-jni\.so'
-$OnnxLoadPattern = 'Load .*/dev\.chungjungsoo\.gptmobile-[^/]+/base\.apk!/lib/[^/]+/libonnxruntime4j_jni\.so'
+$ObjectBoxLoadPattern = 'Load .*/cn\.nabr\.chatwithchat-[^/]+/base\.apk!/lib/[^/]+/libobjectbox-jni\.so'
+$OnnxLoadPattern = 'Load .*/cn\.nabr\.chatwithchat-[^/]+/base\.apk!/lib/[^/]+/libonnxruntime4j_jni\.so'
 
 function Invoke-Checked {
     param(
