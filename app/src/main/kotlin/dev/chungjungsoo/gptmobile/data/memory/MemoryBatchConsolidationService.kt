@@ -603,67 +603,85 @@ class MemoryBatchConsolidationService(
         var dailyWriteCount = 0
         var longTermWriteCount = 0
 
-        operations.forEachIndexed { operationIndex, operation ->
-            if (operation.action == MemoryBatchAction.IGNORE) return@forEachIndexed
-            val sourcePath = when (operation.action) {
-                MemoryBatchAction.CREATE -> pathForDestination(operation.destination, todayPath)
-                else -> checkNotNull(existingById[operation.targetMemoryId]?.sourcePath)
-            }
-            val currentMarkdown = checkNotNull(editedMarkdown[sourcePath])
-            val parsedCurrentEntries = markdownMemoryCodec.parse(currentMarkdown).entries
-            val currentEntries = parsedCurrentEntries.associateBy { it.id }
-            val updatedMarkdown = when (operation.action) {
-                MemoryBatchAction.CREATE -> {
-                    val normalizedText = normalizeExactMemoryText(operation.text)
-                    if (parsedCurrentEntries.any { entry -> normalizeExactMemoryText(entry.text) == normalizedText }) {
-                        return@forEachIndexed
-                    }
-                    val generatedId = generatedEntryId(batchId, operationIndex, operation.destination)
-                    if (generatedId in currentEntries) return@forEachIndexed
-                    val entry = operation.toEntry(
-                        id = generatedId,
-                        chatId = chatId,
-                        createdAt = now()
-                    )
-                    val append = if (operation.destination == MemoryBatchDestination.LONG_TERM) {
-                        markdownMemoryCodec.renderLongTermAppend(listOf(entry))
-                    } else {
-                        markdownMemoryCodec.renderDailyAppend(listOf(entry))
-                    }
-                    currentMarkdown.trimEnd() + "\n\n" + append.trim() + "\n"
+        val indexedOperationsByPath = operations
+            .withIndex()
+            .filter { indexedOperation -> indexedOperation.value.action != MemoryBatchAction.IGNORE }
+            .groupBy { indexedOperation ->
+                val operation = indexedOperation.value
+                when (operation.action) {
+                    MemoryBatchAction.CREATE -> pathForDestination(operation.destination, todayPath)
+                    else -> checkNotNull(existingById[operation.targetMemoryId]?.sourcePath)
                 }
-                MemoryBatchAction.REPLACE -> {
-                    val targetId = checkNotNull(operation.targetMemoryId)
-                    val existingEntry = checkNotNull(currentEntries[targetId])
-                    val replacement = markdownMemoryCodec.replaceEntriesById(
-                        currentMarkdown,
-                        listOf(
-                            operation.toEntry(
-                                id = targetId,
-                                chatId = existingEntry.chatId,
-                                createdAt = existingEntry.createdAt,
-                                section = existingEntry.section
+            }
+        indexedOperationsByPath.forEach { (sourcePath, indexedOperations) ->
+            val originalExactTextCounts = exactTextCounts(checkNotNull(originalMarkdown[sourcePath]))
+            // Destructive edits run first so CREATE can relocate text removed by the same proposal.
+            val orderedOperations = indexedOperations.filter { indexedOperation ->
+                indexedOperation.value.action != MemoryBatchAction.CREATE
+            } + indexedOperations.filter { indexedOperation ->
+                indexedOperation.value.action == MemoryBatchAction.CREATE
+            }
+            orderedOperations.forEach operationLoop@{ indexedOperation ->
+                val operationIndex = indexedOperation.index
+                val operation = indexedOperation.value
+                val currentMarkdown = checkNotNull(editedMarkdown[sourcePath])
+                val parsedCurrentEntries = markdownMemoryCodec.parse(currentMarkdown).entries
+                val currentEntries = parsedCurrentEntries.associateBy { it.id }
+                val updatedMarkdown = when (operation.action) {
+                    MemoryBatchAction.CREATE -> {
+                        val normalizedText = normalizeExactMemoryText(operation.text)
+                        val originalCount = originalExactTextCounts[normalizedText] ?: 0
+                        val currentCount = parsedCurrentEntries.count { entry ->
+                            normalizeExactMemoryText(entry.text) == normalizedText
+                        }
+                        if (currentCount >= maxOf(originalCount, 1)) return@operationLoop
+                        val generatedId = generatedEntryId(batchId, operationIndex, operation.destination)
+                        check(generatedId !in currentEntries) { "generated_memory_id_conflict" }
+                        val entry = operation.toEntry(
+                            id = generatedId,
+                            chatId = chatId,
+                            createdAt = now()
+                        )
+                        val append = if (operation.destination == MemoryBatchDestination.LONG_TERM) {
+                            markdownMemoryCodec.renderLongTermAppend(listOf(entry))
+                        } else {
+                            markdownMemoryCodec.renderDailyAppend(listOf(entry))
+                        }
+                        currentMarkdown.trimEnd() + "\n\n" + append.trim() + "\n"
+                    }
+                    MemoryBatchAction.REPLACE -> {
+                        val targetId = checkNotNull(operation.targetMemoryId)
+                        val existingEntry = checkNotNull(currentEntries[targetId])
+                        val replacement = markdownMemoryCodec.replaceEntriesById(
+                            currentMarkdown,
+                            listOf(
+                                operation.toEntry(
+                                    id = targetId,
+                                    chatId = existingEntry.chatId,
+                                    createdAt = existingEntry.createdAt,
+                                    section = existingEntry.section
+                                )
                             )
                         )
-                    )
-                    check(replacement.replacedCount == 1)
-                    replacement.markdown
+                        check(replacement.replacedCount == 1)
+                        replacement.markdown
+                    }
+                    MemoryBatchAction.REMOVE -> {
+                        val removal = markdownMemoryCodec.removeEntriesById(
+                            currentMarkdown,
+                            setOf(checkNotNull(operation.targetMemoryId))
+                        )
+                        check(removal.deletedCount == 1)
+                        removal.markdown
+                    }
+                    else -> currentMarkdown
                 }
-                MemoryBatchAction.REMOVE -> {
-                    val removal = markdownMemoryCodec.removeEntriesById(
-                        currentMarkdown,
-                        setOf(checkNotNull(operation.targetMemoryId))
-                    )
-                    check(removal.deletedCount == 1)
-                    removal.markdown
+                editedMarkdown[sourcePath] = updatedMarkdown
+                if (operation.destination == MemoryBatchDestination.LONG_TERM) {
+                    longTermWriteCount += 1
+                } else {
+                    dailyWriteCount += 1
                 }
-                else -> currentMarkdown
-            }
-            editedMarkdown[sourcePath] = updatedMarkdown
-            if (operation.destination == MemoryBatchDestination.LONG_TERM) {
-                longTermWriteCount += 1
-            } else {
-                dailyWriteCount += 1
             }
         }
 

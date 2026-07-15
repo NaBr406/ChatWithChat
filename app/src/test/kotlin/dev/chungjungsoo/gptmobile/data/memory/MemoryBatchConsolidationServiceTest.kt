@@ -424,6 +424,208 @@ class MemoryBatchConsolidationServiceTest {
     }
 
     @Test
+    fun `create before replace relocates canonical text with original operation id`() = runBlocking {
+        val codec = MarkdownMemoryCodec()
+        val original = longTermEntry("mem_create_before_replace", "A canonical fact must survive relocation.")
+        val fixture = fixture(
+            proposal = MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        text = "  A CANONICAL fact must survive\nrelocation.  "
+                    ),
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        action = MemoryBatchAction.REPLACE,
+                        targetMemoryId = original.id,
+                        text = "The original entry now records a replacement fact."
+                    )
+                )
+            ),
+            retrievalResults = listOf(retrievalResult(original))
+        )
+        fixture.fileStore.replaceLongTermMemory(codec.renderLongTerm(listOf(original))).getOrThrow()
+        val job = fixture.createFiveTurnBatch()
+        val expectedCreatedId = "mem_${sha256("${job.idempotencyKey}|0|${MemoryBatchDestination.LONG_TERM}").take(24)}"
+
+        val result = fixture.service.process(job)
+        val entries = codec.parse(fixture.fileStore.readLongTermMemory().getOrThrow()).entries
+        val relocated = entries.single { entry ->
+            normalizeExactMemoryText(entry.text) == normalizeExactMemoryText(original.text)
+        }
+
+        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(2, result.longTermWriteCount)
+        assertEquals(expectedCreatedId, relocated.id)
+        assertEquals(
+            "The original entry now records a replacement fact.",
+            entries.single { entry -> entry.id == original.id }.text
+        )
+        assertEquals(5, fixture.turnDao.getCheckpoint(CHAT_ID)?.lastProcessedUserMessageId)
+    }
+
+    @Test
+    fun `replace before create preserves reverse order operation id`() = runBlocking {
+        val codec = MarkdownMemoryCodec()
+        val original = longTermEntry("mem_replace_before_create", "A reverse-order fact must survive relocation.")
+        val fixture = fixture(
+            proposal = MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        action = MemoryBatchAction.REPLACE,
+                        targetMemoryId = original.id,
+                        text = "The reverse-order target now records a replacement fact."
+                    ),
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        text = "  A REVERSE-ORDER fact must survive\nrelocation.  "
+                    )
+                )
+            ),
+            retrievalResults = listOf(retrievalResult(original))
+        )
+        fixture.fileStore.replaceLongTermMemory(codec.renderLongTerm(listOf(original))).getOrThrow()
+        val job = fixture.createFiveTurnBatch()
+        val expectedCreatedId = "mem_${sha256("${job.idempotencyKey}|1|${MemoryBatchDestination.LONG_TERM}").take(24)}"
+
+        val result = fixture.service.process(job)
+        val entries = codec.parse(fixture.fileStore.readLongTermMemory().getOrThrow()).entries
+        val relocated = entries.single { entry ->
+            normalizeExactMemoryText(entry.text) == normalizeExactMemoryText(original.text)
+        }
+
+        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(2, result.longTermWriteCount)
+        assertEquals(expectedCreatedId, relocated.id)
+        assertEquals(
+            "The reverse-order target now records a replacement fact.",
+            entries.single { entry -> entry.id == original.id }.text
+        )
+    }
+
+    @Test
+    fun `create relocates one historical duplicate without reducing multiplicity`() = runBlocking {
+        val codec = MarkdownMemoryCodec()
+        val first = longTermEntry("mem_historical_relocation_first", "A historical canonical duplicate.")
+        val second = longTermEntry(
+            "mem_historical_relocation_second",
+            "\u00a0A HISTORICAL canonical\u3000duplicate.  "
+        )
+        val fixture = fixture(
+            proposal = MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        text = "A historical canonical duplicate."
+                    ),
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        action = MemoryBatchAction.REPLACE,
+                        targetMemoryId = first.id,
+                        text = "The relocated historical entry now has unique content."
+                    )
+                )
+            ),
+            retrievalResults = listOf(retrievalResult(first))
+        )
+        fixture.fileStore.replaceLongTermMemory(codec.renderLongTerm(listOf(first, second))).getOrThrow()
+        val job = fixture.createFiveTurnBatch()
+        val expectedCreatedId = "mem_${sha256("${job.idempotencyKey}|0|${MemoryBatchDestination.LONG_TERM}").take(24)}"
+
+        val result = fixture.service.process(job)
+        val entries = codec.parse(fixture.fileStore.readLongTermMemory().getOrThrow()).entries
+        val duplicateEntries = entries.filter { entry ->
+            normalizeExactMemoryText(entry.text) == normalizeExactMemoryText(first.text)
+        }
+
+        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(2, result.longTermWriteCount)
+        assertEquals(2, duplicateEntries.size)
+        assertTrue(duplicateEntries.any { entry -> entry.id == second.id })
+        assertTrue(duplicateEntries.any { entry -> entry.id == expectedCreatedId })
+        assertEquals(
+            "The relocated historical entry now has unique content.",
+            entries.single { entry -> entry.id == first.id }.text
+        )
+    }
+
+    @Test
+    fun `replacement swap preserves both canonical texts and ids`() = runBlocking {
+        val codec = MarkdownMemoryCodec()
+        val first = longTermEntry("mem_swap_first", "The first canonical fact.")
+        val second = longTermEntry("mem_swap_second", "The second canonical fact.")
+        val fixture = fixture(
+            proposal = MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        action = MemoryBatchAction.REPLACE,
+                        targetMemoryId = first.id,
+                        text = second.text
+                    ),
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        action = MemoryBatchAction.REPLACE,
+                        targetMemoryId = second.id,
+                        text = first.text
+                    )
+                )
+            ),
+            retrievalResults = listOf(retrievalResult(first), retrievalResult(second))
+        )
+        fixture.fileStore.replaceLongTermMemory(codec.renderLongTerm(listOf(first, second))).getOrThrow()
+        val job = fixture.createFiveTurnBatch()
+
+        val result = fixture.service.process(job)
+        val entriesById = codec
+            .parse(fixture.fileStore.readLongTermMemory().getOrThrow())
+            .entries
+            .associateBy { entry -> entry.id }
+
+        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(2, result.longTermWriteCount)
+        assertEquals(second.text, entriesById.getValue(first.id).text)
+        assertEquals(first.text, entriesById.getValue(second.id).text)
+    }
+
+    @Test
+    fun `create and remove relocate canonical text instead of deleting it`() = runBlocking {
+        val codec = MarkdownMemoryCodec()
+        val original = longTermEntry("mem_create_remove", "A removed entry must be recreated by the paired create.")
+        val fixture = fixture(
+            proposal = MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        text = "  A REMOVED entry must be recreated\nby the paired create.  "
+                    ),
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        action = MemoryBatchAction.REMOVE,
+                        targetMemoryId = original.id,
+                        text = ""
+                    )
+                )
+            ),
+            retrievalResults = listOf(retrievalResult(original))
+        )
+        fixture.fileStore.replaceLongTermMemory(codec.renderLongTerm(listOf(original))).getOrThrow()
+        val job = fixture.createFiveTurnBatch()
+        val expectedCreatedId = "mem_${sha256("${job.idempotencyKey}|0|${MemoryBatchDestination.LONG_TERM}").take(24)}"
+
+        val result = fixture.service.process(job)
+        val entries = codec.parse(fixture.fileStore.readLongTermMemory().getOrThrow()).entries
+
+        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(2, result.longTermWriteCount)
+        assertEquals(1, entries.size)
+        assertEquals(expectedCreatedId, entries.single().id)
+        assertEquals(normalizeExactMemoryText(original.text), normalizeExactMemoryText(entries.single().text))
+        assertFalse(entries.any { entry -> entry.id == original.id })
+    }
+
+    @Test
     fun `daily exact text does not block a long term create`() = runBlocking {
         val codec = MarkdownMemoryCodec()
         val dailyEntry = MarkdownMemoryEntry(
