@@ -37,6 +37,10 @@ data class ChatCompletionRequest(
     @EncodeDefault(EncodeDefault.Mode.NEVER)
     val reasoningEffort: String? = null,
 
+    @SerialName("thinking")
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val thinking: ChatCompletionThinkingConfig? = null,
+
     @SerialName("presence_penalty")
     @EncodeDefault(EncodeDefault.Mode.NEVER)
     val presencePenalty: Float? = null,
@@ -66,4 +70,10 @@ data class ChatCompletionRequest(
 data class ChatCompletionStreamOptions(
     @SerialName("include_usage")
     val includeUsage: Boolean = true
+)
+
+@Serializable
+data class ChatCompletionThinkingConfig(
+    @SerialName("type")
+    val type: String
 )

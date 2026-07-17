@@ -8,6 +8,7 @@ import cn.nabr.chatwithchat.data.model.coerceReasoningModeForModel
 import cn.nabr.chatwithchat.data.model.isExplicitReasoningEnabled
 import cn.nabr.chatwithchat.data.model.isGptOssModel
 import cn.nabr.chatwithchat.data.model.reasoningCapabilityForModel
+import java.net.URI
 
 internal fun mapReasoningMode(
     platform: PlatformV2,
@@ -56,12 +57,16 @@ internal fun mapReasoningMode(
             )
         }
 
-        ClientType.OPENROUTER, ClientType.CUSTOM -> ReasoningRequestParameters(
-            mode = mode,
-            openAICompatibleReasoningEffort = effort.takeIf {
-                mode.isExplicitReasoningEnabled() && capability.capability == ReasoningCapability.EFFORT
-            }
-        )
+        ClientType.OPENROUTER, ClientType.CUSTOM -> {
+            val usesOfficialDeepSeekThinking = platform.usesOfficialDeepSeekApi()
+            ReasoningRequestParameters(
+                mode = mode,
+                openAICompatibleReasoningEffort = effort.takeIf {
+                    mode.isExplicitReasoningEnabled() && capability.capability == ReasoningCapability.EFFORT
+                },
+                openAICompatibleThinkingType = "enabled".takeIf { usesOfficialDeepSeekThinking }
+            )
+        }
 
         ClientType.OLLAMA -> ReasoningRequestParameters(mode = mode)
     }
@@ -93,6 +98,12 @@ private fun ReasoningMode.toGoogleThinkingBudget(): Int? = when (this) {
     ReasoningMode.MAX -> 16_384
     ReasoningMode.OFF -> 0
     ReasoningMode.AUTO -> null
+}
+
+internal fun PlatformV2.usesOfficialDeepSeekApi(): Boolean {
+    if (compatibleType != ClientType.CUSTOM || !model.contains("deepseek", ignoreCase = true)) return false
+    val host = runCatching { URI(apiUrl.trim()).host }.getOrNull()
+    return host.equals("api.deepseek.com", ignoreCase = true)
 }
 
 private const val ANTHROPIC_RESPONSE_TOKEN_HEADROOM = 4_096

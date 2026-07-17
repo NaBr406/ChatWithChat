@@ -1,8 +1,18 @@
 package cn.nabr.chatwithchat.data.dto.openai.response
 
 import cn.nabr.chatwithchat.data.dto.ProviderUsage
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
+import kotlinx.serialization.json.JsonDecoder
+import kotlinx.serialization.json.JsonEncoder
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
 
 @Serializable
 data class ChatCompletionChunk(
@@ -48,9 +58,36 @@ data class Delta(
     @SerialName("content")
     val content: String? = null,
 
+    @SerialName("reasoning_content")
+    @Serializable(with = LenientReasoningTextSerializer::class)
+    val reasoningContent: String? = null,
+
+    @SerialName("reasoning")
+    @Serializable(with = LenientReasoningTextSerializer::class)
+    val reasoning: String? = null,
+
     @SerialName("tool_calls")
     val toolCalls: List<ChatCompletionToolCallDelta>? = null
 )
+
+internal object LenientReasoningTextSerializer : KSerializer<String?> {
+    override val descriptor: SerialDescriptor = PrimitiveSerialDescriptor(
+        serialName = "LenientReasoningText",
+        kind = PrimitiveKind.STRING
+    )
+
+    override fun serialize(encoder: Encoder, value: String?) {
+        val jsonEncoder = encoder as JsonEncoder
+        jsonEncoder.encodeJsonElement(value?.let { JsonPrimitive(it) } ?: JsonNull)
+    }
+
+    override fun deserialize(decoder: Decoder): String? {
+        val jsonDecoder = decoder as JsonDecoder
+        return (jsonDecoder.decodeJsonElement() as? JsonPrimitive)
+            ?.takeIf { it.isString }
+            ?.content
+    }
+}
 
 @Serializable
 data class ChatCompletionToolCallDelta(

@@ -117,6 +117,21 @@ class ReasoningParameterMapperTest {
     }
 
     @Test
+    fun `official deepseek api explicitly enables thinking for deepseek models`() {
+        val params = mapReasoningMode(
+            platform = platform(
+                clientType = ClientType.CUSTOM,
+                model = "deepseek-v4-pro",
+                apiUrl = "https://api.deepseek.com/v1"
+            ),
+            requestedMode = ReasoningMode.AUTO
+        )
+
+        assertEquals("enabled", params.openAICompatibleThinkingType)
+        assertNull(params.openAICompatibleReasoningEffort)
+    }
+
+    @Test
     fun `compatible providers do not infer effort from model name`() {
         listOf(ClientType.OPENROUTER, ClientType.CUSTOM).forEach { clientType ->
             val params = mapReasoningMode(
@@ -132,11 +147,12 @@ class ReasoningParameterMapperTest {
     private fun platform(
         clientType: ClientType,
         model: String,
-        reasoning: Boolean = false
+        reasoning: Boolean = false,
+        apiUrl: String = "https://example.test"
     ) = PlatformV2(
         name = clientType.name,
         compatibleType = clientType,
-        apiUrl = "https://example.test",
+        apiUrl = apiUrl,
         model = model,
         reasoning = reasoning
     )

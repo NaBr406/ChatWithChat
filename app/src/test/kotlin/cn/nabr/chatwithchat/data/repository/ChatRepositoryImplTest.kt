@@ -251,6 +251,226 @@ class ChatRepositoryImplTest {
     }
 
     @Test
+    fun `custom chat completions expose deepseek reasoning content`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                flowOf(
+                    ChatCompletionChunk(
+                        choices = listOf(
+                            Choice(
+                                index = 0,
+                                delta = Delta(reasoningContent = "", reasoning = "Plan ")
+                            )
+                        )
+                    ),
+                    ChatCompletionChunk(
+                        choices = listOf(
+                            Choice(
+                                index = 0,
+                                delta = Delta(reasoningContent = "carefully", content = "Answer")
+                            )
+                        )
+                    )
+                )
+            )
+        )
+        val repository = createRepository(openAIAPI = openAIAPI)
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "Hi", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform().copy(
+                apiUrl = "https://api.deepseek.com/v1",
+                model = "deepseek-v4-pro"
+            )
+        ).toList()
+
+        assertEquals(
+            listOf(
+                ApiState.Loading,
+                ApiState.Thinking("Plan "),
+                ApiState.Thinking("carefully"),
+                ApiState.Success("Answer"),
+                ApiState.Done
+            ),
+            states.withoutUsageUpdates()
+        )
+        val request = openAIAPI.chatCompletionRequests.single()
+        assertEquals("enabled", request.thinking?.type)
+        assertNull(request.temperature)
+        assertNull(request.topP)
+    }
+
+    @Test
+    fun `official deepseek fallback tool loop preserves thinking for a direct answer`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                flowOf(
+                    ChatCompletionChunk(
+                        choices = listOf(
+                            Choice(
+                                index = 0,
+                                delta = Delta(
+                                    reasoningContent = "Plan directly",
+                                    content = """{"type":"final_answer","content":"Direct answer"}"""
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Off,
+                toolCallingMode = ToolCallingMode.Auto
+            )
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "Answer without tools", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform().copy(
+                apiUrl = "https://api.deepseek.com/v1",
+                model = "deepseek-v4-pro"
+            )
+        ).toList()
+
+        assertEquals(
+            listOf(
+                ApiState.Loading,
+                ApiState.Thinking("Plan directly"),
+                ApiState.Success("Direct answer"),
+                ApiState.Done
+            ),
+            states.withoutUsageUpdates()
+        )
+        val request = openAIAPI.chatCompletionRequests.single()
+        assertEquals("enabled", request.thinking?.type)
+        assertNull(request.temperature)
+        assertNull(request.topP)
+    }
+
+    @Test
+    fun `official deepseek fallback tool loop preserves thinking across tool rounds`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatCompletionFlow(
+                    content = """{"type":"tool_calls","tool_calls":[{"id":"call_1","name":"web_search","arguments":{"query":"current Android target SDK"}}]}""",
+                    reasoningContent = "Need current sources"
+                ),
+                chatCompletionFlow(
+                    content = """{"type":"final_answer","content":"Draft searched answer"}""",
+                    reasoningContent = "Reviewing sources"
+                ),
+                chatCompletionFlow(
+                    content = "Final searched answer",
+                    reasoningContent = "Preparing final answer"
+                )
+            )
+        )
+        val webSearchRepository = RecordingWebSearchRepository(
+            Result.success(listOf(webSearchResult()))
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Auto,
+                toolCallingMode = ToolCallingMode.Auto
+            ),
+            webSearchRepository = webSearchRepository
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "What is the current Android target SDK?", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform().copy(
+                apiUrl = "https://api.deepseek.com/v1",
+                model = "deepseek-v4-pro"
+            )
+        ).toList()
+
+        assertEquals(
+            listOf(
+                ApiState.Loading,
+                ApiState.Thinking("Need current sources"),
+                ApiState.ToolStarted("web_search", "current Android target SDK"),
+                ApiState.ToolFinished("web_search", "current Android target SDK"),
+                ApiState.Thinking("Reviewing sources"),
+                ApiState.SourcesUpdated(
+                    listOf(
+                        MessageSourceMetadata(
+                            title = "Example Source",
+                            url = "https://example.com/source",
+                            snippet = "Example search snippet",
+                            sourceToolName = "web_search"
+                        )
+                    )
+                ),
+                ApiState.Thinking("Preparing final answer"),
+                ApiState.Success("Final searched answer"),
+                ApiState.Done
+            ),
+            states.withoutUsageUpdates()
+        )
+        assertEquals(3, openAIAPI.chatCompletionRequests.size)
+        assertTrue(openAIAPI.chatCompletionRequests.all { request -> request.thinking?.type == "enabled" })
+        assertTrue(openAIAPI.chatCompletionRequests.all { request -> request.temperature == null && request.topP == null })
+    }
+
+    @Test
+    fun `custom chat completions extract thinking tags split across chunks`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                flowOf(
+                    ChatCompletionChunk(
+                        choices = listOf(
+                            Choice(
+                                index = 0,
+                                delta = Delta(content = "<thinkin")
+                            )
+                        )
+                    ),
+                    ChatCompletionChunk(
+                        choices = listOf(
+                            Choice(
+                                index = 0,
+                                delta = Delta(content = "g>Plan")
+                            )
+                        )
+                    ),
+                    ChatCompletionChunk(
+                        choices = listOf(
+                            Choice(
+                                index = 0,
+                                delta = Delta(content = "</thinking>Answer")
+                            )
+                        )
+                    )
+                )
+            )
+        )
+        val repository = createRepository(openAIAPI = openAIAPI)
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "Hi", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform().copy(model = "deepseek-reasoner")
+        ).toList()
+
+        assertEquals(
+            listOf(
+                ApiState.Loading,
+                ApiState.Thinking("Plan"),
+                ApiState.Success("Answer"),
+                ApiState.Done
+            ),
+            states.withoutUsageUpdates()
+        )
+    }
+
+    @Test
     fun `groq reasoning disabled hides qwen reasoning`() = runBlocking {
         val groqAPI = FakeGroqAPI(emptyFlow())
         val repository = createRepository(groqAPI = groqAPI)
@@ -415,7 +635,7 @@ class ChatRepositoryImplTest {
                     """{"type":"tool_calls","tool_calls":[{"id":"call_1","name":"web_search","arguments":{"query":"current Android target SDK"}}]}"""
                 ),
                 chatCompletionFlow("""{"type":"final_answer","content":"Draft searched answer"}"""),
-                chatCompletionFlow("Final searched answer")
+                chatCompletionFlow("<thinking>Checked sources</thinking>Final searched answer")
             )
         )
         val webSearchRepository = RecordingWebSearchRepository(
@@ -451,6 +671,7 @@ class ChatRepositoryImplTest {
                         )
                     )
                 ),
+                ApiState.Thinking("Checked sources"),
                 ApiState.Success("Final searched answer"),
                 ApiState.Done
             ),
@@ -1407,7 +1628,7 @@ class ChatRepositoryImplTest {
                     name = "web_search",
                     arguments = """{"query":"current Android target SDK"}"""
                 ),
-                chatCompletionFlow("Final searched answer")
+                chatCompletionFlow("<thinking>Checked native sources</thinking>Final searched answer")
             )
         )
         val webSearchRepository = RecordingWebSearchRepository(
@@ -1443,6 +1664,7 @@ class ChatRepositoryImplTest {
                         )
                     )
                 ),
+                ApiState.Thinking("Checked native sources"),
                 ApiState.Success("Final searched answer"),
                 ApiState.Done
             ),
@@ -2620,13 +2842,14 @@ class ChatRepositoryImplTest {
 
     private fun chatCompletionFlow(
         content: String,
-        usage: ProviderUsage? = null
+        usage: ProviderUsage? = null,
+        reasoningContent: String? = null
     ): Flow<ChatCompletionChunk> = flowOf(
         ChatCompletionChunk(
             choices = listOf(
                 Choice(
                     index = 0,
-                    delta = Delta(content = content)
+                    delta = Delta(content = content, reasoningContent = reasoningContent)
                 )
             )
         ),

@@ -6,6 +6,7 @@ import cn.nabr.chatwithchat.data.model.ClientType
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -156,11 +157,44 @@ class SearchDecisionServiceTest {
         assertEquals(null, searchDecisionStreamOptionsFor(ClientType.OLLAMA))
     }
 
-    private fun platform() = PlatformV2(
+    @Test
+    fun `official deepseek decision request disables thinking without unsupported sampling parameters`() {
+        val request = createOpenAICompatibleSearchDecisionRequest(
+            platform = platform(
+                apiUrl = "https://api.deepseek.com/v1",
+                model = "deepseek-v4-flash"
+            ),
+            prompt = "Decide whether search is needed."
+        )
+
+        assertEquals("disabled", request.thinking?.type)
+        assertNull(request.temperature)
+        assertNull(request.topP)
+    }
+
+    @Test
+    fun `deepseek proxy decision request keeps ordinary compatible parameters`() {
+        val request = createOpenAICompatibleSearchDecisionRequest(
+            platform = platform(
+                apiUrl = "https://api.deepseek.com.proxy.example/v1",
+                model = "deepseek-v4-flash"
+            ),
+            prompt = "Decide whether search is needed."
+        )
+
+        assertNull(request.thinking)
+        assertEquals(0f, request.temperature)
+        assertEquals(1f, request.topP)
+    }
+
+    private fun platform(
+        apiUrl: String = "https://example.test",
+        model: String = "custom-model"
+    ) = PlatformV2(
         name = "Custom",
         compatibleType = ClientType.CUSTOM,
-        apiUrl = "https://example.test",
-        model = "custom-model"
+        apiUrl = apiUrl,
+        model = model
     )
 
     private class RecordingDecisionClient(

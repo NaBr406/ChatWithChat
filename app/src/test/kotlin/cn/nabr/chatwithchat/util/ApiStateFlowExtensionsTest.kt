@@ -8,10 +8,16 @@ import cn.nabr.chatwithchat.data.database.entity.MessageSourceType
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.dto.ApiState
 import cn.nabr.chatwithchat.presentation.ui.chat.ChatViewModel
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -71,8 +77,7 @@ class ApiStateFlowExtensionsTest {
             messageFlow = messageFlow,
             turnIndex = 0,
             platformIdx = 0,
-            onLoadingComplete = { loadingCompleteCalls += 1 },
-            nanoTimeProvider = { 1L }
+            onLoadingComplete = { loadingCompleteCalls += 1 }
         )
 
         assertEquals("Partial answer", messageFlow.value.assistantMessages.last().first().content)
@@ -101,8 +106,7 @@ class ApiStateFlowExtensionsTest {
                 messageFlow = messageFlow,
                 turnIndex = 0,
                 platformIdx = 0,
-                onLoadingComplete = { loadingCompleteCalls += 1 },
-                nanoTimeProvider = { 1L }
+                onLoadingComplete = { loadingCompleteCalls += 1 }
             )
         } catch (error: IllegalStateException) {
             thrownMessage = error.message
@@ -118,6 +122,126 @@ class ApiStateFlowExtensionsTest {
         val content = "Partial answer\n\n[响应已停止：Request timed out.]"
 
         assertEquals("Partial answer", stripAssistantErrorNote(content))
+    }
+
+    @Test
+    fun `handleStates publishes the first thinking chunk immediately and the second after the interval`() = runBlocking {
+        val messageFlow = MutableStateFlow(
+            ChatViewModel.GroupedMessages(
+                userMessages = listOf(MessageV2(content = "Hello", platformType = null)),
+                assistantMessages = listOf(
+                    listOf(MessageV2(content = "", platformType = "platform-1"))
+                )
+            )
+        )
+        val firstChunkEmitted = CompletableDeferred<Unit>()
+        val allowSecondChunk = CompletableDeferred<Unit>()
+        val secondChunkEmitted = CompletableDeferred<Unit>()
+        val allowCompletion = CompletableDeferred<Unit>()
+
+        val collection = launch {
+            flow {
+                emit(ApiState.Thinking("First"))
+                firstChunkEmitted.complete(Unit)
+                allowSecondChunk.await()
+                emit(ApiState.Thinking(" thought"))
+                secondChunkEmitted.complete(Unit)
+                allowCompletion.await()
+                emit(ApiState.Done)
+            }.handleStates(
+                messageFlow = messageFlow,
+                turnIndex = 0,
+                platformIdx = 0,
+                onLoadingComplete = {}
+            )
+        }
+
+        firstChunkEmitted.await()
+        assertEquals("First", messageFlow.value.assistantMessages[0][0].thoughts)
+
+        allowSecondChunk.complete(Unit)
+        secondChunkEmitted.await()
+        assertEquals("First", messageFlow.value.assistantMessages[0][0].thoughts)
+        withTimeout(1_000) {
+            messageFlow.first { it.assistantMessages[0][0].thoughts == "First thought" }
+        }
+
+        allowCompletion.complete(Unit)
+        collection.join()
+    }
+
+    @Test
+    fun `handleStates merges dense content chunks into one scheduled update`() = runBlocking {
+        val messageFlow = MutableStateFlow(
+            ChatViewModel.GroupedMessages(
+                userMessages = listOf(MessageV2(content = "Hello", platformType = null)),
+                assistantMessages = listOf(
+                    listOf(MessageV2(content = "", platformType = "platform-1"))
+                )
+            )
+        )
+        val chunksEmitted = CompletableDeferred<Unit>()
+        val allowCompletion = CompletableDeferred<Unit>()
+
+        val collection = launch {
+            flow {
+                emit(ApiState.Success("0"))
+                repeat(9) { index -> emit(ApiState.Success((index + 1).toString())) }
+                chunksEmitted.complete(Unit)
+                allowCompletion.await()
+                emit(ApiState.Done)
+            }.handleStates(
+                messageFlow = messageFlow,
+                turnIndex = 0,
+                platformIdx = 0,
+                onLoadingComplete = {}
+            )
+        }
+
+        chunksEmitted.await()
+        assertEquals("0", messageFlow.value.assistantMessages[0][0].content)
+        withTimeout(1_000) {
+            messageFlow.first { it.assistantMessages[0][0].content == "0123456789" }
+        }
+
+        allowCompletion.complete(Unit)
+        collection.join()
+    }
+
+    @Test
+    fun `handleStates flushes pending text when collection is cancelled`() = runBlocking {
+        val messageFlow = MutableStateFlow(
+            ChatViewModel.GroupedMessages(
+                userMessages = listOf(MessageV2(content = "Hello", platformType = null)),
+                assistantMessages = listOf(
+                    listOf(MessageV2(content = "", platformType = "platform-1"))
+                )
+            )
+        )
+        val chunksEmitted = CompletableDeferred<Unit>()
+
+        val collection = launch {
+            flow {
+                emit(ApiState.Thinking("First"))
+                emit(ApiState.Thinking(" thought"))
+                emit(ApiState.Success("Answer"))
+                emit(ApiState.Success(" preserved"))
+                chunksEmitted.complete(Unit)
+                awaitCancellation()
+            }.handleStates(
+                messageFlow = messageFlow,
+                turnIndex = 0,
+                platformIdx = 0,
+                onLoadingComplete = {}
+            )
+        }
+
+        chunksEmitted.await()
+        collection.cancelAndJoin()
+
+        val assistantMessage = messageFlow.value.assistantMessages[0][0]
+        assertEquals("First thought", assistantMessage.thoughts)
+        assertEquals("Answer preserved", assistantMessage.content)
     }
 
     @Test
@@ -318,7 +442,6 @@ class ApiStateFlowExtensionsTest {
             turnIndex = 0,
             platformIdx = 0,
             onLoadingComplete = {},
-            nanoTimeProvider = { 1L },
             currentTimeProvider = { 1234L },
             revisionToAppendOnSuccess = AssistantRevision(content = "Previous answer", thoughts = "Previous thoughts", createdAt = 100L)
         )

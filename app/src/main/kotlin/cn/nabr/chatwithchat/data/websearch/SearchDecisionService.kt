@@ -20,6 +20,7 @@ import cn.nabr.chatwithchat.data.dto.openai.common.Role as OpenAIRole
 import cn.nabr.chatwithchat.data.dto.openai.common.TextContent as OpenAITextContent
 import cn.nabr.chatwithchat.data.dto.openai.request.ChatCompletionRequest
 import cn.nabr.chatwithchat.data.dto.openai.request.ChatCompletionStreamOptions
+import cn.nabr.chatwithchat.data.dto.openai.request.ChatCompletionThinkingConfig
 import cn.nabr.chatwithchat.data.dto.openai.request.ChatMessage
 import cn.nabr.chatwithchat.data.dto.openai.request.ResponseInputContent
 import cn.nabr.chatwithchat.data.dto.openai.request.ResponseInputMessage
@@ -33,6 +34,7 @@ import cn.nabr.chatwithchat.data.network.AnthropicAPI
 import cn.nabr.chatwithchat.data.network.GoogleAPI
 import cn.nabr.chatwithchat.data.network.GroqAPI
 import cn.nabr.chatwithchat.data.network.OpenAIAPI
+import cn.nabr.chatwithchat.data.repository.usesOfficialDeepSeekApi
 import cn.nabr.chatwithchat.data.token.TokenUsageEstimator
 import cn.nabr.chatwithchat.data.token.TokenUsageRecord
 import kotlinx.coroutines.flow.collect
@@ -153,15 +155,7 @@ class ProviderSearchDecisionModelClient(
         val output = StringBuilder()
         var usage: ProviderUsage? = null
         openAIAPI.streamChatCompletion(
-            request = ChatCompletionRequest(
-                model = platform.model,
-                messages = decisionChatMessages(prompt),
-                stream = true,
-                temperature = 0f,
-                topP = 1f,
-                maxTokens = DECISION_MAX_OUTPUT_TOKENS,
-                streamOptions = searchDecisionStreamOptionsFor(platform.compatibleType)
-            ),
+            request = createOpenAICompatibleSearchDecisionRequest(platform, prompt),
             timeoutSeconds = platform.timeout
         ).collect { chunk ->
             chunk.error?.let { error -> throw IllegalStateException(error.message) }
@@ -283,24 +277,40 @@ class ProviderSearchDecisionModelClient(
         }
         return SearchDecisionModelResponse(output.toString(), usage)
     }
+}
 
-    private fun decisionChatMessages(prompt: String): List<ChatMessage> = listOf(
-        ChatMessage(
-            role = OpenAIRole.SYSTEM,
-            content = listOf(OpenAITextContent(DECISION_SYSTEM_PROMPT))
-        ),
-        ChatMessage(
-            role = OpenAIRole.USER,
-            content = listOf(OpenAITextContent(prompt))
-        )
+internal fun createOpenAICompatibleSearchDecisionRequest(
+    platform: PlatformV2,
+    prompt: String
+): ChatCompletionRequest {
+    val thinking = ChatCompletionThinkingConfig(type = "disabled")
+        .takeIf { platform.usesOfficialDeepSeekApi() }
+    return ChatCompletionRequest(
+        model = platform.model,
+        messages = decisionChatMessages(prompt),
+        stream = true,
+        temperature = 0f.takeIf { thinking == null },
+        topP = 1f.takeIf { thinking == null },
+        maxTokens = DECISION_MAX_OUTPUT_TOKENS,
+        thinking = thinking,
+        streamOptions = searchDecisionStreamOptionsFor(platform.compatibleType)
     )
-
-    companion object {
-        private const val DECISION_MAX_OUTPUT_TOKENS = 400
-        private const val DECISION_SYSTEM_PROMPT =
-            "You are a web-search planner. Decide if search is needed, then output optimized search queries. Return only the requested JSON object and no markdown."
-    }
 }
 
 internal fun searchDecisionStreamOptionsFor(clientType: ClientType): ChatCompletionStreamOptions? =
     ChatCompletionStreamOptions().takeIf { clientType == ClientType.OPENROUTER }
+
+private fun decisionChatMessages(prompt: String): List<ChatMessage> = listOf(
+    ChatMessage(
+        role = OpenAIRole.SYSTEM,
+        content = listOf(OpenAITextContent(DECISION_SYSTEM_PROMPT))
+    ),
+    ChatMessage(
+        role = OpenAIRole.USER,
+        content = listOf(OpenAITextContent(prompt))
+    )
+)
+
+private const val DECISION_MAX_OUTPUT_TOKENS = 400
+private const val DECISION_SYSTEM_PROMPT =
+    "You are a web-search planner. Decide if search is needed, then output optimized search queries. Return only the requested JSON object and no markdown."

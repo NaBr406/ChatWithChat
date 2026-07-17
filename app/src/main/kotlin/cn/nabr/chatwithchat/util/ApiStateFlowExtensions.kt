@@ -8,9 +8,13 @@ import cn.nabr.chatwithchat.data.dto.ApiState
 import cn.nabr.chatwithchat.data.token.TokenUsageRecord
 import cn.nabr.chatwithchat.presentation.ui.chat.ChatViewModel
 import cn.nabr.chatwithchat.presentation.ui.chat.updateAssistantSlot
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 
 private const val STREAM_PUBLISH_INTERVAL_MILLIS = 50L
 
@@ -19,12 +23,18 @@ suspend fun Flow<ApiState>.handleStates(
     turnIndex: Int,
     platformIdx: Int,
     onLoadingComplete: () -> Unit,
-    nanoTimeProvider: () -> Long = System::nanoTime,
     currentTimeProvider: () -> Long = { System.currentTimeMillis() / 1000 },
     revisionToAppendOnSuccess: AssistantRevision? = null,
     onToolProgress: (ApiState) -> Unit = {}
-) {
-    val buffer = StreamingMessageBuffer(nanoTimeProvider = nanoTimeProvider)
+) = coroutineScope {
+    val buffer = StreamingMessageBuffer()
+    val publishSignals = Channel<Unit>(capacity = Channel.CONFLATED)
+    val publisher = launch {
+        for (signal in publishSignals) {
+            delay(STREAM_PUBLISH_INTERVAL_MILLIS)
+            buffer.publishPending(messageFlow, turnIndex, platformIdx)
+        }
+    }
     var isCompletedSuccessfully = false
     var terminalError: String? = null
 
@@ -32,13 +42,19 @@ suspend fun Flow<ApiState>.handleStates(
         collect { chunk ->
             when (chunk) {
                 is ApiState.Thinking -> {
-                    buffer.appendThought(chunk.thinkingChunk)
-                    buffer.publishIfDue(messageFlow, turnIndex, platformIdx)
+                    when (buffer.appendThought(chunk.thinkingChunk)) {
+                        AppendResult.FIRST -> buffer.publishPending(messageFlow, turnIndex, platformIdx)
+                        AppendResult.PENDING -> publishSignals.trySend(Unit)
+                        AppendResult.EMPTY -> {}
+                    }
                 }
 
                 is ApiState.Success -> {
-                    buffer.appendContent(chunk.textChunk)
-                    buffer.publishIfDue(messageFlow, turnIndex, platformIdx)
+                    when (buffer.appendContent(chunk.textChunk)) {
+                        AppendResult.FIRST -> buffer.publishPending(messageFlow, turnIndex, platformIdx)
+                        AppendResult.PENDING -> publishSignals.trySend(Unit)
+                        AppendResult.EMPTY -> {}
+                    }
                 }
 
                 is ApiState.SourcesUpdated -> {
@@ -67,12 +83,15 @@ suspend fun Flow<ApiState>.handleStates(
             }
         }
     } finally {
+        publishSignals.close()
+        publisher.cancel()
         buffer.flush(messageFlow, turnIndex, platformIdx)
+        val error = terminalError
         when {
-            terminalError != null -> messageFlow.setErrorMessage(
+            error != null -> messageFlow.setErrorMessage(
                 turnIndex = turnIndex,
                 platformIdx = platformIdx,
-                error = terminalError,
+                error = error,
                 currentTimeProvider = currentTimeProvider,
                 revisionToAppend = revisionToAppendOnSuccess
             )
@@ -138,57 +157,65 @@ private fun MutableStateFlow<ChatViewModel.GroupedMessages>.setTokenUsage(
     }
 }
 
-private class StreamingMessageBuffer(
-    private val nanoTimeProvider: () -> Long
-) {
+private class StreamingMessageBuffer {
+    private val lock = Any()
     private val thoughts = StringBuilder()
     private val content = StringBuilder()
-    private var lastPublishedAtNanos = 0L
     private var publishedThoughtLength = 0
     private var publishedContentLength = 0
 
-    fun appendThought(chunk: String) {
-        if (chunk.isNotEmpty()) {
-            thoughts.append(chunk)
+    fun appendThought(chunk: String): AppendResult = synchronized(lock) {
+        when {
+            chunk.isEmpty() -> AppendResult.EMPTY
+            thoughts.isEmpty() -> {
+                thoughts.append(chunk)
+                AppendResult.FIRST
+            }
+
+            else -> {
+                thoughts.append(chunk)
+                AppendResult.PENDING
+            }
         }
     }
 
-    fun appendContent(chunk: String) {
-        if (chunk.isNotEmpty()) {
-            content.append(chunk)
+    fun appendContent(chunk: String): AppendResult = synchronized(lock) {
+        when {
+            chunk.isEmpty() -> AppendResult.EMPTY
+            content.isEmpty() -> {
+                content.append(chunk)
+                AppendResult.FIRST
+            }
+
+            else -> {
+                content.append(chunk)
+                AppendResult.PENDING
+            }
         }
     }
 
-    fun publishIfDue(
+    fun publishPending(
         messageFlow: MutableStateFlow<ChatViewModel.GroupedMessages>,
         turnIndex: Int,
         platformIdx: Int
-    ) {
-        if (!hasPendingChanges()) return
-
-        val now = nanoTimeProvider()
-        if (lastPublishedAtNanos == 0L ||
-            now - lastPublishedAtNanos >= STREAM_PUBLISH_INTERVAL_MILLIS * 1_000_000
-        ) {
-            publish(messageFlow, turnIndex, platformIdx, now)
-        }
+    ) = synchronized(lock) {
+        publishBufferedText(messageFlow, turnIndex, platformIdx)
     }
 
     fun flush(
         messageFlow: MutableStateFlow<ChatViewModel.GroupedMessages>,
         turnIndex: Int,
         platformIdx: Int
-    ) {
-        if (!hasPendingChanges()) return
-        publish(messageFlow, turnIndex, platformIdx, nanoTimeProvider())
+    ) = synchronized(lock) {
+        publishBufferedText(messageFlow, turnIndex, platformIdx)
     }
 
-    private fun publish(
+    private fun publishBufferedText(
         messageFlow: MutableStateFlow<ChatViewModel.GroupedMessages>,
         turnIndex: Int,
-        platformIdx: Int,
-        publishedAtNanos: Long
+        platformIdx: Int
     ) {
+        if (!hasPendingChanges()) return
         messageFlow.setBufferedText(
             turnIndex = turnIndex,
             platformIdx = platformIdx,
@@ -197,10 +224,15 @@ private class StreamingMessageBuffer(
         )
         publishedContentLength = content.length
         publishedThoughtLength = thoughts.length
-        lastPublishedAtNanos = publishedAtNanos
     }
 
     private fun hasPendingChanges(): Boolean = content.length != publishedContentLength || thoughts.length != publishedThoughtLength
+}
+
+private enum class AppendResult {
+    EMPTY,
+    FIRST,
+    PENDING
 }
 
 private fun MutableStateFlow<ChatViewModel.GroupedMessages>.setBufferedText(

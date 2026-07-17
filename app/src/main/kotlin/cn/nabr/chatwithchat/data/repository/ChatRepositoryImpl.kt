@@ -2,7 +2,6 @@ package cn.nabr.chatwithchat.data.repository
 
 import android.content.Context
 import androidx.room.withTransaction
-import dagger.hilt.android.qualifiers.ApplicationContext
 import cn.nabr.chatwithchat.data.context.ContextBuilder
 import cn.nabr.chatwithchat.data.context.ConversationContext
 import cn.nabr.chatwithchat.data.context.ConversationTurn
@@ -58,6 +57,7 @@ import cn.nabr.chatwithchat.data.dto.openai.common.Role as OpenAIRole
 import cn.nabr.chatwithchat.data.dto.openai.common.TextContent as OpenAITextContent
 import cn.nabr.chatwithchat.data.dto.openai.request.ChatCompletionRequest
 import cn.nabr.chatwithchat.data.dto.openai.request.ChatCompletionStreamOptions
+import cn.nabr.chatwithchat.data.dto.openai.request.ChatCompletionThinkingConfig
 import cn.nabr.chatwithchat.data.dto.openai.request.ChatCompletionTool
 import cn.nabr.chatwithchat.data.dto.openai.request.ChatCompletionToolChoice
 import cn.nabr.chatwithchat.data.dto.openai.request.ChatMessage
@@ -123,6 +123,7 @@ import cn.nabr.chatwithchat.util.AttachmentPayloadCache
 import cn.nabr.chatwithchat.util.FileUtils
 import cn.nabr.chatwithchat.util.isAssistantErrorMessage
 import cn.nabr.chatwithchat.util.stripAssistantErrorNote
+import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.IOException
 import java.time.ZoneId
 import java.time.ZonedDateTime
@@ -416,10 +417,10 @@ class ChatRepositoryImpl @Inject constructor(
                         extraPrompt = toolPrompt,
                         emitEstimatedUsageWithoutOutput = true
                     ),
-                    maxChars = config.maxToolProtocolResponseChars()
-                ) { usage ->
-                    toolUsageRecords += usage
-                }
+                    maxChars = config.maxToolProtocolResponseChars(),
+                    onThinking = { thinkingChunk -> emit(ApiState.Thinking(thinkingChunk)) },
+                    onUsage = { usage -> toolUsageRecords += usage }
+                )
             }
         )
 
@@ -628,21 +629,28 @@ class ChatRepositoryImpl @Inject constructor(
     private suspend fun collectProviderText(
         states: Flow<ApiState>,
         maxChars: Int = Int.MAX_VALUE,
+        onThinking: suspend (String) -> Unit = {},
         onUsage: (TokenUsageRecord) -> Unit = {}
-    ): Result<String> = runCatching {
-        val text = StringBuilder()
-        var errorMessage: String? = null
-        states.collect { state ->
-            when (state) {
-                is ApiState.Success -> text.appendToolProtocolFragment(state.textChunk, maxChars)
-                is ApiState.Error -> errorMessage = errorMessage ?: state.message
-                is ApiState.UsageUpdated -> onUsage(state.usage)
-                else -> {}
+    ): Result<String> =
+        try {
+            val text = StringBuilder()
+            var errorMessage: String? = null
+            states.collect { state ->
+                when (state) {
+                    is ApiState.Thinking -> onThinking(state.thinkingChunk)
+                    is ApiState.Success -> text.appendToolProtocolFragment(state.textChunk, maxChars)
+                    is ApiState.Error -> errorMessage = errorMessage ?: state.message
+                    is ApiState.UsageUpdated -> onUsage(state.usage)
+                    else -> {}
+                }
             }
+            errorMessage?.let { throw IllegalStateException(it) }
+            Result.success(text.toString())
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            Result.failure(error)
         }
-        errorMessage?.let { throw IllegalStateException(it) }
-        text.toString()
-    }
 
     private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.emitProviderStatesSkippingLoading(states: Flow<ApiState>) {
         states.collect { state ->
@@ -935,12 +943,16 @@ class ChatRepositoryImpl @Inject constructor(
                     openAINativeToolInstruction(activeToolDefinitions)
                 )
             )
+            val thinking = reasoningParameters.openAICompatibleThinkingType?.let { type ->
+                ChatCompletionThinkingConfig(type)
+            }
             OpenAIChatCompletionsNativeToolRequest(
                 model = platform.model,
                 messages = messages,
-                temperature = platform.temperature,
-                topP = platform.topP,
-                reasoningEffort = reasoningParameters.openAICompatibleReasoningEffort
+                temperature = platform.temperature.takeIf { thinking == null },
+                topP = platform.topP.takeIf { thinking == null },
+                reasoningEffort = reasoningParameters.openAICompatibleReasoningEffort,
+                thinking = thinking
             )
         }
 
@@ -1060,6 +1072,7 @@ class ChatRepositoryImpl @Inject constructor(
         )
         var errorMessage: String? = null
         val outputText = StringBuilder()
+        val reasoningParser = ReasoningStreamParser()
 
         try {
             openAIAPI.streamChatCompletion(request, timeoutSeconds).collect { chunk ->
@@ -1076,9 +1089,16 @@ class ChatRepositoryImpl @Inject constructor(
                     chunk.error != null -> errorMessage = chunk.error.message
 
                     else -> chunk.choices.orEmpty().forEach { choice ->
-                        choice.delta.content?.let { content ->
-                            outputText.append(content)
-                            emit(ApiState.Success(content))
+                        reasoningParser.append(
+                            contentChunk = choice.delta.content,
+                            reasoningChunk = choice.delta.reasoningContent
+                                ?.takeIf { it.isNotEmpty() }
+                                ?: choice.delta.reasoning
+                        ).forEach { state ->
+                            if (state is ApiState.Success) {
+                                outputText.append(state.textChunk)
+                            }
+                            emit(state)
                         }
                     }
                 }
@@ -1089,6 +1109,13 @@ class ChatRepositoryImpl @Inject constructor(
             errorMessage = error.message?.toolLimitErrorCodeOrNull() ?: throw error
         } catch (error: IOException) {
             errorMessage = error.message ?: "provider_stream_failed"
+        }
+
+        reasoningParser.flush().forEach { state ->
+            if (state is ApiState.Success) {
+                outputText.append(state.textChunk)
+            }
+            emit(state)
         }
 
         return OpenAIChatCompletionsNativeRound(
@@ -1692,7 +1719,7 @@ class ChatRepositoryImpl @Inject constructor(
             },
             stream = { prepared ->
                 flow {
-                    val parser = GroqReasoningParser()
+                    val parser = ReasoningStreamParser()
                     val chunks = mutableListOf<cn.nabr.chatwithchat.data.dto.groq.response.GroqChatCompletionChunk>()
                     val outputText = StringBuilder()
                     groqAPI.streamChatCompletion(
@@ -1777,9 +1804,16 @@ class ChatRepositoryImpl @Inject constructor(
                         model = platform.model,
                         messages = messages,
                         stream = platform.stream,
-                        temperature = platform.temperature,
-                        topP = platform.topP,
+                        temperature = platform.temperature.takeIf {
+                            reasoningParameters.openAICompatibleThinkingType == null
+                        },
+                        topP = platform.topP.takeIf {
+                            reasoningParameters.openAICompatibleThinkingType == null
+                        },
                         reasoningEffort = reasoningParameters.openAICompatibleReasoningEffort,
+                        thinking = reasoningParameters.openAICompatibleThinkingType?.let { type ->
+                            ChatCompletionThinkingConfig(type)
+                        },
                         streamOptions = chatCompletionStreamOptionsFor(platform)
                     ),
                     sources = emptyList()
@@ -1789,6 +1823,7 @@ class ChatRepositoryImpl @Inject constructor(
                 flow {
                     val chunks = mutableListOf<ChatCompletionChunk>()
                     val outputText = StringBuilder()
+                    val reasoningParser = ReasoningStreamParser()
                     openAIAPI.streamChatCompletion(prepared.request, platform.timeout).collect { chunk ->
                         chunks += chunk
                         when {
@@ -1796,12 +1831,27 @@ class ChatRepositoryImpl @Inject constructor(
                                 emit(ApiState.Error(chunk.error.message))
                             }
 
-                            chunk.choices?.firstOrNull()?.delta?.content != null -> {
-                                val content = chunk.choices.first().delta.content!!
-                                outputText.append(content)
-                                emit(ApiState.Success(content))
+                            else -> {
+                                val delta = chunk.choices?.firstOrNull()?.delta
+                                reasoningParser.append(
+                                    contentChunk = delta?.content,
+                                    reasoningChunk = delta?.reasoningContent
+                                        ?.takeIf { it.isNotEmpty() }
+                                        ?: delta?.reasoning
+                                ).forEach { state ->
+                                    if (state is ApiState.Success) {
+                                        outputText.append(state.textChunk)
+                                    }
+                                    emit(state)
+                                }
                             }
                         }
+                    }
+                    reasoningParser.flush().forEach { state ->
+                        if (state is ApiState.Success) {
+                            outputText.append(state.textChunk)
+                        }
+                        emit(state)
                     }
                     val usage = openAIChatUsageFromChunks(
                         chunks = chunks,
@@ -2637,7 +2687,8 @@ private data class OpenAIChatCompletionsNativeToolRequest(
     val messages: List<ChatMessage>,
     val temperature: Float?,
     val topP: Float?,
-    val reasoningEffort: String?
+    val reasoningEffort: String?,
+    val thinking: ChatCompletionThinkingConfig?
 ) {
     fun toRequest(
         continuationMessages: List<ChatMessage>,
@@ -2651,6 +2702,7 @@ private data class OpenAIChatCompletionsNativeToolRequest(
         temperature = temperature,
         topP = topP,
         reasoningEffort = reasoningEffort,
+        thinking = thinking,
         tools = tools,
         toolChoice = toolChoice,
         streamOptions = ChatCompletionStreamOptions()
