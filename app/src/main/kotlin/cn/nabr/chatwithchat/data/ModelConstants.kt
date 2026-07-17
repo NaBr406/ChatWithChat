@@ -32,7 +32,7 @@ object ModelConstants {
             "你熟悉世界上的多种语言。" +
             "请准确回答我的问题。"
 
-    const val DEFAULT_PROMPT = "你的任务是准确回答我的问题。"
+    const val DEFAULT_PROMPT = ""
 
     const val CHAT_TITLE_GENERATE_PROMPT =
         "请为这段聊天生成一个概括性标题。" +
