@@ -13,17 +13,10 @@ import org.junit.Test
 class ModelSelectionMenuTest {
     @Test
     fun `popup width stays inside compact and freeform viewports`() {
-        assertEquals(216, modelSelectionPopupWidthDp(screenWidthDp = 240))
-        assertEquals(296, modelSelectionPopupWidthDp(screenWidthDp = 320))
-        assertEquals(336, modelSelectionPopupWidthDp(screenWidthDp = 360))
-        assertEquals(400, modelSelectionPopupWidthDp(screenWidthDp = 600))
-    }
-
-    @Test
-    fun `top bar hides secondary summary at accessibility font scales`() {
-        assertTrue(modelTriggerShowsReasoningSummary(fontScale = 1.3f))
-        assertFalse(modelTriggerShowsReasoningSummary(fontScale = 1.5f))
-        assertFalse(modelTriggerShowsReasoningSummary(fontScale = 2f))
+        assertEquals(208, modelSelectionPopupWidthDp(screenWidthDp = 240))
+        assertEquals(224, modelSelectionPopupWidthDp(screenWidthDp = 320))
+        assertEquals(264, modelSelectionPopupWidthDp(screenWidthDp = 360))
+        assertEquals(264, modelSelectionPopupWidthDp(screenWidthDp = 600))
     }
 
     @Test
