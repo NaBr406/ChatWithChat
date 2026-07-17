@@ -31,13 +31,12 @@ class ChatScrollIntentTest {
     }
 
     @Test
-    fun streamCompletion_preservesReadingIntentAndNeverRequestsFollow() {
+    fun streamCompletion_preservesReadingIntent() {
         val reading = ChatScrollIntent.ReadingHistory(ChatScrollAnchor("message-1-0", 24))
 
         val result = reduceChatScrollIntent(reading, ChatScrollEvent.StreamCompleted)
 
         assertEquals(reading, result)
-        assertFalse(result.shouldFollowStreaming(isStreaming = false))
     }
 
     @Test
@@ -55,7 +54,7 @@ class ChatScrollIntentTest {
 
         val result = reduceChatScrollIntent(reading, ChatScrollEvent.FollowLatestRequested)
 
-        assertTrue(result.shouldFollowStreaming(isStreaming = true))
+        assertEquals(ChatScrollIntent.FollowingLatest, result)
     }
 
     @Test

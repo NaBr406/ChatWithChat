@@ -124,29 +124,30 @@ fun OpponentChatBubble(
     onRetryClick: () -> Unit = {},
     onEditClick: () -> Unit = {},
     onShowPreviousRevision: () -> Unit = {},
-    onShowNextRevision: () -> Unit = {},
-    onStreamingTextDisplayed: () -> Unit = {}
+    onShowNextRevision: () -> Unit = {}
 ) {
     val isThinking = isLoading && thoughts.isNotBlank() && text.isBlank()
+    var hasObservedStreaming by remember(contentIdentity) { mutableStateOf(isLoading) }
+    LaunchedEffect(isLoading) {
+        if (isLoading) {
+            hasObservedStreaming = true
+        }
+    }
     val visibleText = rememberSmoothedStreamingText(
         targetText = text,
         isStreaming = isLoading,
         contentIdentity = contentIdentity
     )
-    LaunchedEffect(isLoading, visibleText) {
-        if (isLoading && visibleText.isNotBlank()) {
-            onStreamingTextDisplayed()
-        }
-    }
-
+    val isTextAnimating = isLoading || visibleText != text
     Column(modifier = modifier) {
         if (thoughts.isNotBlank()) {
             ThinkingBlock(
-                modifier = Modifier.padding(top = 8.dp, bottom = 6.dp),
+                modifier = Modifier.padding(top = 6.dp),
                 thoughts = thoughts,
                 contentIdentity = contentIdentity,
-                isLoading = isThinking,
-                onStreamingTextDisplayed = onStreamingTextDisplayed
+                isLoading = isLoading,
+                isThinking = isThinking,
+                initiallyExpanded = isLoading || hasObservedStreaming
             )
         }
 
@@ -159,10 +160,10 @@ fun OpponentChatBubble(
                 }
                 displayText.isNotBlank() || !isLoading -> {
                     ChatMarkdown(
-                        content = appendStreamingTextTail(displayText, isLoading),
+                        content = appendStreamingTextTail(displayText, isTextAnimating),
                         contentIdentity = contentIdentity,
                         renderMath = true,
-                        useMathJax = !isLoading,
+                        useMathJax = !isTextAnimating,
                         modifier = Modifier.padding(vertical = 6.dp)
                     )
                 }
@@ -179,7 +180,7 @@ fun OpponentChatBubble(
                 modifier = Modifier.padding(top = 2.dp, bottom = 8.dp)
             )
 
-            if (!isLoading) {
+            if (!isTextAnimating) {
                 Row(
                     modifier = Modifier
                         .padding(top = 4.dp)

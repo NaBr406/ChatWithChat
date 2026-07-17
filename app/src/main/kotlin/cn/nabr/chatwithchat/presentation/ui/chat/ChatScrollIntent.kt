@@ -70,9 +70,6 @@ internal fun reduceChatScrollIntent(
     }
 }
 
-internal fun ChatScrollIntent.shouldFollowStreaming(isStreaming: Boolean): Boolean =
-    isStreaming && this == ChatScrollIntent.FollowingLatest
-
 internal fun ChatScrollIntent.shouldRestoreFollowingViewport(
     isScrollInProgress: Boolean,
     canScrollForward: Boolean,

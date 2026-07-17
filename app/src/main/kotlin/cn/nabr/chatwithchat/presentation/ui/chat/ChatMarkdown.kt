@@ -64,6 +64,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import cn.nabr.chatwithchat.R
+import cn.nabr.chatwithchat.presentation.common.AppleBlue
+import cn.nabr.chatwithchat.presentation.common.AppleGreen
+import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import com.mikepenz.markdown.annotator.annotatorSettings
 import com.mikepenz.markdown.compose.LocalMarkdownTypography
 import com.mikepenz.markdown.compose.LocalReferenceLinkHandler
@@ -84,10 +88,6 @@ import com.mikepenz.markdown.model.markdownDimens
 import com.mikepenz.markdown.model.markdownInlineContent
 import com.mikepenz.markdown.model.markdownPadding
 import com.mikepenz.markdown.model.rememberMarkdownState
-import cn.nabr.chatwithchat.R
-import cn.nabr.chatwithchat.presentation.common.AppleBlue
-import cn.nabr.chatwithchat.presentation.common.AppleGreen
-import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import dev.snipme.highlights.Highlights
 import dev.snipme.highlights.model.BoldHighlight
 import dev.snipme.highlights.model.ColorHighlight
@@ -105,6 +105,11 @@ private const val DISPLAY_MATH_PLACEHOLDER_PREFIX = "CHAT_MATH_DISPLAY_"
 private const val DISPLAY_MATH_PLACEHOLDER_SUFFIX = "_TOKEN"
 private const val DISPLAY_MATH_PLACEHOLDER_TEST_NONCE = "test"
 
+enum class ChatMarkdownStyle {
+    ANSWER,
+    THINKING
+}
+
 @Composable
 fun ChatMarkdown(
     content: String,
@@ -112,6 +117,7 @@ fun ChatMarkdown(
     renderMath: Boolean = true,
     useMathJax: Boolean = true,
     contentColor: Color = MaterialTheme.colorScheme.onBackground,
+    style: ChatMarkdownStyle = ChatMarkdownStyle.ANSWER,
     modifier: Modifier = Modifier
 ) {
     val isDarkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
@@ -188,6 +194,7 @@ fun ChatMarkdown(
                     CodeBlockWithCopy(
                         code = code,
                         language = language,
+                        contentColor = contentColor,
                         onCopyCode = copyCodeToClipboard
                     ) {
                         HighlightedCodeContent(
@@ -204,6 +211,7 @@ fun ChatMarkdown(
                     CodeBlockWithCopy(
                         code = code,
                         language = language,
+                        contentColor = contentColor,
                         onCopyCode = copyCodeToClipboard
                     ) {
                         HighlightedCodeContent(
@@ -271,7 +279,8 @@ fun ChatMarkdown(
                     rawTable = extractNodeText(model.content, model.node),
                     style = model.typography.paragraph,
                     inlineContent = inlineMathContent,
-                    inlineMathByPlaceholder = inlineMathByPlaceholder
+                    inlineMathByPlaceholder = inlineMathByPlaceholder,
+                    contentColor = contentColor
                 )
             },
             horizontalRule = {
@@ -303,7 +312,7 @@ fun ChatMarkdown(
                 inlineContent = markdownInlineContent(inlineMathContent),
                 annotator = annotator,
                 components = components,
-                typography = chatMarkdownTypography(),
+                typography = chatMarkdownTypography(style),
                 padding = chatMarkdownPadding(),
                 dimens = chatMarkdownDimens(),
                 animations = animations,
@@ -317,6 +326,7 @@ fun ChatMarkdown(
 private fun CodeBlockWithCopy(
     code: String,
     language: String?,
+    contentColor: Color,
     onCopyCode: (String) -> Unit,
     content: @Composable () -> Unit
 ) {
@@ -334,7 +344,7 @@ private fun CodeBlockWithCopy(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
         color = materialColors.field,
-        contentColor = materialColors.primaryLabel,
+        contentColor = contentColor,
         tonalElevation = 0.dp,
         border = BorderStroke(
             width = 0.5.dp,
@@ -399,7 +409,6 @@ private fun HighlightedCodeContent(
     style: TextStyle,
     highlightsBuilder: Highlights.Builder
 ) {
-    val materialColors = settingsMaterialColors()
     val highlightedCode by produceState(
         initialValue = AnnotatedString(code),
         key1 = code,
@@ -414,10 +423,7 @@ private fun HighlightedCodeContent(
     Text(
         text = highlightedCode,
         style = style.copy(
-            color = materialColors.primaryLabel,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 14.sp,
-            lineHeight = 21.sp,
+            color = LocalContentColor.current,
             letterSpacing = 0.sp
         ),
         softWrap = false,
@@ -643,7 +649,8 @@ private fun ChatMarkdownTable(
     rawTable: String,
     style: TextStyle,
     inlineContent: Map<String, InlineTextContent>,
-    inlineMathByPlaceholder: Map<String, InlineMathToken>
+    inlineMathByPlaceholder: Map<String, InlineMathToken>,
+    contentColor: Color
 ) {
     val table = remember(rawTable) { parseMarkdownTable(rawTable) }
     if (table == null) {
@@ -676,7 +683,7 @@ private fun ChatMarkdownTable(
         Surface(
             shape = tableShape,
             color = materialColors.field,
-            contentColor = materialColors.primaryLabel,
+            contentColor = contentColor,
             border = BorderStroke(0.5.dp, materialColors.separatorStrong),
             tonalElevation = 0.dp
         ) {
@@ -688,7 +695,7 @@ private fun ChatMarkdownTable(
                     inlineContent = inlineContent,
                     inlineMathByPlaceholder = inlineMathByPlaceholder,
                     backgroundColor = materialColors.grouped,
-                    contentColor = materialColors.primaryLabel,
+                    contentColor = contentColor,
                     isHeader = true
                 )
                 if (table.rows.isNotEmpty()) {
@@ -705,7 +712,7 @@ private fun ChatMarkdownTable(
                         inlineContent = inlineContent,
                         inlineMathByPlaceholder = inlineMathByPlaceholder,
                         backgroundColor = materialColors.field,
-                        contentColor = materialColors.primaryLabel,
+                        contentColor = contentColor,
                         isHeader = false
                     )
                     if (index < table.rows.lastIndex) {
@@ -896,59 +903,87 @@ private fun ChatMarkdownBlockQuote(
 }
 
 @Composable
-private fun chatMarkdownTypography() = markdownTypography(
-    h1 = MaterialTheme.typography.headlineSmall.copy(
-        fontSize = 24.sp,
-        lineHeight = 30.sp,
-        fontWeight = FontWeight.SemiBold,
-        letterSpacing = 0.sp
-    ),
-    h2 = MaterialTheme.typography.titleLarge.copy(
-        fontSize = 21.sp,
-        lineHeight = 28.sp,
-        fontWeight = FontWeight.SemiBold,
-        letterSpacing = 0.sp
-    ),
-    h3 = MaterialTheme.typography.titleMedium.copy(
-        fontSize = 19.sp,
+private fun chatMarkdownTypography(style: ChatMarkdownStyle) = markdownTypography(
+    h1 = when (style) {
+        ChatMarkdownStyle.ANSWER -> MaterialTheme.typography.headlineSmall.copy(
+            fontSize = 24.sp,
+            lineHeight = 30.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.sp
+        )
+        ChatMarkdownStyle.THINKING -> chatMarkdownThinkingHeadingStyle()
+    },
+    h2 = when (style) {
+        ChatMarkdownStyle.ANSWER -> MaterialTheme.typography.titleLarge.copy(
+            fontSize = 21.sp,
+            lineHeight = 28.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.sp
+        )
+        ChatMarkdownStyle.THINKING -> chatMarkdownThinkingHeadingStyle()
+    },
+    h3 = when (style) {
+        ChatMarkdownStyle.ANSWER -> MaterialTheme.typography.titleMedium.copy(
+            fontSize = 19.sp,
+            lineHeight = 25.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.sp
+        )
+        ChatMarkdownStyle.THINKING -> chatMarkdownThinkingHeadingStyle()
+    },
+    h4 = chatMarkdownSmallHeadingStyle(style),
+    h5 = chatMarkdownSmallHeadingStyle(style),
+    h6 = chatMarkdownSmallHeadingStyle(style),
+    text = chatMarkdownBodyStyle(style),
+    code = chatMarkdownCodeStyle(style),
+    inlineCode = chatMarkdownCodeStyle(style).copy(lineHeight = 20.sp),
+    quote = chatMarkdownBodyStyle(style),
+    paragraph = chatMarkdownBodyStyle(style),
+    ordered = chatMarkdownBodyStyle(style),
+    bullet = chatMarkdownBodyStyle(style),
+    list = chatMarkdownBodyStyle(style),
+    table = chatMarkdownBodyStyle(style)
+)
+
+@Composable
+private fun chatMarkdownBodyStyle(style: ChatMarkdownStyle) = when (style) {
+    ChatMarkdownStyle.ANSWER -> MaterialTheme.typography.bodyLarge.copy(
+        fontSize = 16.sp,
         lineHeight = 25.sp,
+        letterSpacing = 0.sp
+    )
+    ChatMarkdownStyle.THINKING -> MaterialTheme.typography.bodyMedium.copy(
+        fontSize = 14.sp,
+        lineHeight = 22.sp,
+        fontWeight = FontWeight.Normal,
+        letterSpacing = 0.sp
+    )
+}
+
+@Composable
+private fun chatMarkdownSmallHeadingStyle(style: ChatMarkdownStyle) = when (style) {
+    ChatMarkdownStyle.ANSWER -> MaterialTheme.typography.titleMedium.copy(
+        fontSize = 17.sp,
+        lineHeight = 23.sp,
         fontWeight = FontWeight.SemiBold,
         letterSpacing = 0.sp
-    ),
-    h4 = chatMarkdownSmallHeadingStyle(),
-    h5 = chatMarkdownSmallHeadingStyle(),
-    h6 = chatMarkdownSmallHeadingStyle(),
-    text = chatMarkdownBodyStyle(),
-    code = chatMarkdownCodeStyle(),
-    inlineCode = chatMarkdownCodeStyle().copy(lineHeight = 20.sp),
-    quote = chatMarkdownBodyStyle(),
-    paragraph = chatMarkdownBodyStyle(),
-    ordered = chatMarkdownBodyStyle(),
-    bullet = chatMarkdownBodyStyle(),
-    list = chatMarkdownBodyStyle(),
-    table = chatMarkdownBodyStyle()
-)
+    )
+    ChatMarkdownStyle.THINKING -> chatMarkdownThinkingHeadingStyle()
+}
 
 @Composable
-private fun chatMarkdownBodyStyle() = MaterialTheme.typography.bodyLarge.copy(
-    fontSize = 16.sp,
-    lineHeight = 25.sp,
-    letterSpacing = 0.sp
-)
-
-@Composable
-private fun chatMarkdownSmallHeadingStyle() = MaterialTheme.typography.titleMedium.copy(
-    fontSize = 17.sp,
-    lineHeight = 23.sp,
+private fun chatMarkdownThinkingHeadingStyle() = MaterialTheme.typography.titleSmall.copy(
+    fontSize = 14.sp,
+    lineHeight = 22.sp,
     fontWeight = FontWeight.SemiBold,
     letterSpacing = 0.sp
 )
 
 @Composable
-private fun chatMarkdownCodeStyle() = MaterialTheme.typography.bodyMedium.copy(
+private fun chatMarkdownCodeStyle(style: ChatMarkdownStyle) = MaterialTheme.typography.bodyMedium.copy(
     fontFamily = FontFamily.Monospace,
-    fontSize = 14.sp,
-    lineHeight = 21.sp,
+    fontSize = if (style == ChatMarkdownStyle.THINKING) 13.sp else 14.sp,
+    lineHeight = if (style == ChatMarkdownStyle.THINKING) 20.sp else 21.sp,
     letterSpacing = 0.sp
 )
 

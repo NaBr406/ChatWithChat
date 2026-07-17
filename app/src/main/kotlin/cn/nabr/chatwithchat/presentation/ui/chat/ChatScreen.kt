@@ -106,6 +106,7 @@ import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import java.io.File
 import kotlin.math.abs
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -346,29 +347,8 @@ private fun ChatContent(
         }
     }
     val roundNavigatorMaxHeight = (screenHeightDp * 0.62f).coerceAtMost(520.dp)
-    val latestStreamingContentVersion = remember(groupedMessages, toolProgressStates) {
-        buildString {
-            append(groupedMessages.userMessages.size)
-            append('|')
-            groupedMessages.assistantMessages.lastOrNull().orEmpty().forEach { message ->
-                append(message.effectiveContent().length)
-                append(':')
-                append(message.effectiveThoughts().length)
-                append(':')
-                append(message.attachments.size)
-                append('|')
-            }
-            toolProgressStates.entries.sortedBy { it.key }.forEach { (key, states) ->
-                append('|')
-                append(key)
-                append(':')
-                append(states.size)
-                append(':')
-                append(states.lastOrNull()?.status?.name.orEmpty())
-            }
-        }
-    }
     val scope = rememberCoroutineScope()
+    val programmaticScrollMutex = remember { Mutex() }
     val currentBottomItemIndex by rememberUpdatedState(bottomItemIndex)
     val turnKeyRegistry = remember { ChatTurnKeyRegistry() }
     val turnKeys = remember(groupedMessages.userMessages) {
@@ -396,18 +376,30 @@ private fun ChatContent(
         }
     }
 
-    suspend fun scrollToLatestMessage(animated: Boolean) {
-        scrollIntent = reduceChatScrollIntent(scrollIntent, ChatScrollEvent.FollowLatestRequested)
+    suspend fun runProgrammaticScroll(block: suspend () -> Unit) {
+        programmaticScrollMutex.lock()
         programmaticScrollInProgress = true
         try {
+            block()
+        } finally {
+            programmaticScrollInProgress = false
+            programmaticScrollMutex.unlock()
+        }
+    }
+
+    suspend fun scrollToLatestMessage(animated: Boolean) {
+        runProgrammaticScroll {
+            if (scrollIntent != ChatScrollIntent.FollowingLatest) return@runProgrammaticScroll
             if (animated) {
                 listState.animateScrollToItem(currentBottomItemIndex)
             } else {
                 listState.scrollToItem(currentBottomItemIndex)
             }
-        } finally {
-            programmaticScrollInProgress = false
         }
+    }
+
+    fun requestFollowLatest() {
+        scrollIntent = reduceChatScrollIntent(scrollIntent, ChatScrollEvent.FollowLatestRequested)
     }
 
     LaunchedEffect(listState) {
@@ -460,12 +452,6 @@ private fun ChatContent(
         }
     }
 
-    LaunchedEffect(latestStreamingContentVersion) {
-        if (scrollIntent.shouldFollowStreaming(isStreaming = !isIdle)) {
-            scrollToLatestMessage(animated = false)
-        }
-    }
-
     LaunchedEffect(isIdle) {
         if (isIdle) {
             scrollIntent = reduceChatScrollIntent(scrollIntent, ChatScrollEvent.StreamCompleted)
@@ -486,17 +472,16 @@ private fun ChatContent(
             return@LaunchedEffect
         }
 
-        programmaticScrollInProgress = true
-        try {
+        runProgrammaticScroll {
+            if (scrollIntent != readingIntent) return@runProgrammaticScroll
             listState.scrollToItem(anchorIndex, readingIntent.anchor.offset)
-        } finally {
-            programmaticScrollInProgress = false
         }
     }
 
     val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     LaunchedEffect(imeVisible) {
         if (imeVisible) {
+            requestFollowLatest()
             scrollToLatestMessage(animated = false)
         }
     }
@@ -576,14 +561,7 @@ private fun ChatContent(
                             onSelectText = onSelectText,
                             onRetry = onRetry,
                             onShowPreviousRevision = onShowPreviousRevision,
-                            onShowNextRevision = onShowNextRevision,
-                            onStreamingTextDisplayed = {
-                                if (scrollIntent.shouldFollowStreaming(isStreaming = !isIdle)) {
-                                    scope.launch {
-                                        scrollToLatestMessage(animated = false)
-                                    }
-                                }
-                            }
+                            onShowNextRevision = onShowNextRevision
                         )
                     }
 
@@ -611,14 +589,7 @@ private fun ChatContent(
                                 onSelectText = onSelectText,
                                 onRetry = onRetry,
                                 onShowPreviousRevision = onShowPreviousRevision,
-                                onShowNextRevision = onShowNextRevision,
-                                onStreamingTextDisplayed = {
-                                    if (scrollIntent.shouldFollowStreaming(isStreaming = !isIdle)) {
-                                        scope.launch {
-                                            scrollToLatestMessage(animated = false)
-                                        }
-                                    }
-                                }
+                                onShowNextRevision = onShowNextRevision
                             )
                         }
                     }
@@ -636,6 +607,7 @@ private fun ChatContent(
                         contentAlignment = Alignment.BottomCenter
                     ) {
                         ScrollToBottomButton {
+                            requestFollowLatest()
                             scope.launch {
                                 scrollToLatestMessage(animated = true)
                             }
@@ -670,11 +642,8 @@ private fun ChatContent(
                                 )
                             }
                             scope.launch {
-                                programmaticScrollInProgress = true
-                                try {
+                                runProgrammaticScroll {
                                     listState.animateScrollToItem(turnIndex)
-                                } finally {
-                                    programmaticScrollInProgress = false
                                 }
                             }
                         }
@@ -691,7 +660,7 @@ private fun ChatContent(
                 onFilesSelected = onFilesSelected,
                 onFileRemoved = onFileRemoved
             ) {
-                scrollIntent = reduceChatScrollIntent(scrollIntent, ChatScrollEvent.FollowLatestRequested)
+                requestFollowLatest()
                 onSendButtonClick()
                 focusManager.clearFocus()
             }
@@ -722,10 +691,10 @@ private fun ChatMessagePair(
     onSelectText: (String) -> Unit,
     onRetry: (Int, Int) -> Unit,
     onShowPreviousRevision: (Int, Int) -> Unit,
-    onShowNextRevision: (Int, Int) -> Unit,
-    onStreamingTextDisplayed: () -> Unit
+    onShowNextRevision: (Int, Int) -> Unit
 ) {
     val selectedAssistantMessage = assistantMessages.getOrNull(platformIndexState)
+    val selectedAssistantRevisionIndex = selectedAssistantMessage?.activeRevisionIndex ?: ACTIVE_REVISION_LATEST
     val assistantContent = selectedAssistantMessage?.effectiveContent() ?: ""
     val assistantThoughts = selectedAssistantMessage?.effectiveThoughts() ?: ""
     val selectedTokenUsage = selectedAssistantMessage?.effectiveTokenUsage()
@@ -832,7 +801,7 @@ private fun ChatMessagePair(
                 thoughts = assistantThoughts,
                 attachments = selectedAssistantMessage?.attachments.orEmpty().map { it.filePathForDisplay },
                 sourceMetadata = selectedAssistantMessage?.sourceMetadata.orEmpty(),
-                contentIdentity = "$messageIndex:$selectedPlatformUid",
+                contentIdentity = "$messageIndex:$selectedPlatformUid:$selectedAssistantRevisionIndex",
                 revisionIndexLabel = selectedAssistantMessage?.takeUnless { isInterruptedInitialRequest }?.let { assistantMessage ->
                     val totalRevisions = assistantMessage.revisions.size + 1
                     if (assistantMessage.activeRevisionIndex == ACTIVE_REVISION_LATEST) {
@@ -856,8 +825,7 @@ private fun ChatMessagePair(
                 onRetryClick = { onRetry(messageIndex, platformIndexState) },
                 onEditClick = { onEditAssistant(messageIndex, platformIndexState) },
                 onShowPreviousRevision = { onShowPreviousRevision(messageIndex, platformIndexState) },
-                onShowNextRevision = { onShowNextRevision(messageIndex, platformIndexState) },
-                onStreamingTextDisplayed = onStreamingTextDisplayed
+                onShowNextRevision = { onShowNextRevision(messageIndex, platformIndexState) }
             )
             TokenUsageRow(
                 usage = selectedTokenUsage,
