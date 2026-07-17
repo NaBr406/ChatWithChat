@@ -17,6 +17,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ExpectedApplicationId = "cn.nabr.chatwithchat"
 Set-Location -LiteralPath $ProjectRoot
 
 function Write-Step {
@@ -133,18 +134,37 @@ function Resolve-KeystorePath {
 }
 
 function Invoke-Gradle {
-    param([string[]]$Tasks)
+    param(
+        [string[]]$Tasks,
+        [string[]]$CleanRetryTasks = @()
+    )
 
     $gradlew = Join-Path $ProjectRoot "gradlew.bat"
     if (-not (Test-Path -LiteralPath $gradlew)) { throw "gradlew.bat not found in project root." }
 
     Write-Step "Running Gradle: $($Tasks -join ' ')"
     & $gradlew @Tasks
-    if ($LASTEXITCODE -ne 0) { throw "Gradle failed with exit code $LASTEXITCODE." }
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -eq 0) { return }
+
+    if ($CleanRetryTasks.Count -eq 0) {
+        throw "Gradle failed with exit code $exitCode."
+    }
+
+    Write-Step "Gradle failed with exit code $exitCode. Retrying once after clean."
+    Write-Step "Running Gradle: $($CleanRetryTasks -join ' ')"
+    & $gradlew @CleanRetryTasks
+    $retryExitCode = $LASTEXITCODE
+    if ($retryExitCode -ne 0) {
+        throw "Gradle failed with exit code $exitCode and clean retry failed with exit code $retryExitCode."
+    }
 }
 
 function Get-BuiltApkPath {
-    param([string]$Variant)
+    param(
+        [string]$Variant,
+        [string]$ExpectedApplicationId
+    )
 
     $outputDirectory = Join-Path $ProjectRoot "app\build\outputs\apk\$Variant"
     $metadataPath = Join-Path $outputDirectory "output-metadata.json"
@@ -156,6 +176,10 @@ function Get-BuiltApkPath {
         $metadata = Get-Content -Raw -Encoding UTF8 -LiteralPath $metadataPath | ConvertFrom-Json
     } catch {
         throw "Failed to read Gradle APK output metadata for $Variant build: $($_.Exception.Message)"
+    }
+
+    if ($metadata.applicationId -cne $ExpectedApplicationId) {
+        throw "Gradle APK metadata applicationId mismatch. Expected '$ExpectedApplicationId', found '$($metadata.applicationId)'."
     }
 
     $outputFiles = @(
@@ -229,6 +253,30 @@ function Test-ApkSignature {
     if ($LASTEXITCODE -ne 0) { throw "APK signature verification failed with exit code $LASTEXITCODE." }
 }
 
+function Test-ApkApplicationId {
+    param(
+        [string]$ApkPath,
+        [string]$ExpectedApplicationId
+    )
+
+    $sdkPath = Resolve-AndroidSdkPath $AndroidSdk
+    $aapt2 = Resolve-BuildToolPath -SdkPath $sdkPath -ToolName "aapt2.exe"
+    $applicationIdOutput = @(& $aapt2 dump packagename $ApkPath)
+    $inspectionExitCode = $LASTEXITCODE
+    if ($inspectionExitCode -ne 0) {
+        throw "APK applicationId inspection failed with exit code $inspectionExitCode."
+    }
+    if ($applicationIdOutput.Count -ne 1 -or [string]::IsNullOrWhiteSpace($applicationIdOutput[0])) {
+        throw "APK applicationId inspection returned unexpected output."
+    }
+    $actualApplicationId = $applicationIdOutput[0].Trim()
+    if ($actualApplicationId -cne $ExpectedApplicationId) {
+        throw "APK applicationId mismatch. Expected '$ExpectedApplicationId', found '$actualApplicationId'."
+    }
+
+    Write-Step "Verified APK applicationId: $ExpectedApplicationId"
+}
+
 function Test-ApkAbi {
     param(
         [string]$ApkPath,
@@ -287,9 +335,18 @@ if ($Clean) { $tasks.Add("clean") }
 if ($RunTests) { $tasks.Add("test") }
 $tasks.Add($assembleTask)
 
-Invoke-Gradle -Tasks $tasks.ToArray()
+if ($Clean) {
+    Invoke-Gradle -Tasks $tasks.ToArray()
+} else {
+    $cleanRetryTasks = New-Object System.Collections.Generic.List[string]
+    $cleanRetryTasks.Add("-PchatWithChatApkAbi=$TargetAbi")
+    $cleanRetryTasks.Add("clean")
+    if ($RunTests) { $cleanRetryTasks.Add("test") }
+    $cleanRetryTasks.Add($assembleTask)
+    Invoke-Gradle -Tasks $tasks.ToArray() -CleanRetryTasks $cleanRetryTasks.ToArray()
+}
 
-$apkPath = Get-BuiltApkPath $variant
+$apkPath = Get-BuiltApkPath -Variant $variant -ExpectedApplicationId $ExpectedApplicationId
 $outputPath = if ([System.IO.Path]::IsPathRooted($OutputDir)) { $OutputDir } else { Join-Path $ProjectRoot $OutputDir }
 New-Item -ItemType Directory -Force -Path $outputPath | Out-Null
 
@@ -300,6 +357,7 @@ $destinationPath = Join-Path $outputPath "ChatWithChat-$packageKind-$timestamp.a
 try {
     Copy-InstallableApk -SourceApk $apkPath -DestinationApk $destinationPath -Variant $variant
     Test-ApkSignature $destinationPath
+    Test-ApkApplicationId -ApkPath $destinationPath -ExpectedApplicationId $ExpectedApplicationId
     Test-ApkAbi -ApkPath $destinationPath -ExpectedAbi $TargetAbi
 } catch {
     foreach ($partialOutput in @($destinationPath, "$destinationPath.idsig")) {
