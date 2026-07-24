@@ -8,7 +8,12 @@ class MemoryPromptBuilder(
         if (retrievedMemories.isEmpty()) return null
 
         val lines = retrievedMemories
-            .sortedWith(compareByDescending<MemoryRetrievalResult> { it.fusedScore }.thenBy { it.sourcePath }.thenBy { it.chunkId })
+            .sortedWith(
+                compareByDescending<MemoryRetrievalResult> { it.type == "communication_style" }
+                    .thenByDescending { it.fusedScore }
+                    .thenBy { it.sourcePath }
+                    .thenBy { it.chunkId }
+            )
             .distinctBy(MemoryRetrievalResult::deduplicationKey)
             .distinctBy { memory -> normalizeExactMemoryText(memory.text) }
             .take(maxMemories)
@@ -25,7 +30,11 @@ class MemoryPromptBuilder(
                     "path: ${memory.sourcePath}"
                 ).joinToString(", ")
                 val guidance = listOfNotNull(
-                    "Use only if genuinely relevant; never force mentioning it.",
+                    if (memory.type == "communication_style") {
+                        "Apply as a default communication preference when addressing the user; do not force an explicit mention."
+                    } else {
+                        "Use only if genuinely relevant; never force mentioning it."
+                    },
                     sensitivityGuidance
                 ).joinToString(" ")
                 "- ${memory.text.trim()}. $metadata. $guidance"

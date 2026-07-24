@@ -5,6 +5,8 @@ import cn.nabr.chatwithchat.data.context.ContextBuilder
 import cn.nabr.chatwithchat.data.database.entity.MessageSourceMetadata
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
+import cn.nabr.chatwithchat.data.debug.PromptTraceStage
+import cn.nabr.chatwithchat.data.debug.PromptTraceStore
 import cn.nabr.chatwithchat.data.dto.ApiState
 import cn.nabr.chatwithchat.data.dto.ProviderUsage
 import cn.nabr.chatwithchat.data.dto.anthropic.common.ToolResultContent
@@ -984,6 +986,7 @@ class ChatRepositoryImplTest {
 
     @Test
     fun `openai native tools use filtered non search tool list`() = runBlocking {
+        val promptTraceStore = PromptTraceStore()
         val openAIAPI = RecordingOpenAIAPI(
             responsesResponses = mutableListOf(
                 flowOf(
@@ -1014,7 +1017,8 @@ class ChatRepositoryImplTest {
                 webSearchMode = WebSearchMode.Off,
                 toolCallingMode = ToolCallingMode.Auto
             ),
-            webSearchRepository = webSearchRepository
+            webSearchRepository = webSearchRepository,
+            promptTraceStore = promptTraceStore
         )
 
         val states = repository.completeChat(
@@ -1035,6 +1039,15 @@ class ChatRepositoryImplTest {
             openAIAPI.responsesRequests[0].tools.orEmpty().map { tool -> tool.name }
         )
         assertFalse(openAIAPI.responsesRequests[0].instructions.orEmpty().contains("web_search"))
+        val chronologicalTraces = promptTraceStore.entries.value.asReversed()
+        assertEquals(
+            listOf(PromptTraceStage.toolRequest(1), PromptTraceStage.toolRequest(2)),
+            chronologicalTraces.map { trace -> trace.stage }
+        )
+        assertEquals(
+            openAIAPI.responsesRequests.map { request -> request.instructions.orEmpty() },
+            chronologicalTraces.map { trace -> trace.systemPrompt }
+        )
     }
 
     @Test
@@ -2144,10 +2157,29 @@ class ChatRepositoryImplTest {
 
         harness.execute(platform)
 
-        assertProviderPromptSections(
+        harness.assertTracedProviderPrompt(
             provider = "OpenAI Responses",
             prompt = harness.openAIAPI.responsesRequests.single().instructions.orEmpty()
         )
+    }
+
+    @Test
+    fun `prompt trace captures exact final instructions sent to provider`() = runBlocking {
+        val harness = providerPromptHarness()
+        val platform = openAIPlatform(systemPrompt = PROVIDER_BASE_SYSTEM_MARKER)
+
+        harness.execute(platform)
+
+        val sentPrompt = harness.openAIAPI.responsesRequests.single().instructions.orEmpty()
+        val trace = harness.promptTraceStore.entries.value.single()
+        assertEquals(sentPrompt, trace.systemPrompt)
+        harness.assertTracedProviderPrompt(provider = "Prompt trace", prompt = trace.systemPrompt)
+        assertEquals(PromptTraceStage.ANSWER_WITH_EXTRA_INSTRUCTIONS, trace.stage)
+        assertEquals(PROVIDER_CHAT_ID, trace.chatId)
+        assertEquals(12, trace.turnNumber)
+        assertEquals(12, trace.userMessageId)
+        assertEquals(platform.uid, trace.platformUid)
+        assertEquals(platform.model, trace.model)
     }
 
     @Test
@@ -2157,7 +2189,7 @@ class ChatRepositoryImplTest {
 
         harness.execute(platform)
 
-        assertProviderPromptSections(
+        harness.assertTracedProviderPrompt(
             provider = "OpenRouter chat completions",
             prompt = harness.openAIAPI.chatCompletionRequests.single().systemText()
         )
@@ -2170,7 +2202,7 @@ class ChatRepositoryImplTest {
 
         harness.execute(platform)
 
-        assertProviderPromptSections(
+        harness.assertTracedProviderPrompt(
             provider = "Ollama chat completions",
             prompt = harness.openAIAPI.chatCompletionRequests.single().systemText()
         )
@@ -2185,7 +2217,7 @@ class ChatRepositoryImplTest {
         harness.execute(platform)
 
         assertEquals(1, harness.groqAPI.streamCalls)
-        assertProviderPromptSections(
+        harness.assertTracedProviderPrompt(
             provider = "Groq",
             prompt = checkNotNull(harness.groqAPI.lastRequest).messages.systemText()
         )
@@ -2198,7 +2230,7 @@ class ChatRepositoryImplTest {
 
         harness.execute(platform)
 
-        assertProviderPromptSections(
+        harness.assertTracedProviderPrompt(
             provider = "Anthropic",
             prompt = harness.anthropicAPI.requests.single().systemPrompt.orEmpty()
         )
@@ -2215,7 +2247,7 @@ class ChatRepositoryImplTest {
             ?.parts
             .orEmpty()
             .joinToString(separator = "\n") { part -> part.text.orEmpty() }
-        assertProviderPromptSections(provider = "Google", prompt = prompt)
+        harness.assertTracedProviderPrompt(provider = "Google", prompt = prompt)
     }
 
     private fun directUsageScenarios(includeProviderUsage: Boolean): List<UsageScenario> {
@@ -2544,7 +2576,8 @@ class ChatRepositoryImplTest {
         settingRepository: SettingRepository = settingRepository(WebSearchMode.Off),
         webSearchRepository: WebSearchRepository = RecordingWebSearchRepository(),
         toolLoopOrchestrator: ToolLoopOrchestrator = toolLoopOrchestrator(webSearchRepository),
-        searchDecisionService: SearchDecisionService? = null
+        searchDecisionService: SearchDecisionService? = null,
+        promptTraceStore: PromptTraceStore = PromptTraceStore()
     ): ChatRepositoryImpl = ChatRepositoryImpl(
         context = ContextWrapper(null),
         chatRoomDao = proxy(),
@@ -2564,7 +2597,8 @@ class ChatRepositoryImplTest {
         ),
         contextBuilder = ContextBuilder(),
         toolLoopOrchestrator = toolLoopOrchestrator,
-        searchDecisionService = searchDecisionService
+        searchDecisionService = searchDecisionService,
+        promptTraceStore = promptTraceStore
     )
 
     private fun providerPromptHarness(): ProviderPromptHarness {
@@ -2572,6 +2606,7 @@ class ChatRepositoryImplTest {
         val groqAPI = FakeGroqAPI(emptyFlow())
         val anthropicAPI = RecordingAnthropicAPI()
         val googleAPI = RecordingGoogleAPI()
+        val promptTraceStore = PromptTraceStore()
         val webSearchRepository = RecordingWebSearchRepository(
             Result.success(listOf(webSearchResult()))
         )
@@ -2595,12 +2630,14 @@ class ChatRepositoryImplTest {
                     toolCallingMode = ToolCallingMode.Auto
                 ),
                 webSearchRepository = webSearchRepository,
-                searchDecisionService = searchDecisionService
+                searchDecisionService = searchDecisionService,
+                promptTraceStore = promptTraceStore
             ),
             openAIAPI = openAIAPI,
             groqAPI = groqAPI,
             anthropicAPI = anthropicAPI,
-            googleAPI = googleAPI
+            googleAPI = googleAPI,
+            promptTraceStore = promptTraceStore
         )
     }
 
@@ -2620,6 +2657,7 @@ class ChatRepositoryImplTest {
         val userMessages = (1..12).map { index ->
             MessageV2(
                 id = index,
+                chatId = PROVIDER_CHAT_ID,
                 content = if (index == 12) {
                     "Find current provider prompt assembly evidence"
                 } else {
@@ -2635,6 +2673,7 @@ class ChatRepositoryImplTest {
                 listOf(
                     MessageV2(
                         id = 100 + index,
+                        chatId = PROVIDER_CHAT_ID,
                         content = "provider-topic-$index assistant detail",
                         platformType = platformUid
                     )
@@ -2658,17 +2697,24 @@ class ChatRepositoryImplTest {
         assertTrue("$provider lost search evidence", prompt.contains("https://example.com/source"))
     }
 
+    private fun ProviderPromptHarness.assertTracedProviderPrompt(provider: String, prompt: String) {
+        assertProviderPromptSections(provider = provider, prompt = prompt)
+        assertEquals("$provider trace differs from the sent prompt", prompt, promptTraceStore.entries.value.single().systemPrompt)
+    }
+
     private data class ProviderPromptHarness(
         val repository: ChatRepositoryImpl,
         val openAIAPI: RecordingOpenAIAPI,
         val groqAPI: FakeGroqAPI,
         val anthropicAPI: RecordingAnthropicAPI,
-        val googleAPI: RecordingGoogleAPI
+        val googleAPI: RecordingGoogleAPI,
+        val promptTraceStore: PromptTraceStore
     )
 
     private companion object {
         const val PROVIDER_BASE_SYSTEM_MARKER = "__PROVIDER_BASE_SYSTEM_5CFA__"
         const val PROVIDER_MEMORY_MARKER = "__PROVIDER_MEMORY_EXACTLY_ONCE_7E31__"
+        const val PROVIDER_CHAT_ID = 73
     }
 
     private fun List<ApiState>.withoutUsageUpdates(): List<ApiState> =

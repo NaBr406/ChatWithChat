@@ -30,6 +30,7 @@ class MemoryPromptBuilderTest {
         assertTrue(prompt!!.contains("Potentially relevant user memories"))
         assertTrue(prompt.contains("path: MEMORY.md"))
         assertTrue(prompt.contains("Handle carefully"))
+        assertTrue(prompt.contains("default communication preference"))
         assertTrue(prompt.contains("Do not reveal private or sensitive context"))
     }
 

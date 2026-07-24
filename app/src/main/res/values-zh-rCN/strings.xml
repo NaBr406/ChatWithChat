@@ -36,7 +36,7 @@
     <string name="gpt_4_turbo_description">可靠性良好，价格约为 GPT-4 的三分之一。</string>
     <string name="gpt_4_description">更擅长解决抽象问题。</string>
     <string name="select_anthropic_model">选择 Anthropic 聊天模型</string>
-    <string name="select_anthropic_model_description">请选择 Anthropic 聊天模型。当前支持 Claude 3 系列模型，并且仅支持文本输入。</string>
+    <string name="select_anthropic_model_description">请选择 Anthropic 聊天模型。</string>
     <string name="claude_3_5_sonnet" translatable="false">Claude 3.5 Sonnet</string>
     <string name="claude_3_opus" translatable="false">Claude 3 Opus</string>
     <string name="claude_3_sonnet" translatable="false">Claude 3 Sonnet</string>
@@ -505,4 +505,27 @@
     <string name="tool_finished">工具已完成</string>
     <string name="tool_failed">工具执行失败</string>
     <string name="initial_request_interrupted">请求已中断，请重试。</string>
+    <string name="prompt_trace_title">完整提示词</string>
+    <string name="prompt_trace_empty">暂无提示词记录</string>
+    <string name="prompt_trace_clear">清空记录</string>
+    <string name="prompt_trace_clear_confirmation">确定清空当前运行期间的提示词记录吗？</string>
+    <string name="prompt_trace_copy">复制</string>
+    <string name="prompt_trace_detail_title">完整提示词</string>
+    <string name="prompt_trace_prompt_empty">未发送系统提示词</string>
+    <string name="prompt_trace_stage_answer">回答</string>
+    <string name="prompt_trace_stage_answer_with_extra">带附加指令的回答</string>
+    <string name="prompt_trace_stage_tool_request">工具请求 %1$d</string>
+    <string name="prompt_trace_stage_tool_final">工具最终回答</string>
+    <string name="prompt_trace_item_metadata">%1$s · %2$s</string>
+    <string name="prompt_trace_chat_turn">会话 %1$d · 第 %2$d 轮</string>
+    <string name="prompt_trace_recall_summary">召回：%1$s · 命中 %2$d 条</string>
+    <string name="prompt_trace_recall_unavailable">召回：未记录</string>
+    <string name="prompt_trace_recall_lexical">词法召回</string>
+    <string name="prompt_trace_recall_lexical_fallback">词法降级</string>
+    <string name="prompt_trace_recall_semantic">语义召回</string>
+    <string name="prompt_trace_recall_hybrid">混合召回</string>
+    <string name="prompt_trace_recall_none">无命中</string>
+    <string name="prompt_trace_recall_failed">召回失败</string>
+    <string name="prompt_trace_recall_ids">记忆 ID：%1$s</string>
+    <string name="prompt_trace_recall_error">错误：%1$s</string>
 </resources>

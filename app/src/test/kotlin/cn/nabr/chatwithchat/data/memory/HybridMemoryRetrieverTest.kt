@@ -40,8 +40,10 @@ class HybridMemoryRetrieverTest {
         val fixture = fixture(snapshot(chunks = listOf(target, distractor)))
         fixture.vectorStore.matches = listOf(match(target, TARGET_VECTOR, 0.05f))
 
-        val results = fixture.retriever.retrieve(request("别绕弯子，尽快说重点")).getOrThrow()
+        val report = fixture.retriever.retrieveWithDiagnostics(request("别绕弯子，尽快说重点")).getOrThrow()
+        val results = report.results
 
+        assertEquals(MemoryRetrievalMode.SEMANTIC, report.mode)
         assertEquals(listOf("mem_target"), results.map { result -> result.entryId })
         assertNull(results.single().lexicalScore)
         assertTrue(results.single().vectorScore!! > 0f)
@@ -57,12 +59,106 @@ class HybridMemoryRetrieverTest {
         val fixture = fixture(snapshot(chunks = listOf(shared, lexicalOnly)))
         fixture.vectorStore.matches = listOf(match(shared, TARGET_VECTOR, 0.01f))
 
-        val results = fixture.retriever.retrieve(request("concrete implementation steps")).getOrThrow()
+        val report = fixture.retriever.retrieveWithDiagnostics(request("concrete implementation steps")).getOrThrow()
+        val results = report.results
         val result = results.first { item -> item.entryId == "mem_shared" }
 
+        assertEquals(MemoryRetrievalMode.HYBRID, report.mode)
         assertTrue(result.lexicalScore!! > 0f)
         assertTrue(result.vectorScore!! > 0f)
         assertEquals(2f / 61f, result.fusedScore, 0.000001f)
+    }
+
+    @Test
+    fun `hybrid does not fill the prompt with low similarity vector memories`() = runBlocking {
+        val addressPreference = chunk("address", "mem_address", "希望以后被称呼为大哥。")
+        val vectorDistractors = (1..9).map { index ->
+            chunk("distractor-$index", "mem_distractor_$index", "Unrelated user preference $index.")
+        }
+        val fixture = fixture(snapshot(chunks = listOf(addressPreference) + vectorDistractors))
+        fixture.vectorStore.matches = listOf(
+            match(addressPreference, TARGET_VECTOR, 0.01f),
+            *vectorDistractors.mapIndexed { index, chunk ->
+                match(chunk, if (index % 2 == 0) DIVERSE_VECTOR else OTHER_VECTOR, 0.2f + index * 0.02f)
+            }.toTypedArray()
+        )
+
+        val results = fixture.retriever.retrieve(request("你称呼我什么")).getOrThrow()
+
+        assertEquals(listOf("mem_address"), results.map { result -> result.entryId })
+    }
+
+    @Test
+    fun `hybrid lexical branch ignores unrelated prior turn context`() = runBlocking {
+        val addressPreference = chunk("address", "mem_address", "希望以后被称呼为大哥。")
+        val serverDistractors = (1..8).map { index ->
+            chunk(
+                "server-$index",
+                "mem_server_$index",
+                "Linux 服务器配置 $index：2 核 4GB、200M 带宽，用于 Minecraft 联机。"
+            )
+        }
+        val fixture = fixture(
+            snapshot(chunks = listOf(addressPreference) + serverDistractors),
+            capability = unavailableCapability()
+        )
+
+        val results = fixture.retriever.retrieve(
+            request("你称呼我什么").copy(
+                recentContext = "User: 我的服务器配置给我复述一遍\nAssistant: 服务器是 Linux，运行 Minecraft。"
+            )
+        ).getOrThrow()
+
+        assertEquals(listOf("mem_address"), results.map { result -> result.entryId })
+    }
+
+    @Test
+    fun `hybrid keeps communication preferences on topical first turn`() = runBlocking {
+        val server = chunk("server", "mem_server", "Linux 服务器配置：2 核 4GB、200M 带宽，用于 Minecraft 联机。")
+        val address = chunk("address", "mem_address", "希望以后被称呼为大哥。")
+        val nickname = chunk("nickname", "mem_nickname", "用户为 AI 取名为小 c，以后称其为小 c。")
+        val fixture = fixture(
+            snapshot(
+                chunks = listOf(
+                    server,
+                    address,
+                    nickname,
+                    chunk("interest", "mem_interest", "关注个人 AI 使用的能源消耗估算。")
+                        .copy(type = "interest")
+                )
+            ),
+            capability = unavailableCapability()
+        )
+
+        val results = fixture.retriever.retrieve(
+            request("我的服务器配置是什么").copy(alwaysIncludeTypes = setOf("communication_style"))
+        ).getOrThrow()
+
+        assertEquals(
+            listOf("mem_server", "mem_address", "mem_nickname"),
+            results.map { result -> result.entryId }
+        )
+    }
+
+    @Test
+    fun `lexical fallback matches Chinese paraphrase with a meaningful single character`() = runBlocking {
+        val education = chunk(
+            "education",
+            "mem_education",
+            "目前即将升入大二，专业是计算机科学与技术（计科）。"
+        ).copy(type = "stable_profile")
+        val unrelated = (1..8).map { index ->
+            chunk("unrelated-$index", "mem_unrelated_$index", "用户偏好项目记录 $index。")
+                .copy(type = "project_context")
+        }
+        val fixture = fixture(
+            snapshot(chunks = listOf(education) + unrelated),
+            capability = unavailableCapability()
+        )
+
+        val results = fixture.retriever.retrieve(request("我读大几")).getOrThrow()
+
+        assertEquals(listOf("mem_education"), results.map { result -> result.entryId })
     }
 
     @Test
@@ -100,9 +196,13 @@ class HybridMemoryRetrieverTest {
             capability = unavailableCapability()
         )
 
-        val chineseResults = fixture.retriever.retrieve(request("请直接具体回答")).getOrThrow()
-        val englishResults = fixture.retriever.retrieve(request("implementation steps")).getOrThrow()
+        val chineseReport = fixture.retriever.retrieveWithDiagnostics(request("请直接具体回答")).getOrThrow()
+        val englishReport = fixture.retriever.retrieveWithDiagnostics(request("implementation steps")).getOrThrow()
+        val chineseResults = chineseReport.results
+        val englishResults = englishReport.results
 
+        assertEquals(MemoryRetrievalMode.LEXICAL_FALLBACK, chineseReport.mode)
+        assertEquals(MemoryRetrievalMode.LEXICAL_FALLBACK, englishReport.mode)
         assertEquals("mem_zh", chineseResults.first().entryId)
         assertEquals("mem_en", englishResults.first().entryId)
         assertEquals(0, fixture.provider.embedQueryCalls)

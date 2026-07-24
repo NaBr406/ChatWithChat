@@ -21,6 +21,8 @@ import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.database.entity.effectiveContent
 import cn.nabr.chatwithchat.data.database.entity.safeDedupeKey
+import cn.nabr.chatwithchat.data.debug.PromptTraceStage
+import cn.nabr.chatwithchat.data.debug.PromptTraceStore
 import cn.nabr.chatwithchat.data.dto.ApiState
 import cn.nabr.chatwithchat.data.dto.ProviderUsage
 import cn.nabr.chatwithchat.data.dto.anthropic.common.ImageContent as AnthropicImageContent
@@ -167,7 +169,8 @@ class ChatRepositoryImpl @Inject constructor(
     private val anthropicToolAdapter: ToolCallingAdapter = AnthropicToolAdapter(),
     private val googleToolAdapter: ToolCallingAdapter = GoogleToolAdapter(),
     private val memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null,
-    private val chatDatabaseV2: ChatDatabaseV2? = null
+    private val chatDatabaseV2: ChatDatabaseV2? = null,
+    private val promptTraceStore: PromptTraceStore = PromptTraceStore()
 ) : ChatRepository {
 
     private fun isImageFile(extension: String): Boolean = extension in setOf("jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff", "svg")
@@ -205,6 +208,43 @@ class ChatRepositoryImpl @Inject constructor(
 
         else -> "application/octet-stream"
     }
+
+    private fun promptTraceContext(
+        userMessages: List<MessageV2>,
+        platform: PlatformV2
+    ): PromptTraceContext {
+        val latestUserMessage = userMessages.lastOrNull()
+        return PromptTraceContext(
+            chatId = latestUserMessage?.chatId ?: userMessages.firstOrNull()?.chatId ?: 0,
+            turnNumber = userMessages.size,
+            userMessageId = latestUserMessage?.id?.takeIf { it > 0 },
+            platformUid = platform.uid,
+            platformName = platform.name,
+            clientType = platform.compatibleType,
+            model = platform.model
+        )
+    }
+
+    private fun recordSystemPrompt(
+        context: PromptTraceContext,
+        stage: String,
+        systemPrompt: String?
+    ) {
+        promptTraceStore.record(
+            chatId = context.chatId,
+            turnNumber = context.turnNumber,
+            userMessageId = context.userMessageId,
+            platformUid = context.platformUid,
+            platformName = context.platformName,
+            clientType = context.clientType,
+            model = context.model,
+            stage = stage,
+            systemPrompt = systemPrompt
+        )
+    }
+
+    private fun answerPromptStage(extraPrompt: String?): String =
+        if (extraPrompt.isNullOrBlank()) PromptTraceStage.ANSWER else PromptTraceStage.ANSWER_WITH_EXTRA_INSTRUCTIONS
 
     override suspend fun completeChat(
         userMessages: List<MessageV2>,
@@ -671,6 +711,7 @@ class ChatRepositoryImpl @Inject constructor(
         emit(ApiState.Loading)
         openAIAPI.setToken(platform.token)
         openAIAPI.setAPIUrl(platform.apiUrl)
+        val traceContext = promptTraceContext(userMessages, platform)
 
         val prepared = withContext(Dispatchers.Default) {
             val reasoningParameters = mapReasoningMode(platform, reasoningMode)
@@ -737,6 +778,8 @@ class ChatRepositoryImpl @Inject constructor(
                 timeoutSeconds = platform.timeout,
                 platform = platform,
                 label = "工具请求 ${roundIndex + 1}",
+                traceContext = traceContext,
+                traceStage = PromptTraceStage.toolRequest(roundIndex + 1),
                 config = config
             )
             round.usage?.let { toolUsageRecords += it }
@@ -804,6 +847,8 @@ class ChatRepositoryImpl @Inject constructor(
             timeoutSeconds = platform.timeout,
             platform = platform,
             label = "工具最终回答",
+            traceContext = traceContext,
+            traceStage = PromptTraceStage.TOOL_FINAL_ANSWER,
             config = config
         )
         finalRound.usage?.let { toolUsageRecords += it }
@@ -825,6 +870,8 @@ class ChatRepositoryImpl @Inject constructor(
         timeoutSeconds: Int,
         platform: PlatformV2,
         label: String,
+        traceContext: PromptTraceContext,
+        traceStage: String,
         config: ToolLoopConfig
     ): OpenAIResponsesNativeRound {
         val events = mutableListOf<ResponsesStreamEvent>()
@@ -835,6 +882,7 @@ class ChatRepositoryImpl @Inject constructor(
         var errorMessage: String? = null
         var emittedOutputTextDelta = false
         val outputText = StringBuilder()
+        recordSystemPrompt(traceContext, traceStage, request.instructions)
 
         try {
             openAIAPI.streamResponses(request, timeoutSeconds).collect { event ->
@@ -907,6 +955,7 @@ class ChatRepositoryImpl @Inject constructor(
         emit(ApiState.Loading)
         openAIAPI.setToken(platform.token)
         openAIAPI.setAPIUrl(platform.apiUrl)
+        val traceContext = promptTraceContext(userMessages, platform)
 
         val searchDecisionExecution = executeSearchDecisionIfNeeded(
             userMessages = userMessages,
@@ -975,6 +1024,8 @@ class ChatRepositoryImpl @Inject constructor(
                 timeoutSeconds = platform.timeout,
                 platform = platform,
                 label = "工具请求 ${roundIndex + 1}",
+                traceContext = traceContext,
+                traceStage = PromptTraceStage.toolRequest(roundIndex + 1),
                 config = config
             )
             round.usage?.let { toolUsageRecords += it }
@@ -1042,6 +1093,8 @@ class ChatRepositoryImpl @Inject constructor(
             timeoutSeconds = platform.timeout,
             platform = platform,
             label = "工具最终回答",
+            traceContext = traceContext,
+            traceStage = PromptTraceStage.TOOL_FINAL_ANSWER,
             config = config
         )
         finalRound.usage?.let { toolUsageRecords += it }
@@ -1063,6 +1116,8 @@ class ChatRepositoryImpl @Inject constructor(
         timeoutSeconds: Int,
         platform: PlatformV2,
         label: String,
+        traceContext: PromptTraceContext,
+        traceStage: String,
         config: ToolLoopConfig
     ): OpenAIChatCompletionsNativeRound {
         val chunks = mutableListOf<ChatCompletionChunk>()
@@ -1073,6 +1128,7 @@ class ChatRepositoryImpl @Inject constructor(
         var errorMessage: String? = null
         val outputText = StringBuilder()
         val reasoningParser = ReasoningStreamParser()
+        recordSystemPrompt(traceContext, traceStage, request.systemPromptText())
 
         try {
             openAIAPI.streamChatCompletion(request, timeoutSeconds).collect { chunk ->
@@ -1142,6 +1198,7 @@ class ChatRepositoryImpl @Inject constructor(
         emit(ApiState.Loading)
         anthropicAPI.setToken(platform.token)
         anthropicAPI.setAPIUrl(platform.apiUrl)
+        val traceContext = promptTraceContext(userMessages, platform)
 
         val searchDecisionExecution = executeSearchDecisionIfNeeded(
             userMessages = userMessages,
@@ -1209,6 +1266,8 @@ class ChatRepositoryImpl @Inject constructor(
                 timeoutSeconds = platform.timeout,
                 platform = platform,
                 label = "工具请求 ${roundIndex + 1}",
+                traceContext = traceContext,
+                traceStage = PromptTraceStage.toolRequest(roundIndex + 1),
                 config = config
             )
             round.usage?.let { toolUsageRecords += it }
@@ -1276,6 +1335,8 @@ class ChatRepositoryImpl @Inject constructor(
             timeoutSeconds = platform.timeout,
             platform = platform,
             label = "工具最终回答",
+            traceContext = traceContext,
+            traceStage = PromptTraceStage.TOOL_FINAL_ANSWER,
             config = config
         )
         finalRound.usage?.let { toolUsageRecords += it }
@@ -1297,6 +1358,8 @@ class ChatRepositoryImpl @Inject constructor(
         timeoutSeconds: Int,
         platform: PlatformV2,
         label: String,
+        traceContext: PromptTraceContext,
+        traceStage: String,
         config: ToolLoopConfig
     ): AnthropicNativeRound {
         val chunks = mutableListOf<MessageResponseChunk>()
@@ -1306,6 +1369,7 @@ class ChatRepositoryImpl @Inject constructor(
         )
         var errorMessage: String? = null
         val outputText = StringBuilder()
+        recordSystemPrompt(traceContext, traceStage, request.systemPrompt)
 
         try {
             anthropicAPI.streamChatMessage(request, timeoutSeconds).collect { chunk ->
@@ -1378,6 +1442,7 @@ class ChatRepositoryImpl @Inject constructor(
         emit(ApiState.Loading)
         googleAPI.setToken(platform.token)
         googleAPI.setAPIUrl(platform.apiUrl)
+        val traceContext = promptTraceContext(userMessages, platform)
 
         val searchDecisionExecution = executeSearchDecisionIfNeeded(
             userMessages = userMessages,
@@ -1450,6 +1515,8 @@ class ChatRepositoryImpl @Inject constructor(
                 timeoutSeconds = platform.timeout,
                 platform = platform,
                 label = "工具请求 ${roundIndex + 1}",
+                traceContext = traceContext,
+                traceStage = PromptTraceStage.toolRequest(roundIndex + 1),
                 config = config
             )
             round.usage?.let { toolUsageRecords += it }
@@ -1518,6 +1585,8 @@ class ChatRepositoryImpl @Inject constructor(
             timeoutSeconds = platform.timeout,
             platform = platform,
             label = "工具最终回答",
+            traceContext = traceContext,
+            traceStage = PromptTraceStage.TOOL_FINAL_ANSWER,
             config = config
         )
         finalRound.usage?.let { toolUsageRecords += it }
@@ -1540,6 +1609,8 @@ class ChatRepositoryImpl @Inject constructor(
         timeoutSeconds: Int,
         platform: PlatformV2,
         label: String,
+        traceContext: PromptTraceContext,
+        traceStage: String,
         config: ToolLoopConfig
     ): GoogleNativeRound {
         val responses = mutableListOf<GenerateContentResponse>()
@@ -1550,6 +1621,7 @@ class ChatRepositoryImpl @Inject constructor(
         var errorMessage: String? = null
         val outputText = StringBuilder()
         var functionCallIndex = 0
+        recordSystemPrompt(traceContext, traceStage, request.systemInstructionText())
 
         try {
             googleAPI.streamGenerateContent(request, model, timeoutSeconds).collect { response ->
@@ -1612,6 +1684,7 @@ class ChatRepositoryImpl @Inject constructor(
     ): Flow<ApiState> = try {
         openAIAPI.setToken(platform.token)
         openAIAPI.setAPIUrl(platform.apiUrl)
+        val traceContext = promptTraceContext(userMessages, platform)
 
         streamPreparedApiState(
             prepare = {
@@ -1639,6 +1712,11 @@ class ChatRepositoryImpl @Inject constructor(
             },
             stream = { prepared ->
                 flow {
+                    recordSystemPrompt(
+                        traceContext,
+                        answerPromptStage(extraPrompt),
+                        prepared.request.instructions
+                    )
                     val events = mutableListOf<ResponsesStreamEvent>()
                     val outputText = StringBuilder()
                     var emittedOutputTextDelta = false
@@ -1703,6 +1781,7 @@ class ChatRepositoryImpl @Inject constructor(
         extraPrompt: String? = null,
         emitEstimatedUsageWithoutOutput: Boolean = false
     ): Flow<ApiState> = try {
+        val traceContext = promptTraceContext(userMessages, platform)
         streamPreparedApiState(
             prepare = {
                 val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
@@ -1719,6 +1798,11 @@ class ChatRepositoryImpl @Inject constructor(
             },
             stream = { prepared ->
                 flow {
+                    recordSystemPrompt(
+                        traceContext,
+                        answerPromptStage(extraPrompt),
+                        prepared.request.systemPromptText()
+                    )
                     val parser = ReasoningStreamParser()
                     val chunks = mutableListOf<cn.nabr.chatwithchat.data.dto.groq.response.GroqChatCompletionChunk>()
                     val outputText = StringBuilder()
@@ -1788,6 +1872,7 @@ class ChatRepositoryImpl @Inject constructor(
     ): Flow<ApiState> = try {
         openAIAPI.setToken(platform.token)
         openAIAPI.setAPIUrl(platform.apiUrl)
+        val traceContext = promptTraceContext(userMessages, platform)
 
         streamPreparedApiState(
             prepare = {
@@ -1821,6 +1906,11 @@ class ChatRepositoryImpl @Inject constructor(
             },
             stream = { prepared ->
                 flow {
+                    recordSystemPrompt(
+                        traceContext,
+                        answerPromptStage(extraPrompt),
+                        prepared.request.systemPromptText()
+                    )
                     val chunks = mutableListOf<ChatCompletionChunk>()
                     val outputText = StringBuilder()
                     val reasoningParser = ReasoningStreamParser()
@@ -2117,6 +2207,7 @@ class ChatRepositoryImpl @Inject constructor(
     ): Flow<ApiState> = try {
         anthropicAPI.setToken(platform.token)
         anthropicAPI.setAPIUrl(platform.apiUrl)
+        val traceContext = promptTraceContext(userMessages, platform)
 
         streamPreparedApiState(
             prepare = {
@@ -2145,6 +2236,11 @@ class ChatRepositoryImpl @Inject constructor(
             },
             stream = { prepared ->
                 flow {
+                    recordSystemPrompt(
+                        traceContext,
+                        answerPromptStage(extraPrompt),
+                        prepared.request.systemPrompt
+                    )
                     val chunks = mutableListOf<MessageResponseChunk>()
                     val outputText = StringBuilder()
                     anthropicAPI.streamChatMessage(prepared.request, platform.timeout).collect { chunk ->
@@ -2246,6 +2342,7 @@ class ChatRepositoryImpl @Inject constructor(
     ): Flow<ApiState> = try {
         googleAPI.setToken(platform.token)
         googleAPI.setAPIUrl(platform.apiUrl)
+        val traceContext = promptTraceContext(userMessages, platform)
 
         streamPreparedApiState(
             prepare = {
@@ -2277,6 +2374,11 @@ class ChatRepositoryImpl @Inject constructor(
             },
             stream = { prepared ->
                 flow {
+                    recordSystemPrompt(
+                        traceContext,
+                        answerPromptStage(extraPrompt),
+                        prepared.request.systemInstructionText()
+                    )
                     val responses = mutableListOf<GenerateContentResponse>()
                     val outputText = StringBuilder()
                     googleAPI.streamGenerateContent(prepared.request, platform.model, platform.timeout).collect { response ->
@@ -2645,6 +2747,16 @@ private data class ProviderRequestWithSources<T>(
     val sources: List<MessageSourceMetadata>
 )
 
+private data class PromptTraceContext(
+    val chatId: Int,
+    val turnNumber: Int,
+    val userMessageId: Int?,
+    val platformUid: String,
+    val platformName: String,
+    val clientType: ClientType,
+    val model: String
+)
+
 private data class SearchDecisionExecution(
     val finalAnswerPrompt: String,
     val usage: TokenUsageRecord
@@ -2773,6 +2885,27 @@ private data class GoogleNativeRound(
     val errorMessage: String?,
     val usage: TokenUsageRecord?
 )
+
+private fun ChatCompletionRequest.systemPromptText(): String? = messages.systemPromptText()
+
+private fun GroqChatCompletionRequest.systemPromptText(): String? = messages.systemPromptText()
+
+private fun List<ChatMessage>.systemPromptText(): String? =
+    filter { message -> message.role == OpenAIRole.SYSTEM }
+        .mapNotNull { message ->
+            (message.contentText ?: message.content
+                .filterIsInstance<OpenAITextContent>()
+                .joinToString(separator = "\n\n") { content -> content.text })
+                .takeIf { prompt -> prompt.isNotBlank() }
+        }
+        .takeIf { prompts -> prompts.isNotEmpty() }
+        ?.joinToString(separator = "\n\n")
+
+private fun GenerateContentRequest.systemInstructionText(): String? = systemInstruction
+    ?.parts
+    ?.mapNotNull { part -> part.text }
+    ?.joinToString(separator = "\n\n")
+    ?.takeIf { prompt -> prompt.isNotBlank() }
 
 private fun List<ChatMessage>.withAdditionalSystemInstruction(extraInstruction: String?): List<ChatMessage> {
     val instruction = extraInstruction?.trim()?.takeIf { it.isNotBlank() } ?: return this

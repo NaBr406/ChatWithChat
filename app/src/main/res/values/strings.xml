@@ -514,4 +514,27 @@
     <string name="tool_finished">工具已完成</string>
     <string name="tool_failed">工具执行失败</string>
     <string name="initial_request_interrupted">请求已中断，请重试。</string>
+    <string name="prompt_trace_title">完整提示词</string>
+    <string name="prompt_trace_empty">暂无提示词记录</string>
+    <string name="prompt_trace_clear">清空记录</string>
+    <string name="prompt_trace_clear_confirmation">确定清空当前运行期间的提示词记录吗？</string>
+    <string name="prompt_trace_copy">复制</string>
+    <string name="prompt_trace_detail_title">完整提示词</string>
+    <string name="prompt_trace_prompt_empty">未发送系统提示词</string>
+    <string name="prompt_trace_stage_answer">回答</string>
+    <string name="prompt_trace_stage_answer_with_extra">带附加指令的回答</string>
+    <string name="prompt_trace_stage_tool_request">工具请求 %1$d</string>
+    <string name="prompt_trace_stage_tool_final">工具最终回答</string>
+    <string name="prompt_trace_item_metadata">%1$s · %2$s</string>
+    <string name="prompt_trace_chat_turn">会话 %1$d · 第 %2$d 轮</string>
+    <string name="prompt_trace_recall_summary">Recall: %1$s · %2$d hits</string>
+    <string name="prompt_trace_recall_unavailable">Recall: not recorded</string>
+    <string name="prompt_trace_recall_lexical">Lexical recall</string>
+    <string name="prompt_trace_recall_lexical_fallback">Lexical fallback</string>
+    <string name="prompt_trace_recall_semantic">Semantic recall</string>
+    <string name="prompt_trace_recall_hybrid">Hybrid recall</string>
+    <string name="prompt_trace_recall_none">No hits</string>
+    <string name="prompt_trace_recall_failed">Recall failed</string>
+    <string name="prompt_trace_recall_ids">Memory IDs: %1$s</string>
+    <string name="prompt_trace_recall_error">Error: %1$s</string>
 </resources>

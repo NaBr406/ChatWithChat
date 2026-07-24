@@ -21,6 +21,7 @@ import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.presentation.ui.chat.ChatScreen
 import cn.nabr.chatwithchat.presentation.ui.chat.ChatShellScreen
 import cn.nabr.chatwithchat.presentation.ui.chat.EmptyChatScreen
+import cn.nabr.chatwithchat.presentation.ui.debug.PromptTraceScreen
 import cn.nabr.chatwithchat.presentation.ui.main.MainLaunchDestination
 import cn.nabr.chatwithchat.presentation.ui.memory.MemoryScreen
 import cn.nabr.chatwithchat.presentation.ui.migrate.MigrateScreen
@@ -272,8 +273,12 @@ fun NavGraphBuilder.settingNavigation(navController: NavHostController) {
         composable(Route.ABOUT_PAGE) {
             AboutScreen(
                 onNavigationClick = { navController.navigateUp() },
-                onNavigationToLicense = { navController.navigate(Route.LICENSE) }
+                onNavigationToLicense = { navController.navigate(Route.LICENSE) },
+                onNavigateToPromptTrace = { navController.navigate(Route.PROMPT_TRACE_DEBUG) }
             )
+        }
+        composable(Route.PROMPT_TRACE_DEBUG) {
+            PromptTraceScreen(onNavigationClick = { navController.navigateUp() })
         }
         composable(Route.MEMORY) {
             MemoryScreen(onNavigationClick = { navController.navigateUp() })

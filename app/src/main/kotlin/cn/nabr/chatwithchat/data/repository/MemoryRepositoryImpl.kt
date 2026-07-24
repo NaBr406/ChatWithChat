@@ -4,6 +4,8 @@ import android.util.Log
 import cn.nabr.chatwithchat.data.database.entity.ChatRoomV2
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
+import cn.nabr.chatwithchat.data.debug.MemoryRecallTrace
+import cn.nabr.chatwithchat.data.debug.PromptTraceStore
 import cn.nabr.chatwithchat.data.memory.MemoryCompletedTurnInput
 import cn.nabr.chatwithchat.data.memory.MemoryCorpus
 import cn.nabr.chatwithchat.data.memory.MemoryDailyDistillationScheduler
@@ -11,6 +13,8 @@ import cn.nabr.chatwithchat.data.memory.MemoryFilePaths
 import cn.nabr.chatwithchat.data.memory.MemoryFileStore
 import cn.nabr.chatwithchat.data.memory.MemoryPromptBuilder
 import cn.nabr.chatwithchat.data.memory.MemoryRetrievalRequest
+import cn.nabr.chatwithchat.data.memory.MemoryRetrievalMode
+import cn.nabr.chatwithchat.data.memory.MemoryRetrievalReport
 import cn.nabr.chatwithchat.data.memory.MemoryRetrievalStrategy
 import cn.nabr.chatwithchat.data.memory.MemoryRetriever
 import cn.nabr.chatwithchat.data.memory.MemoryTurnBatchCoordinator
@@ -29,7 +33,8 @@ class MemoryRepositoryImpl(
     private val memoryFileStore: MemoryFileStore? = null,
     private val memoryTurnBatchCoordinator: MemoryTurnBatchCoordinator? = null,
     private val memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null,
-    private val memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler? = null
+    private val memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler? = null,
+    private val promptTraceStore: PromptTraceStore? = null
 ) : MemoryRepository {
 
     override suspend fun onMemoryEnabledChanged(enabled: Boolean) {
@@ -51,25 +56,51 @@ class MemoryRepositoryImpl(
         assistantMessages: List<List<MessageV2>>,
         memoryPlatform: PlatformV2?
     ): PreparedMemoryContext {
-        val retriever = memoryRetriever ?: return PreparedMemoryContext()
+        val recallKey = memoryRecallKey(chatRoom.id, userMessages)
+        val retriever = memoryRetriever ?: run {
+            recordMemoryRecall(recallKey, MemoryRecallTrace(MemoryRetrievalMode.NONE, 0, emptyList()))
+            return PreparedMemoryContext()
+        }
         val query = buildLocalRecallQuery(userMessages.lastOrNull())
-        if (query.isBlank()) return PreparedMemoryContext()
+        if (query.isBlank()) {
+            recordMemoryRecall(recallKey, MemoryRecallTrace(MemoryRetrievalMode.NONE, 0, emptyList()))
+            return PreparedMemoryContext()
+        }
         val recentContext = buildLocalRecentContext(chatRoom, userMessages, assistantMessages)
-        val retrievedMemories = retriever.retrieve(
-            MemoryRetrievalRequest(
-                corpus = MemoryCorpus.CHAT_RECALL_LONG_TERM,
-                query = query,
-                recentContext = recentContext,
-                limit = MAX_SELECTED_MEMORIES,
-                candidateLimit = MAX_CANDIDATE_MEMORIES,
-                tokenBudget = MEMORY_RECALL_TOKEN_BUDGET,
-                includePrivate = true,
-                strategy = MemoryRetrievalStrategy.HYBRID
-            )
-        ).getOrElse { throwable ->
+        val retrievalRequest = MemoryRetrievalRequest(
+            corpus = MemoryCorpus.CHAT_RECALL_LONG_TERM,
+            query = query,
+            recentContext = recentContext,
+            alwaysIncludeTypes = ALWAYS_INCLUDED_MEMORY_TYPES,
+            limit = MAX_SELECTED_MEMORIES,
+            candidateLimit = MAX_CANDIDATE_MEMORIES,
+            tokenBudget = MEMORY_RECALL_TOKEN_BUDGET,
+            includePrivate = true,
+            strategy = MemoryRetrievalStrategy.HYBRID
+        )
+        val retrievalReport = retriever.retrieveWithDiagnostics(retrievalRequest).getOrElse { throwable ->
             logWarning("Local memory retrieval failed; continuing without memory: ${throwable.message}", throwable)
-            emptyList()
-        }.filter { memory -> memory.sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME }
+            MemoryRetrievalReport(
+                results = emptyList(),
+                mode = MemoryRetrievalMode.FAILED,
+                errorMessage = throwable.message
+            )
+        }
+        val retrievedMemories = retrievalReport.results
+            .filter { memory -> memory.sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME }
+        recordMemoryRecall(
+            key = recallKey,
+            recall = MemoryRecallTrace(
+                mode = when {
+                    retrievalReport.mode == MemoryRetrievalMode.FAILED -> MemoryRetrievalMode.FAILED
+                    retrievedMemories.isEmpty() -> MemoryRetrievalMode.NONE
+                    else -> retrievalReport.mode
+                },
+                hitCount = retrievedMemories.size,
+                memoryIds = retrievedMemories.map { memory -> memory.entryId ?: memory.chunkId }.distinct(),
+                errorMessage = retrievalReport.errorMessage
+            )
+        )
         return PreparedMemoryContext(
             retrievedMemories = retrievedMemories,
             prompt = memoryPromptBuilder.buildRetrieved(retrievedMemories)
@@ -108,6 +139,21 @@ class MemoryRepositoryImpl(
 
     private fun String.trimForMemoryContext(): String = trim().take(MAX_CONTEXT_MESSAGE_LENGTH)
 
+    private fun memoryRecallKey(chatId: Int, userMessages: List<MessageV2>): MemoryRecallKey = MemoryRecallKey(
+        chatId = userMessages.lastOrNull()?.chatId?.takeIf { it > 0 } ?: chatId,
+        turnNumber = userMessages.size,
+        userMessageId = userMessages.lastOrNull()?.id?.takeIf { it > 0 }
+    )
+
+    private fun recordMemoryRecall(key: MemoryRecallKey, recall: MemoryRecallTrace) {
+        promptTraceStore?.recordMemoryRecall(
+            chatId = key.chatId,
+            turnNumber = key.turnNumber,
+            userMessageId = key.userMessageId,
+            recall = recall
+        )
+    }
+
     private fun logWarning(message: String, throwable: Throwable) {
         runCatching { Log.w(TAG, message, throwable) }
     }
@@ -117,9 +163,16 @@ class MemoryRepositoryImpl(
         private const val MAX_CANDIDATE_MEMORIES = 24
         private const val MAX_SELECTED_MEMORIES = 8
         private const val MEMORY_RECALL_TOKEN_BUDGET = 900
+        private val ALWAYS_INCLUDED_MEMORY_TYPES = setOf("communication_style")
         private const val MAX_CONTEXT_MESSAGE_LENGTH = 1200
         private const val LOCAL_RECALL_RECENT_MESSAGE_COUNT = 6
         private const val MAX_LOCAL_RECALL_QUERY_LENGTH = 2_000
         private const val MAX_LOCAL_RECENT_MESSAGE_LENGTH = 600
+
+        private data class MemoryRecallKey(
+            val chatId: Int,
+            val turnNumber: Int,
+            val userMessageId: Int?
+        )
     }
 }

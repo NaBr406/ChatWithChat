@@ -3,6 +3,8 @@ package cn.nabr.chatwithchat.data.repository
 import cn.nabr.chatwithchat.data.database.InMemoryMemoryTurnBatchDao
 import cn.nabr.chatwithchat.data.database.entity.ChatRoomV2
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
+import cn.nabr.chatwithchat.data.debug.PromptTraceStore
+import cn.nabr.chatwithchat.data.memory.MemoryRetrievalMode
 import cn.nabr.chatwithchat.data.memory.MarkdownLexicalRetriever
 import cn.nabr.chatwithchat.data.memory.MarkdownMemoryCodec
 import cn.nabr.chatwithchat.data.memory.MarkdownMemoryEntry
@@ -52,6 +54,7 @@ class MemoryRepositoryTest {
         assertEquals("Please implement this directly.", retriever.lastRequest?.query)
         assertEquals(MemoryCorpus.CHAT_RECALL_LONG_TERM, retriever.lastRequest?.corpus)
         assertEquals(900, retriever.lastRequest?.tokenBudget)
+        assertEquals(setOf("communication_style"), retriever.lastRequest?.alwaysIncludeTypes)
         assertTrue(retriever.lastRequest?.includePrivate == true)
         assertEquals(MemoryRetrievalStrategy.HYBRID, retriever.lastRequest?.strategy)
         assertEquals(1, prepared.retrievedMemories.size)
@@ -181,6 +184,71 @@ class MemoryRepositoryTest {
         assertEquals(1, vectorRetriever.calls)
         assertEquals(0.95f, prepared.retrievedMemories.single().vectorScore)
         assertTrue(prepared.prompt!!.contains("Vector supplied memory"))
+    }
+
+    @Test
+    fun `memory recall diagnostics are bound to the current turn`() = runBlocking {
+        val store = PromptTraceStore()
+        val repository = MemoryRepositoryImpl(
+            memoryPromptBuilder = MemoryPromptBuilder(),
+            memoryRetriever = FakeMemoryRetriever(
+                results = listOf(retrievalResult("Bound memory"))
+            ),
+            promptTraceStore = store
+        )
+
+        repository.prepareMemoryContext(
+            chatRoom = chatRoom(),
+            userMessages = listOf(MessageV2(id = 31, chatId = 1, content = "Recall this", platformType = null)),
+            assistantMessages = listOf(emptyList())
+        )
+
+        val entry = store.record(
+            chatId = 1,
+            turnNumber = 1,
+            userMessageId = 31,
+            platformUid = "platform",
+            platformName = "Platform",
+            clientType = cn.nabr.chatwithchat.data.model.ClientType.OPENAI,
+            model = "model",
+            stage = cn.nabr.chatwithchat.data.debug.PromptTraceStage.ANSWER,
+            systemPrompt = "system"
+        )
+
+        assertEquals(MemoryRetrievalMode.LEXICAL, entry.memoryRecall?.mode)
+        assertEquals(1, entry.memoryRecall?.hitCount)
+        assertEquals(listOf("mem_1"), entry.memoryRecall?.memoryIds)
+    }
+
+    @Test
+    fun `memory recall failure is visible in prompt trace diagnostics`() = runBlocking {
+        val store = PromptTraceStore()
+        val repository = MemoryRepositoryImpl(
+            memoryPromptBuilder = MemoryPromptBuilder(),
+            memoryRetriever = FakeMemoryRetriever(failure = IllegalStateException("index unavailable")),
+            promptTraceStore = store
+        )
+
+        repository.prepareMemoryContext(
+            chatRoom = chatRoom(),
+            userMessages = listOf(MessageV2(id = 32, chatId = 1, content = "Recall this", platformType = null)),
+            assistantMessages = listOf(emptyList())
+        )
+
+        val entry = store.record(
+            chatId = 1,
+            turnNumber = 1,
+            userMessageId = 32,
+            platformUid = "platform",
+            platformName = "Platform",
+            clientType = cn.nabr.chatwithchat.data.model.ClientType.OPENAI,
+            model = "model",
+            stage = cn.nabr.chatwithchat.data.debug.PromptTraceStage.ANSWER,
+            systemPrompt = "system"
+        )
+
+        assertEquals(MemoryRetrievalMode.FAILED, entry.memoryRecall?.mode)
+        assertEquals("index unavailable", entry.memoryRecall?.errorMessage)
     }
 
     @Test

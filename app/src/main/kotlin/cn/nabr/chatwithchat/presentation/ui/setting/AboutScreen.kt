@@ -9,7 +9,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.ClipEntry
@@ -29,7 +33,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun AboutScreen(
     onNavigationClick: () -> Unit,
-    onNavigationToLicense: () -> Unit
+    onNavigationToLicense: () -> Unit,
+    onNavigateToPromptTrace: () -> Unit
 ) {
     val scrollState = rememberScrollState()
     val materialColors = settingsMaterialColors()
@@ -43,6 +48,7 @@ fun AboutScreen(
     val bugReportLink = stringResource(R.string.bug_report_link)
     val feedbackLink = stringResource(R.string.feedback_link)
     val scope = rememberCoroutineScope()
+    var versionTapCount by rememberSaveable { mutableIntStateOf(0) }
 
     Scaffold(
         topBar = {
@@ -64,7 +70,19 @@ fun AboutScreen(
                     modifier = Modifier.height(64.dp),
                     title = stringResource(R.string.version),
                     description = "v$version",
-                    onItemClick = { scope.launch { clipboardManager.setClipEntry(ClipEntry(ClipData.newPlainText("v$version", "v$version"))) } },
+                    onItemClick = {
+                        if (isPromptTraceUnlockTap(versionTapCount)) {
+                            versionTapCount = 0
+                            onNavigateToPromptTrace()
+                        } else {
+                            versionTapCount += 1
+                            scope.launch {
+                                clipboardManager.setClipEntry(
+                                    ClipEntry(ClipData.newPlainText("v$version", "v$version"))
+                                )
+                            }
+                        }
+                    },
                     showTrailingIcon = false,
                     showLeadingIcon = true,
                     showDivider = true,
@@ -165,3 +183,8 @@ fun AboutScreen(
         }
     }
 }
+
+internal fun isPromptTraceUnlockTap(currentTapCount: Int): Boolean =
+    currentTapCount == PROMPT_TRACE_UNLOCK_TAP_COUNT - 1
+
+private const val PROMPT_TRACE_UNLOCK_TAP_COUNT = 7

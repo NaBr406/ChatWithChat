@@ -10,6 +10,7 @@ import cn.nabr.chatwithchat.data.database.dao.MemoryActivityLogDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryMaintenanceJobDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryRecoveryDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryTurnBatchDao
+import cn.nabr.chatwithchat.data.debug.PromptTraceStore
 import cn.nabr.chatwithchat.data.memory.HybridMemoryRetriever
 import cn.nabr.chatwithchat.data.memory.LlmMemoryIntelligence
 import cn.nabr.chatwithchat.data.memory.MarkdownLexicalRetriever
@@ -412,13 +413,15 @@ object MemoryRepositoryModule {
         memoryFileStore: MemoryFileStore,
         memoryTurnBatchCoordinator: MemoryTurnBatchCoordinator,
         memoryTurnBatchScheduler: MemoryTurnBatchScheduler,
-        memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler
+        memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler,
+        promptTraceStore: PromptTraceStore
     ): MemoryRepository = MemoryRepositoryImpl(
         memoryPromptBuilder = memoryPromptBuilder,
         memoryRetriever = memoryRetriever,
         memoryFileStore = memoryFileStore,
         memoryTurnBatchCoordinator = memoryTurnBatchCoordinator,
         memoryTurnBatchScheduler = memoryTurnBatchScheduler,
-        memoryDailyDistillationScheduler = memoryDailyDistillationScheduler
+        memoryDailyDistillationScheduler = memoryDailyDistillationScheduler,
+        promptTraceStore = promptTraceStore
     )
 }
