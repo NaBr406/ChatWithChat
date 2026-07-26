@@ -105,4 +105,18 @@ class ChatLaunchStateTest {
             )
         )
     }
+
+    @Test
+    fun recoveredInitialRequest_withAssistantSticker_isNotReportedAsInterrupted() {
+        assertFalse(
+            shouldShowInterruptedInitialRequest(
+                initialRequestId = -42,
+                assistantContent = "",
+                assistantThoughts = "",
+                hasAttachments = false,
+                hasStickerRefs = true,
+                isLoading = false
+            )
+        )
+    }
 }

@@ -12,11 +12,13 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import cn.nabr.chatwithchat.R
+import cn.nabr.chatwithchat.data.context.semanticAssistantContent
 import cn.nabr.chatwithchat.data.database.entity.ACTIVE_REVISION_LATEST
 import cn.nabr.chatwithchat.data.database.entity.ChatRoomV2
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.database.entity.effectiveContent
+import cn.nabr.chatwithchat.data.database.entity.effectiveStickerRefs
 import cn.nabr.chatwithchat.data.database.entity.effectiveThoughts
 import cn.nabr.chatwithchat.data.database.entity.resetActiveRevision
 import cn.nabr.chatwithchat.data.database.entity.selectRevision
@@ -669,7 +671,7 @@ class ChatViewModel @Inject constructor(
                         ?.let { _platformsInApp.value.getPlatformName(it) }
                         ?: context.getString(R.string.unknown)
                     appendLine("**${context.getString(R.string.assistant_label)} ($platformName):**")
-                    appendLine(message.effectiveContent())
+                    appendLine(message.semanticAssistantContent())
                     appendLine()
                 }
             }
@@ -1586,7 +1588,8 @@ internal fun persistableMessages(groupedMessages: ChatViewModel.GroupedMessages)
         .filter {
             it.effectiveContent().isNotBlank() ||
                 it.effectiveThoughts().isNotBlank() ||
-                it.attachments.isNotEmpty()
+                it.attachments.isNotEmpty() ||
+                it.effectiveStickerRefs().isNotEmpty()
         }
         .sortedBy { it.createdAt }
 }

@@ -95,10 +95,12 @@ import androidx.core.content.FileProvider.getUriForFile
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.nabr.chatwithchat.R
+import cn.nabr.chatwithchat.data.context.semanticAssistantContent
 import cn.nabr.chatwithchat.data.database.entity.ACTIVE_REVISION_LATEST
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.database.entity.effectiveContent
+import cn.nabr.chatwithchat.data.database.entity.effectiveStickerRefs
 import cn.nabr.chatwithchat.data.database.entity.effectiveThoughts
 import cn.nabr.chatwithchat.data.database.entity.effectiveTokenUsage
 import cn.nabr.chatwithchat.data.model.ReasoningMode
@@ -112,6 +114,7 @@ import kotlinx.coroutines.sync.Mutex
 @Composable
 fun ChatScreen(
     chatViewModel: ChatViewModel = hiltViewModel(),
+    stickerAssetViewModel: StickerAssetViewModel = hiltViewModel(),
     onBackAction: () -> Unit,
     navigationIcon: ImageVector = Icons.AutoMirrored.Filled.ArrowBack,
     navigationIconContentDescription: String? = null
@@ -182,6 +185,7 @@ fun ChatScreen(
         isLoaded = isLoaded,
         inputState = chatViewModel.question,
         selectedAttachments = selectedAttachments,
+        stickerAssetResolver = stickerAssetViewModel,
         onBackAction = onBackAction,
         onChatTitleItemClick = chatViewModel::openChatTitleDialog,
         onExportChatItemClick = { exportChat(context, chatViewModel) },
@@ -297,6 +301,7 @@ private fun ChatContent(
     isLoaded: Boolean,
     inputState: TextFieldState,
     selectedAttachments: List<ChatAttachmentDraft>,
+    stickerAssetResolver: StickerAssetResolver,
     onBackAction: () -> Unit,
     onChatTitleItemClick: () -> Unit,
     onModelOptionSelected: (ModelSelectionOption) -> Unit,
@@ -570,7 +575,8 @@ private fun ChatContent(
                             onSelectText = onSelectText,
                             onRetry = onRetry,
                             onShowPreviousRevision = onShowPreviousRevision,
-                            onShowNextRevision = onShowNextRevision
+                            onShowNextRevision = onShowNextRevision,
+                            stickerAssetResolver = stickerAssetResolver
                         )
                     }
 
@@ -598,7 +604,8 @@ private fun ChatContent(
                                 onSelectText = onSelectText,
                                 onRetry = onRetry,
                                 onShowPreviousRevision = onShowPreviousRevision,
-                                onShowNextRevision = onShowNextRevision
+                                onShowNextRevision = onShowNextRevision,
+                                stickerAssetResolver = stickerAssetResolver
                             )
                         }
                     }
@@ -700,12 +707,15 @@ private fun ChatMessagePair(
     onSelectText: (String) -> Unit,
     onRetry: (Int, Int) -> Unit,
     onShowPreviousRevision: (Int, Int) -> Unit,
-    onShowNextRevision: (Int, Int) -> Unit
+    onShowNextRevision: (Int, Int) -> Unit,
+    stickerAssetResolver: StickerAssetResolver
 ) {
     val selectedAssistantMessage = assistantMessages.getOrNull(platformIndexState)
     val selectedAssistantRevisionIndex = selectedAssistantMessage?.activeRevisionIndex ?: ACTIVE_REVISION_LATEST
     val assistantContent = selectedAssistantMessage?.effectiveContent() ?: ""
+    val assistantContentForInteraction = selectedAssistantMessage?.semanticAssistantContent().orEmpty()
     val assistantThoughts = selectedAssistantMessage?.effectiveThoughts() ?: ""
+    val assistantStickerRefs = selectedAssistantMessage?.effectiveStickerRefs().orEmpty()
     val selectedTokenUsage = selectedAssistantMessage?.effectiveTokenUsage()
     val turnTokenUsages = remember(assistantMessages) { assistantMessages.mapNotNull { it.effectiveTokenUsage() } }
     val canShowPreviousRevision = selectedAssistantMessage?.let { assistantMessage ->
@@ -725,6 +735,7 @@ private fun ChatMessagePair(
         assistantContent = assistantContent,
         assistantThoughts = assistantThoughts,
         hasAttachments = selectedAssistantMessage?.attachments?.isNotEmpty() == true,
+        hasStickerRefs = assistantStickerRefs.isNotEmpty(),
         isLoading = isCurrentPlatformLoading
     )
     val displayedAssistantContent = if (isInterruptedInitialRequest) {
@@ -810,6 +821,8 @@ private fun ChatMessagePair(
                 text = displayedAssistantContent,
                 thoughts = assistantThoughts,
                 attachments = selectedAssistantMessage?.attachments.orEmpty().map { it.filePathForDisplay },
+                stickerRefs = assistantStickerRefs,
+                stickerAssetResolver = stickerAssetResolver,
                 sourceMetadata = selectedAssistantMessage?.sourceMetadata.orEmpty(),
                 contentIdentity = "$messageIndex:$selectedPlatformUid:$selectedAssistantRevisionIndex",
                 revisionIndexLabel = selectedAssistantMessage?.takeUnless { isInterruptedInitialRequest }?.let { assistantMessage ->
@@ -830,8 +843,16 @@ private fun ChatMessagePair(
                 },
                 canShowPreviousRevision = canShowPreviousRevision,
                 canShowNextRevision = canShowNextRevision,
-                onCopyClick = { onCopyText(displayedAssistantContent) },
-                onSelectClick = { onSelectText(displayedAssistantContent) },
+                onCopyClick = {
+                    onCopyText(
+                        if (isInterruptedInitialRequest) displayedAssistantContent else assistantContentForInteraction
+                    )
+                },
+                onSelectClick = {
+                    onSelectText(
+                        if (isInterruptedInitialRequest) displayedAssistantContent else assistantContentForInteraction
+                    )
+                },
                 onRetryClick = { onRetry(messageIndex, platformIndexState) },
                 onEditClick = { onEditAssistant(messageIndex, platformIndexState) },
                 onShowPreviousRevision = { onShowPreviousRevision(messageIndex, platformIndexState) },

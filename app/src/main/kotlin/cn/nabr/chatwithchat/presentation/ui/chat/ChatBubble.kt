@@ -63,6 +63,7 @@ import androidx.compose.ui.unit.dp
 import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.database.entity.AppSourceNavigationTarget
 import cn.nabr.chatwithchat.data.database.entity.MessageSourceMetadata
+import cn.nabr.chatwithchat.data.database.entity.MessageStickerRef
 import cn.nabr.chatwithchat.data.database.entity.SafeMessageSourceTarget
 import cn.nabr.chatwithchat.data.database.entity.safeDedupeKey
 import cn.nabr.chatwithchat.data.database.entity.safeNavigationTarget
@@ -113,6 +114,8 @@ fun OpponentChatBubble(
     text: String,
     thoughts: String = "",
     attachments: List<String> = emptyList(),
+    stickerRefs: List<MessageStickerRef> = emptyList(),
+    stickerAssetResolver: StickerAssetResolver? = null,
     sourceMetadata: List<MessageSourceMetadata> = emptyList(),
     contentIdentity: Any = text,
     canEdit: Boolean = false,
@@ -155,7 +158,7 @@ fun OpponentChatBubble(
             val displayText = visibleText
 
             when {
-                isLoading && displayText.isBlank() && thoughts.isBlank() && showPendingIndicator -> {
+                isLoading && displayText.isBlank() && thoughts.isBlank() && stickerRefs.isEmpty() && showPendingIndicator -> {
                     ResponseLoadingIndicator()
                 }
                 displayText.isNotBlank() || !isLoading -> {
@@ -168,6 +171,12 @@ fun OpponentChatBubble(
                     )
                 }
             }
+
+            StickerMessageBlock(
+                stickerRefs = stickerRefs,
+                assetResolver = stickerAssetResolver,
+                modifier = Modifier.padding(top = 2.dp, bottom = 8.dp)
+            )
 
             MessageFileThumbnailRow(
                 files = attachments,

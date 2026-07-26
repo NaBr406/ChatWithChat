@@ -56,6 +56,7 @@ import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.database.entity.effectiveContent
+import cn.nabr.chatwithchat.data.database.entity.effectiveStickerRefs
 import cn.nabr.chatwithchat.data.database.entity.effectiveTokenUsage
 import cn.nabr.chatwithchat.data.token.TokenUsageRecord
 import cn.nabr.chatwithchat.presentation.common.AppleBlue
@@ -483,7 +484,7 @@ private fun RoundStatus.localizedLabel(): String = stringResource(
 private fun MessageV2.hasSuccessfulAssistantAnswer(): Boolean {
     val content = effectiveContent()
     if (isAssistantErrorMessage(content)) return false
-    return stripAssistantErrorNote(content).trim().isNotBlank()
+    return stripAssistantErrorNote(content).trim().isNotBlank() || effectiveStickerRefs().isNotEmpty()
 }
 
 private fun MessageV2.hasAssistantFailure(): Boolean {

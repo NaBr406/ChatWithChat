@@ -32,6 +32,7 @@ import cn.nabr.chatwithchat.presentation.ui.setting.ModelManagementScreen
 import cn.nabr.chatwithchat.presentation.ui.setting.PlatformSettingScreen
 import cn.nabr.chatwithchat.presentation.ui.setting.SettingScreen
 import cn.nabr.chatwithchat.presentation.ui.setting.SettingViewModelV2
+import cn.nabr.chatwithchat.presentation.ui.setting.StickerLibraryScreen
 import cn.nabr.chatwithchat.presentation.ui.setting.ToolSettingsScreen
 import cn.nabr.chatwithchat.presentation.ui.setup.SetupCompleteScreen
 import cn.nabr.chatwithchat.presentation.ui.setup.SetupPlatformListScreen
@@ -229,6 +230,7 @@ fun NavGraphBuilder.settingNavigation(navController: NavHostController) {
                 onNavigateToModelManagement = { navController.navigate(Route.MODEL_MANAGEMENT) },
                 onNavigateToToolSettings = { navController.navigate(Route.TOOL_SETTINGS) },
                 onNavigateToMemory = { navController.navigate(Route.MEMORY) },
+                onNavigateToStickerLibrary = { navController.navigate(Route.STICKER_LIBRARY) },
                 onNavigateToAboutPage = { navController.navigate(Route.ABOUT_PAGE) }
             )
         }
@@ -282,6 +284,9 @@ fun NavGraphBuilder.settingNavigation(navController: NavHostController) {
         }
         composable(Route.MEMORY) {
             MemoryScreen(onNavigationClick = { navController.navigateUp() })
+        }
+        composable(Route.STICKER_LIBRARY) {
+            StickerLibraryScreen(onNavigationClick = { navController.navigateUp() })
         }
         composable(Route.LICENSE) {
             LicenseScreen(onNavigationClick = { navController.navigateUp() })

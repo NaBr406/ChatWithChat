@@ -25,8 +25,9 @@ import androidx.compose.material.icons.rounded.Alarm
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Cloud
-import androidx.compose.material.icons.rounded.Extension
+import androidx.compose.material.icons.rounded.EmojiEmotions
 import androidx.compose.material.icons.rounded.Event
+import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.LocationOn
@@ -103,6 +104,7 @@ fun SettingScreen(
     onNavigateToModelManagement: () -> Unit,
     onNavigateToToolSettings: () -> Unit,
     onNavigateToMemory: () -> Unit,
+    onNavigateToStickerLibrary: () -> Unit,
     onNavigateToAboutPage: () -> Unit
 ) {
     val platformState by settingViewModel.platformState.collectAsStateWithLifecycle()
@@ -201,8 +203,16 @@ fun SettingScreen(
                     description = stringResource(R.string.memory_page_description),
                     leadingIcon = Icons.Rounded.Memory,
                     iconContainerColor = ApplePurple,
-                    showDivider = false,
+                    showDivider = true,
                     onClick = onNavigateToMemory
+                )
+                SettingsRow(
+                    title = stringResource(R.string.sticker_library),
+                    description = stringResource(R.string.sticker_library_description),
+                    leadingIcon = Icons.Rounded.EmojiEmotions,
+                    iconContainerColor = AppleOrange,
+                    showDivider = false,
+                    onClick = onNavigateToStickerLibrary
                 )
             }
 

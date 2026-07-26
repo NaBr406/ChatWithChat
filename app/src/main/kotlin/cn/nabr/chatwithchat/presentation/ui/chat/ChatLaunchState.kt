@@ -44,9 +44,11 @@ internal fun shouldShowInterruptedInitialRequest(
     assistantContent: String,
     assistantThoughts: String,
     hasAttachments: Boolean,
+    hasStickerRefs: Boolean = false,
     isLoading: Boolean
 ): Boolean = initialRequestId < 0 &&
     !isLoading &&
     assistantContent.isBlank() &&
     assistantThoughts.isBlank() &&
-    !hasAttachments
+    !hasAttachments &&
+    !hasStickerRefs
