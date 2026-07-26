@@ -365,7 +365,7 @@ Implementation requirements:
 
 Acceptance criteria:
 
-- [ ] Provider request tests prove a stored sticker does not generate an image input or provider upload attempt.
+- [x] Provider request tests prove a stored sticker does not generate an image input or provider upload attempt.
 - [x] A later model turn can see a compact assistant semantic marker rather than raw asset data.
 - [x] A sticker-only assistant reply cannot become a memory fact by itself.
 - [x] Existing ordinary image attachments remain provider-visible and continue using their established upload/base64 fallback behavior.
@@ -430,7 +430,7 @@ Required test coverage:
 - [x] `search_stickers -> send_sticker` success, forged/missing/disabled/hash-mismatch failure, single-send policy, and artifact de-duplication.
 - [ ] Artifact event propagation through the JSON fallback and all native tool-loop paths.
 - [ ] `MessageV2` / revision converter compatibility, schema 17 -> 18 migration, sticker-only persistence, retry history, and selected-revision rendering.
-- [ ] Provider-context proof that stickers become semantic text only and ordinary attachments remain image inputs.
+- [x] Provider-context proof that stickers become semantic text only and ordinary attachments remain image inputs.
 - [ ] Settings-only management logic and no composer/user-message sticker path.
 - [ ] Missing-asset placeholder and unknown media-kind behavior.
 - [ ] Localized strings and backup behavior: user assets may remain in normal app backup, but temporary import staging must live in cache or be excluded explicitly. Update exact backup-rule tests if rules change.
@@ -447,7 +447,7 @@ git diff --check
 
 Run focused instrumentation migration/UI checks only with a usable connected device. Report exactly which runtime evidence was obtained and which behavior remains unit/compile verified only.
 
-> **2026-07-26 verification:** `:app:testDebugUnitTest`, the sticker/tool/context focused suite, `:app:compileDebugKotlin`, `:app:compileDebugAndroidTestKotlin`, and `:app:assembleDebug` passed. `adb devices` reported no connected device, so the remaining unchecked migration instrumentation, import, and manual UI acceptance items have source/compile coverage only and must be run on a device or emulator.
+> **2026-07-26 verification:** `:app:testDebugUnitTest`, the sticker/tool/context focused suite, `:app:compileDebugKotlin`, `:app:compileDebugAndroidTestKotlin`, and `:app:assembleDebug` passed. The provider-context regression covers OpenAI Responses, OpenAI Chat Completions/OpenRouter, Anthropic, and Google, and asserts zero provider upload calls. `adb devices` reported no connected device, so the remaining unchecked migration instrumentation, import, and manual UI acceptance items have source/compile coverage only and must be run on a device or emulator.
 
 ## Final Acceptance Matrix
 
