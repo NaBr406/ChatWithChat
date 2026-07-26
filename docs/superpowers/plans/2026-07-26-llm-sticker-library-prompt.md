@@ -249,25 +249,25 @@ Likely additions:
 
 Implementation requirements:
 
-- [ ] Use a reserved `builtin.reactions` namespace for bundled IDs and a separate generated namespace for user items. Never derive an ID from a visible name or original file name.
-- [ ] Seed the three supplied assets from the exact desktop source paths into a repo assets subtree using normalized ASCII output names. Include a versioned manifest with IDs, SHA-256, MIME, title, alt text, tags, and `mediaKind = "static_raster"`.
-- [ ] Bundle reading must validate the manifest and asset hash. If an app update contains an invalid bundled item, skip only that item with bounded logging; do not crash chat startup.
-- [ ] Represent user items under one local "My stickers" collection in the UI, while preserving a `packId`/collection field in storage for future extension.
-- [ ] Store user-imported binaries by content hash below an app-private root. Store a generated relative path or resolvable key, never an external `content://` URI or absolute original path.
-- [ ] Treat user import as a separate pipeline from chat attachments. It may reuse safe generic primitives, but must not call `AttachmentUploadCoordinator`, write into attachment directories, create provider refs, or invoke upload resizing semantics.
-- [ ] First release accepts only non-animated JPEG, PNG, and WebP. Check actual decodability, true MIME/signature, file size, pixel bounds, and image dimensions; reject GIF/SVG/BMP/TIFF and malformed or oversized input. Define named, tested limits rather than scattering literals.
-- [ ] Copy through a staging file, hash and validate it, atomically promote it to the final content-addressed location, then update the Room catalog transaction. A failed import must not leave a catalog entry pointing at a missing file.
-- [ ] Normalize/re-encode user images as needed to remove EXIF and prevent unexpectedly large resources while preserving alpha for PNG/WebP. Avoid silently converting an asset to a different type without updating MIME/hash metadata.
-- [ ] Deleting or disabling a catalog item makes it unavailable for future candidates. Keep its asset while any historical `MessageStickerRef` references the asset key; only garbage-collect unreferenced local assets.
-- [ ] Persist the forward-compatible descriptor fields (`mediaKind`, optional preview/poster key, optional playback metadata) even though only static raster is enabled now.
+- [x] Use a reserved `builtin.reactions` namespace for bundled IDs and a separate generated namespace for user items. Never derive an ID from a visible name or original file name.
+- [x] Seed the three supplied assets from the exact desktop source paths into a repo assets subtree using normalized ASCII output names. Include a versioned manifest with IDs, SHA-256, MIME, title, alt text, tags, and `mediaKind = "static_raster"`.
+- [x] Bundle reading must validate the manifest and asset hash. If an app update contains an invalid bundled item, skip only that item with bounded logging; do not crash chat startup.
+- [x] Represent user items under one local "My stickers" collection in the UI, while preserving a `packId`/collection field in storage for future extension.
+- [x] Store user-imported binaries by content hash below an app-private root. Store a generated relative path or resolvable key, never an external `content://` URI or absolute original path.
+- [x] Treat user import as a separate pipeline from chat attachments. It may reuse safe generic primitives, but must not call `AttachmentUploadCoordinator`, write into attachment directories, create provider refs, or invoke upload resizing semantics.
+- [x] First release accepts only non-animated JPEG, PNG, and WebP. Check actual decodability, true MIME/signature, file size, pixel bounds, and image dimensions; reject GIF/SVG/BMP/TIFF and malformed or oversized input. Define named, tested limits rather than scattering literals.
+- [x] Copy through a staging file, hash and validate it, atomically promote it to the final content-addressed location, then update the Room catalog transaction. A failed import must not leave a catalog entry pointing at a missing file.
+- [x] Normalize/re-encode user images as needed to remove EXIF and prevent unexpectedly large resources while preserving alpha for PNG/WebP. Avoid silently converting an asset to a different type without updating MIME/hash metadata.
+- [x] Deleting or disabling a catalog item makes it unavailable for future candidates. Keep its asset while any historical `MessageStickerRef` references the asset key; only garbage-collect unreferenced local assets.
+- [x] Persist the forward-compatible descriptor fields (`mediaKind`, optional preview/poster key, optional playback metadata) even though only static raster is enabled now.
 
 Acceptance criteria:
 
-- [ ] The three bundled IDs resolve to valid, locally renderable assets.
-- [ ] A multi-image import creates stable IDs, hash-addressed files, a "My stickers" catalog entry, and editable semantic metadata.
-- [ ] Reimporting identical bytes does not create duplicate blobs.
-- [ ] A bad image, unsupported MIME, oversized resource, or failed copy does not create a usable catalog entry.
-- [ ] Deleting an unused custom item reclaims its asset; deleting an item already sent in a message preserves that history asset.
+- [x] The three bundled IDs resolve to valid, locally renderable assets.
+- [x] A multi-image import creates stable IDs, hash-addressed files, a "My stickers" catalog entry, and editable semantic metadata.
+- [x] Reimporting identical bytes does not create duplicate blobs.
+- [x] A bad image, unsupported MIME, oversized resource, or failed copy does not create a usable catalog entry.
+- [x] Deleting an unused custom item reclaims its asset; deleting an item already sent in a message preserves that history asset.
 
 Focused verification:
 
@@ -282,21 +282,21 @@ Focused verification:
 
 Implementation requirements:
 
-- [ ] Add a serializable `MessageStickerRef` list to `MessageV2`, a matching Room converter, and the required Room column. Extend `AssistantRevision` with the same snapshot data.
-- [ ] Add a `MIGRATION_17_18`, bump `ChatDatabaseV2` to 18, register the migration in `DatabaseModule`, and export the schema JSON under the current package path.
-- [ ] Add the sticker catalog tables to the same migration with appropriate indexes/foreign keys. A historical message reference must not cascade-delete when a user disables or deletes a catalog item.
-- [ ] Add `effectiveStickerRefs()` and update every effective-content, blank, persistence, retry, revision, selected-revision, and round-navigation helper so a sticker-only successful assistant reply is not lost.
-- [ ] Make the update idempotent by `instanceId`/tool-call ID. A repeated stream event or retry must not duplicate the same sticker within one assistant revision.
-- [ ] Update `persistableMessages(...)` and any initial-request recovery logic so a sticker-only assistant response remains saveable and does not look interrupted.
-- [ ] Preserve existing ordinary attachment serialization byte-for-byte in behavior. A normal chat image remains a normal provider attachment; a sticker never appears in `attachments`.
+- [x] Add a serializable `MessageStickerRef` list to `MessageV2`, a matching Room converter, and the required Room column. Extend `AssistantRevision` with the same snapshot data.
+- [x] Add a `MIGRATION_17_18`, bump `ChatDatabaseV2` to 18, register the migration in `DatabaseModule`, and export the schema JSON under the current package path.
+- [x] Add the sticker catalog tables to the same migration with appropriate indexes/foreign keys. A historical message reference must not cascade-delete when a user disables or deletes a catalog item.
+- [x] Add `effectiveStickerRefs()` and update every effective-content, blank, persistence, retry, revision, selected-revision, and round-navigation helper so a sticker-only successful assistant reply is not lost.
+- [x] Make the update idempotent by `instanceId`/tool-call ID. A repeated stream event or retry must not duplicate the same sticker within one assistant revision.
+- [x] Update `persistableMessages(...)` and any initial-request recovery logic so a sticker-only assistant response remains saveable and does not look interrupted.
+- [x] Preserve existing ordinary attachment serialization byte-for-byte in behavior. A normal chat image remains a normal provider attachment; a sticker never appears in `attachments`.
 
 Acceptance criteria:
 
 - [ ] A schema-17 database upgrades with empty sticker lists and all existing chats readable.
 - [ ] A sticker-only assistant reply is persisted and restored after process recreation.
-- [ ] Selecting an earlier assistant revision shows its matching stickers, not the latest revision's stickers.
-- [ ] Retrying an assistant answer snapshots the old sticker set and starts the new revision with no accidental carry-over.
-- [ ] Deleting or renaming a catalog item does not erase historical message display because the message stores asset/alt-text snapshots.
+- [x] Selecting an earlier assistant revision shows its matching stickers, not the latest revision's stickers.
+- [x] Retrying an assistant answer snapshots the old sticker set and starts the new revision with no accidental carry-over.
+- [x] Deleting or renaming a catalog item does not erase historical message display because the message stores asset/alt-text snapshots.
 
 Focused verification:
 
@@ -323,25 +323,25 @@ Likely additions/updates:
 
 Implementation requirements:
 
-- [ ] Add the exact two tool definitions described in the Product Contracts. `search_stickers` accepts bounded text and optional bounded limit; `send_sticker` accepts a bounded exact ID only.
-- [ ] Use deterministic local matching over title, alt text, tags, and aliases. Prefer exact/prefix/tag matches before weaker text matches. Do not introduce an embedding model, cloud call, network request, or full-text/vector infrastructure for a small local catalog.
-- [ ] Return at most six candidates and bound every visible string. The tool result content must be useful in JSON fallback, while `structuredContent` may supplement native adapters.
-- [ ] `send_sticker` must resolve the resource locally and create a typed presentation artifact only after validating the current catalog entry, availability, media kind, and asset hash. It must never pass a local path or byte array into model-visible result fields.
-- [ ] Add a central `ToolProvider`/`ToolExecutor` artifact-mapping contract or another single shared extension point. Do not add five provider-specific sticker branches to `ChatRepositoryImpl`.
-- [ ] Ensure the bridge is exercised by the JSON fallback and all four native adapter loops. The event must be emitted once for a successful `send_sticker`, and never for a failed, rejected, disabled, malformed, or unavailable call.
-- [ ] Keep normal tool progress UI functional. Use a concise localized label such as "正在挑选表情"; do not show raw IDs or paths.
-- [ ] Make `send_sticker` at most once per request through `ToolPolicy` and prevent duplicate artifact emission. `search_stickers` can be called once per request unless live behavior requires another bounded search.
-- [ ] Add a separate persisted automatic-sticker setting, default enabled. It must independently add only the two sticker definitions to active capabilities; disabling generic tools must not silently enable web/location/calendar/alarm, and disabling stickers must remove both definitions even when generic tools are on.
-- [ ] Put a concise model-facing instruction in the tool definitions: use no more than one sticker, only when it adds tone or empathy, and never use a guessed ID without a search result.
+- [x] Add the exact two tool definitions described in the Product Contracts. `search_stickers` accepts bounded text and optional bounded limit; `send_sticker` accepts a bounded exact ID only.
+- [x] Use deterministic local matching over title, alt text, tags, and aliases. Prefer exact/prefix/tag matches before weaker text matches. Do not introduce an embedding model, cloud call, network request, or full-text/vector infrastructure for a small local catalog.
+- [x] Return at most six candidates and bound every visible string. The tool result content must be useful in JSON fallback, while `structuredContent` may supplement native adapters.
+- [x] `send_sticker` must resolve the resource locally and create a typed presentation artifact only after validating the current catalog entry, availability, media kind, and asset hash. It must never pass a local path or byte array into model-visible result fields.
+- [x] Add a central `ToolProvider`/`ToolExecutor` artifact-mapping contract or another single shared extension point. Do not add five provider-specific sticker branches to `ChatRepositoryImpl`.
+- [x] Ensure the bridge is exercised by the JSON fallback and all four native adapter loops. The event must be emitted once for a successful `send_sticker`, and never for a failed, rejected, disabled, malformed, or unavailable call.
+- [x] Keep normal tool progress UI functional. Use a concise localized label such as "正在挑选表情"; do not show raw IDs or paths.
+- [x] Make `send_sticker` at most once per request through `ToolPolicy` and prevent duplicate artifact emission. `search_stickers` can be called once per request unless live behavior requires another bounded search.
+- [x] Add a separate persisted automatic-sticker setting, default enabled. It must independently add only the two sticker definitions to active capabilities; disabling generic tools must not silently enable web/location/calendar/alarm, and disabling stickers must remove both definitions even when generic tools are on.
+- [x] Put a concise model-facing instruction in the tool definitions: use no more than one sticker, only when it adds tone or empathy, and never use a guessed ID without a search result.
 
 Acceptance criteria:
 
-- [ ] The model receives no catalog until it calls `search_stickers`.
-- [ ] A successful search followed by send emits exactly one typed sticker event and a normal final response can still stream afterward.
-- [ ] The same behavior works in JSON fallback and every native provider loop without duplicated code paths.
-- [ ] A forged ID, disabled item, removed item, unsupported media kind, or hash mismatch yields a bounded tool error and no UI artifact.
-- [ ] Turning off automatic sticker replies removes only the sticker tools from active definitions.
-- [ ] Normal tool result sources, usage, approval, and error behavior remain intact.
+- [x] The model receives no catalog until it calls `search_stickers`.
+- [x] A successful search followed by send emits exactly one typed sticker event and a normal final response can still stream afterward.
+- [x] The same behavior works in JSON fallback and every native provider loop without duplicated code paths.
+- [x] A forged ID, disabled item, removed item, unsupported media kind, or hash mismatch yields a bounded tool error and no UI artifact.
+- [x] Turning off automatic sticker replies removes only the sticker tools from active definitions.
+- [x] Normal tool result sources, usage, approval, and error behavior remain intact.
 
 Focused verification:
 
@@ -357,18 +357,18 @@ Focused verification:
 
 Implementation requirements:
 
-- [ ] Update every provider-message transform used by `ChatRepositoryImpl` so an assistant sticker contributes only a bounded semantic text marker based on the effective revision's `altText`.
-- [ ] Ensure no sticker reference reaches `AttachmentUploadCoordinator`, provider file APIs, inline Base64 encoding, or image content parts.
-- [ ] Update context token estimation and truncation so semantic markers are counted deterministically and do not make a sticker-only assistant message disappear.
-- [ ] Do not teach long-term memory new user facts from a sticker-only assistant reply. Preserve existing memory behavior for surrounding ordinary user/assistant text.
-- [ ] Ensure assistant editing, retry, copying, export/search helpers, and error recovery preserve or deliberately render sticker semantics without exposing local storage details.
+- [x] Update every provider-message transform used by `ChatRepositoryImpl` so an assistant sticker contributes only a bounded semantic text marker based on the effective revision's `altText`.
+- [x] Ensure no sticker reference reaches `AttachmentUploadCoordinator`, provider file APIs, inline Base64 encoding, or image content parts.
+- [x] Update context token estimation and truncation so semantic markers are counted deterministically and do not make a sticker-only assistant message disappear.
+- [x] Do not teach long-term memory new user facts from a sticker-only assistant reply. Preserve existing memory behavior for surrounding ordinary user/assistant text.
+- [x] Ensure assistant editing, retry, copying, export/search helpers, and error recovery preserve or deliberately render sticker semantics without exposing local storage details.
 
 Acceptance criteria:
 
 - [ ] Provider request tests prove a stored sticker does not generate an image input or provider upload attempt.
-- [ ] A later model turn can see a compact assistant semantic marker rather than raw asset data.
-- [ ] A sticker-only assistant reply cannot become a memory fact by itself.
-- [ ] Existing ordinary image attachments remain provider-visible and continue using their established upload/base64 fallback behavior.
+- [x] A later model turn can see a compact assistant semantic marker rather than raw asset data.
+- [x] A sticker-only assistant reply cannot become a memory fact by itself.
+- [x] Existing ordinary image attachments remain provider-visible and continue using their established upload/base64 fallback behavior.
 
 Focused verification:
 
@@ -392,14 +392,14 @@ Likely additions/updates:
 
 Implementation requirements:
 
-- [ ] Add a Settings entry for the sticker library and a clear automatic-sticker enable/disable control. Do not add a composer button or an outgoing-user sticker renderer.
-- [ ] The "My stickers" page must support multi-select add, import progress/error state, thumbnail preview, edit title/alt text/tags, enable/disable, and delete confirmation. The three built-ins may be visible but are not editable/deletable as user assets.
-- [ ] Use a familiar add icon/button and the Android photo picker. Do not request broad storage permissions.
-- [ ] Favor concise Chinese labels and tags. Initial user metadata may default from a safe filename-derived draft, but the UI must make title/alt/tags editable; all model-facing values are length-limited and sanitized.
-- [ ] Render assistant stickers after text and before sources/actions in `OpponentChatBubble`. A sticker-only assistant response must render without a perpetual loading indicator.
-- [ ] Give the sticker block stable constrained dimensions (roughly 128-160dp maximum for one asset), preserve aspect ratio, support transparent PNG/WebP, and show `altText` fallback when the asset is unavailable. Do not reuse the 48dp attachment-thumbnail row or its RGB_565 decoding behavior.
-- [ ] Resolve assets off the main thread and cache only bounded decoded previews. Ensure renderer state and labels cannot change message layout unexpectedly during streaming.
-- [ ] Unknown/non-renderable `mediaKind` must render a localized unavailable placeholder and must not be offered as an LLM candidate in this release.
+- [x] Add a Settings entry for the sticker library and a clear automatic-sticker enable/disable control. Do not add a composer button or an outgoing-user sticker renderer.
+- [x] The "My stickers" page must support multi-select add, import progress/error state, thumbnail preview, edit title/alt text/tags, enable/disable, and delete confirmation. The three built-ins may be visible but are not editable/deletable as user assets.
+- [x] Use a familiar add icon/button and the Android photo picker. Do not request broad storage permissions.
+- [x] Favor concise Chinese labels and tags. Initial user metadata may default from a safe filename-derived draft, but the UI must make title/alt/tags editable; all model-facing values are length-limited and sanitized.
+- [x] Render assistant stickers after text and before sources/actions in `OpponentChatBubble`. A sticker-only assistant response must render without a perpetual loading indicator.
+- [x] Give the sticker block stable constrained dimensions (roughly 128-160dp maximum for one asset), preserve aspect ratio, support transparent PNG/WebP, and show `altText` fallback when the asset is unavailable. Do not reuse the 48dp attachment-thumbnail row or its RGB_565 decoding behavior.
+- [x] Resolve assets off the main thread and cache only bounded decoded previews. Ensure renderer state and labels cannot change message layout unexpectedly during streaming.
+- [x] Unknown/non-renderable `mediaKind` must render a localized unavailable placeholder and must not be offered as an LLM candidate in this release.
 
 Acceptance criteria:
 
@@ -426,8 +426,8 @@ If a device/emulator is available, manually verify: Settings entry, bulk import,
 Required test coverage:
 
 - [ ] Asset manifest parsing, bundled hash verification, user import success/failure, duplicate content, unsupported animation/MIME, oversized/decode failure, and interrupted promotion cleanup.
-- [ ] Candidate ranking, enabled filtering, stable IDs, and bounded result text/structured content.
-- [ ] `search_stickers -> send_sticker` success, forged/missing/disabled/hash-mismatch failure, single-send policy, and artifact de-duplication.
+- [x] Candidate ranking, enabled filtering, stable IDs, and bounded result text/structured content.
+- [x] `search_stickers -> send_sticker` success, forged/missing/disabled/hash-mismatch failure, single-send policy, and artifact de-duplication.
 - [ ] Artifact event propagation through the JSON fallback and all native tool-loop paths.
 - [ ] `MessageV2` / revision converter compatibility, schema 17 -> 18 migration, sticker-only persistence, retry history, and selected-revision rendering.
 - [ ] Provider-context proof that stickers become semantic text only and ordinary attachments remain image inputs.
@@ -447,17 +447,19 @@ git diff --check
 
 Run focused instrumentation migration/UI checks only with a usable connected device. Report exactly which runtime evidence was obtained and which behavior remains unit/compile verified only.
 
+> **2026-07-26 verification:** `:app:testDebugUnitTest`, the sticker/tool/context focused suite, `:app:compileDebugKotlin`, `:app:compileDebugAndroidTestKotlin`, and `:app:assembleDebug` passed. `adb devices` reported no connected device, so the remaining unchecked migration instrumentation, import, and manual UI acceptance items have source/compile coverage only and must be run on a device or emulator.
+
 ## Final Acceptance Matrix
 
-- [ ] The app ships the three supplied static built-ins with stable IDs and validated local assets.
+- [x] The app ships the three supplied static built-ins with stable IDs and validated local assets.
 - [ ] A user can add/manage only their own static stickers from Settings; no user chat-send UI exists.
-- [ ] The model automatically chooses stickers through bounded candidate IDs, never paths or binary media.
-- [ ] A response emits at most one assistant sticker and normal text streaming still works.
+- [x] The model automatically chooses stickers through bounded candidate IDs, never paths or binary media.
+- [x] A response emits at most one assistant sticker and normal text streaming still works.
 - [ ] Sticker state survives save/restart, retry, and historical revision selection.
-- [ ] Sticker assets never re-enter provider image uploads or future Base64 requests.
-- [ ] Disabled/deleted catalog items are unavailable to the model but old messages remain understandable/renderable.
+- [x] Sticker assets never re-enter provider image uploads or future Base64 requests.
+- [x] Disabled/deleted catalog items are unavailable to the model but old messages remain understandable/renderable.
 - [ ] Static renderer is complete; dynamic media has a safe typed extension boundary but no dynamic decoder is added.
-- [ ] Existing attachment, edit, retry, export, memory, multi-provider, tool approval, and token-usage behavior remains covered and intact.
+- [x] Existing attachment, edit, retry, export, memory, multi-provider, tool approval, and token-usage behavior remains covered and intact.
 
 ## Suggested Commit Sequence
 
