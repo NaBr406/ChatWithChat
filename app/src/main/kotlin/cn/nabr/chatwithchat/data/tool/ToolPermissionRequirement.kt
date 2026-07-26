@@ -2,6 +2,7 @@ package cn.nabr.chatwithchat.data.tool
 
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Build
 import androidx.core.content.ContextCompat
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -52,8 +53,12 @@ class AndroidToolPermissionChecker(
             !requirement.isSatisfied { permission -> appContext.isPermissionGranted(permission) }
         }
 
-    private fun Context.isPermissionGranted(permission: String): Boolean =
-        ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+    private fun Context.isPermissionGranted(permission: String): Boolean = when (permission) {
+        android.Manifest.permission.POST_NOTIFICATIONS ->
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+        else -> ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+    }
 }
 
 class ToolPermissionDeniedException(

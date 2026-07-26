@@ -1035,7 +1035,7 @@ class ChatRepositoryImplTest {
         assertTrue(webSearchRepository.queries.isEmpty())
         assertEquals(2, openAIAPI.streamResponsesCalls)
         assertEquals(
-            listOf("current_datetime", "device_location"),
+            listOf("current_datetime", "device_location", "add_schedule", "set_alarm"),
             openAIAPI.responsesRequests[0].tools.orEmpty().map { tool -> tool.name }
         )
         assertFalse(openAIAPI.responsesRequests[0].instructions.orEmpty().contains("web_search"))

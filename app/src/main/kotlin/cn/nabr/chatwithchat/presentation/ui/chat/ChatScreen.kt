@@ -129,6 +129,7 @@ fun ChatScreen(
     val pendingSelectedAttachmentBatches by chatViewModel.pendingSelectedAttachmentBatches.collectAsStateWithLifecycle()
     val pendingMessageEditAttachmentBatches by chatViewModel.pendingMessageEditAttachmentBatches.collectAsStateWithLifecycle()
     val toolProgressStates by chatViewModel.toolProgressStates.collectAsStateWithLifecycle()
+    val pendingToolApproval by chatViewModel.pendingToolApproval.collectAsStateWithLifecycle()
     val isChatTitleDialogOpen by chatViewModel.isChatTitleDialogOpen.collectAsStateWithLifecycle()
     val messageEditSession by chatViewModel.messageEditSession.collectAsStateWithLifecycle()
     val isSelectTextSheetOpen by chatViewModel.isSelectTextSheetOpen.collectAsStateWithLifecycle()
@@ -250,6 +251,14 @@ fun ChatScreen(
                 )
             }
         }
+    }
+
+    pendingToolApproval?.let { pending ->
+        ToolApprovalDialog(
+            preview = pending.request.preview,
+            onApprove = { chatViewModel.approveToolApproval(pending.requestId) },
+            onDeny = { chatViewModel.denyToolApproval(pending.requestId) }
+        )
     }
 
     if (isSelectTextSheetOpen) {
@@ -783,7 +792,8 @@ private fun ChatMessagePair(
             if (selectedToolProgressStates.isNotEmpty()) {
                 ToolActivityBlock(
                     progressStates = selectedToolProgressStates,
-                    modifier = Modifier.padding(bottom = 8.dp)
+                    modifier = Modifier.padding(bottom = 8.dp),
+                    onRetryAfterPermission = { onRetry(messageIndex, platformIndexState) }
                 )
             }
             OpponentChatBubble(

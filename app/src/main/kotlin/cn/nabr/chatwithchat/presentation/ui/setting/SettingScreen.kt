@@ -21,10 +21,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBackIos
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Alarm
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Extension
+import androidx.compose.material.icons.rounded.Event
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.LocationOn
@@ -81,6 +83,7 @@ import cn.nabr.chatwithchat.presentation.common.AppleIndigo
 import cn.nabr.chatwithchat.presentation.common.AppleOrange
 import cn.nabr.chatwithchat.presentation.common.ApplePurple
 import cn.nabr.chatwithchat.presentation.common.AppleRed
+import cn.nabr.chatwithchat.presentation.common.HigActionDialog
 import cn.nabr.chatwithchat.presentation.common.LocalNotificationPermissionRequester
 import cn.nabr.chatwithchat.presentation.common.LocalToolPermissionRequester
 import cn.nabr.chatwithchat.presentation.common.SettingsMaterialGroup
@@ -369,32 +372,24 @@ fun ToolSettingsScreen(
     pendingPermissionTool?.let { resolvedEntry ->
         val entry = resolvedEntry.catalogEntry
         val title = entry.settingsTitle()
-        AlertDialog(
-            onDismissRequest = { pendingPermissionTool = null },
-            title = { Text(stringResource(R.string.tool_permission_rationale_title, title)) },
-            text = { Text(stringResource(R.string.tool_permission_rationale_description, title)) },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        pendingPermissionTool = null
-                        toolPermissionRequester.requestToolPermissions(entry.definition.name) { granted ->
-                            if (granted) {
-                                deniedPermissionToolNames -= entry.definition.name
-                                settingViewModel.updateToolEnabled(entry.definition.name, true)
-                            } else {
-                                deniedPermissionToolNames += entry.definition.name
-                            }
-                        }
+        HigActionDialog(
+            title = stringResource(R.string.tool_permission_rationale_title, title),
+            message = stringResource(R.string.tool_permission_rationale_description, title),
+            primaryActionLabel = stringResource(R.string.grant_permission),
+            onPrimaryAction = {
+                pendingPermissionTool = null
+                toolPermissionRequester.requestToolPermissions(entry.definition.name) { granted ->
+                    if (granted) {
+                        deniedPermissionToolNames -= entry.definition.name
+                        settingViewModel.updateToolEnabled(entry.definition.name, true)
+                    } else {
+                        deniedPermissionToolNames += entry.definition.name
                     }
-                ) {
-                    Text(stringResource(R.string.grant_permission))
                 }
             },
-            dismissButton = {
-                TextButton(onClick = { pendingPermissionTool = null }) {
-                    Text(stringResource(R.string.cancel))
-                }
-            }
+            onDismissRequest = { pendingPermissionTool = null },
+            secondaryActionLabel = stringResource(R.string.cancel),
+            onSecondaryAction = { pendingPermissionTool = null }
         )
     }
 }
@@ -405,6 +400,8 @@ private fun ToolCatalogEntry.settingsTitle(): String = when (settings.presentati
     "fetch_url" -> stringResource(R.string.tool_fetch_url_title)
     "current_datetime" -> stringResource(R.string.tool_current_datetime_title)
     "device_location" -> stringResource(R.string.tool_device_location_title)
+    "add_schedule" -> stringResource(R.string.tool_add_schedule_title)
+    "set_alarm" -> stringResource(R.string.tool_set_alarm_title)
     else -> definition.name.replace('_', ' ').ifBlank { stringResource(R.string.tool_generic_title) }
 }
 
@@ -414,6 +411,8 @@ private fun ToolCatalogEntry.settingsDescription(): String = when (settings.pres
     "fetch_url" -> stringResource(R.string.tool_fetch_url_description)
     "current_datetime" -> stringResource(R.string.tool_current_datetime_description)
     "device_location" -> stringResource(R.string.tool_device_location_description)
+    "add_schedule" -> stringResource(R.string.tool_add_schedule_description)
+    "set_alarm" -> stringResource(R.string.tool_set_alarm_description)
     else -> definition.description.ifBlank { stringResource(R.string.tool_generic_description) }
 }
 
@@ -422,6 +421,8 @@ private fun ToolCatalogEntry.settingsIcon(): ImageVector = when (settings.iconKe
     "language" -> Icons.Rounded.Language
     "schedule" -> Icons.Rounded.Schedule
     "location" -> Icons.Rounded.LocationOn
+    "event" -> Icons.Rounded.Event
+    "alarm" -> Icons.Rounded.Alarm
     else -> Icons.Rounded.Extension
 }
 
@@ -430,6 +431,8 @@ private fun ToolCatalogEntry.settingsIconColor(): Color = when (settings.iconKey
     "language" -> AppleIndigo
     "schedule" -> AppleOrange
     "location" -> AppleGreen
+    "event" -> AppleBlue
+    "alarm" -> AppleRed
     else -> AppleGray
 }
 

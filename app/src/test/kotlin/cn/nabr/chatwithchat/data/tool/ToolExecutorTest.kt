@@ -523,7 +523,7 @@ class ToolExecutorTest {
     }
 
     @Test
-    fun `built in registry exposes location runtime permissions`() {
+    fun `built in registry exposes tool runtime permissions`() {
         val registry = BuiltInTools(
             webSearchRepository = FakeWebSearchRepository(emptyList()),
             webPageExtractor = WebPageExtractor()
@@ -533,14 +533,21 @@ class ToolExecutorTest {
         assertEquals(
             listOf(
                 "android.permission.ACCESS_FINE_LOCATION",
-                "android.permission.ACCESS_COARSE_LOCATION"
+                "android.permission.ACCESS_COARSE_LOCATION",
+                "android.permission.WRITE_CALENDAR",
+                "com.android.alarm.permission.SET_ALARM"
             ),
             permissions
         )
         assertTrue(
             registry.requestedRuntimePermissions { definition ->
-                definition.name != ToolDefinition.DeviceLocation.name
-            }.isEmpty()
+                definition.name == ToolDefinition.AddSchedule.name
+            }.toSet() == setOf("android.permission.WRITE_CALENDAR")
+        )
+        assertTrue(
+            registry.requestedRuntimePermissions { definition ->
+                definition.name == ToolDefinition.SetAlarm.name
+            }.toSet() == setOf("com.android.alarm.permission.SET_ALARM")
         )
         val enabledByDefault = ToolEnablementResolver().enabledToolNames(
             registry.catalog,

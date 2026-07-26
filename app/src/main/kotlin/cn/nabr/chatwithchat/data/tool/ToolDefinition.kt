@@ -104,6 +104,88 @@ data class ToolDefinition(
             parameters = Parameters()
         )
 
-        val BuiltIns = listOf(WebSearch, FetchUrl, CurrentDateTime, DeviceLocation)
+        val AddSchedule = ToolDefinition(
+            name = "add_schedule",
+            description = "Add a calendar event to the device calendar. Use an ISO-8601 start time and optionally an end time or duration. This is a local external write that requires calendar permission; after the system permission is granted, ChatWithChat adds the event directly without another app approval dialog.",
+            parameters = Parameters(
+                properties = mapOf(
+                    "title" to Parameter(
+                        type = "string",
+                        description = "Calendar event title.",
+                        minLength = 1,
+                        maxLength = 200
+                    ),
+                    "start_time" to Parameter(
+                        type = "string",
+                        description = "Event start as an ISO-8601 date-time, including timezone offset when possible.",
+                        format = "date-time"
+                    ),
+                    "end_time" to Parameter(
+                        type = "string",
+                        description = "Optional event end as an ISO-8601 date-time.",
+                        format = "date-time"
+                    ),
+                    "duration_minutes" to Parameter(
+                        type = "integer",
+                        description = "Optional duration in minutes when end_time is omitted.",
+                        minimum = 1.0,
+                        maximum = 1_440.0
+                    ),
+                    "description" to Parameter(
+                        type = "string",
+                        description = "Optional calendar event notes.",
+                        maxLength = 2_000
+                    ),
+                    "location" to Parameter(
+                        type = "string",
+                        description = "Optional event location.",
+                        maxLength = 500
+                    ),
+                    "all_day" to Parameter(
+                        type = "boolean",
+                        description = "Whether the event should be marked as an all-day event."
+                    )
+                ),
+                required = listOf("title", "start_time")
+            )
+        )
+
+        val SetAlarm = ToolDefinition(
+            name = "set_alarm",
+            description = "Set an alarm directly in the device's Clock app. Provide a local hour and minute, an optional message, and optional weekly repeat days. ChatWithChat uses the system alarm capability to create it without opening an editor or showing an additional app approval dialog.",
+            parameters = Parameters(
+                properties = mapOf(
+                    "hour" to Parameter(
+                        type = "integer",
+                        description = "Local alarm hour from 0 through 23.",
+                        minimum = 0.0,
+                        maximum = 23.0
+                    ),
+                    "minute" to Parameter(
+                        type = "integer",
+                        description = "Alarm minute from 0 through 59.",
+                        minimum = 0.0,
+                        maximum = 59.0
+                    ),
+                    "message" to Parameter(
+                        type = "string",
+                        description = "Optional alarm label.",
+                        maxLength = 200
+                    ),
+                    "days" to Parameter(
+                        type = "array",
+                        description = "Optional weekly repeat days using 1=Sunday through 7=Saturday.",
+                        items = Parameter(
+                            type = "integer",
+                            minimum = 1.0,
+                            maximum = 7.0
+                        )
+                    )
+                ),
+                required = listOf("hour", "minute")
+            )
+        )
+
+        val BuiltIns = listOf(WebSearch, FetchUrl, CurrentDateTime, DeviceLocation, AddSchedule, SetAlarm)
     }
 }

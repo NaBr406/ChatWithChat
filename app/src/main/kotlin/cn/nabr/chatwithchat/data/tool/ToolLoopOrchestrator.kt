@@ -13,7 +13,8 @@ class ToolLoopOrchestrator(
         toolPromptBuilder = toolPromptBuilder,
         jsonToolCallParser = jsonToolCallParser
     ),
-    private val config: ToolLoopConfig = ToolLoopConfig.Default
+    private val config: ToolLoopConfig = ToolLoopConfig.Default,
+    private val toolApprovalBroker: ToolApprovalBroker? = null
 ) {
     val configuration: ToolLoopConfig
         get() = config
@@ -184,7 +185,21 @@ class ToolLoopOrchestrator(
     ): List<ToolResult> = calls.map { call ->
         val label = toolExecutor.progressLabel(call)
         onProgress(ApiState.ToolStarted(call.name, label))
-        val result = toolExecutor.execute(call, activeToolNames, config)
+        var result = toolExecutor.execute(call, activeToolNames, config)
+        if (result.metadata["error_code"] == ToolApprovalStatus.MISSING.recoverableErrorCode) {
+            when (val decision = toolApprovalBroker?.awaitApproval(call)) {
+                is ToolApprovalBroker.Decision.WithContext -> {
+                    result = toolExecutor.execute(
+                        call = call,
+                        activeToolNames = activeToolNames,
+                        config = config,
+                        executionContext = decision.context
+                    )
+                }
+                ToolApprovalBroker.Decision.Unavailable,
+                null -> {}
+            }
+        }
         if (result.isError) {
             onProgress(ApiState.ToolFailed(call.name, result.content, result.metadata["error_code"]))
         } else {

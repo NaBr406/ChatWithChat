@@ -34,6 +34,7 @@ import cn.nabr.chatwithchat.data.repository.AttachmentUploadCoordinator
 import cn.nabr.chatwithchat.data.repository.ChatRepository
 import cn.nabr.chatwithchat.data.repository.MemoryRepository
 import cn.nabr.chatwithchat.data.repository.SettingRepository
+import cn.nabr.chatwithchat.data.tool.ToolApprovalBroker
 import cn.nabr.chatwithchat.di.ApplicationScope
 import cn.nabr.chatwithchat.util.AttachmentPayloadCache
 import cn.nabr.chatwithchat.util.FileUtils
@@ -60,6 +61,7 @@ class ChatViewModel @Inject constructor(
     private val settingRepository: SettingRepository,
     private val memoryRepository: MemoryRepository,
     private val attachmentUploadCoordinator: AttachmentUploadCoordinator,
+    private val toolApprovalBroker: ToolApprovalBroker,
     @param:ApplicationScope private val applicationScope: CoroutineScope
 ) : ViewModel() {
     sealed class LoadingState {
@@ -192,6 +194,7 @@ class ChatViewModel @Inject constructor(
 
     private val _toolProgressStates = MutableStateFlow<Map<String, List<ToolProgressState>>>(emptyMap())
     val toolProgressStates = _toolProgressStates.asStateFlow()
+    val pendingToolApproval = toolApprovalBroker.pending
 
     // Used for text data to show in SelectText Bottom Sheet
     private val _selectedText = MutableStateFlow("")
@@ -379,6 +382,14 @@ class ChatViewModel @Inject constructor(
                 onToolProgress = { progress -> updateToolProgress(turnIndex, platformIndex, progress) }
             )
         }
+    }
+
+    fun approveToolApproval(requestId: String) {
+        toolApprovalBroker.approve(requestId)
+    }
+
+    fun denyToolApproval(requestId: String) {
+        toolApprovalBroker.deny(requestId)
     }
 
     fun updateChatTitle(title: String) {

@@ -6,12 +6,15 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import cn.nabr.chatwithchat.data.tool.AndroidAlarmLauncher
 import cn.nabr.chatwithchat.data.tool.AndroidDeviceLocationReader
+import cn.nabr.chatwithchat.data.tool.AndroidScheduleEventLauncher
 import cn.nabr.chatwithchat.data.tool.AndroidToolPermissionChecker
 import cn.nabr.chatwithchat.data.tool.BuiltInTools
 import cn.nabr.chatwithchat.data.tool.JsonToolCallParser
 import cn.nabr.chatwithchat.data.tool.NoOpToolAuditSink
 import cn.nabr.chatwithchat.data.tool.ToolApprovalAuthority
+import cn.nabr.chatwithchat.data.tool.ToolApprovalBroker
 import cn.nabr.chatwithchat.data.tool.ToolAuditSink
 import cn.nabr.chatwithchat.data.tool.ToolExecutionContextFactory
 import cn.nabr.chatwithchat.data.tool.ToolExecutor
@@ -36,7 +39,9 @@ object ToolModule {
     ): List<ToolProvider> = BuiltInTools(
         webSearchRepository,
         webPageExtractor,
-        AndroidDeviceLocationReader(context)
+        AndroidDeviceLocationReader(context),
+        AndroidScheduleEventLauncher(context),
+        AndroidAlarmLauncher(context)
     ).providers()
 
     @Provides
@@ -86,9 +91,11 @@ object ToolModule {
     @Singleton
     fun provideToolLoopOrchestrator(
         toolExecutor: ToolExecutor,
-        jsonToolCallParser: JsonToolCallParser
+        jsonToolCallParser: JsonToolCallParser,
+        toolApprovalBroker: ToolApprovalBroker
     ): ToolLoopOrchestrator = ToolLoopOrchestrator(
         toolExecutor = toolExecutor,
-        jsonToolCallParser = jsonToolCallParser
+        jsonToolCallParser = jsonToolCallParser,
+        toolApprovalBroker = toolApprovalBroker
     )
 }

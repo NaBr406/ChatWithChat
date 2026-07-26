@@ -106,13 +106,21 @@ class ToolApprovalAuthorityTest {
     }
 
     @Test
-    fun `write security policies fail closed without per-call approval`() {
+    fun `write security policies require explicit authorization`() {
         ToolEffect.entries.filter { effect -> effect.isWriteCapable }.forEach { effect ->
             val result = runCatching {
                 ToolSecurityPolicy(effect, ToolApprovalPolicy.NOT_REQUIRED)
             }
-            assertTrue("$effect should require approval", result.isFailure)
+            assertTrue("$effect should require explicit authorization", result.isFailure)
         }
+
+        assertEquals(
+            ToolApprovalPolicy.REQUIRE_SYSTEM_PERMISSION,
+            ToolSecurityPolicy(
+                effect = ToolEffect.EXTERNAL_WRITE,
+                approvalPolicy = ToolApprovalPolicy.REQUIRE_SYSTEM_PERMISSION
+            ).approvalPolicy
+        )
 
         assertEquals(
             ToolApprovalPolicy.NOT_REQUIRED,

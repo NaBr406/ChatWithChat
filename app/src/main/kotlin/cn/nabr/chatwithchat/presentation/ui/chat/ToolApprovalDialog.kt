@@ -20,6 +20,8 @@ fun ToolApprovalDialog(
         "fetch_url" -> stringResource(R.string.tool_fetch_url_title)
         "current_datetime" -> stringResource(R.string.tool_current_datetime_title)
         "device_location" -> stringResource(R.string.tool_device_location_title)
+        "add_schedule" -> stringResource(R.string.tool_add_schedule_title)
+        "set_alarm" -> stringResource(R.string.tool_set_alarm_title)
         else -> preview.fallbackDisplayName
     }
     HigActionDialog(

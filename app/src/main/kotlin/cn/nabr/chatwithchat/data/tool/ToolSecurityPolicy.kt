@@ -19,7 +19,8 @@ enum class ToolEffect {
 
 enum class ToolApprovalPolicy {
     NOT_REQUIRED,
-    REQUIRE_EACH_CALL
+    REQUIRE_EACH_CALL,
+    REQUIRE_SYSTEM_PERMISSION
 }
 
 data class ToolSecurityPolicy(
@@ -27,8 +28,8 @@ data class ToolSecurityPolicy(
     val approvalPolicy: ToolApprovalPolicy
 ) {
     init {
-        require(!effect.isWriteCapable || approvalPolicy == ToolApprovalPolicy.REQUIRE_EACH_CALL) {
-            "write_tool_requires_per_call_approval"
+        require(!effect.isWriteCapable || approvalPolicy != ToolApprovalPolicy.NOT_REQUIRED) {
+            "write_tool_requires_explicit_authorization"
         }
     }
 

@@ -67,9 +67,7 @@ class MainActivity : ComponentActivity() {
         toolPermissionLauncher = registerForActivityResult(
             ActivityResultContracts.RequestMultiplePermissions()
         ) {
-            val pendingRequest = pendingToolPermissionRequest
-            pendingToolPermissionRequest = null
-            pendingRequest?.onResult?.invoke(areToolPermissionsGranted(pendingRequest.toolName))
+            completePendingToolPermissionRequest()
         }
         notificationPermissionLauncher = registerForActivityResult(
             ActivityResultContracts.RequestPermission()
@@ -139,9 +137,7 @@ class MainActivity : ComponentActivity() {
         val missingPermissions = requirements
             .flatMap { requirement -> requirement.requestedPermissions() }
             .distinct()
-            .filter { permission ->
-                ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED
-            }
+            .filterNot(::isToolPermissionGranted)
         if (missingPermissions.isNotEmpty()) {
             pendingToolPermissionRequest = PendingToolPermissionRequest(toolName, onResult)
             toolPermissionLauncher.launch(missingPermissions.toTypedArray())
@@ -153,9 +149,22 @@ class MainActivity : ComponentActivity() {
     private fun areToolPermissionsGranted(toolName: String): Boolean =
         toolRegistry.permissionRequirementsFor(toolName).all { requirement ->
             requirement.isSatisfied { permission ->
-                ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+                isToolPermissionGranted(permission)
             }
         }
+
+    private fun isToolPermissionGranted(permission: String): Boolean = when (permission) {
+        Manifest.permission.POST_NOTIFICATIONS ->
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+        else -> ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun completePendingToolPermissionRequest() {
+        val pendingRequest = pendingToolPermissionRequest
+        pendingToolPermissionRequest = null
+        pendingRequest?.onResult?.invoke(areToolPermissionsGranted(pendingRequest.toolName))
+    }
 
     private fun requestPostNotificationsPermission() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return

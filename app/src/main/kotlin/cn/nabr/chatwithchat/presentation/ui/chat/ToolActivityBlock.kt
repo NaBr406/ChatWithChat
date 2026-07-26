@@ -18,9 +18,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Alarm
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Event
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.LocationOn
@@ -34,6 +36,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -64,13 +67,16 @@ private const val WEB_SEARCH_TOOL = "web_search"
 private const val FETCH_URL_TOOL = "fetch_url"
 private const val CURRENT_DATETIME_TOOL = "current_datetime"
 private const val DEVICE_LOCATION_TOOL = "device_location"
+private const val ADD_SCHEDULE_TOOL = "add_schedule"
+private const val SET_ALARM_TOOL = "set_alarm"
 private const val TOOL_PERMISSION_DENIED = "tool_permission_denied"
 private const val MAX_VISIBLE_TOOL_ROWS = 4
 
 @Composable
 fun ToolActivityBlock(
     progressStates: List<ChatViewModel.ToolProgressState>,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onRetryAfterPermission: () -> Unit = {}
 ) {
     val visibleStates = remember(progressStates) { progressStates.latestVisibleStates() }
     if (visibleStates.isEmpty()) return
@@ -88,7 +94,10 @@ fun ToolActivityBlock(
         Column {
             visibleStates.forEachIndexed { index, state ->
                 key(state.toolName, state.label) {
-                    ToolActivityRow(state = state)
+                    ToolActivityRow(
+                        state = state,
+                        onRetryAfterPermission = onRetryAfterPermission
+                    )
                 }
                 if (index < visibleStates.lastIndex) {
                     HorizontalDivider(
@@ -103,13 +112,27 @@ fun ToolActivityBlock(
 }
 
 @Composable
-private fun ToolActivityRow(state: ChatViewModel.ToolProgressState) {
+private fun ToolActivityRow(
+    state: ChatViewModel.ToolProgressState,
+    onRetryAfterPermission: () -> Unit
+) {
     val materialColors = settingsMaterialColors()
     val toolPermissionRequester = LocalToolPermissionRequester.current
     var showPermissionRationale by remember(state.toolName, state.label) { mutableStateOf(false) }
     var isPermissionGranted by remember(state.toolName, state.label, state.errorCode) { mutableStateOf(false) }
     val isPermissionFailure = state.errorCode == TOOL_PERMISSION_DENIED
     val detail = state.secondaryText(isPermissionGranted)
+
+    LaunchedEffect(state.toolName, state.label, state.errorCode) {
+        if (isPermissionFailure &&
+            (state.toolName == ADD_SCHEDULE_TOOL || state.toolName == SET_ALARM_TOOL)
+        ) {
+            toolPermissionRequester.requestToolPermissions(state.toolName) { granted ->
+                isPermissionGranted = granted
+                if (granted) onRetryAfterPermission()
+            }
+        }
+    }
 
     Row(
         modifier = Modifier
@@ -175,6 +198,7 @@ private fun ToolActivityRow(state: ChatViewModel.ToolProgressState) {
                 showPermissionRationale = false
                 toolPermissionRequester.requestToolPermissions(state.toolName) { granted ->
                     isPermissionGranted = granted
+                    if (granted) onRetryAfterPermission()
                 }
             },
             onDismissRequest = {},
@@ -241,6 +265,8 @@ private fun ChatViewModel.ToolProgressState.primaryText(): String = when (status
         FETCH_URL_TOOL -> stringResource(R.string.tool_fetch_url_running)
         CURRENT_DATETIME_TOOL -> stringResource(R.string.tool_current_datetime_running)
         DEVICE_LOCATION_TOOL -> stringResource(R.string.tool_device_location_running)
+        ADD_SCHEDULE_TOOL -> stringResource(R.string.tool_add_schedule_running)
+        SET_ALARM_TOOL -> stringResource(R.string.tool_set_alarm_running)
         else -> stringResource(R.string.tool_running)
     }
     ChatViewModel.ToolProgressStatus.Finished -> when (toolName) {
@@ -248,6 +274,8 @@ private fun ChatViewModel.ToolProgressState.primaryText(): String = when (status
         FETCH_URL_TOOL -> stringResource(R.string.tool_fetch_url_finished)
         CURRENT_DATETIME_TOOL -> stringResource(R.string.tool_current_datetime_finished)
         DEVICE_LOCATION_TOOL -> stringResource(R.string.tool_device_location_finished)
+        ADD_SCHEDULE_TOOL -> stringResource(R.string.tool_add_schedule_finished)
+        SET_ALARM_TOOL -> stringResource(R.string.tool_set_alarm_finished)
         else -> stringResource(R.string.tool_finished)
     }
     ChatViewModel.ToolProgressStatus.Failed -> when (toolName) {
@@ -255,6 +283,8 @@ private fun ChatViewModel.ToolProgressState.primaryText(): String = when (status
         FETCH_URL_TOOL -> stringResource(R.string.tool_fetch_url_failed)
         CURRENT_DATETIME_TOOL -> stringResource(R.string.tool_current_datetime_failed)
         DEVICE_LOCATION_TOOL -> stringResource(R.string.tool_device_location_failed)
+        ADD_SCHEDULE_TOOL -> stringResource(R.string.tool_add_schedule_failed)
+        SET_ALARM_TOOL -> stringResource(R.string.tool_set_alarm_failed)
         else -> stringResource(R.string.tool_failed)
     }
 }
@@ -276,6 +306,8 @@ private fun ChatViewModel.ToolProgressState.toolDisplayName(): String = when (to
     FETCH_URL_TOOL -> stringResource(R.string.tool_fetch_url_title)
     CURRENT_DATETIME_TOOL -> stringResource(R.string.tool_current_datetime_title)
     DEVICE_LOCATION_TOOL -> stringResource(R.string.tool_device_location_title)
+    ADD_SCHEDULE_TOOL -> stringResource(R.string.tool_add_schedule_title)
+    SET_ALARM_TOOL -> stringResource(R.string.tool_set_alarm_title)
     else -> toolName.replace('_', ' ')
 }
 
@@ -284,6 +316,8 @@ private fun String.toolVisual(): Pair<ImageVector, Color> = when (this) {
     FETCH_URL_TOOL -> Icons.Rounded.Language to AppleIndigo
     CURRENT_DATETIME_TOOL -> Icons.Rounded.Schedule to AppleOrange
     DEVICE_LOCATION_TOOL -> Icons.Rounded.LocationOn to AppleGreen
+    ADD_SCHEDULE_TOOL -> Icons.Rounded.Event to AppleBlue
+    SET_ALARM_TOOL -> Icons.Rounded.Alarm to AppleRed
     else -> Icons.Rounded.Extension to ApplePurple
 }
 
