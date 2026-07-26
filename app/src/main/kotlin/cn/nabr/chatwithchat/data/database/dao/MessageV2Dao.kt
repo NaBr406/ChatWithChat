@@ -27,6 +27,13 @@ interface MessageV2Dao {
     )
     suspend fun searchMessagesByContent(query: String): List<Int>
 
+    @Query(
+        "SELECT COUNT(*) FROM messages_v2 " +
+            "WHERE sticker_refs LIKE '%' || :assetKey || '%' OR " +
+            "revisions LIKE '%' || :assetKey || '%'"
+    )
+    suspend fun countStickerAssetReferences(assetKey: String): Int
+
     @Insert
     suspend fun addMessages(vararg messages: MessageV2)
 

@@ -38,6 +38,9 @@ data class MessageV2(
     @ColumnInfo(name = "attachments")
     val attachments: List<ChatAttachment> = listOf(),
 
+    @ColumnInfo(name = "sticker_refs")
+    val stickerRefs: List<MessageStickerRef> = emptyList(),
+
     @ColumnInfo(name = "revisions")
     val revisions: List<AssistantRevision> = listOf(),
 
@@ -61,11 +64,21 @@ data class MessageV2(
 )
 
 @Serializable
+data class MessageStickerRef(
+    val instanceId: String,
+    val stickerId: String,
+    val assetKey: String,
+    val altText: String,
+    val mediaKind: String = "static_raster"
+)
+
+@Serializable
 data class AssistantRevision(
     val content: String,
     val thoughts: String = "",
     val createdAt: Long,
-    val tokenUsage: TokenUsageRecord? = null
+    val tokenUsage: TokenUsageRecord? = null,
+    val stickerRefs: List<MessageStickerRef> = emptyList()
 )
 
 @Serializable
@@ -105,12 +118,19 @@ fun MessageV2.effectiveThoughts(): String = revisions
     ?.thoughts
     ?: thoughts
 
+fun MessageV2.effectiveStickerRefs(): List<MessageStickerRef> = revisions
+    .getOrNull(activeRevisionIndex)
+    ?.stickerRefs
+    ?: stickerRefs
+
 fun MessageV2.effectiveTokenUsage(): TokenUsageRecord? = revisions
     .getOrNull(activeRevisionIndex)
     ?.tokenUsage
     ?: tokenUsage
 
-fun MessageV2.isEffectivelyBlank(): Boolean = effectiveContent().isBlank() && attachments.isEmpty()
+fun MessageV2.isEffectivelyBlank(): Boolean = effectiveContent().isBlank() &&
+    attachments.isEmpty() &&
+    effectiveStickerRefs().isEmpty()
 
 fun MessageV2.resetActiveRevision(): MessageV2 = copy(activeRevisionIndex = ACTIVE_REVISION_LATEST)
 
@@ -120,12 +140,13 @@ fun MessageV2.selectRevision(index: Int): MessageV2 = copy(
 
 fun MessageV2.snapshotLatestAssistantRevision(timestamp: Long = System.currentTimeMillis() / 1000): AssistantRevision? {
     if (platformType == null) return null
-    if (content.isBlank() && thoughts.isBlank()) return null
+    if (content.isBlank() && thoughts.isBlank() && stickerRefs.isEmpty()) return null
 
     return AssistantRevision(
         content = content,
         thoughts = thoughts,
         createdAt = timestamp,
-        tokenUsage = tokenUsage
+        tokenUsage = tokenUsage,
+        stickerRefs = stickerRefs
     )
 }

@@ -21,6 +21,7 @@ import cn.nabr.chatwithchat.data.database.dao.MessageDao
 import cn.nabr.chatwithchat.data.database.dao.MessageV2Dao
 import cn.nabr.chatwithchat.data.database.dao.PlatformModelV2Dao
 import cn.nabr.chatwithchat.data.database.dao.PlatformV2Dao
+import cn.nabr.chatwithchat.data.database.dao.StickerCatalogDao
 import javax.inject.Singleton
 
 @Module
@@ -63,6 +64,9 @@ object DatabaseModule {
     fun provideMemoryActivityLogDao(chatDatabaseV2: ChatDatabaseV2): MemoryActivityLogDao = chatDatabaseV2.memoryActivityLogDao()
 
     @Provides
+    fun provideStickerCatalogDao(chatDatabaseV2: ChatDatabaseV2): StickerCatalogDao = chatDatabaseV2.stickerCatalogDao()
+
+    @Provides
     @Singleton
     fun provideChatDatabase(@ApplicationContext appContext: Context): ChatDatabase = Room.databaseBuilder(
         appContext,
@@ -92,6 +96,7 @@ object DatabaseModule {
         ChatDatabaseV2Migrations.MIGRATION_13_14,
         ChatDatabaseV2Migrations.MIGRATION_14_15,
         ChatDatabaseV2Migrations.MIGRATION_15_16,
-        ChatDatabaseV2Migrations.MIGRATION_16_17
+        ChatDatabaseV2Migrations.MIGRATION_16_17,
+        ChatDatabaseV2Migrations.MIGRATION_17_18
     ).build()
 }

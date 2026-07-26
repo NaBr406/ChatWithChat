@@ -12,6 +12,7 @@ import cn.nabr.chatwithchat.data.database.dao.MemoryTurnBatchDao
 import cn.nabr.chatwithchat.data.database.dao.MessageV2Dao
 import cn.nabr.chatwithchat.data.database.dao.PlatformModelV2Dao
 import cn.nabr.chatwithchat.data.database.dao.PlatformV2Dao
+import cn.nabr.chatwithchat.data.database.dao.StickerCatalogDao
 import cn.nabr.chatwithchat.data.database.entity.AssistantRevisionListConverter
 import cn.nabr.chatwithchat.data.database.entity.ChatAttachmentListConverter
 import cn.nabr.chatwithchat.data.database.entity.ChatPlatformModelV2
@@ -25,9 +26,13 @@ import cn.nabr.chatwithchat.data.database.entity.MemoryMutationGroup
 import cn.nabr.chatwithchat.data.database.entity.MemoryMutationReceipt
 import cn.nabr.chatwithchat.data.database.entity.MemoryPendingTurn
 import cn.nabr.chatwithchat.data.database.entity.MessageSourceMetadataListConverter
+import cn.nabr.chatwithchat.data.database.entity.MessageStickerRefListConverter
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformModelV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
+import cn.nabr.chatwithchat.data.database.entity.StickerAssetEntity
+import cn.nabr.chatwithchat.data.database.entity.StickerItemEntity
+import cn.nabr.chatwithchat.data.database.entity.StickerPackEntity
 import cn.nabr.chatwithchat.data.database.entity.StringListConverter
 import cn.nabr.chatwithchat.data.database.entity.TokenUsageRecordConverter
 
@@ -45,14 +50,18 @@ import cn.nabr.chatwithchat.data.database.entity.TokenUsageRecordConverter
         MemoryDistillationCheckpoint::class,
         MemoryChatCheckpoint::class,
         MemoryPendingTurn::class,
-        MemoryActivityLog::class
+        MemoryActivityLog::class,
+        StickerPackEntity::class,
+        StickerAssetEntity::class,
+        StickerItemEntity::class
     ],
-    version = 17,
+    version = 18,
     exportSchema = true
 )
 @TypeConverters(
     StringListConverter::class,
     ChatAttachmentListConverter::class,
+    MessageStickerRefListConverter::class,
     AssistantRevisionListConverter::class,
     MessageSourceMetadataListConverter::class,
     TokenUsageRecordConverter::class
@@ -68,4 +77,5 @@ abstract class ChatDatabaseV2 : RoomDatabase() {
     abstract fun memoryRecoveryDao(): MemoryRecoveryDao
     abstract fun memoryTurnBatchDao(): MemoryTurnBatchDao
     abstract fun memoryActivityLogDao(): MemoryActivityLogDao
+    abstract fun stickerCatalogDao(): StickerCatalogDao
 }

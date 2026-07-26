@@ -284,6 +284,26 @@ class ChatDatabaseV2MigrationsTest {
         )
     }
 
+    @Test
+    fun `migration 17 to 18 adds sticker payload and catalog tables`() {
+        val executedSql = mutableListOf<String>()
+        val db = recordingDatabase(executedSql)
+
+        ChatDatabaseV2Migrations.MIGRATION_17_18.migrate(db)
+
+        val migrationSql = executedSql.joinToString(separator = "\n")
+        assertTrue(executedSql.any { it == "ALTER TABLE messages_v2 ADD COLUMN sticker_refs TEXT NOT NULL DEFAULT ''" })
+        assertTrue(migrationSql.contains("CREATE TABLE IF NOT EXISTS `sticker_packs`"))
+        assertTrue(migrationSql.contains("CREATE TABLE IF NOT EXISTS `sticker_assets`"))
+        assertTrue(migrationSql.contains("CREATE TABLE IF NOT EXISTS `sticker_items`"))
+        assertTrue(migrationSql.contains("`aliases_json` TEXT NOT NULL"))
+        assertTrue(migrationSql.contains("FOREIGN KEY(`pack_id`) REFERENCES `sticker_packs`(`pack_id`)"))
+        assertTrue(migrationSql.contains("FOREIGN KEY(`asset_key`) REFERENCES `sticker_assets`(`asset_key`)"))
+        assertTrue(executedSql.any { it == "CREATE INDEX IF NOT EXISTS `index_sticker_items_pack_id` ON `sticker_items` (`pack_id`)" })
+        assertTrue(executedSql.any { it == "CREATE INDEX IF NOT EXISTS `index_sticker_items_asset_key` ON `sticker_items` (`asset_key`)" })
+        assertTrue(executedSql.any { it == "CREATE INDEX IF NOT EXISTS `index_sticker_items_enabled` ON `sticker_items` (`enabled`)" })
+    }
+
     private fun recordingDatabase(executedSql: MutableList<String>): SupportSQLiteDatabase = Proxy.newProxyInstance(
         SupportSQLiteDatabase::class.java.classLoader,
         arrayOf(SupportSQLiteDatabase::class.java),

@@ -158,7 +158,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
             .addMigrations(
                 ChatDatabaseV2Migrations.MIGRATION_14_15,
                 ChatDatabaseV2Migrations.MIGRATION_15_16,
-                ChatDatabaseV2Migrations.MIGRATION_16_17
+                ChatDatabaseV2Migrations.MIGRATION_16_17,
+                ChatDatabaseV2Migrations.MIGRATION_17_18
             )
             .build()
         try {
@@ -272,7 +273,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
         val roomDatabase = Room.databaseBuilder(context, ChatDatabaseV2::class.java, TEST_DATABASE)
             .addMigrations(
                 ChatDatabaseV2Migrations.MIGRATION_15_16,
-                ChatDatabaseV2Migrations.MIGRATION_16_17
+                ChatDatabaseV2Migrations.MIGRATION_16_17,
+                ChatDatabaseV2Migrations.MIGRATION_17_18
             )
             .build()
         try {
@@ -323,7 +325,7 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                     assertEquals("dismissed", roomDatabase.memoryMaintenanceJobDao().getById(jobId)?.status)
                 }
             }
-            assertEquals(SCHEMA_17_TABLES, roomDatabase.openHelper.writableDatabase.userTableNames())
+            assertEquals(SCHEMA_18_TABLES, roomDatabase.openHelper.writableDatabase.userTableNames())
             assertLegacySemanticTablesAbsent(roomDatabase.openHelper.writableDatabase)
         } finally {
             roomDatabase.close()
@@ -399,15 +401,88 @@ class ChatDatabaseV2MigrationInstrumentedTest {
     }
 
     @Test
-    fun freshSchema17_opensAndReopensWithExactlyRetainedTables() {
+    fun migration17To18_preservesMessagesAndCreatesStickerCatalog() {
+        migrationHelper.createDatabase(TEST_DATABASE, 17).apply {
+            execSQL(
+                "INSERT INTO chats_v2 (chat_id, title, enabled_platform, created_at, updated_at) VALUES (1, 'sticker chat', '', 1, 1)"
+            )
+            execSQL(
+                """
+                INSERT INTO messages_v2 (
+                    message_id, chat_id, thoughts, content, attachments, revisions,
+                    active_revision_index, source_metadata, token_usage, linked_message_id,
+                    platform_type, created_at
+                ) VALUES (1, 1, '', 'existing assistant text', '', '[]', -1, '', NULL, 0, 'provider-1', 2)
+                """.trimIndent()
+            )
+            close()
+        }
+
+        migrationHelper.runMigrationsAndValidate(
+            TEST_DATABASE,
+            18,
+            true,
+            ChatDatabaseV2Migrations.MIGRATION_17_18
+        ).use { database ->
+            assertEquals("", database.singleString("SELECT sticker_refs FROM messages_v2 WHERE message_id = 1"))
+            assertEquals(SCHEMA_18_TABLES, database.userTableNames())
+            database.execSQL(
+                "INSERT INTO sticker_packs (pack_id, display_name, is_builtin, created_at, updated_at) VALUES ('user.my_stickers', 'My stickers', 0, 3, 3)"
+            )
+            database.execSQL(
+                """
+                INSERT INTO sticker_assets (
+                    asset_key, storage_kind, relative_path, media_kind, mime_type,
+                    poster_asset_key, duration_ms, loop_count, byte_size, width, height
+                ) VALUES (
+                    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                    'local_file', 'assets/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jpg',
+                    'static_raster', 'image/jpeg', NULL, NULL, NULL, 12, 4, 3
+                )
+                """.trimIndent()
+            )
+            database.execSQL(
+                """
+                INSERT INTO sticker_items (
+                    sticker_id, pack_id, asset_key, title, alt_text, tags_json,
+                    aliases_json, enabled, is_builtin, created_at, updated_at
+                ) VALUES (
+                    'user.fixture', 'user.my_stickers',
+                    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                    'fixture', 'fixture alt', '[]', '[]', 1, 0, 3, 3
+                )
+                """.trimIndent()
+            )
+            database.query("PRAGMA foreign_key_check").use { cursor ->
+                assertEquals(0, cursor.count)
+            }
+            assertEquals("ok", database.singleString("PRAGMA integrity_check"))
+        }
+
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val roomDatabase = Room.databaseBuilder(context, ChatDatabaseV2::class.java, TEST_DATABASE)
+            .addMigrations(ChatDatabaseV2Migrations.MIGRATION_17_18)
+            .build()
+        try {
+            runBlocking {
+                assertTrue(roomDatabase.messageDao().loadMessages(1).single().stickerRefs.isEmpty())
+                assertEquals("user.fixture", roomDatabase.stickerCatalogDao().getItem("user.fixture")?.stickerId)
+            }
+        } finally {
+            roomDatabase.close()
+        }
+    }
+
+    @Test
+    fun freshSchema18_opensAndReopensWithStickerCatalogTables() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val freshDatabase = Room.databaseBuilder(context, ChatDatabaseV2::class.java, TEST_DATABASE).build()
         try {
             val database = freshDatabase
             val sqliteDatabase = database.openHelper.writableDatabase
-            assertEquals(SCHEMA_17_TABLES, sqliteDatabase.userTableNames())
+            assertEquals(SCHEMA_18_TABLES, sqliteDatabase.userTableNames())
             assertLegacySemanticTablesAbsent(sqliteDatabase)
-            assertEquals(17L, sqliteDatabase.singleLong("PRAGMA user_version"))
+            assertEquals(18L, sqliteDatabase.singleLong("PRAGMA user_version"))
             sqliteDatabase.query("PRAGMA foreign_key_check").use { cursor ->
                 assertEquals(0, cursor.count)
             }
@@ -420,9 +495,9 @@ class ChatDatabaseV2MigrationInstrumentedTest {
         try {
             val database = reopenedDatabase
             val sqliteDatabase = database.openHelper.writableDatabase
-            assertEquals(SCHEMA_17_TABLES, sqliteDatabase.userTableNames())
+            assertEquals(SCHEMA_18_TABLES, sqliteDatabase.userTableNames())
             assertLegacySemanticTablesAbsent(sqliteDatabase)
-            assertEquals(17L, sqliteDatabase.singleLong("PRAGMA user_version"))
+            assertEquals(18L, sqliteDatabase.singleLong("PRAGMA user_version"))
             assertEquals("ok", sqliteDatabase.singleString("PRAGMA integrity_check"))
             runBlocking {
                 assertTrue(database.chatRoomDao().getChatRooms().isEmpty())
@@ -932,6 +1007,11 @@ class ChatDatabaseV2MigrationInstrumentedTest {
             "memory_chat_checkpoint",
             "memory_pending_turn",
             "memory_activity_log"
+        )
+        private val SCHEMA_18_TABLES = SCHEMA_17_TABLES + setOf(
+            "sticker_packs",
+            "sticker_assets",
+            "sticker_items"
         )
         private val LEGACY_SEMANTIC_TABLES = setOf("personal_memory", "chat_classification")
         private val SCHEMA_16_TABLES = SCHEMA_17_TABLES + LEGACY_SEMANTIC_TABLES

@@ -347,6 +347,65 @@ object ChatDatabaseV2Migrations {
         }
     }
 
+    val MIGRATION_17_18 = object : Migration(17, 18) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE messages_v2 ADD COLUMN sticker_refs TEXT NOT NULL DEFAULT ''")
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `sticker_packs` (
+                    `pack_id` TEXT NOT NULL,
+                    `display_name` TEXT NOT NULL,
+                    `is_builtin` INTEGER NOT NULL,
+                    `created_at` INTEGER NOT NULL,
+                    `updated_at` INTEGER NOT NULL,
+                    PRIMARY KEY(`pack_id`)
+                )
+                """.trimIndent()
+            )
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `sticker_assets` (
+                    `asset_key` TEXT NOT NULL,
+                    `storage_kind` TEXT NOT NULL,
+                    `relative_path` TEXT NOT NULL,
+                    `media_kind` TEXT NOT NULL,
+                    `mime_type` TEXT NOT NULL,
+                    `poster_asset_key` TEXT,
+                    `duration_ms` INTEGER,
+                    `loop_count` INTEGER,
+                    `byte_size` INTEGER NOT NULL,
+                    `width` INTEGER NOT NULL,
+                    `height` INTEGER NOT NULL,
+                    PRIMARY KEY(`asset_key`)
+                )
+                """.trimIndent()
+            )
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `sticker_items` (
+                    `sticker_id` TEXT NOT NULL,
+                    `pack_id` TEXT NOT NULL,
+                    `asset_key` TEXT NOT NULL,
+                    `title` TEXT NOT NULL,
+                    `alt_text` TEXT NOT NULL,
+                    `tags_json` TEXT NOT NULL,
+                    `aliases_json` TEXT NOT NULL,
+                    `enabled` INTEGER NOT NULL,
+                    `is_builtin` INTEGER NOT NULL,
+                    `created_at` INTEGER NOT NULL,
+                    `updated_at` INTEGER NOT NULL,
+                    PRIMARY KEY(`sticker_id`),
+                    FOREIGN KEY(`pack_id`) REFERENCES `sticker_packs`(`pack_id`) ON UPDATE NO ACTION ON DELETE CASCADE,
+                    FOREIGN KEY(`asset_key`) REFERENCES `sticker_assets`(`asset_key`) ON UPDATE NO ACTION ON DELETE NO ACTION
+                )
+                """.trimIndent()
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_sticker_items_pack_id` ON `sticker_items` (`pack_id`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_sticker_items_asset_key` ON `sticker_items` (`asset_key`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_sticker_items_enabled` ON `sticker_items` (`enabled`)")
+        }
+    }
+
     internal fun legacyFilesToAttachmentsJson(filesValue: String): String {
         val attachments = filesValue
             .split(",")

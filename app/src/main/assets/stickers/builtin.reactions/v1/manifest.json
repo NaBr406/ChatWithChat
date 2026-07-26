@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "packId": "builtin.reactions",
+  "displayName": "内置表情",
+  "items": [
+    {
+      "stickerId": "builtin.reactions.qq_penguin_heartbroken",
+      "assetPath": "stickers/builtin.reactions/v1/qq_penguin_heartbroken.jpg",
+      "sha256": "ffb2ef70da693e5340279baa57c42a6d2090a18d4f91431d150cc444228b4ed9",
+      "mimeType": "image/jpeg",
+      "mediaKind": "static_raster",
+      "title": "企鹅心碎",
+      "altText": "一只心碎难过的企鹅",
+      "tags": ["心碎", "失落", "难过", "失望"],
+      "aliases": ["企鹅哭泣", "brokenhearted penguin"],
+      "byteSize": 29055,
+      "width": 444,
+      "height": 439
+    },
+    {
+      "stickerId": "builtin.reactions.crying_cat",
+      "assetPath": "stickers/builtin.reactions/v1/crying_cat.jpg",
+      "sha256": "659fdfbdbc94762b6db542287f218bc345fa98f274377e51cfdac77b03be2440",
+      "mimeType": "image/jpeg",
+      "mediaKind": "static_raster",
+      "title": "小猫痛哭",
+      "altText": "一只委屈痛哭的小猫",
+      "tags": ["痛哭", "委屈", "悲伤", "难过"],
+      "aliases": ["哭哭猫", "大哭"],
+      "byteSize": 14094,
+      "width": 402,
+      "height": 382
+    },
+    {
+      "stickerId": "builtin.reactions.soul_stare_cat",
+      "assetPath": "stickers/builtin.reactions/v1/soul_stare_cat.jpg",
+      "sha256": "0fe0d199124e2e05d9e1412d059a64e648ff8cf14a495bb3194ebc3d58c89af5",
+      "mimeType": "image/jpeg",
+      "mediaKind": "static_raster",
+      "title": "直视灵魂的大脸猫",
+      "altText": "一只大脸猫沉默凝视",
+      "tags": ["凝视", "无语", "沉默", "尴尬"],
+      "aliases": ["猫猫凝视", "灵魂拷问"],
+      "byteSize": 50111,
+      "width": 831,
+      "height": 831
+    }
+  ]
+}
