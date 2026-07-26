@@ -54,6 +54,38 @@ class ToolResultTest {
     }
 
     @Test
+    fun `presentation artifacts stay local to the tool execution path`() {
+        val result = ToolResult(
+            callId = "call_local",
+            name = "local_presentation",
+            content = "Selected",
+            presentationArtifacts = listOf(TestPresentationArtifact("local_only_artifact"))
+        )
+
+        val serialized = toolProtocolJson.encodeToString(result)
+        val decoded = toolProtocolJson.decodeFromString<ToolResult>(serialized)
+
+        assertFalse(serialized.contains("presentationArtifacts"))
+        assertFalse(serialized.contains("TestPresentationArtifact"))
+        assertFalse(serialized.contains("local_only_artifact"))
+        assertTrue(decoded.presentationArtifacts.isEmpty())
+        assertEquals(result.copy(presentationArtifacts = emptyList()), decoded)
+    }
+
+    @Test
+    fun `bounding preserves local presentation artifacts on successful results`() {
+        val artifact = TestPresentationArtifact("local_artifact")
+        val bounded = ToolResult(
+            callId = "call_local",
+            name = "local_presentation",
+            content = "Selected",
+            presentationArtifacts = listOf(artifact)
+        ).boundPayload(ToolResultBounds(maxContentChars = 100)).result
+
+        assertEquals(listOf(artifact), bounded.presentationArtifacts)
+    }
+
+    @Test
     fun `bounding clips text and drops oversized structured content without truncating json`() {
         val result = ToolResult(
             callId = "call_3",
@@ -209,3 +241,7 @@ class ToolResultTest {
         assertTrue(ToolResultPayloadPart.STRUCTURED_CONTENT in bounded.droppedPayloadParts)
     }
 }
+
+private data class TestPresentationArtifact(
+    override val instanceId: String
+) : ToolPresentationArtifact

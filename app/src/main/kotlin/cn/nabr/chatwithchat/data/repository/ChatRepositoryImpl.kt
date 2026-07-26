@@ -6,6 +6,7 @@ import cn.nabr.chatwithchat.data.context.ContextBuilder
 import cn.nabr.chatwithchat.data.context.ConversationContext
 import cn.nabr.chatwithchat.data.context.ConversationTurn
 import cn.nabr.chatwithchat.data.context.ProviderContextPolicy
+import cn.nabr.chatwithchat.data.context.semanticAssistantContent
 import cn.nabr.chatwithchat.data.database.ChatDatabaseV2
 import cn.nabr.chatwithchat.data.database.dao.ChatPlatformModelV2Dao
 import cn.nabr.chatwithchat.data.database.dao.ChatRoomDao
@@ -23,6 +24,8 @@ import cn.nabr.chatwithchat.data.database.entity.effectiveContent
 import cn.nabr.chatwithchat.data.database.entity.safeDedupeKey
 import cn.nabr.chatwithchat.data.debug.PromptTraceStage
 import cn.nabr.chatwithchat.data.debug.PromptTraceStore
+import cn.nabr.chatwithchat.data.sticker.StickerPresentationArtifact
+import cn.nabr.chatwithchat.data.sticker.toMessageStickerRef
 import cn.nabr.chatwithchat.data.dto.ApiState
 import cn.nabr.chatwithchat.data.dto.ProviderUsage
 import cn.nabr.chatwithchat.data.dto.anthropic.common.ImageContent as AnthropicImageContent
@@ -100,6 +103,7 @@ import cn.nabr.chatwithchat.data.tool.ToolArgumentStreamLimiter
 import cn.nabr.chatwithchat.data.tool.ToolCall
 import cn.nabr.chatwithchat.data.tool.ToolCallingMode
 import cn.nabr.chatwithchat.data.tool.ToolDefinition
+import cn.nabr.chatwithchat.data.tool.ToolEnablementGroup
 import cn.nabr.chatwithchat.data.tool.ToolEnablementOverrides
 import cn.nabr.chatwithchat.data.tool.ToolEnablementResolver
 import cn.nabr.chatwithchat.data.tool.ToolLoopConfig
@@ -260,8 +264,18 @@ class ChatRepositoryImpl @Inject constructor(
             .getOrNull()
             ?: WebSearchMode.Off
         val toolEnablementOverrides = runCatching { settingRepository.fetchToolEnablementOverrides() }.getOrNull()
+        val automaticStickerRepliesEnabled = runCatching {
+            settingRepository.fetchAutomaticStickerRepliesEnabled()
+        }.getOrDefault(true)
         val activeToolDefinitions = toolEnablementOverrides
-            ?.let { overrides -> activeToolDefinitions(toolCallingMode, webSearchMode, overrides) }
+            ?.let { overrides ->
+                activeToolDefinitions(
+                    toolCallingMode,
+                    webSearchMode,
+                    overrides,
+                    automaticStickerRepliesEnabled
+                )
+            }
             .orEmpty()
         return if (activeToolDefinitions.isNotEmpty()) {
             when (platform.compatibleType) {
@@ -314,14 +328,21 @@ class ChatRepositoryImpl @Inject constructor(
     private suspend fun activeToolDefinitions(
         toolCallingMode: ToolCallingMode,
         webSearchMode: WebSearchMode,
-        toolEnablementOverrides: ToolEnablementOverrides
+        toolEnablementOverrides: ToolEnablementOverrides,
+        automaticStickerRepliesEnabled: Boolean
     ): List<ToolDefinition> {
-        if (toolCallingMode != ToolCallingMode.Auto) return emptyList()
-
         val enabledToolNames = toolEnablementResolver.enabledToolNames(
             catalog = toolLoopOrchestrator.toolCatalog,
-            overrides = toolEnablementOverrides
+            overrides = toolEnablementOverrides,
+            automaticStickerRepliesEnabled = automaticStickerRepliesEnabled
         )
+        val automaticStickerToolNames = toolLoopOrchestrator.toolCatalog
+            .asSequence()
+            .filter { entry ->
+                entry.settings.enablementGroup == ToolEnablementGroup.AutomaticStickerReplies
+            }
+            .map { entry -> entry.definition.name }
+            .toSet()
 
         val webSearchToolsAvailable = webSearchMode == WebSearchMode.Auto &&
             runCatching { settingRepository.fetchWebSearchSearxngBaseUrl().trim().isNotBlank() }
@@ -329,6 +350,7 @@ class ChatRepositoryImpl @Inject constructor(
 
         return toolLoopOrchestrator.availableToolDefinitions { definition ->
             definition.name in enabledToolNames &&
+                (toolCallingMode == ToolCallingMode.Auto || definition.name in automaticStickerToolNames) &&
                 when (definition.name) {
                     ToolDefinition.WebSearch.name,
                     ToolDefinition.FetchUrl.name -> webSearchToolsAvailable
@@ -473,6 +495,7 @@ class ChatRepositoryImpl @Inject constructor(
                 emit(ApiState.Done)
             }
             is ToolLoopResult.ToolResults -> {
+                emitPresentationArtifacts(loopResult.results)
                 toolLoopOrchestrator.sourceMetadata(loopResult.results)
                     .dedupeMessageSources()
                     .takeIf { it.isNotEmpty() }?.let { sources ->
@@ -589,6 +612,7 @@ class ChatRepositoryImpl @Inject constructor(
             calls = calls,
             tools = activeToolDefinitions
         ) { progress -> emit(progress) }
+        emitPresentationArtifacts(results)
         toolLoopOrchestrator.sourceMetadata(results)
             .dedupeMessageSources()
             .takeIf { it.isNotEmpty() }?.let { sources ->
@@ -608,6 +632,15 @@ class ChatRepositoryImpl @Inject constructor(
         states: Flow<ApiState>,
         decisionUsage: TokenUsageRecord
     ) = emitToolAggregatedProviderStates(states, listOf(decisionUsage))
+
+    private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.emitPresentationArtifacts(
+        results: List<ToolResult>
+    ) {
+        toolLoopOrchestrator.presentationArtifacts(results)
+            .filterIsInstance<StickerPresentationArtifact>()
+            .map(StickerPresentationArtifact::toMessageStickerRef)
+            .forEach { sticker -> emit(ApiState.StickerAdded(sticker)) }
+    }
 
     private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.emitToolAggregatedProviderStates(
         states: Flow<ApiState>,
@@ -822,6 +855,7 @@ class ChatRepositoryImpl @Inject constructor(
                 executionSession = toolExecutionSession
             ) { progress -> emit(progress) }
             allResults += results
+            emitPresentationArtifacts(results)
             toolLoopOrchestrator.sourceMetadata(allResults)
                 .dedupeMessageSources()
                 .takeIf { it.isNotEmpty() }?.let { sources ->
@@ -1068,6 +1102,7 @@ class ChatRepositoryImpl @Inject constructor(
                 executionSession = toolExecutionSession
             ) { progress -> emit(progress) }
             allResults += results
+            emitPresentationArtifacts(results)
             toolLoopOrchestrator.sourceMetadata(allResults)
                 .dedupeMessageSources()
                 .takeIf { it.isNotEmpty() }?.let { sources ->
@@ -1310,6 +1345,7 @@ class ChatRepositoryImpl @Inject constructor(
                 executionSession = toolExecutionSession
             ) { progress -> emit(progress) }
             allResults += results
+            emitPresentationArtifacts(results)
             toolLoopOrchestrator.sourceMetadata(allResults)
                 .dedupeMessageSources()
                 .takeIf { it.isNotEmpty() }?.let { sources ->
@@ -1559,6 +1595,7 @@ class ChatRepositoryImpl @Inject constructor(
                 executionSession = toolExecutionSession
             ) { progress -> emit(progress) }
             allResults += results
+            emitPresentationArtifacts(results)
             toolLoopOrchestrator.sourceMetadata(allResults)
                 .dedupeMessageSources()
                 .takeIf { it.isNotEmpty() }?.let { sources ->
@@ -2978,11 +3015,12 @@ internal fun mergePromptSections(vararg sections: String?): String? = sections
     ?.joinToString(separator = "\n\n")
 
 internal fun MessageV2.sendableAssistantContent(): String {
-    val strippedContent = stripAssistantErrorNote(effectiveContent()).trim()
+    val strippedContent = stripAssistantErrorNote(semanticAssistantContent()).trim()
     return if (isAssistantErrorMessage(strippedContent)) "" else strippedContent
 }
 
-internal fun MessageV2.hasSendableAssistantPayload(): Boolean = sendableAssistantContent().isNotBlank() || attachments.isNotEmpty()
+internal fun MessageV2.hasSendableAssistantPayload(): Boolean =
+    sendableAssistantContent().isNotBlank() || attachments.isNotEmpty()
 
 internal fun validateResponseInputPartsOrThrow(messageContent: String, partCount: Int, messageId: Int) {
     if (messageContent.isBlank() && partCount == 0) {

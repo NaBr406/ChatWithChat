@@ -31,6 +31,11 @@ class ToolLoopOrchestrator(
     fun sourceMetadata(results: List<ToolResult>): List<MessageSourceMetadata> =
         results.flatMap { result -> toolExecutor.sourceMetadata(result) }
 
+    fun presentationArtifacts(results: List<ToolResult>): List<ToolPresentationArtifact> = results
+        .flatMap { result -> toolExecutor.presentationArtifacts(result) }
+        .filter { artifact -> artifact.instanceId.isNotBlank() }
+        .distinctBy { artifact -> artifact.instanceId }
+
     fun createExecutionSession(): ToolLoopExecutionSession = ToolLoopExecutionSession(
         config = config,
         policyFor = toolExecutor::policyFor
@@ -120,9 +125,11 @@ class ToolLoopOrchestrator(
                     val rawResults = executeCallsWithProgress(
                         calls = allowedCalls,
                         activeToolNames = activeToolNames,
+                        sessionState = executionSession.state,
                         onProgress = onProgress
                     ) + rejectedCalls
                     val results = executionSession.bound(rawResults)
+                    results.forEach { result -> toolExecutor.recordSessionResult(result, executionSession.state) }
                     allCalls += calls
                     allResults += results
                     calls.forEach { call -> scratchpad += ToolMessage.modelToolCall(call) }
@@ -173,19 +180,28 @@ class ToolLoopOrchestrator(
         val rawResults = executeCallsWithProgress(
             calls = allowedCalls,
             activeToolNames = activeToolNames,
+            sessionState = executionSession.state,
             onProgress = onProgress
         ) + rejectedCalls
-        return executionSession.bound(rawResults)
+        return executionSession.bound(rawResults).also { results ->
+            results.forEach { result -> toolExecutor.recordSessionResult(result, executionSession.state) }
+        }
     }
 
     private suspend fun executeCallsWithProgress(
         calls: List<ToolCall>,
         activeToolNames: Set<String>,
+        sessionState: ToolExecutionSessionState,
         onProgress: suspend (ApiState) -> Unit
     ): List<ToolResult> = calls.map { call ->
         val label = toolExecutor.progressLabel(call)
         onProgress(ApiState.ToolStarted(call.name, label))
-        var result = toolExecutor.execute(call, activeToolNames, config)
+        var result = toolExecutor.execute(
+            call = call,
+            activeToolNames = activeToolNames,
+            config = config,
+            sessionState = sessionState
+        )
         if (result.metadata["error_code"] == ToolApprovalStatus.MISSING.recoverableErrorCode) {
             when (val decision = toolApprovalBroker?.awaitApproval(call)) {
                 is ToolApprovalBroker.Decision.WithContext -> {
@@ -193,7 +209,8 @@ class ToolLoopOrchestrator(
                         call = call,
                         activeToolNames = activeToolNames,
                         config = config,
-                        executionContext = decision.context
+                        executionContext = decision.context,
+                        sessionState = sessionState
                     )
                 }
                 ToolApprovalBroker.Decision.Unavailable,
@@ -309,6 +326,7 @@ class ToolLoopExecutionSession internal constructor(
 ) {
     private val toolBudget = ToolBudgetState(config, policyFor)
     private val resultPayloadBudget = ToolResultPayloadBudget(config)
+    internal val state = ToolExecutionSessionState()
 
     internal fun select(calls: List<ToolCall>): Pair<List<ToolCall>, List<ToolResult>> {
         val selection = toolBudget.select(calls)

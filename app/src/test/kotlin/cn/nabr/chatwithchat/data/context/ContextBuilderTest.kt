@@ -3,6 +3,7 @@ package cn.nabr.chatwithchat.data.context
 import cn.nabr.chatwithchat.data.database.entity.AppSourceNavigationTarget
 import cn.nabr.chatwithchat.data.database.entity.MessageSourceMetadata
 import cn.nabr.chatwithchat.data.database.entity.MessageSourceType
+import cn.nabr.chatwithchat.data.database.entity.MessageStickerRef
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.database.entity.effectiveContent
@@ -157,6 +158,75 @@ class ContextBuilderTest {
         assertFalse(assistantContext.contains("file://"))
     }
 
+    @Test
+    fun `sticker only assistant history is projected as bounded semantic text`() {
+        val assetKey = "a".repeat(64)
+        val context = ContextBuilder().buildContext(
+            userMessages = listOf(
+                userMessage(1, "I had a difficult day"),
+                userMessage(2, "What should I do next?")
+            ),
+            assistantMessages = listOf(
+                listOf(
+                    assistantMessage(
+                        id = 1,
+                        content = "",
+                        stickerRefs = listOf(
+                            MessageStickerRef(
+                                instanceId = "call_sticker",
+                                stickerId = "builtin.reactions.crying_cat",
+                                assetKey = assetKey,
+                                altText = "A crying cat offering empathy"
+                            )
+                        )
+                    )
+                ),
+                listOf(assistantMessage(2, ""))
+            ),
+            platform = platform(),
+            policy = policy(recentTurnWindow = 2, maxContextTokens = 300, summaryTokenBudget = 80)
+        )
+
+        val assistantContext = context.turns.first().assistantMessage?.effectiveContent().orEmpty()
+        assertTrue(assistantContext.contains("[assistant sent sticker: A crying cat offering empathy]"))
+        assertFalse(assistantContext.contains(assetKey))
+        assertFalse(assistantContext.contains("builtin.reactions.crying_cat"))
+    }
+
+    @Test
+    fun `sticker only assistant history remains in omitted turn summary`() {
+        val context = ContextBuilder().buildContext(
+            userMessages = listOf(
+                userMessage(1, "first turn"),
+                userMessage(2, "second turn"),
+                userMessage(3, "current turn")
+            ),
+            assistantMessages = listOf(
+                listOf(
+                    assistantMessage(
+                        id = 1,
+                        content = "",
+                        stickerRefs = listOf(
+                            MessageStickerRef(
+                                instanceId = "call_sticker",
+                                stickerId = "builtin.reactions.soul_stare_cat",
+                                assetKey = "b".repeat(64),
+                                altText = "A silent staring cat"
+                            )
+                        )
+                    )
+                ),
+                listOf(assistantMessage(2, "second answer")),
+                listOf(assistantMessage(3, ""))
+            ),
+            platform = platform(),
+            policy = policy(recentTurnWindow = 1, maxContextTokens = 300, summaryTokenBudget = 80)
+        )
+
+        assertNotNull(context.summary)
+        assertTrue(context.summary!!.contains("[assistant sent sticker: A silent staring cat]"))
+    }
+
     private fun policy(
         recentTurnWindow: Int,
         maxContextTokens: Int,
@@ -189,11 +259,13 @@ class ContextBuilderTest {
     private fun assistantMessage(
         id: Int,
         content: String,
-        sourceMetadata: List<MessageSourceMetadata> = emptyList()
+        sourceMetadata: List<MessageSourceMetadata> = emptyList(),
+        stickerRefs: List<MessageStickerRef> = emptyList()
     ) = MessageV2(
         id = 100 + id,
         content = content,
         sourceMetadata = sourceMetadata,
+        stickerRefs = stickerRefs,
         platformType = PLATFORM_UID
     )
 

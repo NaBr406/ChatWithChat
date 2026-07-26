@@ -17,6 +17,7 @@ interface SettingDataSource {
     suspend fun updateLastSelectedModel(platformUid: String, model: String, reasoningMode: String)
     suspend fun updateMemoryEnabled(enabled: Boolean)
     suspend fun updateMemoryMaintenanceNotificationsEnabled(enabled: Boolean)
+    suspend fun updateAutomaticStickerRepliesEnabled(enabled: Boolean)
     suspend fun updateToolCallingMode(mode: String)
     suspend fun updateToolEnabled(toolName: String, enabled: Boolean)
     suspend fun updateWebSearchMode(mode: String)
@@ -35,6 +36,7 @@ interface SettingDataSource {
     suspend fun getLastSelectedReasoningMode(): String?
     suspend fun getMemoryEnabled(): Boolean?
     suspend fun getMemoryMaintenanceNotificationsEnabled(): Boolean?
+    suspend fun getAutomaticStickerRepliesEnabled(): Boolean?
     suspend fun getToolCallingMode(): String?
     suspend fun getEnabledToolNames(): Set<String>
     suspend fun getDisabledToolNames(): Set<String>

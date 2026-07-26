@@ -129,6 +129,9 @@ class SettingRepositoryImpl @Inject constructor(
     override suspend fun fetchMemoryMaintenanceNotificationsEnabled(): Boolean =
         settingDataSource.getMemoryMaintenanceNotificationsEnabled() ?: true
 
+    override suspend fun fetchAutomaticStickerRepliesEnabled(): Boolean =
+        settingDataSource.getAutomaticStickerRepliesEnabled() ?: true
+
     override suspend fun fetchToolCallingMode(): ToolCallingMode =
         ToolCallingMode.fromStorageValue(settingDataSource.getToolCallingMode())
 
@@ -225,6 +228,10 @@ class SettingRepositoryImpl @Inject constructor(
 
     override suspend fun updateMemoryMaintenanceNotificationsEnabled(enabled: Boolean) {
         settingDataSource.updateMemoryMaintenanceNotificationsEnabled(enabled)
+    }
+
+    override suspend fun updateAutomaticStickerRepliesEnabled(enabled: Boolean) {
+        settingDataSource.updateAutomaticStickerRepliesEnabled(enabled)
     }
 
     override suspend fun updateToolCallingMode(mode: ToolCallingMode) {

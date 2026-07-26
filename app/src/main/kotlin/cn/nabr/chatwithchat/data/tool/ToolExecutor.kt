@@ -30,7 +30,8 @@ class ToolExecutor(
         call: ToolCall,
         activeToolNames: Set<String>,
         config: ToolLoopConfig = ToolLoopConfig.Default,
-        executionContext: ToolExecutionContext? = null
+        executionContext: ToolExecutionContext? = null,
+        sessionState: ToolExecutionSessionState = ToolExecutionSessionState()
     ): ToolResult {
         if (call.name !in activeToolNames) {
             return call.errorResult("tool_unavailable:${call.name}", TOOL_UNAVAILABLE)
@@ -73,6 +74,10 @@ class ToolExecutor(
             audit(ToolAuditStatus.APPROVAL_INVALID, null, auditBinding)
             return call.approvalResult(ToolApprovalStatus.INVALID)
                 .boundForExecution(maxResultChars)
+        }
+        toolRegistry.validateSessionCall(call, sessionState)?.let { result ->
+            audit(ToolAuditStatus.FAILED, trustedContext, auditBinding)
+            return result.boundForExecution(maxResultChars)
         }
 
         return try {
@@ -125,9 +130,16 @@ class ToolExecutor(
         calls: List<ToolCall>,
         activeToolNames: Set<String>,
         config: ToolLoopConfig = ToolLoopConfig.Default
-    ): List<ToolResult> = calls
-        .take(config.maxToolCallsPerRound.coerceAtLeast(0))
-        .map { call -> execute(call, activeToolNames, config) }
+    ): List<ToolResult> {
+        val sessionState = ToolExecutionSessionState()
+        return calls
+            .take(config.maxToolCallsPerRound.coerceAtLeast(0))
+            .map { call ->
+                execute(call, activeToolNames, config, sessionState = sessionState).also { result ->
+                    recordSessionResult(result, sessionState)
+                }
+            }
+    }
 
     fun progressLabel(call: ToolCall): String = toolRegistry.progressLabel(call)
 
@@ -137,6 +149,13 @@ class ToolExecutor(
     fun policyFor(toolName: String): ToolPolicy = toolRegistry.policyFor(toolName)
 
     fun sourceMetadata(result: ToolResult): List<MessageSourceMetadata> = toolRegistry.sourceMetadata(result)
+
+    fun presentationArtifacts(result: ToolResult): List<ToolPresentationArtifact> =
+        toolRegistry.presentationArtifacts(result)
+
+    internal fun recordSessionResult(result: ToolResult, sessionState: ToolExecutionSessionState) {
+        toolRegistry.recordSessionResult(result, sessionState)
+    }
 
     private suspend fun audit(
         status: ToolAuditStatus,

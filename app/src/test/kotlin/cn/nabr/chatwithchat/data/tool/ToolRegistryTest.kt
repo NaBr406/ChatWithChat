@@ -5,6 +5,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ToolRegistryTest {
@@ -39,6 +40,37 @@ class ToolRegistryTest {
         )
 
         assertEquals("ok", result?.content)
+    }
+
+    @Test
+    fun `presentation artifacts are extracted only from successful provider results`() {
+        val artifact = object : ToolPresentationArtifact {
+            override val instanceId: String = "call_artifact"
+        }
+        val provider = object : ToolProvider {
+            override val definition = ToolDefinition("presentation", "description", ToolDefinition.Parameters())
+            override val securityPolicy: ToolSecurityPolicy = ToolSecurityPolicy.ReadOnlyPublic
+
+            override suspend fun execute(call: ToolCall, config: ToolLoopConfig): ToolResult = ToolResult(
+                callId = call.id,
+                name = call.name,
+                content = "ok",
+                presentationArtifacts = listOf(artifact)
+            )
+
+            override fun presentationArtifacts(result: ToolResult): List<ToolPresentationArtifact> =
+                result.presentationArtifacts
+        }
+        val registry = ToolRegistry(listOf(provider))
+        val successfulResult = ToolResult(
+            callId = "call_artifact",
+            name = provider.definition.name,
+            content = "ok",
+            presentationArtifacts = listOf(artifact)
+        )
+
+        assertEquals(listOf(artifact), registry.presentationArtifacts(successfulResult))
+        assertTrue(registry.presentationArtifacts(successfulResult.copy(isError = true)).isEmpty())
     }
 
     private fun provider(name: String): ToolProvider = object : ToolProvider {

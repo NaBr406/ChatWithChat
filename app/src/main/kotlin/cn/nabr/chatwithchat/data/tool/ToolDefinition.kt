@@ -186,6 +186,53 @@ data class ToolDefinition(
             )
         )
 
-        val BuiltIns = listOf(WebSearch, FetchUrl, CurrentDateTime, DeviceLocation, AddSchedule, SetAlarm)
+        val SearchStickers = ToolDefinition(
+            name = "search_stickers",
+            description = "Search enabled local stickers by a concise semantic query before choosing one. Use stickers sparingly, only when one improves a conversational response with tone or empathy. Search before send_sticker; never guess a sticker ID or repeat the same search.",
+            parameters = Parameters(
+                properties = mapOf(
+                    "query" to Parameter(
+                        type = "string",
+                        description = "Concise emotion, reaction, or conversational-tone query for enabled stickers.",
+                        minLength = 1,
+                        maxLength = 120
+                    ),
+                    "limit" to Parameter(
+                        type = "integer",
+                        description = "Optional maximum number of candidates to return.",
+                        minimum = 1.0,
+                        maximum = 6.0
+                    )
+                ),
+                required = listOf("query")
+            )
+        )
+
+        val SendSticker = ToolDefinition(
+            name = "send_sticker",
+            description = "Select one enabled sticker returned by search_stickers for the current assistant response. Use at most one sticker, only when it adds tone or empathy. Never guess a sticker ID, and do not call this tool for safety-sensitive, medical, legal, account, payment, or error-recovery replies unless the user explicitly asks for that style.",
+            parameters = Parameters(
+                properties = mapOf(
+                    "sticker_id" to Parameter(
+                        type = "string",
+                        description = "Exact sticker_id from the current search_stickers result.",
+                        minLength = 1,
+                        maxLength = 160
+                    )
+                ),
+                required = listOf("sticker_id")
+            )
+        )
+
+        val BuiltIns = listOf(
+            WebSearch,
+            FetchUrl,
+            CurrentDateTime,
+            DeviceLocation,
+            AddSchedule,
+            SetAlarm,
+            SearchStickers,
+            SendSticker
+        )
     }
 }

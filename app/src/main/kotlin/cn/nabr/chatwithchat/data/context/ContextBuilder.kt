@@ -52,7 +52,7 @@ class ContextBuilder @Inject constructor() {
             when {
                 turn.isCurrentTurn -> true
                 turn.assistantMessage == null -> false
-                turn.assistantMessage.effectiveContent().isBlank() && turn.assistantMessage.attachments.isEmpty() -> false
+                turn.assistantMessage.semanticAssistantContent().isBlank() && turn.assistantMessage.attachments.isEmpty() -> false
                 else -> true
             }
         }
@@ -141,7 +141,7 @@ class ContextBuilder @Inject constructor() {
 
         val sanitizedMessage = sanitizeAssistantMessageForContext(message)
         when {
-            sanitizedMessage.effectiveContent().isBlank() && sanitizedMessage.attachments.isEmpty() -> null
+            sanitizedMessage.semanticAssistantContent().isBlank() && sanitizedMessage.attachments.isEmpty() -> null
             isAssistantErrorMessage(sanitizedMessage.content) -> null
             else -> sanitizedMessage
         }
@@ -188,7 +188,7 @@ class ContextBuilder @Inject constructor() {
         }
 
     private fun sanitizeAssistantMessageForContext(message: MessageV2): MessageV2 {
-        val sanitizedContent = stripAssistantErrorNote(message.effectiveContent()).trimEnd()
+        val sanitizedContent = stripAssistantErrorNote(message.semanticAssistantContent()).trimEnd()
             .withSourceContext(message.sourceMetadata)
         return if (sanitizedContent == message.content && message.activeRevisionIndex == ACTIVE_REVISION_LATEST) {
             message
@@ -276,7 +276,7 @@ private object ConversationContextSummarizer {
 
             appendMessageLine(lines, "User", turn.userMessage.content, messageBudget, tokenCounter)
             turn.assistantMessage?.let { assistantMessage ->
-                appendMessageLine(lines, "Assistant", assistantMessage.effectiveContent(), messageBudget, tokenCounter)
+                appendMessageLine(lines, "Assistant", assistantMessage.semanticAssistantContent(), messageBudget, tokenCounter)
             }
         }
 
@@ -359,7 +359,7 @@ private class ContextTokenCounter private constructor(
 
     private fun estimateMessage(message: MessageV2): Int =
         MESSAGE_OVERHEAD_TOKENS +
-            estimateText(message.effectiveContent()) +
+            estimateText(message.semanticAssistantContent()) +
             message.attachments.size * ATTACHMENT_ESTIMATED_TOKENS
 
     private fun estimateTextHeuristic(text: String): Int {

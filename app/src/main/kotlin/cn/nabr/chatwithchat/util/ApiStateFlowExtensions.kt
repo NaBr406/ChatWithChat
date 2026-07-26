@@ -2,6 +2,7 @@ package cn.nabr.chatwithchat.util
 
 import cn.nabr.chatwithchat.data.database.entity.AssistantRevision
 import cn.nabr.chatwithchat.data.database.entity.MessageSourceMetadata
+import cn.nabr.chatwithchat.data.database.entity.MessageStickerRef
 import cn.nabr.chatwithchat.data.database.entity.resetActiveRevision
 import cn.nabr.chatwithchat.data.database.entity.safeDedupeKey
 import cn.nabr.chatwithchat.data.dto.ApiState
@@ -59,6 +60,10 @@ suspend fun Flow<ApiState>.handleStates(
 
                 is ApiState.SourcesUpdated -> {
                     messageFlow.setSourceMetadata(turnIndex, platformIdx, chunk.sources)
+                }
+
+                is ApiState.StickerAdded -> {
+                    messageFlow.addStickerReference(turnIndex, platformIdx, chunk.sticker)
                 }
 
                 is ApiState.UsageUpdated -> {
@@ -227,6 +232,26 @@ private class StreamingMessageBuffer {
     }
 
     private fun hasPendingChanges(): Boolean = content.length != publishedContentLength || thoughts.length != publishedThoughtLength
+}
+
+private fun MutableStateFlow<ChatViewModel.GroupedMessages>.addStickerReference(
+    turnIndex: Int,
+    platformIdx: Int,
+    sticker: MessageStickerRef
+) {
+    update { groupedMessages ->
+        updateAssistantSlot(
+            groupedMessages = groupedMessages,
+            turnIndex = turnIndex,
+            platformIndex = platformIdx
+        ) { currentMessage ->
+            if (currentMessage.stickerRefs.any { ref -> ref.instanceId == sticker.instanceId }) {
+                currentMessage
+            } else {
+                currentMessage.copy(stickerRefs = currentMessage.stickerRefs + sticker)
+            }
+        }
+    }
 }
 
 private enum class AppendResult {

@@ -91,6 +91,38 @@ class ToolEnablementResolverTest {
         assertEquals(setOf("future_disabled"), overrides.disabledToolNames)
     }
 
+    @Test
+    fun `disabling automatic sticker replies only removes sticker group tools`() {
+        val generic = catalogEntry("generic", defaultEnabled = true, isSensitive = false)
+        val sticker = ToolCatalogEntry(
+            definition = ToolDefinition("search_stickers", "description", ToolDefinition.Parameters()),
+            settings = ToolSettingsMetadata(
+                defaultEnabled = true,
+                isSensitive = false,
+                enablementGroup = ToolEnablementGroup.AutomaticStickerReplies
+            ),
+            permissionRequirements = emptyList(),
+            securityPolicy = ToolSecurityPolicy.ReadOnlyPrivate
+        )
+
+        assertEquals(
+            setOf("generic", "search_stickers"),
+            resolver.enabledToolNames(
+                catalog = listOf(generic, sticker),
+                overrides = ToolEnablementOverrides(),
+                automaticStickerRepliesEnabled = true
+            )
+        )
+        assertEquals(
+            setOf("generic"),
+            resolver.enabledToolNames(
+                catalog = listOf(generic, sticker),
+                overrides = ToolEnablementOverrides(enabledToolNames = setOf("search_stickers")),
+                automaticStickerRepliesEnabled = false
+            )
+        )
+    }
+
     private fun catalogEntry(
         name: String,
         defaultEnabled: Boolean,

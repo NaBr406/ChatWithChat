@@ -106,6 +106,20 @@ class ToolRegistry private constructor(
     fun sourceMetadata(result: ToolResult): List<MessageSourceMetadata> =
         providerFor(result.name)?.sourceMetadata(result).orEmpty()
 
+    fun presentationArtifacts(result: ToolResult): List<ToolPresentationArtifact> =
+        if (result.isError) {
+            emptyList()
+        } else {
+            providerFor(result.name)?.presentationArtifacts(result).orEmpty()
+        }
+
+    internal fun validateSessionCall(call: ToolCall, sessionState: ToolExecutionSessionState): ToolResult? =
+        providerFor(call.name)?.validateSessionCall(call, sessionState)
+
+    internal fun recordSessionResult(result: ToolResult, sessionState: ToolExecutionSessionState) {
+        providerFor(result.name)?.onSessionResult(result, sessionState)
+    }
+
     internal suspend fun execute(
         call: ToolCall,
         config: ToolLoopConfig,

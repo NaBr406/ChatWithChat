@@ -6,6 +6,7 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import cn.nabr.chatwithchat.data.sticker.StickerRepository
 import cn.nabr.chatwithchat.data.tool.AndroidAlarmLauncher
 import cn.nabr.chatwithchat.data.tool.AndroidDeviceLocationReader
 import cn.nabr.chatwithchat.data.tool.AndroidScheduleEventLauncher
@@ -35,13 +36,15 @@ object ToolModule {
     fun provideToolProviders(
         webSearchRepository: WebSearchRepository,
         webPageExtractor: WebPageExtractor,
+        stickerRepository: StickerRepository,
         @ApplicationContext context: Context
     ): List<ToolProvider> = BuiltInTools(
         webSearchRepository,
         webPageExtractor,
         AndroidDeviceLocationReader(context),
         AndroidScheduleEventLauncher(context),
-        AndroidAlarmLauncher(context)
+        AndroidAlarmLauncher(context),
+        stickerRepository
     ).providers()
 
     @Provides

@@ -6,8 +6,14 @@ data class ToolSettingsMetadata(
     val defaultEnabled: Boolean = false,
     val isSensitive: Boolean = true,
     val presentationKey: String? = null,
-    val iconKey: String? = null
+    val iconKey: String? = null,
+    val enablementGroup: ToolEnablementGroup = ToolEnablementGroup.General
 )
+
+enum class ToolEnablementGroup {
+    General,
+    AutomaticStickerReplies
+}
 
 enum class ToolCategory {
     Web,

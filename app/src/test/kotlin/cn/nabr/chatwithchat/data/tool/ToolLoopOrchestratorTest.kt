@@ -14,6 +14,41 @@ import org.junit.Test
 class ToolLoopOrchestratorTest {
 
     @Test
+    fun `presentation artifacts are deduplicated by tool call id`() {
+        val first = object : ToolPresentationArtifact {
+            override val instanceId: String = "call_1"
+        }
+        val duplicate = object : ToolPresentationArtifact {
+            override val instanceId: String = "call_1"
+        }
+        val second = object : ToolPresentationArtifact {
+            override val instanceId: String = "call_2"
+        }
+        val provider = object : ToolProvider {
+            override val definition = ToolDefinition("presentation", "description", ToolDefinition.Parameters())
+            override val securityPolicy: ToolSecurityPolicy = ToolSecurityPolicy.ReadOnlyPublic
+
+            override suspend fun execute(call: ToolCall, config: ToolLoopConfig): ToolResult = ToolResult(
+                callId = call.id,
+                name = call.name,
+                content = "ok"
+            )
+
+            override fun presentationArtifacts(result: ToolResult): List<ToolPresentationArtifact> =
+                result.presentationArtifacts
+        }
+        val orchestrator = ToolLoopOrchestrator(ToolExecutor(ToolRegistry(listOf(provider))))
+        val results = listOf(
+            ToolResult("call_1", provider.definition.name, "ok", presentationArtifacts = listOf(first)),
+            ToolResult("call_1", provider.definition.name, "ok", presentationArtifacts = listOf(duplicate)),
+            ToolResult("call_2", provider.definition.name, "ok", presentationArtifacts = listOf(second)),
+            ToolResult("failed", provider.definition.name, "error", isError = true, presentationArtifacts = listOf(second))
+        )
+
+        assertEquals(listOf(first, second), orchestrator.presentationArtifacts(results))
+    }
+
+    @Test
     fun `model final answer path does not execute tools`() = runBlocking {
         val executedCalls = mutableListOf<ToolCall>()
         val orchestrator = ToolLoopOrchestrator(recordingExecutor(executedCalls))

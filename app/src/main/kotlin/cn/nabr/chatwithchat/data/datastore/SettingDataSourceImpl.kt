@@ -74,6 +74,7 @@ class SettingDataSourceImpl @Inject constructor(
     private val lastSelectedReasoningModeKey = stringPreferencesKey("last_selected_reasoning_mode")
     private val memoryEnabledKey = booleanPreferencesKey("memory_enabled")
     private val memoryMaintenanceNotificationsEnabledKey = booleanPreferencesKey("memory_maintenance_notifications_enabled")
+    private val automaticStickerRepliesEnabledKey = booleanPreferencesKey("automatic_sticker_replies_enabled")
     private val toolCallingModeKey = stringPreferencesKey("tool_calling_mode")
     private val enabledToolNamesKey = stringSetPreferencesKey("enabled_tool_names")
     private val disabledToolNamesKey = stringSetPreferencesKey("disabled_tool_names")
@@ -151,6 +152,12 @@ class SettingDataSourceImpl @Inject constructor(
     override suspend fun updateMemoryMaintenanceNotificationsEnabled(enabled: Boolean) {
         dataStore.edit { pref ->
             pref[memoryMaintenanceNotificationsEnabledKey] = enabled
+        }
+    }
+
+    override suspend fun updateAutomaticStickerRepliesEnabled(enabled: Boolean) {
+        dataStore.edit { pref ->
+            pref[automaticStickerRepliesEnabledKey] = enabled
         }
     }
 
@@ -250,6 +257,10 @@ class SettingDataSourceImpl @Inject constructor(
 
     override suspend fun getMemoryMaintenanceNotificationsEnabled(): Boolean? = dataStore.data.map { pref ->
         pref[memoryMaintenanceNotificationsEnabledKey]
+    }.first()
+
+    override suspend fun getAutomaticStickerRepliesEnabled(): Boolean? = dataStore.data.map { pref ->
+        pref[automaticStickerRepliesEnabledKey]
     }.first()
 
     override suspend fun getToolCallingMode(): String? = dataStore.data.map { pref ->

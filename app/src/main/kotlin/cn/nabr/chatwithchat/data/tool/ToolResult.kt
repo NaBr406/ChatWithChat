@@ -1,6 +1,7 @@
 package cn.nabr.chatwithchat.data.tool
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import kotlinx.serialization.json.JsonElement
 
 @Serializable
@@ -11,5 +12,7 @@ data class ToolResult(
     val isError: Boolean = false,
     val metadata: Map<String, String> = emptyMap(),
     val structuredContent: JsonElement? = null,
-    val sources: List<ToolSource> = emptyList()
+    val sources: List<ToolSource> = emptyList(),
+    @Transient
+    val presentationArtifacts: List<ToolPresentationArtifact> = emptyList()
 )

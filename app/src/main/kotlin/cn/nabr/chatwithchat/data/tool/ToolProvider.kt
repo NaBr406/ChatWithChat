@@ -28,6 +28,12 @@ interface ToolProvider {
         executionContext: ToolExecutionContext
     ): ToolResult = execute(call, config)
 
+    fun validateSessionCall(call: ToolCall, sessionState: ToolExecutionSessionState): ToolResult? = null
+
+    fun onSessionResult(result: ToolResult, sessionState: ToolExecutionSessionState) = Unit
+
     fun sourceMetadata(result: ToolResult): List<MessageSourceMetadata> =
         result.sources.toMessageSourceMetadata(definition.name)
+
+    fun presentationArtifacts(result: ToolResult): List<ToolPresentationArtifact> = emptyList()
 }

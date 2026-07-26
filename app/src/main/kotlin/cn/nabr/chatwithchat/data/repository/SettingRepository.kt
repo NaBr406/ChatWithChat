@@ -23,6 +23,7 @@ interface SettingRepository {
     suspend fun fetchLastSelectedModel(): LastSelectedModel?
     suspend fun fetchMemoryEnabled(): Boolean
     suspend fun fetchMemoryMaintenanceNotificationsEnabled(): Boolean
+    suspend fun fetchAutomaticStickerRepliesEnabled(): Boolean = true
     suspend fun fetchToolCallingMode(): ToolCallingMode
     suspend fun fetchDisabledToolNames(): Set<String>
     suspend fun fetchToolEnablementOverrides(): ToolEnablementOverrides = ToolEnablementOverrides(
@@ -36,6 +37,7 @@ interface SettingRepository {
     suspend fun updateLastSelectedModel(platformUid: String, model: String, reasoningMode: ReasoningMode = ReasoningMode.AUTO)
     suspend fun updateMemoryEnabled(enabled: Boolean)
     suspend fun updateMemoryMaintenanceNotificationsEnabled(enabled: Boolean)
+    suspend fun updateAutomaticStickerRepliesEnabled(enabled: Boolean) = Unit
     suspend fun updateToolCallingMode(mode: ToolCallingMode)
     suspend fun updateToolEnabled(toolName: String, enabled: Boolean)
     suspend fun updateWebSearchMode(mode: WebSearchMode)
