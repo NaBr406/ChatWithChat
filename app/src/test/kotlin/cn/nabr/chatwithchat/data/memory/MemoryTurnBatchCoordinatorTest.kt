@@ -2,6 +2,7 @@ package cn.nabr.chatwithchat.data.memory
 
 import cn.nabr.chatwithchat.data.database.InMemoryMemoryTurnBatchDao
 import cn.nabr.chatwithchat.data.database.entity.ChatRoomV2
+import cn.nabr.chatwithchat.data.database.entity.MessageStickerRef
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.decodeFromString
@@ -98,6 +99,49 @@ class MemoryTurnBatchCoordinatorTest {
     }
 
     @Test
+    fun `sticker-only assistant reply does not create a memory turn`() = runBlocking {
+        val dao = InMemoryMemoryTurnBatchDao()
+        val coordinator = MemoryTurnBatchCoordinator(dao)
+        val result = coordinator.recordCompletedTurn(
+            input(
+                userMessageId = 1,
+                assistantMessages = listOf(
+                    assistant("platform-1", "").copy(
+                        stickerRefs = listOf(stickerRef())
+                    )
+                )
+            )
+        )
+
+        assertFalse(result.recorded)
+        assertEquals("no_successful_assistant", result.reason)
+        assertEquals(0, dao.countUnclaimedTurns(CHAT_ID))
+    }
+
+    @Test
+    fun `ordinary assistant text remains the memory snapshot when accompanied by a sticker`() = runBlocking {
+        val dao = InMemoryMemoryTurnBatchDao()
+        val coordinator = MemoryTurnBatchCoordinator(dao)
+        val result = coordinator.recordCompletedTurn(
+            input(
+                userMessageId = 1,
+                assistantMessages = listOf(
+                    assistant("platform-1", "Useful answer").copy(
+                        stickerRefs = listOf(stickerRef())
+                    )
+                )
+            )
+        )
+
+        assertTrue(result.recorded)
+        val snapshot = Json.decodeFromString<MemoryCompletedTurnSnapshot>(
+            dao.getPendingTurnsForChat(CHAT_ID).single().payloadJson
+        )
+        assertEquals("Useful answer", snapshot.assistantContent)
+        assertFalse(snapshot.assistantContent.contains("A crying cat"))
+    }
+
+    @Test
     fun `reprocessing one user message updates its snapshot without incrementing count`() = runBlocking {
         val dao = InMemoryMemoryTurnBatchDao()
         val coordinator = MemoryTurnBatchCoordinator(dao)
@@ -170,6 +214,13 @@ class MemoryTurnBatchCoordinatorTest {
             chatId = CHAT_ID,
             content = content,
             platformType = platformUid
+        )
+
+        private fun stickerRef(): MessageStickerRef = MessageStickerRef(
+            instanceId = "sticker-instance",
+            stickerId = "builtin.reactions.crying_cat",
+            assetKey = "sha256:sticker",
+            altText = "A crying cat offering empathy"
         )
     }
 }

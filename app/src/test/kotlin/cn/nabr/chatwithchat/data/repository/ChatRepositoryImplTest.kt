@@ -3,12 +3,15 @@ package cn.nabr.chatwithchat.data.repository
 import android.content.ContextWrapper
 import cn.nabr.chatwithchat.data.context.ContextBuilder
 import cn.nabr.chatwithchat.data.database.entity.MessageSourceMetadata
+import cn.nabr.chatwithchat.data.database.entity.MessageStickerRef
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.debug.PromptTraceStage
 import cn.nabr.chatwithchat.data.debug.PromptTraceStore
 import cn.nabr.chatwithchat.data.dto.ApiState
 import cn.nabr.chatwithchat.data.dto.ProviderUsage
+import cn.nabr.chatwithchat.data.dto.anthropic.common.MessageRole
+import cn.nabr.chatwithchat.data.dto.anthropic.common.TextContent as AnthropicTextContent
 import cn.nabr.chatwithchat.data.dto.anthropic.common.ToolResultContent
 import cn.nabr.chatwithchat.data.dto.anthropic.common.ToolUseContent
 import cn.nabr.chatwithchat.data.dto.anthropic.request.AnthropicToolChoice
@@ -44,6 +47,8 @@ import cn.nabr.chatwithchat.data.dto.openai.request.ChatCompletionToolChoice
 import cn.nabr.chatwithchat.data.dto.openai.request.ChatMessage
 import cn.nabr.chatwithchat.data.dto.openai.request.ResponseFunctionCallInputItem
 import cn.nabr.chatwithchat.data.dto.openai.request.ResponseFunctionCallOutputItem
+import cn.nabr.chatwithchat.data.dto.openai.request.ResponseInputContent
+import cn.nabr.chatwithchat.data.dto.openai.request.ResponseInputMessage
 import cn.nabr.chatwithchat.data.dto.openai.request.ResponseToolChoice
 import cn.nabr.chatwithchat.data.dto.openai.request.ResponsesRequest
 import cn.nabr.chatwithchat.data.dto.openai.response.ChatCompletionChunk
@@ -126,6 +131,102 @@ class ChatRepositoryImplTest {
     @Test
     fun `response input with encoded image parts does not throw when text is blank`() {
         validateResponseInputPartsOrThrow("", 1, 42)
+    }
+
+    @Test
+    fun `sticker history stays semantic text and never enters upload or image parts`() = runBlocking {
+        val expectedMarker = "[assistant sent sticker: A crying cat offering empathy]"
+        val userMessage = MessageV2(
+            id = 1,
+            chatId = 73,
+            content = "hello",
+            platformType = null
+        )
+        val assistantMessage = MessageV2(
+            id = 2,
+            chatId = 73,
+            content = "",
+            platformType = "provider",
+            stickerRefs = listOf(
+                MessageStickerRef(
+                    instanceId = "instance-1",
+                    stickerId = "builtin.reactions.crying_cat",
+                    assetKey = "sha256:sticker",
+                    altText = "A crying cat offering empathy"
+                )
+            )
+        )
+        val assistantHistory = listOf(listOf(assistantMessage))
+
+        val openAIResponses = RecordingOpenAIAPI(
+            responsesResponses = mutableListOf(responseTextFlow("ok", null))
+        )
+        createRepository(openAIAPI = openAIResponses).completeChat(
+            userMessages = listOf(userMessage),
+            assistantMessages = assistantHistory,
+            platform = openAIPlatform().copy(uid = "provider")
+        ).toList()
+        val responsesAssistant = openAIResponses.responsesRequests
+            .single()
+            .input
+            .filterIsInstance<ResponseInputMessage>()
+            .single { input -> input.role == "assistant" }
+        assertEquals(ResponseInputContent.Text(expectedMarker), responsesAssistant.content)
+        assertEquals(0, openAIResponses.uploadFileCalls)
+
+        val openAIChat = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(chatCompletionFlow("ok"))
+        )
+        createRepository(openAIAPI = openAIChat).completeChat(
+            userMessages = listOf(userMessage),
+            assistantMessages = assistantHistory,
+            platform = openRouterPlatform().copy(uid = "provider")
+        ).toList()
+        val chatAssistant = openAIChat.chatCompletionRequests
+            .single()
+            .messages
+            .single { message -> message.role == OpenAIRole.ASSISTANT }
+        assertEquals(listOf(OpenAITextContent(text = expectedMarker)), chatAssistant.content)
+        assertEquals(0, openAIChat.uploadFileCalls)
+
+        val anthropic = RecordingAnthropicAPI(
+            responses = mutableListOf(
+                anthropicTextFlow(
+                    content = "ok",
+                    inputTokens = 0,
+                    cacheCreationInputTokens = 0,
+                    cacheReadInputTokens = 0,
+                    outputTokens = 0,
+                    includeProviderUsage = false
+                )
+            )
+        )
+        createRepository(anthropicAPI = anthropic).completeChat(
+            userMessages = listOf(userMessage),
+            assistantMessages = assistantHistory,
+            platform = anthropicPlatform().copy(uid = "provider")
+        ).toList()
+        val anthropicAssistant = anthropic.requests
+            .single()
+            .messages
+            .single { message -> message.role == MessageRole.ASSISTANT }
+        assertEquals(listOf(AnthropicTextContent(text = expectedMarker)), anthropicAssistant.content)
+        assertEquals(0, anthropic.uploadFileCalls)
+
+        val google = RecordingGoogleAPI(
+            responses = mutableListOf(googleTextFlow("ok", null))
+        )
+        createRepository(googleAPI = google).completeChat(
+            userMessages = listOf(userMessage),
+            assistantMessages = assistantHistory,
+            platform = googlePlatform().copy(uid = "provider")
+        ).toList()
+        val googleAssistant = google.requests
+            .single()
+            .contents
+            .single { content -> content.role == GoogleRole.MODEL }
+        assertEquals(listOf(Part.text(expectedMarker)), googleAssistant.parts)
+        assertEquals(0, google.uploadFileCalls)
     }
 
     @Test
@@ -3184,6 +3285,7 @@ class ChatRepositoryImplTest {
     ) : OpenAIAPI {
         var streamChatCompletionCalls = 0
         var streamResponsesCalls = 0
+        var uploadFileCalls = 0
         var lastChatCompletionRequest: ChatCompletionRequest? = null
         var lastResponsesRequest: ResponsesRequest? = null
         val chatCompletionRequests = mutableListOf<ChatCompletionRequest>()
@@ -3219,7 +3321,10 @@ class ChatRepositoryImplTest {
             filePath: String,
             fileName: String,
             mimeType: String
-        ): UploadedProviderFile = UploadedProviderFile(id = "file-uploaded", mimeType = mimeType)
+        ): UploadedProviderFile {
+            uploadFileCalls += 1
+            return UploadedProviderFile(id = "file-uploaded", mimeType = mimeType)
+        }
 
         override suspend fun isFileAvailable(fileId: String): Boolean = false
     }
@@ -3228,6 +3333,7 @@ class ChatRepositoryImplTest {
         private val responses: MutableList<Flow<MessageResponseChunk>> = mutableListOf(emptyFlow())
     ) : AnthropicAPI {
         var streamCalls = 0
+        var uploadFileCalls = 0
         val requests = mutableListOf<MessageRequest>()
 
         override fun setToken(token: String?) = Unit
@@ -3248,7 +3354,10 @@ class ChatRepositoryImplTest {
             filePath: String,
             fileName: String,
             mimeType: String
-        ): UploadedProviderFile = UploadedProviderFile(id = "anthropic-file", mimeType = mimeType)
+        ): UploadedProviderFile {
+            uploadFileCalls += 1
+            return UploadedProviderFile(id = "anthropic-file", mimeType = mimeType)
+        }
 
         override suspend fun isFileAvailable(fileId: String): Boolean = false
     }
@@ -3257,6 +3366,7 @@ class ChatRepositoryImplTest {
         private val responses: MutableList<Flow<GenerateContentResponse>> = mutableListOf(emptyFlow())
     ) : GoogleAPI {
         var streamCalls = 0
+        var uploadFileCalls = 0
         val requests = mutableListOf<GenerateContentRequest>()
 
         override fun setToken(token: String?) = Unit
@@ -3281,7 +3391,10 @@ class ChatRepositoryImplTest {
             filePath: String,
             fileName: String,
             mimeType: String
-        ): UploadedProviderFile = UploadedProviderFile(id = "google-file", mimeType = mimeType)
+        ): UploadedProviderFile {
+            uploadFileCalls += 1
+            return UploadedProviderFile(id = "google-file", mimeType = mimeType)
+        }
 
         override suspend fun isFileAvailable(fileName: String): Boolean = false
     }

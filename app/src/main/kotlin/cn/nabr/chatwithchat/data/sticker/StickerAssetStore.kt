@@ -18,6 +18,8 @@ data class StoredStickerAsset(
     val wasCreated: Boolean
 )
 
+internal const val STICKER_STAGING_RETENTION_MILLIS = 24L * 60L * 60L * 1_000L
+
 @Singleton
 class StickerAssetStore @Inject constructor(
     @ApplicationContext private val context: Context
@@ -33,7 +35,19 @@ class StickerAssetStore @Inject constructor(
 
     fun createStagingFile(): File? {
         if (!stagingDirectory.exists() && !stagingDirectory.mkdirs()) return null
+        cleanupStagingFiles()
         return runCatching { File.createTempFile("sticker_", ".tmp", stagingDirectory) }.getOrNull()
+    }
+
+    internal fun cleanupStagingFiles(nowMillis: Long = System.currentTimeMillis()) {
+        stagingDirectory.listFiles()
+            .orEmpty()
+            .filter { file ->
+                file.isFile &&
+                    nowMillis >= file.lastModified() &&
+                    nowMillis - file.lastModified() > STICKER_STAGING_RETENTION_MILLIS
+            }
+            .forEach { file -> file.delete() }
     }
 
     fun promote(stagingFile: File, assetKey: String, extension: String): StoredStickerAsset? {
@@ -64,12 +78,17 @@ class StickerAssetStore @Inject constructor(
             try {
                 Files.move(stagingFile.toPath(), targetFile.toPath(), StandardCopyOption.ATOMIC_MOVE)
             } catch (_: AtomicMoveNotSupportedException) {
-                Files.move(stagingFile.toPath(), targetFile.toPath())
+                stagingFile.delete()
+                return null
             }
             StoredStickerAsset(relativePath, wasCreated = true)
         } catch (_: FileAlreadyExistsException) {
             stagingFile.delete()
-            StoredStickerAsset(relativePath, wasCreated = false)
+            if (targetFile.sha256OrNull() == assetKey) {
+                StoredStickerAsset(relativePath, wasCreated = false)
+            } else {
+                null
+            }
         } catch (_: Exception) {
             stagingFile.delete()
             null

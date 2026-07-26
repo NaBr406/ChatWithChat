@@ -27,4 +27,22 @@ class StickerAssetStoreInstrumentedTest {
             stagingFile.delete()
         }
     }
+
+    @Test
+    fun interruptedStagingFilesAreRemovedAfterRetentionWindow() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val store = StickerAssetStore(context)
+        val stagingFile = requireNotNull(store.createStagingFile())
+
+        try {
+            stagingFile.writeText("interrupted import")
+            stagingFile.setLastModified(1L)
+
+            store.cleanupStagingFiles(nowMillis = STICKER_STAGING_RETENTION_MILLIS + 2L)
+
+            assertFalse(stagingFile.exists())
+        } finally {
+            stagingFile.delete()
+        }
+    }
 }
