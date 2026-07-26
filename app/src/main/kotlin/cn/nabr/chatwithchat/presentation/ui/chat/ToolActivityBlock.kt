@@ -78,7 +78,11 @@ fun ToolActivityBlock(
     modifier: Modifier = Modifier,
     onRetryAfterPermission: () -> Unit = {}
 ) {
-    val visibleStates = remember(progressStates) { progressStates.latestVisibleStates() }
+    val visibleStates = remember(progressStates) {
+        progressStates
+            .withoutStickerToolProgress()
+            .latestVisibleStates()
+    }
     if (visibleStates.isEmpty()) return
     val materialColors = settingsMaterialColors()
 
@@ -110,6 +114,9 @@ fun ToolActivityBlock(
         }
     }
 }
+
+internal fun List<ChatViewModel.ToolProgressState>.withoutStickerToolProgress(): List<ChatViewModel.ToolProgressState> =
+    filterNot { state -> state.toolName.isStickerToolName() }
 
 @Composable
 private fun ToolActivityRow(

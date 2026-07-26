@@ -37,6 +37,7 @@ import cn.nabr.chatwithchat.data.repository.ChatRepository
 import cn.nabr.chatwithchat.data.repository.MemoryRepository
 import cn.nabr.chatwithchat.data.repository.SettingRepository
 import cn.nabr.chatwithchat.data.tool.ToolApprovalBroker
+import cn.nabr.chatwithchat.data.tool.ToolDefinition
 import cn.nabr.chatwithchat.di.ApplicationScope
 import cn.nabr.chatwithchat.util.AttachmentPayloadCache
 import cn.nabr.chatwithchat.util.FileUtils
@@ -1531,6 +1532,8 @@ internal suspend fun prepareMemoryPromptWhenEnabled(
 ): String? = if (memoryEnabled) runCatching { prepare() }.getOrNull() else null
 
 internal fun List<ChatViewModel.ToolProgressState>.appendToolProgress(progress: ApiState): List<ChatViewModel.ToolProgressState> {
+    if (progress.toolNameOrNull()?.isStickerToolName() == true) return this
+
     val progressState = when (progress) {
         is ApiState.ToolStarted -> ChatViewModel.ToolProgressState(
             toolName = progress.toolName,
@@ -1567,6 +1570,16 @@ internal fun List<ChatViewModel.ToolProgressState>.appendToolProgress(progress: 
         this[runningIndex] = progressState
     }
 }
+
+private fun ApiState.toolNameOrNull(): String? = when (this) {
+    is ApiState.ToolStarted -> toolName
+    is ApiState.ToolFinished -> toolName
+    is ApiState.ToolFailed -> toolName
+    else -> null
+}
+
+internal fun String.isStickerToolName(): Boolean = this == ToolDefinition.SearchStickers.name ||
+    this == ToolDefinition.SendSticker.name
 
 private fun List<ChatViewModel.ToolProgressState>.lastRunningLabelFor(toolName: String): String? =
     lastOrNull { state ->

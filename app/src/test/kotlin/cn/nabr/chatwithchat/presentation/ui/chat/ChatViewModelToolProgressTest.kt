@@ -52,4 +52,32 @@ class ChatViewModelToolProgressTest {
         assertEquals("web_search", states.single().label)
         assertEquals(ChatViewModel.ToolProgressStatus.Failed, states.single().status)
     }
+
+    @Test
+    fun `sticker tool progress is omitted from chat activity state`() {
+        val states = emptyList<ChatViewModel.ToolProgressState>()
+            .appendToolProgress(ApiState.ToolStarted("search_stickers", "正在挑选表情"))
+            .appendToolProgress(ApiState.ToolFinished("search_stickers", "正在挑选表情"))
+            .appendToolProgress(ApiState.ToolFailed("send_sticker", "sticker_unavailable"))
+
+        assertEquals(emptyList<ChatViewModel.ToolProgressState>(), states)
+    }
+
+    @Test
+    fun `sticker tool progress is hidden at activity block boundary`() {
+        val visibleStates = listOf(
+            ChatViewModel.ToolProgressState(
+                toolName = "search_stickers",
+                label = "正在挑选表情",
+                status = ChatViewModel.ToolProgressStatus.Finished
+            ),
+            ChatViewModel.ToolProgressState(
+                toolName = "web_search",
+                label = "Kotlin updates",
+                status = ChatViewModel.ToolProgressStatus.Finished
+            )
+        ).withoutStickerToolProgress()
+
+        assertEquals(listOf("web_search"), visibleStates.map { state -> state.toolName })
+    }
 }
