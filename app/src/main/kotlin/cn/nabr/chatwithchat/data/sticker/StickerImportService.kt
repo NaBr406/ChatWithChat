@@ -16,9 +16,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 internal sealed interface StickerImportPreparation {
-    internal data class Ready(val prepared: PreparedStickerImport) : StickerImportPreparation
+    data class Ready(val prepared: PreparedStickerImport) : StickerImportPreparation
 
-    internal data class Rejected(val reason: StickerImportFailure) : StickerImportPreparation
+    data class Rejected(val reason: StickerImportFailure) : StickerImportPreparation
 }
 
 @Singleton
