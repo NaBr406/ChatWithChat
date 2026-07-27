@@ -2,6 +2,7 @@ package cn.nabr.chatwithchat.presentation.ui.chat
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.util.Log
 import android.util.LruCache
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
@@ -22,6 +23,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -33,13 +35,24 @@ import androidx.compose.ui.unit.dp
 import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.database.entity.MessageStickerRef
 import cn.nabr.chatwithchat.data.sticker.STICKER_MEDIA_KIND_STATIC_RASTER
+import java.io.IOException
 import java.io.InputStream
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 private val StickerBlockShape = RoundedCornerShape(8.dp)
 private val StickerMessageSize = 152.dp
 private const val STICKER_PREVIEW_CACHE_ENTRIES = 8
+private const val STICKER_PREVIEW_LOG_TAG = "StickerPreview"
+
+private sealed interface StickerPreviewState {
+    data object Loading : StickerPreviewState
+
+    data class Ready(val bitmap: Bitmap) : StickerPreviewState
+
+    data object Unavailable : StickerPreviewState
+}
 
 /**
  * UI-facing boundary for opening a sticker binary. A resolver only receives an immutable asset
@@ -77,45 +90,63 @@ internal fun StickerAssetPreview(
 ) {
     val targetSizePx = with(LocalDensity.current) { size.roundToPx() }
     val cachedBitmap = StickerPreviewCache[assetKey]
-    val bitmap by produceState<Bitmap?>(
-        initialValue = cachedBitmap,
+    val previewState by produceState<StickerPreviewState>(
+        initialValue = cachedBitmap?.let(StickerPreviewState::Ready) ?: StickerPreviewState.Loading,
         assetKey,
         mediaKind,
         assetResolver,
         targetSizePx
     ) {
+        value = cachedBitmap?.let(StickerPreviewState::Ready) ?: StickerPreviewState.Loading
         if (cachedBitmap != null) return@produceState
-        if (mediaKind != STICKER_MEDIA_KIND_STATIC_RASTER || assetResolver == null) return@produceState
-
-        value = decodeStickerPreview(assetResolver, assetKey, targetSizePx)?.also { decodedBitmap ->
-            StickerPreviewCache[assetKey] = decodedBitmap
+        if (mediaKind != STICKER_MEDIA_KIND_STATIC_RASTER || assetResolver == null) {
+            value = StickerPreviewState.Unavailable
+            return@produceState
         }
+
+        value = decodeStickerPreview(assetResolver, assetKey, targetSizePx)
+            ?.also { decodedBitmap -> StickerPreviewCache[assetKey] = decodedBitmap }
+            ?.let(StickerPreviewState::Ready)
+            ?: StickerPreviewState.Unavailable
     }
 
-    if (bitmap == null) {
-        StickerUnavailablePreview(
+    when (val state = previewState) {
+        StickerPreviewState.Loading -> StickerLoadingPreview(size = size, modifier = modifier)
+        StickerPreviewState.Unavailable -> StickerUnavailablePreview(
             altText = altText,
             size = size,
             modifier = modifier
         )
-        return
-    }
 
+        is StickerPreviewState.Ready -> {
+            Surface(
+                modifier = modifier.size(size),
+                shape = StickerBlockShape,
+                color = Color.Transparent
+            ) {
+                Image(
+                    bitmap = state.bitmap.asImageBitmap(),
+                    contentDescription = altText.takeIf { value -> value.isNotBlank() },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(StickerBlockShape),
+                    contentScale = ContentScale.Fit
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun StickerLoadingPreview(
+    size: Dp,
+    modifier: Modifier = Modifier
+) {
     Surface(
         modifier = modifier.size(size),
         shape = StickerBlockShape,
         color = MaterialTheme.colorScheme.surfaceVariant
-    ) {
-        Image(
-            bitmap = bitmap!!.asImageBitmap(),
-            contentDescription = altText.takeIf { value -> value.isNotBlank() },
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(4.dp)
-                .clip(StickerBlockShape),
-            contentScale = ContentScale.Fit
-        )
-    }
+    ) {}
 }
 
 @Composable
@@ -172,20 +203,35 @@ private suspend fun decodeStickerPreview(
         }
         assetResolver.openStickerAsset(assetKey)?.use { input ->
             BitmapFactory.decodeStream(input, null, boundsOptions)
-        } ?: return@withContext null
+        } ?: run {
+            Log.w(STICKER_PREVIEW_LOG_TAG, "Unable to read sticker asset bounds for preview")
+            return@withContext null
+        }
 
-        if (boundsOptions.outWidth <= 0 || boundsOptions.outHeight <= 0) return@withContext null
+        if (boundsOptions.outWidth <= 0 || boundsOptions.outHeight <= 0) {
+            Log.w(STICKER_PREVIEW_LOG_TAG, "Sticker preview bounds could not be decoded")
+            return@withContext null
+        }
 
         val decodeOptions = BitmapFactory.Options().apply {
             inSampleSize = calculateStickerSampleSize(boundsOptions, targetSizePx)
             inPreferredConfig = Bitmap.Config.ARGB_8888
         }
-        assetResolver.openStickerAsset(assetKey)?.use { input ->
+        val bitmap = assetResolver.openStickerAsset(assetKey)?.use { input ->
             BitmapFactory.decodeStream(input, null, decodeOptions)
         }
-    } catch (_: OutOfMemoryError) {
+        if (bitmap == null) Log.w(STICKER_PREVIEW_LOG_TAG, "Sticker preview bitmap could not be decoded")
+        bitmap
+    } catch (error: CancellationException) {
+        throw error
+    } catch (error: OutOfMemoryError) {
+        Log.w(STICKER_PREVIEW_LOG_TAG, "Sticker preview exhausted available memory", error)
         null
-    } catch (_: RuntimeException) {
+    } catch (error: IOException) {
+        Log.w(STICKER_PREVIEW_LOG_TAG, "Sticker preview asset could not be read", error)
+        null
+    } catch (error: RuntimeException) {
+        Log.w(STICKER_PREVIEW_LOG_TAG, "Sticker preview decoding failed", error)
         null
     }
 }
