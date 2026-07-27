@@ -224,6 +224,22 @@ data class ToolDefinition(
             )
         )
 
+        val DiscoverTools = ToolDefinition(
+            name = "discover_tools",
+            description = "Find enabled on-demand tools for a capability that is not currently available. Returned tools become available in the next response.",
+            parameters = Parameters(
+                properties = mapOf(
+                    "query" to Parameter(
+                        type = "string",
+                        description = "The capability needed to answer the latest request.",
+                        minLength = 1,
+                        maxLength = 160
+                    )
+                ),
+                required = listOf("query")
+            )
+        )
+
         val BuiltIns = listOf(
             WebSearch,
             FetchUrl,

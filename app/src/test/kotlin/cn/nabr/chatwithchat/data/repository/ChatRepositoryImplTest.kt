@@ -77,8 +77,10 @@ import cn.nabr.chatwithchat.data.tool.BuiltInTools
 import cn.nabr.chatwithchat.data.tool.ToolCall
 import cn.nabr.chatwithchat.data.tool.ToolCallingMode
 import cn.nabr.chatwithchat.data.tool.ToolDefinition
+import cn.nabr.chatwithchat.data.tool.ToolDiscoveryMetadata
 import cn.nabr.chatwithchat.data.tool.ToolEnablementOverrides
 import cn.nabr.chatwithchat.data.tool.ToolExecutor
+import cn.nabr.chatwithchat.data.tool.ToolExposure
 import cn.nabr.chatwithchat.data.tool.ToolLoopConfig
 import cn.nabr.chatwithchat.data.tool.ToolLoopOrchestrator
 import cn.nabr.chatwithchat.data.tool.ToolProvider
@@ -423,7 +425,7 @@ class ChatRepositoryImplTest {
     }
 
     @Test
-    fun `official deepseek fallback tool loop preserves thinking for a direct answer`() = runBlocking {
+    fun `official deepseek uses native tools while preserving thinking for a direct answer`() = runBlocking {
         val openAIAPI = RecordingOpenAIAPI(
             chatCompletionResponses = mutableListOf(
                 flowOf(
@@ -433,7 +435,7 @@ class ChatRepositoryImplTest {
                                 index = 0,
                                 delta = Delta(
                                     reasoningContent = "Plan directly",
-                                    content = """{"type":"final_answer","content":"Direct answer"}"""
+                                    content = "Direct answer"
                                 )
                             )
                         )
@@ -471,19 +473,171 @@ class ChatRepositoryImplTest {
         assertEquals("enabled", request.thinking?.type)
         assertNull(request.temperature)
         assertNull(request.topP)
+        assertEquals(ChatCompletionToolChoice.Auto, request.toolChoice)
+        assertTrue(request.tools.orEmpty().isNotEmpty())
+        assertFalse(request.systemText().contains("Enabled tool signatures:"))
     }
 
     @Test
-    fun `official deepseek fallback tool loop preserves thinking across tool rounds`() = runBlocking {
+    fun `official deepseek falls back to json tools after a native tools rejection without losing reasoning`() = runBlocking {
         val openAIAPI = RecordingOpenAIAPI(
             chatCompletionResponses = mutableListOf(
-                chatCompletionFlow(
-                    content = """{"type":"tool_calls","tool_calls":[{"id":"call_1","name":"web_search","arguments":{"query":"current Android target SDK"}}]}""",
-                    reasoningContent = "Need current sources"
+                flowOf(
+                    ChatCompletionChunk(
+                        choices = listOf(
+                            Choice(
+                                index = 0,
+                                delta = Delta(reasoningContent = "Native plan")
+                            )
+                        )
+                    ),
+                    ChatCompletionChunk(
+                        error = ErrorDetail(message = "Invalid value for parameter tools")
+                    )
                 ),
                 chatCompletionFlow(
-                    content = """{"type":"final_answer","content":"Draft searched answer"}""",
-                    reasoningContent = "Reviewing sources"
+                    content = """{"type":"final_answer","content":"Fallback answer"}""",
+                    reasoningContent = "Fallback plan"
+                )
+            )
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Off,
+                toolCallingMode = ToolCallingMode.Auto
+            )
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "Answer with available tools", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform().copy(
+                apiUrl = "https://api.deepseek.com/v1",
+                model = "deepseek-v4-pro"
+            )
+        ).toList()
+
+        assertEquals(
+            listOf(
+                ApiState.Loading,
+                ApiState.Thinking("Native plan"),
+                ApiState.Thinking("Fallback plan"),
+                ApiState.Success("Fallback answer"),
+                ApiState.Done
+            ),
+            states.withoutUsageUpdates()
+        )
+        assertEquals(2, openAIAPI.streamChatCompletionCalls)
+        val nativeRequest = openAIAPI.chatCompletionRequests[0]
+        val fallbackRequest = openAIAPI.chatCompletionRequests[1]
+        assertEquals(ChatCompletionToolChoice.Auto, nativeRequest.toolChoice)
+        assertTrue(nativeRequest.tools.orEmpty().isNotEmpty())
+        assertFalse(nativeRequest.systemText().contains("Enabled tool signatures:"))
+        assertNull(fallbackRequest.toolChoice)
+        assertNull(fallbackRequest.tools)
+        assertTrue(fallbackRequest.systemText().contains("Enabled tool signatures:"))
+    }
+
+    @Test
+    fun `official deepseek ordinary service error does not switch to json tools`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                flowOf(ChatCompletionChunk(error = ErrorDetail(message = "provider unavailable"))),
+                chatCompletionFlow(content = "Direct recovery")
+            )
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Off,
+                toolCallingMode = ToolCallingMode.Auto
+            )
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "Answer normally", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform().copy(
+                apiUrl = "https://api.deepseek.com/v1",
+                model = "deepseek-v4-pro"
+            )
+        ).toList()
+
+        assertEquals(
+            listOf(
+                ApiState.Loading,
+                ApiState.Success("Direct recovery"),
+                ApiState.Done
+            ),
+            states.withoutUsageUpdates()
+        )
+        assertEquals(2, openAIAPI.streamChatCompletionCalls)
+        val nativeRequest = openAIAPI.chatCompletionRequests[0]
+        val directRequest = openAIAPI.chatCompletionRequests[1]
+        assertTrue(nativeRequest.tools.orEmpty().isNotEmpty())
+        assertNull(directRequest.toolChoice)
+        assertNull(directRequest.tools)
+        assertFalse(directRequest.systemText().contains("Enabled tool signatures:"))
+    }
+
+    @Test
+    fun `official deepseek native tool error after a tool call does not switch protocols`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatToolCallFlow(
+                    callId = "call_1",
+                    name = ToolDefinition.CurrentDateTime.name,
+                    arguments = "{}"
+                ),
+                flowOf(ChatCompletionChunk(error = ErrorDetail(message = "Unsupported parameter: tools")))
+            )
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Off,
+                toolCallingMode = ToolCallingMode.Auto
+            )
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "What time is it?", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform().copy(
+                apiUrl = "https://api.deepseek.com/v1",
+                model = "deepseek-v4-pro"
+            )
+        ).toList()
+
+        assertEquals(
+            listOf(
+                ApiState.Loading,
+                ApiState.ToolStarted("current_datetime", "current_datetime"),
+                ApiState.ToolFinished("current_datetime", "current_datetime"),
+                ApiState.Error("Unsupported parameter: tools"),
+                ApiState.Done
+            ),
+            states.withoutUsageUpdates()
+        )
+        assertEquals(2, openAIAPI.streamChatCompletionCalls)
+        assertTrue(openAIAPI.chatCompletionRequests.all { request -> request.tools.orEmpty().isNotEmpty() })
+        assertTrue(
+            openAIAPI.chatCompletionRequests.none { request ->
+                request.systemText().contains("Enabled tool signatures:")
+            }
+        )
+    }
+
+    @Test
+    fun `official deepseek native tool loop preserves thinking across tool rounds`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatToolCallFlow(
+                    callId = "call_1",
+                    name = "web_search",
+                    arguments = """{"query":"current Android target SDK"}""",
+                    reasoningContent = "Need current sources"
                 ),
                 chatCompletionFlow(
                     content = "Final searched answer",
@@ -518,7 +672,6 @@ class ChatRepositoryImplTest {
                 ApiState.Thinking("Need current sources"),
                 ApiState.ToolStarted("web_search", "current Android target SDK"),
                 ApiState.ToolFinished("web_search", "current Android target SDK"),
-                ApiState.Thinking("Reviewing sources"),
                 ApiState.SourcesUpdated(
                     listOf(
                         MessageSourceMetadata(
@@ -535,9 +688,14 @@ class ChatRepositoryImplTest {
             ),
             states.withoutUsageUpdates()
         )
-        assertEquals(3, openAIAPI.chatCompletionRequests.size)
+        assertEquals(2, openAIAPI.chatCompletionRequests.size)
         assertTrue(openAIAPI.chatCompletionRequests.all { request -> request.thinking?.type == "enabled" })
         assertTrue(openAIAPI.chatCompletionRequests.all { request -> request.temperature == null && request.topP == null })
+        assertTrue(
+            openAIAPI.chatCompletionRequests[1].messages.any { message ->
+                message.reasoningContent == "Need current sources"
+            }
+        )
     }
 
     @Test
@@ -800,7 +958,7 @@ class ChatRepositoryImplTest {
         )
         assertEquals(listOf("current Android target SDK"), webSearchRepository.queries)
         assertEquals(3, openAIAPI.streamChatCompletionCalls)
-        assertTrue(openAIAPI.chatCompletionRequests[0].systemText().contains("Available tools:"))
+        assertTrue(openAIAPI.chatCompletionRequests[0].systemText().contains("Enabled tool signatures:"))
         assertTrue(openAIAPI.chatCompletionRequests[1].systemText().contains("Tool scratchpad:"))
         assertTrue(openAIAPI.chatCompletionRequests[1].systemText().contains("Example Source"))
         assertTrue(openAIAPI.chatCompletionRequests[1].systemText().contains("https://example.com/source"))
@@ -843,7 +1001,7 @@ class ChatRepositoryImplTest {
         )
         assertTrue(webSearchRepository.queries.isEmpty())
         assertEquals(1, openAIAPI.streamChatCompletionCalls)
-        assertFalse(openAIAPI.chatCompletionRequests.single().systemText().contains("Available tools:"))
+        assertFalse(openAIAPI.chatCompletionRequests.single().systemText().contains("Enabled tool signatures:"))
     }
 
     @Test
@@ -882,9 +1040,10 @@ class ChatRepositoryImplTest {
         assertTrue(webSearchRepository.queries.isEmpty())
         assertEquals(1, openAIAPI.streamChatCompletionCalls)
         val toolPrompt = openAIAPI.chatCompletionRequests.single().systemText()
-        assertTrue(toolPrompt.contains("Available tools:"))
-        assertTrue(toolPrompt.contains("current_datetime"))
-        assertTrue(toolPrompt.contains("device_location"))
+        assertTrue(toolPrompt.contains("Enabled tool signatures:"))
+        assertTrue(toolPrompt.contains("discover_tools"))
+        assertFalse(toolPrompt.contains("current_datetime"))
+        assertFalse(toolPrompt.contains("device_location"))
         assertFalse(toolPrompt.contains("web_search"))
         assertFalse(toolPrompt.contains("fetch_url"))
     }
@@ -912,9 +1071,10 @@ class ChatRepositoryImplTest {
         ).toList()
 
         val toolPrompt = openAIAPI.chatCompletionRequests.single().systemText()
-        assertTrue(toolPrompt.contains("Available tools:"))
+        assertTrue(toolPrompt.contains("Enabled tool signatures:"))
+        assertTrue(toolPrompt.contains(ToolDefinition.DiscoverTools.name))
         assertFalse(toolPrompt.contains(ToolDefinition.CurrentDateTime.name))
-        assertTrue(toolPrompt.contains(ToolDefinition.DeviceLocation.name))
+        assertFalse(toolPrompt.contains(ToolDefinition.DeviceLocation.name))
     }
 
     @Test
@@ -942,7 +1102,7 @@ class ChatRepositoryImplTest {
             states.withoutUsageUpdates()
         )
         assertEquals(1, openAIAPI.streamChatCompletionCalls)
-        assertFalse(openAIAPI.chatCompletionRequests.single().systemText().contains("Available tools:"))
+        assertFalse(openAIAPI.chatCompletionRequests.single().systemText().contains("Enabled tool signatures:"))
     }
 
     @Test
@@ -974,7 +1134,7 @@ class ChatRepositoryImplTest {
             states.withoutUsageUpdates()
         )
         assertTrue(webSearchRepository.queries.isEmpty())
-        assertFalse(openAIAPI.chatCompletionRequests.single().systemText().contains("Available tools:"))
+        assertFalse(openAIAPI.chatCompletionRequests.single().systemText().contains("Enabled tool signatures:"))
     }
 
     @Test
@@ -1014,9 +1174,10 @@ class ChatRepositoryImplTest {
         assertTrue(webSearchRepository.queries.isEmpty())
         assertEquals(1, openAIAPI.streamChatCompletionCalls)
         val toolPrompt = openAIAPI.chatCompletionRequests.single().systemText()
-        assertTrue(toolPrompt.contains("Available tools:"))
-        assertTrue(toolPrompt.contains("current_datetime"))
-        assertTrue(toolPrompt.contains("device_location"))
+        assertTrue(toolPrompt.contains("Enabled tool signatures:"))
+        assertTrue(toolPrompt.contains("discover_tools"))
+        assertFalse(toolPrompt.contains("current_datetime"))
+        assertFalse(toolPrompt.contains("device_location"))
         assertFalse(toolPrompt.contains("web_search"))
         assertFalse(toolPrompt.contains("fetch_url"))
     }
@@ -1058,9 +1219,10 @@ class ChatRepositoryImplTest {
         assertTrue(webSearchRepository.queries.isEmpty())
         assertEquals(3, openAIAPI.streamChatCompletionCalls)
         val firstToolPrompt = openAIAPI.chatCompletionRequests[0].systemText()
-        assertTrue(firstToolPrompt.contains("Available tools:"))
+        assertTrue(firstToolPrompt.contains("Enabled tool signatures:"))
+        assertTrue(firstToolPrompt.contains(ToolDefinition.DiscoverTools.name))
         assertTrue(firstToolPrompt.contains("current_datetime"))
-        assertTrue(firstToolPrompt.contains("device_location"))
+        assertFalse(firstToolPrompt.contains("device_location"))
         assertFalse(firstToolPrompt.contains("web_search"))
         assertFalse(firstToolPrompt.contains("fetch_url"))
     }
@@ -1154,7 +1316,7 @@ class ChatRepositoryImplTest {
         assertTrue(webSearchRepository.queries.isEmpty())
         assertEquals(2, openAIAPI.streamResponsesCalls)
         assertEquals(
-            listOf("current_datetime", "device_location", "add_schedule", "set_alarm"),
+            listOf(ToolDefinition.DiscoverTools.name, ToolDefinition.CurrentDateTime.name),
             openAIAPI.responsesRequests[0].tools.orEmpty().map { tool -> tool.name }
         )
         assertFalse(openAIAPI.responsesRequests[0].instructions.orEmpty().contains("web_search"))
@@ -1175,8 +1337,20 @@ class ChatRepositoryImplTest {
             responsesResponses = mutableListOf(responseTextFlow("No sticker needed", null))
         )
         val stickerProviders = listOf(
-            noOpToolProvider(ToolDefinition.SearchStickers),
-            noOpToolProvider(ToolDefinition.SendSticker)
+            noOpToolProvider(
+                definition = ToolDefinition.SearchStickers,
+                discovery = ToolDiscoveryMetadata(
+                    exposure = ToolExposure.Resident,
+                    requiredCompanionToolNames = setOf(ToolDefinition.SendSticker.name)
+                )
+            ),
+            noOpToolProvider(
+                definition = ToolDefinition.SendSticker,
+                discovery = ToolDiscoveryMetadata(
+                    exposure = ToolExposure.Resident,
+                    requiredCompanionToolNames = setOf(ToolDefinition.SearchStickers.name)
+                )
+            )
         )
         val repository = createRepository(
             openAIAPI = openAIAPI,
@@ -1550,8 +1724,16 @@ class ChatRepositoryImplTest {
             ToolExecutor(
                 ToolRegistry(
                     listOf(
-                        sourceProvider(ToolDefinition.CurrentDateTime, "https://example.com/first"),
-                        sourceProvider(ToolDefinition.DeviceLocation, "https://example.com/second")
+                        sourceProvider(
+                            definition = ToolDefinition.CurrentDateTime,
+                            url = "https://example.com/first",
+                            discovery = ToolDiscoveryMetadata(exposure = ToolExposure.Resident)
+                        ),
+                        sourceProvider(
+                            definition = ToolDefinition.DeviceLocation,
+                            url = "https://example.com/second",
+                            discovery = ToolDiscoveryMetadata(exposure = ToolExposure.Resident)
+                        )
                     )
                 )
             )
@@ -2106,7 +2288,7 @@ class ChatRepositoryImplTest {
         assertEquals(2, openAIAPI.streamChatCompletionCalls)
         assertEquals(ChatCompletionToolChoice.Auto, openAIAPI.chatCompletionRequests[0].toolChoice)
         assertTrue(openAIAPI.chatCompletionRequests[0].tools.orEmpty().any { tool -> tool.function.name == "web_search" })
-        assertFalse(openAIAPI.chatCompletionRequests[0].systemText().contains("Available tools:"))
+        assertFalse(openAIAPI.chatCompletionRequests[0].systemText().contains("Enabled tool signatures:"))
         assertEquals(ChatCompletionToolChoice.Auto, openAIAPI.chatCompletionRequests[1].toolChoice)
         assertTrue(
             openAIAPI.chatCompletionRequests[1].messages.any { message ->
@@ -2198,7 +2380,7 @@ class ChatRepositoryImplTest {
         assertEquals(2, anthropicAPI.streamCalls)
         assertEquals(AnthropicToolChoice.Auto, anthropicAPI.requests[0].toolChoice)
         assertTrue(anthropicAPI.requests[0].tools.orEmpty().any { tool -> tool.name == "web_search" })
-        assertFalse(anthropicAPI.requests[0].systemPrompt.orEmpty().contains("Available tools:"))
+        assertFalse(anthropicAPI.requests[0].systemPrompt.orEmpty().contains("Enabled tool signatures:"))
         assertEquals(AnthropicToolChoice.Auto, anthropicAPI.requests[1].toolChoice)
         assertTrue(
             anthropicAPI.requests[1].messages.any { message ->
@@ -2297,7 +2479,7 @@ class ChatRepositoryImplTest {
         assertEquals(2, googleAPI.streamCalls)
         assertEquals(GoogleToolConfig.Auto, googleAPI.requests[0].toolConfig)
         assertTrue(googleAPI.requests[0].tools.orEmpty().flatMap { tool -> tool.functionDeclarations }.any { declaration -> declaration.name == "web_search" })
-        assertFalse(googleAPI.requests[0].systemInstruction?.parts.orEmpty().any { part -> part.text.orEmpty().contains("Available tools:") })
+        assertFalse(googleAPI.requests[0].systemInstruction?.parts.orEmpty().any { part -> part.text.orEmpty().contains("Enabled tool signatures:") })
         assertEquals(GoogleToolConfig.Auto, googleAPI.requests[1].toolConfig)
         assertTrue(
             googleAPI.requests[1].contents.any { content ->
@@ -2534,7 +2716,7 @@ class ChatRepositoryImplTest {
         assertEquals(18, usage.totalTokens)
         assertEquals(0, usage.toolTotalTokens)
         assertTrue(usage.details.all { detail -> !detail.isToolRelated })
-        assertFalse(openAIAPI.chatCompletionRequests.single().systemText().contains("Available tools:"))
+        assertFalse(openAIAPI.chatCompletionRequests.single().systemText().contains("Enabled tool signatures:"))
     }
 
     @Test
@@ -3241,9 +3423,11 @@ class ChatRepositoryImplTest {
 
     private fun sourceProvider(
         definition: ToolDefinition,
-        url: String
+        url: String,
+        discovery: ToolDiscoveryMetadata = ToolDiscoveryMetadata()
     ): ToolProvider = object : ToolProvider {
         override val definition: ToolDefinition = definition
+        override val discoveryMetadata: ToolDiscoveryMetadata = discovery
         override val securityPolicy: ToolSecurityPolicy = ToolSecurityPolicy.ReadOnlyPublic
 
         override suspend fun execute(call: ToolCall, config: ToolLoopConfig): ToolResult = ToolResult(
@@ -3257,9 +3441,11 @@ class ChatRepositoryImplTest {
     private fun noOpToolProvider(
         definition: ToolDefinition,
         content: String = "ok",
-        metadata: Map<String, String> = emptyMap()
+        metadata: Map<String, String> = emptyMap(),
+        discovery: ToolDiscoveryMetadata = ToolDiscoveryMetadata()
     ): ToolProvider = object : ToolProvider {
         override val definition: ToolDefinition = definition
+        override val discoveryMetadata: ToolDiscoveryMetadata = discovery
         override val securityPolicy: ToolSecurityPolicy = ToolSecurityPolicy.ReadOnlyPrivate
 
         override suspend fun execute(call: ToolCall, config: ToolLoopConfig): ToolResult = ToolResult(
@@ -3341,13 +3527,15 @@ class ChatRepositoryImplTest {
         callId: String,
         name: String,
         arguments: String,
-        usage: ProviderUsage? = null
+        usage: ProviderUsage? = null,
+        reasoningContent: String? = null
     ): Flow<ChatCompletionChunk> = flowOf(
         ChatCompletionChunk(
             choices = listOf(
                 Choice(
                     index = 0,
                     delta = Delta(
+                        reasoningContent = reasoningContent,
                         toolCalls = listOf(
                             ChatCompletionToolCallDelta(
                                 index = 0,

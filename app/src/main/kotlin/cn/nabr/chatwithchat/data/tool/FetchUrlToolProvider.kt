@@ -18,6 +18,11 @@ class FetchUrlToolProvider(
         iconKey = "language"
     )
 
+    override val discoveryMetadata: ToolDiscoveryMetadata = ToolDiscoveryMetadata(
+        intentTags = setOf("url", "link", "page", "website", "read", "网页", "链接", "页面", "网址", "阅读"),
+        priority = 20
+    )
+
     override val securityPolicy: ToolSecurityPolicy = ToolSecurityPolicy.ReadOnlyPublic
     override val policy: ToolPolicy = ToolPolicy(
         maxCallsPerRequest = 2,

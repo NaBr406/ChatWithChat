@@ -37,6 +37,9 @@ class OpenAIResponsesToolAdapter {
         )
     }
 
+    fun advertisedToolChars(definitions: List<ToolDefinition>): Int =
+        toolProtocolJson.encodeToString(toResponseTools(definitions)).length
+
     fun toolCallsFromEvents(
         events: List<ResponsesStreamEvent>,
         config: ToolLoopConfig = ToolLoopConfig.Default

@@ -54,7 +54,7 @@ class ToolLoopOrchestratorTest {
         val orchestrator = ToolLoopOrchestrator(recordingExecutor(executedCalls))
 
         val result = orchestrator.runLoop(tools = orchestrator.toolDefinitions) { prompt ->
-            assertTrue(prompt.contains("Available tools:"))
+            assertTrue(prompt.contains("Enabled tool signatures:"))
             Result.success("""{"type":"final_answer","content":"No tool needed."}""")
         }
 
@@ -569,6 +569,81 @@ class ToolLoopOrchestratorTest {
         val prompt = (result as ToolLoopResult.ToolResults).finalAnswerPrompt.orEmpty()
         assertTrue(prompt.contains("cite the source URLs"))
         assertTrue(prompt.contains("https://example.com/source"))
+    }
+
+    @Test
+    fun `discovered tool is rejected until the next model round`() = runBlocking {
+        val executedCalls = mutableListOf<ToolCall>()
+        val provider = object : ToolProvider {
+            override val definition = ToolDefinition(
+                name = "calendar_tool",
+                description = "Create a calendar event.",
+                parameters = ToolDefinition.Parameters()
+            )
+            override val discoveryMetadata = ToolDiscoveryMetadata(
+                intentTags = setOf("calendar", "schedule")
+            )
+            override val securityPolicy: ToolSecurityPolicy = ToolSecurityPolicy.ReadOnlyPublic
+
+            override suspend fun execute(call: ToolCall, config: ToolLoopConfig): ToolResult {
+                executedCalls += call
+                return ToolResult(call.id, call.name, "calendar created")
+            }
+        }
+        val orchestrator = ToolLoopOrchestrator(
+            toolExecutor = ToolExecutor(ToolRegistry(listOf(provider))),
+            config = ToolLoopConfig(maxToolRounds = 1)
+        )
+        val scope = orchestrator.createToolScope(orchestrator.toolDefinitions)
+        val prompts = mutableListOf<String>()
+        val responses = ArrayDeque(
+            listOf(
+                """{"type":"tool_calls","tool_calls":[{"id":"discover","name":"discover_tools","arguments":{"query":"calendar"}},{"id":"too_early","name":"calendar_tool","arguments":{}}]}""",
+                """{"type":"tool_calls","tool_calls":[{"id":"calendar","name":"calendar_tool","arguments":{}}]}"""
+            )
+        )
+
+        val result = orchestrator.runLoop(scope = scope) { prompt ->
+            prompts += prompt
+            Result.success(responses.removeFirst())
+        }
+
+        assertTrue(result is ToolLoopResult.ToolResults)
+        assertEquals(listOf("calendar_tool"), executedCalls.map(ToolCall::name))
+        assertTrue(prompts.first().contains("discover_tools("))
+        assertFalse(prompts.first().contains("calendar_tool("))
+        assertTrue(prompts.last().contains("calendar_tool("))
+    }
+
+    @Test
+    fun `unsuccessful discovery does not spend another model round`() = runBlocking {
+        val provider = object : ToolProvider {
+            override val definition = ToolDefinition(
+                name = "calendar_tool",
+                description = "Create a calendar event.",
+                parameters = ToolDefinition.Parameters()
+            )
+            override val discoveryMetadata = ToolDiscoveryMetadata(intentTags = setOf("calendar"))
+            override val securityPolicy: ToolSecurityPolicy = ToolSecurityPolicy.ReadOnlyPublic
+
+            override suspend fun execute(call: ToolCall, config: ToolLoopConfig): ToolResult =
+                ToolResult(call.id, call.name, "calendar created")
+        }
+        val orchestrator = ToolLoopOrchestrator(
+            toolExecutor = ToolExecutor(ToolRegistry(listOf(provider))),
+            config = ToolLoopConfig(maxToolRounds = 1)
+        )
+        val prompts = mutableListOf<String>()
+
+        val result = orchestrator.runLoop(scope = orchestrator.createToolScope(orchestrator.toolDefinitions)) {
+            prompts += it
+            Result.success(
+                """{"type":"tool_calls","tool_calls":[{"id":"discover","name":"discover_tools","arguments":{"query":"weather"}}]}"""
+            )
+        }
+
+        assertTrue(result is ToolLoopResult.ToolResults)
+        assertEquals(1, prompts.size)
     }
 
     private fun recordingExecutor(

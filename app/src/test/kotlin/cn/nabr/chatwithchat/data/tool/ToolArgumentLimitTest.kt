@@ -71,6 +71,20 @@ class ToolArgumentLimitTest {
     }
 
     @Test
+    fun `fallback parser accepts explicit legacy sticker markup`() {
+        val result = JsonToolCallParser().parse(
+            "<send_sticker>builtin.reactions.tired_walking</send_sticker>"
+        ).getOrThrow() as JsonToolModelOutput.ToolCalls
+
+        assertEquals("send_sticker", result.calls.single().name)
+        assertEquals(
+            "{\"sticker_id\":\"builtin.reactions.tired_walking\"}",
+            result.calls.single().arguments
+        )
+        assertTrue(JsonToolCallParser().hasToolCallIntent("<send_sticker>id</send_sticker>"))
+    }
+
+    @Test
     fun `executor rejects oversized arguments before provider execution`() = runBlocking {
         var didExecute = false
         val provider = object : ToolProvider {

@@ -1,6 +1,5 @@
 package cn.nabr.chatwithchat.data.tool
 
-import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -46,26 +45,21 @@ class ToolPromptBuilderTest {
     }
 
     @Test
-    fun `fallback example uses schema compatible nested argument types`() {
+    fun `fallback manifest advertises compact parameter signatures`() {
         val prompt = ToolPromptBuilder().buildJsonFallbackPrompt(
             tools = listOf(complexSchemaToolDefinition())
         )
-        val example = prompt.lineSequence().first { line -> line.startsWith("{\"type\":\"tool_calls\"") }
-        val output = JsonToolCallParser().parse(example).getOrThrow() as JsonToolModelOutput.ToolCalls
-        val arguments = output.calls.single().argumentsObject().getOrThrow()
 
-        assertEquals("safe", arguments.getValue("mode").jsonPrimitive.content)
-        assertEquals(false, arguments.getValue("options").jsonObject.getValue("enabled").jsonPrimitive.content.toBoolean())
-        assertEquals(0, arguments.getValue("retries").jsonPrimitive.int)
-        assertEquals("https://example.com", arguments.getValue("endpoint").jsonPrimitive.content)
-        assertEquals("value", arguments.getValue("tags").jsonArray.single().jsonPrimitive.content)
+        assertTrue(prompt.contains("complex_tool(mode:string[safe|fast]!, options:object!, tags:array!, retries:integer!, endpoint:string<uri>!)"))
+        assertFalse(prompt.contains("\"additionalProperties\""))
+        assertFalse(prompt.contains("\"minimum\""))
     }
 
     @Test
     fun `fallback prompt discourages web search for local device state`() {
         val prompt = ToolPromptBuilder().buildJsonFallbackPrompt(tools = listOf(ToolDefinition.WebSearch))
 
-        assertTrue(prompt.contains("Do not call web_search for the user's local date, time, timezone, device state, or app settings."))
+        assertTrue(prompt.contains("do not use it for device time or state"))
     }
 
     @Test
@@ -73,7 +67,18 @@ class ToolPromptBuilderTest {
         val prompt = ToolPromptBuilder().buildJsonFallbackPrompt()
 
         assertTrue(prompt.contains("tool_permission_denied"))
-        assertTrue(prompt.contains("which Android permission is missing"))
+        assertTrue(prompt.contains("which Android permission is needed"))
+    }
+
+    @Test
+    fun `fallback prompt tells the model to discover hidden capabilities first`() {
+        val prompt = ToolPromptBuilder().buildJsonFallbackPrompt(
+            tools = listOf(ToolDefinition.DiscoverTools)
+        )
+
+        assertTrue(prompt.contains("If the needed capability is not listed, call discover_tools first"))
+        assertTrue(prompt.contains("enabled only in the next response"))
+        assertTrue(prompt.contains("never call them in the same response"))
     }
 
     @Test
@@ -82,13 +87,11 @@ class ToolPromptBuilderTest {
             tools = listOf(ToolDefinition.SearchStickers, ToolDefinition.SendSticker)
         )
 
-        assertTrue(prompt.contains("part of your own response voice"))
-        assertTrue(prompt.contains("Do not merely mirror the user's mood"))
-        assertTrue(prompt.contains("the emotional choice remains yours"))
-        assertTrue(prompt.contains("no candidate expresses your intended reaction"))
-        assertTrue(prompt.contains("Only a successful send_sticker sends a sticker"))
-        assertTrue(prompt.contains("[assistant sent sticker: ...]"))
-        assertTrue(prompt.contains("answer briefly without describing or identifying the sticker"))
+        assertTrue(prompt.contains("Stickers express your own response"))
+        assertTrue(prompt.contains("Search first, then send one exact returned ID"))
+        assertTrue(prompt.contains("never mirror the user's mood by default"))
+        assertTrue(prompt.contains("Only send_sticker displays one"))
+        assertTrue(prompt.contains("Never simulate a send with text"))
     }
 
     @Test
@@ -126,13 +129,11 @@ class ToolPromptBuilderTest {
     }
 
     @Test
-    fun `fallback prompt requires structured search query planning`() {
+    fun `fallback prompt keeps the web search guidance compact`() {
         val prompt = ToolPromptBuilder().buildJsonFallbackPrompt(tools = listOf(ToolDefinition.WebSearch))
 
-        assertTrue(prompt.contains("rewrite the user's request into a search-engine query"))
-        assertTrue(prompt.contains("Resolve relative dates such as today, yesterday"))
-        assertTrue(prompt.contains("choose sensible default scopes and complementary queries"))
-        assertTrue(prompt.contains("Prefer official, primary, or local-language source terms"))
+        assertTrue(prompt.contains("make a focused query"))
+        assertTrue(prompt.contains("entity, date, place, and source terms"))
     }
 
     @Test
@@ -148,18 +149,70 @@ class ToolPromptBuilderTest {
         )
 
         assertTrue(prompt.contains("current_datetime"))
-        assertTrue(prompt.contains("Available tools:"))
+        assertTrue(prompt.contains("Enabled tool signatures:"))
         assertFalse(prompt.contains("web_search"))
         assertFalse(prompt.contains("fetch_url"))
     }
 
     @Test
-    fun `fallback definition budget keeps sticker tools visible`() {
+    fun `fallback manifest advertises every enabled tool without silently dropping schemas`() {
         val prompt = ToolPromptBuilder().buildJsonFallbackPrompt(tools = ToolDefinition.BuiltIns)
-        val definitions = prompt.substringAfter("Available tools:")
+        val definitions = prompt.substringAfter("Enabled tool signatures:")
 
-        assertTrue(definitions.contains("Name: search_stickers"))
-        assertTrue(definitions.contains("Name: send_sticker"))
+        ToolDefinition.BuiltIns.forEach { tool ->
+            assertTrue(definitions.contains("${tool.name}("))
+        }
+    }
+
+    @Test
+    fun `fallback manifest retains all signatures after its description budget is exhausted`() {
+        val tools = (1..100).map { index ->
+            ToolDefinition(
+                name = "tool_$index",
+                description = "A deliberately verbose description that must not decide whether tool_$index is advertised.",
+                parameters = ToolDefinition.Parameters(
+                    properties = mapOf("value" to ToolDefinition.Parameter(type = "string")),
+                    required = listOf("value")
+                )
+            )
+        }
+
+        val prompt = ToolPromptBuilder(
+            maxToolDefinitionChars = 0,
+            maxPromptChars = 12_000
+        ).buildJsonFallbackPrompt(tools = tools)
+
+        tools.forEach { tool ->
+            assertTrue(prompt.contains("${tool.name}(value:string!)"))
+        }
+        assertFalse(prompt.contains("deliberately verbose description"))
+    }
+
+    @Test
+    fun `fallback prompt preserves the latest scratchpad result within its total budget`() {
+        val prompt = ToolPromptBuilder(maxPromptChars = 700).buildJsonFallbackPrompt(
+            tools = listOf(ToolDefinition.CurrentDateTime),
+            scratchpad = listOf(
+                ToolMessage.toolResult(
+                    ToolResult(
+                        callId = "first",
+                        name = ToolDefinition.CurrentDateTime.name,
+                        content = "first-result-" + "x".repeat(500)
+                    )
+                ),
+                ToolMessage.toolResult(
+                    ToolResult(
+                        callId = "latest",
+                        name = ToolDefinition.CurrentDateTime.name,
+                        content = "y".repeat(500) + "latest-result"
+                    )
+                )
+            )
+        )
+
+        assertTrue(prompt.contains("latest-result"))
+        assertFalse(prompt.contains("first-result-"))
+        assertTrue(prompt.length <= 700)
     }
 
     @Test

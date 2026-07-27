@@ -19,6 +19,11 @@ class CurrentDateTimeToolProvider(
         iconKey = "schedule"
     )
 
+    override val discoveryMetadata: ToolDiscoveryMetadata = ToolDiscoveryMetadata(
+        intentTags = setOf("date", "time", "timezone", "clock", "today", "now", "时间", "日期", "时区", "现在", "现在几点", "今天"),
+        priority = 20
+    )
+
     override val securityPolicy: ToolSecurityPolicy = ToolSecurityPolicy.ReadOnlyPublic
 
     override val policy: ToolPolicy = ToolPolicy(

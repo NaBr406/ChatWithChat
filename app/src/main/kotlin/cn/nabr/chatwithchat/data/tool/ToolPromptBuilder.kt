@@ -1,13 +1,6 @@
 package cn.nabr.chatwithchat.data.tool
 
-import kotlin.math.ceil
-import kotlin.math.floor
 import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonArray
-import kotlinx.serialization.json.buildJsonObject
 
 class ToolPromptBuilder(
     private val maxToolDefinitionChars: Int = DEFAULT_MAX_TOOL_DEFINITION_CHARS,
@@ -18,168 +11,101 @@ class ToolPromptBuilder(
         scratchpad: List<ToolMessage> = emptyList(),
         config: ToolLoopConfig = ToolLoopConfig.Default
     ): String {
-        val prompt = buildString {
-            appendLine("You may call tools before answering.")
-            appendLine("Return only valid JSON. Do not use markdown fences or add extra text.")
-            appendLine()
-            appendLine("If no tool is needed, return:")
-            appendLine("""{"type":"final_answer","content":"answer text"}""")
-            appendLine()
-            appendLine("If tools are needed, return:")
-            appendLine(exampleToolCallJson(tools))
-            appendLine()
+        val toolManifest = formatFallbackToolManifest(tools)
+        val promptPrefix = buildString {
+            appendLine("You may call an enabled tool before answering.")
+            appendLine("Return exactly one JSON object. Never use Markdown, XML, tool tags, or bare IDs.")
+            appendLine("No tool: {\"type\":\"final_answer\",\"content\":\"answer text\"}")
+            appendLine("Tool: {\"type\":\"tool_calls\",\"tool_calls\":[{\"name\":\"tool_name\",\"arguments\":{}}]}")
             appendLine("Rules:")
-            appendLine("- Use only the listed tool names.")
-            appendLine("- Use at most ${config.maxToolCallsPerRound.coerceAtLeast(0)} tool calls in one response.")
-            appendLine("- Use at most ${config.maxToolRounds.coerceAtLeast(0)} tool rounds before returning final_answer.")
-            appendLine("- Keep arguments concise and match each tool parameter schema.")
-            appendLine("- If a tool result is an error with tool_permission_denied, tell the user which Android permission is missing and ask them to enable it before retrying.")
+            appendLine("- Use only an enabled tool signature below and one tool call per response.")
+            appendLine("- Parameter names ending in ! are required; keep arguments concise.")
+            appendLine("- If a result says tool_permission_denied, explain which Android permission is needed before retrying.")
+            if (tools.any { tool -> tool.name == ToolDefinition.DiscoverTools.name }) {
+                appendLine("- If the needed capability is not listed, call discover_tools first. Returned tools are enabled only in the next response; never call them in the same response.")
+            }
             if (tools.any { tool -> tool.name == ToolDefinition.WebSearch.name }) {
-                appendLine("- For web_search, rewrite the user's request into a search-engine query with likely entity, topic/category, timeframe, and geography/source scope; do not merely copy the user's wording.")
-                appendLine("- Prefer official, primary, or local-language source terms for factual data such as weather, laws, finance, health, releases, and schedules.")
-                appendLine("- Resolve relative dates such as today, yesterday, latest, or current into concrete dates or years when the conversation/runtime context provides them.")
-                appendLine("- For broad search requests, choose sensible default scopes and complementary queries instead of asking a clarifying question first.")
-                appendLine("- Do not call web_search for the user's local date, time, timezone, device state, or app settings.")
+                appendLine("- web_search: make a focused query with useful entity, date, place, and source terms; do not use it for device time or state.")
             }
             if (tools.any { tool -> tool.name == ToolDefinition.FetchUrl.name }) {
-                appendLine("- Use fetch_url only for pages that are clearly worth reading.")
+                appendLine("- fetch_url: read only a page that is useful to the answer.")
             }
-            stickerToolUsageRules(tools).forEach { rule ->
-                appendLine("- $rule")
-            }
-            appendLine("- Prefer final_answer when the existing conversation is enough.")
+            fallbackStickerToolUsageRules(tools).forEach { rule -> appendLine("- $rule") }
             appendLine()
-            appendLine("Available tools:")
-            appendLine(formatToolDefinitionsWithinBudget(tools))
-            formatScratchpad(scratchpad, config)?.let { scratchpadText ->
-                appendLine()
-                appendLine("Tool scratchpad:")
-                appendLine(scratchpadText)
-            }
+            appendLine("Enabled tool signatures:")
+            append(toolManifest)
         }.trim()
 
-        return prompt.clip(maxPromptChars)
+        val formattedScratchpad = formatScratchpad(scratchpad, config)
+        val scratchpadPrefix = "\n\nTool scratchpad:\n"
+        val remainingScratchpadChars = (maxPromptChars - promptPrefix.length - scratchpadPrefix.length).coerceAtLeast(0)
+        val boundedScratchpad = formattedScratchpad
+            ?.takeLast(remainingScratchpadChars)
+            ?.trimStart()
+            ?.takeIf { value -> value.isNotBlank() }
+
+        return buildString {
+            append(promptPrefix)
+            boundedScratchpad?.let { value ->
+                append(scratchpadPrefix)
+                append(value)
+            }
+        }
     }
 
     fun formatToolDefinitions(tools: List<ToolDefinition>): String = tools.joinToString(separator = "\n\n") { tool ->
         tool.toPromptText()
     }.trim()
 
-    private fun exampleToolCallJson(tools: List<ToolDefinition>): String {
-        val tool = tools.firstOrNull()
-            ?: return """{"type":"tool_calls","tool_calls":[]}"""
-        val arguments = when (tool.name) {
-            ToolDefinition.WebSearch.name -> buildJsonObject {
-                put("query", JsonPrimitive("search query"))
-            }
-            ToolDefinition.FetchUrl.name -> buildJsonObject {
-                put("url", JsonPrimitive("https://example.com/page"))
-            }
-            else -> tool.parameters.exampleArguments()
-        }
-        return buildJsonObject {
-            put("type", JsonPrimitive("tool_calls"))
-            put(
-                "tool_calls",
-                buildJsonArray {
-                    add(
-                        buildJsonObject {
-                            put("id", JsonPrimitive("call_1"))
-                            put("name", JsonPrimitive(tool.name))
-                            put("arguments", arguments)
-                        }
-                    )
-                }
-            )
-        }.toString()
-    }
+    private fun formatFallbackToolManifest(tools: List<ToolDefinition>): String {
+        val distinctTools = tools.distinctBy(ToolDefinition::name)
+        val basicLines = distinctTools.map { tool -> tool.toFallbackSignature(includeSummary = false) }
+        val detailedLines = distinctTools.map { tool -> tool.toFallbackSignature(includeSummary = true) }
+        val descriptionBudget = maxToolDefinitionChars.coerceAtLeast(0)
+        var usedDescriptionChars = 0
 
-    private fun ToolDefinition.Parameters.exampleArguments(): JsonObject = buildJsonObject {
-        required.distinct().forEach { name ->
-            properties[name]?.let { schema -> put(name, schema.exampleValue()) }
+        return basicLines.indices.joinToString(separator = "\n") { index ->
+            val basic = basicLines[index]
+            val detailed = detailedLines[index]
+            val addedChars = detailed.length - basic.length
+            if (usedDescriptionChars + addedChars <= descriptionBudget) {
+                usedDescriptionChars += addedChars
+                detailed
+            } else {
+                basic
+            }
         }
     }
 
-    private fun ToolDefinition.Parameter.exampleValue(): JsonElement = enumValues
-        .firstOrNull()
-        ?.let(::JsonPrimitive)
-        ?: when (type) {
-            JSON_SCHEMA_OBJECT -> buildJsonObject {
-                required.distinct().forEach { name ->
-                    properties[name]?.let { schema -> put(name, schema.exampleValue()) }
-                }
-            }
-            JSON_SCHEMA_ARRAY -> buildJsonArray {
-                items?.let { schema -> add(schema.exampleValue()) }
-            }
-            JSON_SCHEMA_INTEGER -> JsonPrimitive(integerExample())
-            JSON_SCHEMA_NUMBER -> JsonPrimitive(numberExample())
-            JSON_SCHEMA_BOOLEAN -> JsonPrimitive(false)
-            JSON_SCHEMA_STRING -> JsonPrimitive(stringExample())
-            else -> JsonPrimitive("value")
+    private fun ToolDefinition.toFallbackSignature(includeSummary: Boolean): String {
+        val requiredNames = parameters.required.toSet()
+        val parametersText = parameters.properties.entries.joinToString(separator = ", ") { (name, parameter) ->
+            "$name:${parameter.toFallbackType()}${if (name in requiredNames) "!" else ""}"
         }
+        val signature = "$name($parametersText)"
+        if (!includeSummary) return signature
 
-    private fun ToolDefinition.Parameter.integerExample(): Long {
-        val lowerBound = minimum
-            ?.takeIf { value -> value.isFinite() }
-            ?.let(::ceil)
-            ?.toLong()
-            ?: 0L
-        val upperBound = maximum
-            ?.takeIf { value -> value.isFinite() }
-            ?.let(::floor)
-            ?.toLong()
-        return upperBound?.let { maximum -> lowerBound.coerceAtMost(maximum) } ?: lowerBound
+        val summary = description
+            .substringBefore('.')
+            .trim()
+            .take(MAX_FALLBACK_TOOL_SUMMARY_CHARS)
+            .takeIf { value -> value.isNotBlank() }
+            ?: return signature
+        return "$signature - $summary"
     }
 
-    private fun ToolDefinition.Parameter.numberExample(): Double {
-        val lowerBound = minimum?.takeIf { value -> value.isFinite() } ?: 0.0
-        val upperBound = maximum?.takeIf { value -> value.isFinite() }
-        return upperBound?.let { maximum -> lowerBound.coerceAtMost(maximum) } ?: lowerBound
-    }
-
-    private fun ToolDefinition.Parameter.stringExample(): String {
-        val base = when (format) {
-            "date-time" -> "2026-01-01T00:00:00Z"
-            "date" -> "2026-01-01"
-            "time" -> "00:00:00Z"
-            "email" -> "user@example.com"
-            "hostname" -> "example.com"
-            "ipv4" -> "192.0.2.1"
-            "ipv6" -> "2001:db8::1"
-            "uuid" -> "00000000-0000-4000-8000-000000000000"
-            "uri", "url" -> "https://example.com"
-            else -> "value"
+    private fun ToolDefinition.Parameter.toFallbackType(): String = buildString {
+        append(type)
+        enumValues.takeIf { values -> values.isNotEmpty() }?.let { values ->
+            append('[')
+            append(values.joinToString(separator = "|"))
+            append(']')
         }
-        val minimumLength = minLength?.coerceAtLeast(0) ?: 0
-        val padded = if (base.length < minimumLength) {
-            base + "x".repeat(minimumLength - base.length)
-        } else {
-            base
+        format?.takeIf { value -> value.isNotBlank() }?.let { value ->
+            append('<')
+            append(value)
+            append('>')
         }
-        return maxLength?.coerceAtLeast(0)?.let { maximumLength -> padded.take(maximumLength) } ?: padded
-    }
-
-    private fun formatToolDefinitionsWithinBudget(tools: List<ToolDefinition>): String {
-        val boundedMax = maxToolDefinitionChars.coerceAtLeast(0)
-        val result = StringBuilder()
-        tools
-            .withIndex()
-            .sortedWith(
-                compareByDescending<IndexedValue<ToolDefinition>> { indexed ->
-                    indexed.value.isStickerTool()
-                }.thenBy { indexed -> indexed.index }
-            )
-            .map { indexed -> indexed.value }
-            .forEach { tool ->
-                val block = tool.toPromptText()
-                val separator = if (result.isEmpty()) "" else "\n\n"
-                if (result.length + separator.length + block.length <= boundedMax) {
-                    result.append(separator)
-                    result.append(block)
-                }
-            }
-        return result.toString()
     }
 
     fun formatToolResults(
@@ -254,11 +180,27 @@ class ToolPromptBuilder(
     companion object {
         private const val DEFAULT_MAX_TOOL_DEFINITION_CHARS = 4_000
         private const val DEFAULT_MAX_PROMPT_CHARS = 12_000
+        private const val MAX_FALLBACK_TOOL_SUMMARY_CHARS = 120
     }
 }
 
-private fun ToolDefinition.isStickerTool(): Boolean = name == ToolDefinition.SearchStickers.name ||
-    name == ToolDefinition.SendSticker.name
+private fun fallbackStickerToolUsageRules(tools: Collection<ToolDefinition>): List<String> {
+    val activeToolNames = tools.map(ToolDefinition::name).toSet()
+    val hasSearch = ToolDefinition.SearchStickers.name in activeToolNames
+    val hasSend = ToolDefinition.SendSticker.name in activeToolNames
+    if (!hasSearch && !hasSend) return emptyList()
+
+    return buildList {
+        if (hasSearch && hasSend) {
+            add("Stickers express your own response. Search first, then send one exact returned ID; never mirror the user's mood by default.")
+        } else if (hasSearch) {
+            add("search_stickers only finds candidates and does not display one.")
+        }
+        if (hasSend) {
+            add("Only send_sticker displays one. Never simulate a send with text, Markdown, an ID, or a tag.")
+        }
+    }
+}
 
 internal fun stickerToolUsageRules(tools: Collection<ToolDefinition>): List<String> {
     val activeToolNames = tools.map(ToolDefinition::name).toSet()

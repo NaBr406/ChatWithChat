@@ -14,7 +14,8 @@ class ToolLoopOrchestrator(
         jsonToolCallParser = jsonToolCallParser
     ),
     private val config: ToolLoopConfig = ToolLoopConfig.Default,
-    private val toolApprovalBroker: ToolApprovalBroker? = null
+    private val toolApprovalBroker: ToolApprovalBroker? = null,
+    private val toolScopePlanner: ToolScopePlanner = ToolScopePlanner()
 ) {
     val configuration: ToolLoopConfig
         get() = config
@@ -41,6 +42,16 @@ class ToolLoopOrchestrator(
         policyFor = toolExecutor::policyFor
     )
 
+    fun createToolScope(
+        activeToolDefinitions: List<ToolDefinition>,
+        initialIntent: String = "",
+        advertisementSizer: ToolAdvertisementSizer = ToolAdvertisementSizer.promptText
+    ): ToolScope = toolScopePlanner.createScope(
+        entries = activeToolEntries(activeToolDefinitions),
+        initialIntent = initialIntent,
+        advertisementSizer = advertisementSizer
+    )
+
     fun boundToolCalls(calls: Iterable<ToolCall>): List<ToolCall> = calls.boundedDistinctToolCalls(config)
 
     suspend fun runLoop(
@@ -48,12 +59,22 @@ class ToolLoopOrchestrator(
         adapter: ToolCallingAdapter = defaultToolCallingAdapter,
         onProgress: suspend (ApiState) -> Unit = {},
         requestModel: suspend (toolPrompt: String) -> Result<String>
+    ): ToolLoopResult = runLoop(
+        scope = createFullToolScope(tools),
+        adapter = adapter,
+        onProgress = onProgress,
+        requestModel = requestModel
+    )
+
+    suspend fun runLoop(
+        scope: ToolScope,
+        adapter: ToolCallingAdapter = defaultToolCallingAdapter,
+        onProgress: suspend (ApiState) -> Unit = {},
+        requestModel: suspend (toolPrompt: String) -> Result<String>
     ): ToolLoopResult {
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)
         if (maxRounds == 0) return ToolLoopResult.Failed("tool_loop_no_rounds")
-        val activeTools = tools.distinctBy { tool -> tool.name }
-        if (activeTools.isEmpty()) return ToolLoopResult.Failed("tool_loop_no_available_tools")
-        val activeToolNames = activeTools.map { tool -> tool.name }.toSet()
+        if (scope.definitions.isEmpty()) return ToolLoopResult.Failed("tool_loop_no_available_tools")
 
         val scratchpad = mutableListOf<ToolMessage>()
         val allCalls = mutableListOf<ToolCall>()
@@ -61,9 +82,13 @@ class ToolLoopOrchestrator(
         var hadToolInteraction = false
         val executionSession = createExecutionSession()
 
-        repeat(maxRounds) {
+        var allowedRounds = maxRounds
+        var discoveryRounds = 0
+        var roundIndex = 0
+        while (roundIndex < allowedRounds) {
+            val scopedTools = scope.definitions
             val toolPrompt = adapter.buildToolPrompt(
-                tools = activeTools,
+                tools = scopedTools,
                 scratchpad = scratchpad,
                 config = config
             )
@@ -106,10 +131,7 @@ class ToolLoopOrchestrator(
                 is JsonToolModelOutput.ToolCalls -> {
                     hadToolInteraction = hadToolInteraction || modelOutput.calls.isNotEmpty()
                     val calls = boundToolCalls(modelOutput.calls)
-                    val availableCalls = calls.selectAvailable(activeToolNames)
-                    val (allowedCalls, budgetRejectedCalls) = executionSession.select(availableCalls.allowed)
-                    val rejectedCalls = availableCalls.rejected + budgetRejectedCalls
-                    if (calls.isEmpty() || (allowedCalls.isEmpty() && rejectedCalls.isEmpty())) {
+                    if (calls.isEmpty()) {
                         return fallbackOrFailure(
                             adapter = adapter,
                             allCalls = allCalls,
@@ -118,24 +140,25 @@ class ToolLoopOrchestrator(
                             hadToolInteraction = hadToolInteraction
                         )
                     }
-
-                    rejectedCalls.forEach { rejected ->
-                        onProgress(ApiState.ToolFailed(rejected.name, rejected.content))
-                    }
-                    val rawResults = executeCallsWithProgress(
-                        calls = allowedCalls,
-                        activeToolNames = activeToolNames,
-                        sessionState = executionSession.state,
+                    val results = executeScopedToolCalls(
+                        calls = calls,
+                        scope = scope,
+                        executionSession = executionSession,
                         onProgress = onProgress
-                    ) + rejectedCalls
-                    val results = executionSession.bound(rawResults)
-                    results.forEach { result -> toolExecutor.recordSessionResult(result, executionSession.state) }
+                    )
                     allCalls += calls
                     allResults += results
                     calls.forEach { call -> scratchpad += ToolMessage.modelToolCall(call) }
                     results.forEach { result -> scratchpad += ToolMessage.toolResult(result) }
+                    if (results.hasSuccessfulToolDiscovery() &&
+                        discoveryRounds < scope.maxDiscoveryRounds
+                    ) {
+                        allowedRounds += 1
+                        discoveryRounds += 1
+                    }
                 }
             }
+            roundIndex += 1
         }
 
         return fallbackOrFailure(
@@ -163,6 +186,40 @@ class ToolLoopOrchestrator(
         executionSession = executionSession,
         onProgress = onProgress
     )
+
+    internal suspend fun executeScopedToolCalls(
+        calls: List<ToolCall>,
+        scope: ToolScope,
+        executionSession: ToolLoopExecutionSession = createExecutionSession(),
+        onProgress: suspend (ApiState) -> Unit = {}
+    ): List<ToolResult> {
+        val activeToolNames = scope.advertisedToolNames
+        val availableCalls = calls.selectAvailable(activeToolNames)
+        val (allowedCalls, budgetRejectedCalls) = executionSession.select(availableCalls.allowed)
+        val rejectedCalls = availableCalls.rejected + budgetRejectedCalls
+        rejectedCalls.forEach { rejected ->
+            onProgress(ApiState.ToolFailed(rejected.name, rejected.content))
+        }
+
+        val scopeControlCalls = allowedCalls.filter { call -> call.name == ToolDefinition.DiscoverTools.name }
+        val ordinaryCalls = allowedCalls - scopeControlCalls.toSet()
+        val scopeResults = mutableMapOf<String, ToolResult>()
+        scopeControlCalls.forEach { call ->
+            scopeResults[call.id] = executeScopeControlCall(call, scope, onProgress)
+        }
+        val ordinaryResults = executeCallsWithProgress(
+            calls = ordinaryCalls,
+            activeToolNames = activeToolNames,
+            sessionState = executionSession.state,
+            onProgress = onProgress
+        ).associateBy(ToolResult::callId)
+        val rawResults = allowedCalls.map { call ->
+            scopeResults[call.id] ?: ordinaryResults.getValue(call.id)
+        } + rejectedCalls
+        return executionSession.bound(rawResults).also { results ->
+            results.forEach { result -> toolExecutor.recordSessionResult(result, executionSession.state) }
+        }
+    }
 
     internal suspend fun executeBoundedToolCalls(
         calls: List<ToolCall>,
@@ -223,6 +280,53 @@ class ToolLoopOrchestrator(
             onProgress(ApiState.ToolFinished(call.name, label))
         }
         result
+    }
+
+    private fun createFullToolScope(activeToolDefinitions: List<ToolDefinition>): ToolScope = ToolScopePlanner(
+        maxAdvertisedTools = Int.MAX_VALUE,
+        maxAdvertisedSchemaChars = Int.MAX_VALUE,
+        maxInitialOnDemandTools = 0,
+        maxDiscoveryResults = 0,
+        maxDiscoveryCalls = 0
+    ).createScope(
+        entries = activeToolEntries(activeToolDefinitions).map { entry ->
+            entry.copy(
+                discovery = entry.discovery.copy(
+                    exposure = ToolExposure.Resident,
+                    requiredCompanionToolNames = entry.discovery.requiredCompanionToolNames
+                        .intersect(activeToolDefinitions.map { definition -> definition.name }.toSet())
+                )
+            )
+        }
+    )
+
+    private fun activeToolEntries(activeToolDefinitions: List<ToolDefinition>): List<ToolCatalogEntry> {
+        val catalogByName = toolCatalog.associateBy { entry -> entry.definition.name }
+        return activeToolDefinitions
+            .distinctBy { definition -> definition.name }
+            .map { definition ->
+                catalogByName[definition.name] ?: ToolCatalogEntry(
+                    definition = definition,
+                    settings = ToolSettingsMetadata(userVisible = false),
+                    permissionRequirements = emptyList(),
+                    securityPolicy = ToolSecurityPolicy.FailClosed
+                )
+            }
+    }
+
+    private suspend fun executeScopeControlCall(
+        call: ToolCall,
+        scope: ToolScope,
+        onProgress: suspend (ApiState) -> Unit
+    ): ToolResult {
+        onProgress(ApiState.ToolStarted(call.name, DISCOVER_TOOLS_PROGRESS_LABEL))
+        val result = scope.discover(call)
+        if (result.isError) {
+            onProgress(ApiState.ToolFailed(call.name, result.content, result.metadata["error_code"]))
+        } else {
+            onProgress(ApiState.ToolFinished(call.name, DISCOVER_TOOLS_PROGRESS_LABEL))
+        }
+        return result
     }
 
     private fun fallbackOrFailure(
@@ -319,6 +423,8 @@ private data class BudgetedToolCalls(
     val allowed: List<ToolCall>,
     val rejected: List<ToolResult>
 )
+
+private const val DISCOVER_TOOLS_PROGRESS_LABEL = "正在查找可用工具"
 
 class ToolLoopExecutionSession internal constructor(
     config: ToolLoopConfig,

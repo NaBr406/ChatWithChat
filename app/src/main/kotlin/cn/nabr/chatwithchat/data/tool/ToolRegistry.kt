@@ -31,7 +31,8 @@ class ToolRegistry private constructor(
                 definition = registration.definition,
                 settings = registration.provider?.settingsMetadata ?: ToolSettingsMetadata(userVisible = false),
                 permissionRequirements = registration.provider?.permissionRequirements.orEmpty(),
-                securityPolicy = registration.securityPolicy
+                securityPolicy = registration.securityPolicy,
+                discovery = registration.provider?.discoveryMetadata ?: ToolDiscoveryMetadata()
             )
         }
     }

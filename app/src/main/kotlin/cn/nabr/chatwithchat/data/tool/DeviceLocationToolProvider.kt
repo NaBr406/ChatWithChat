@@ -27,6 +27,11 @@ class DeviceLocationToolProvider(
         iconKey = "location"
     )
 
+    override val discoveryMetadata: ToolDiscoveryMetadata = ToolDiscoveryMetadata(
+        intentTags = setOf("location", "gps", "where", "coordinate", "地图", "位置", "定位", "坐标", "我在哪"),
+        priority = 20
+    )
+
     override val securityPolicy: ToolSecurityPolicy = ToolSecurityPolicy.ReadOnlyPrivate
     override val permissionRequirements: List<ToolPermissionRequirement> = listOf(DeviceLocationPermissionRequirement)
 

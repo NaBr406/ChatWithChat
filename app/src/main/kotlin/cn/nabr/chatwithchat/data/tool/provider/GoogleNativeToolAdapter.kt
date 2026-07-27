@@ -15,6 +15,7 @@ import cn.nabr.chatwithchat.data.tool.ToolSchemaDialect
 import cn.nabr.chatwithchat.data.tool.requireWithinToolArgumentLimit
 import cn.nabr.chatwithchat.data.tool.toSchemaJson
 import cn.nabr.chatwithchat.data.tool.toolProtocolJson
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -33,6 +34,9 @@ class GoogleNativeToolAdapter {
             }
         )
     )
+
+    fun advertisedToolChars(definitions: List<ToolDefinition>): Int =
+        toolProtocolJson.encodeToString(toGoogleTools(definitions)).length
 
     fun toolCallsFromResponses(
         responses: List<GenerateContentResponse>,

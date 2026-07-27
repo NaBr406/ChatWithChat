@@ -16,6 +16,7 @@ import cn.nabr.chatwithchat.data.tool.ToolLoopConfig
 import cn.nabr.chatwithchat.data.tool.ToolResult
 import cn.nabr.chatwithchat.data.tool.ToolSource
 import cn.nabr.chatwithchat.data.tool.complexSchemaToolDefinition
+import cn.nabr.chatwithchat.data.tool.toolProtocolJson
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.boolean
@@ -65,6 +66,16 @@ class OpenAIChatCompletionsToolAdapterTest {
 
         assertTrue(payload.contains(""""name":"current_datetime""""))
         assertTrue(payload.contains(""""parameters":{"type":"object","properties":{},"required":[],"additionalProperties":false}"""))
+    }
+
+    @Test
+    fun `advertised tool chars match serialized chat completion tools`() {
+        val definitions = listOf(ToolDefinition.WebSearch, ToolDefinition.CurrentDateTime)
+
+        assertEquals(
+            toolProtocolJson.encodeToString(adapter.toChatCompletionTools(definitions)).length,
+            adapter.advertisedToolChars(definitions)
+        )
     }
 
     @Test
@@ -268,7 +279,8 @@ class OpenAIChatCompletionsToolAdapterTest {
                     structuredContent = buildJsonObject { put("count", 1) },
                     sources = listOf(ToolSource.PublicUrl("Example", "https://example.com/source"))
                 )
-            )
+            ),
+            reasoningContent = "Need current sources."
         )
 
         val payload = NetworkClient.openAIJson.encodeToString(messages)
@@ -276,6 +288,7 @@ class OpenAIChatCompletionsToolAdapterTest {
         assertTrue(payload.contains(""""role":"assistant","content":null"""))
         assertTrue(payload.contains(""""tool_calls""""))
         assertTrue(payload.contains(""""id":"call_1""""))
+        assertTrue(payload.contains(""""reasoning_content":"Need current sources.""""))
         assertTrue(payload.contains(""""role":"tool""""))
         assertTrue(payload.contains(""""tool_call_id":"call_1""""))
         assertTrue(payload.contains("Search result"))

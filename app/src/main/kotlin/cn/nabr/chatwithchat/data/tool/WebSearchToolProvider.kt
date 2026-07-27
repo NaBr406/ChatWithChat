@@ -17,6 +17,11 @@ class WebSearchToolProvider(
         iconKey = "search"
     )
 
+    override val discoveryMetadata: ToolDiscoveryMetadata = ToolDiscoveryMetadata(
+        intentTags = setOf("web", "search", "latest", "current", "today", "yesterday", "news", "happened", "research", "internet", "android", "sdk", "target", "网页", "搜索", "最新", "当前", "今天", "昨天", "新闻", "发生", "查一下"),
+        priority = 30
+    )
+
     override val securityPolicy: ToolSecurityPolicy = ToolSecurityPolicy.ReadOnlyPublic
     override val policy: ToolPolicy = ToolPolicy(
         maxCallsPerRequest = 3,

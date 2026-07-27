@@ -1,6 +1,5 @@
 package cn.nabr.chatwithchat.data.tool
 
-import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
@@ -54,6 +53,11 @@ class SetAlarmToolProvider(
         isSensitive = true,
         presentationKey = "set_alarm",
         iconKey = "alarm"
+    )
+
+    override val discoveryMetadata: ToolDiscoveryMetadata = ToolDiscoveryMetadata(
+        intentTags = setOf("alarm", "wake", "clock", "reminder", "闹钟", "叫醒", "提醒"),
+        priority = 20
     )
 
     override val securityPolicy: ToolSecurityPolicy = ToolSecurityPolicy(

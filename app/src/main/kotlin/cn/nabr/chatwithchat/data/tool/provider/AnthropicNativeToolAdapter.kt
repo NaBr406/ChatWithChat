@@ -39,6 +39,9 @@ class AnthropicNativeToolAdapter {
         )
     }
 
+    fun advertisedToolChars(definitions: List<ToolDefinition>): Int =
+        toolProtocolJson.encodeToString(toAnthropicTools(definitions)).length
+
     fun toolCallsFromChunks(
         chunks: List<MessageResponseChunk>,
         config: ToolLoopConfig = ToolLoopConfig.Default

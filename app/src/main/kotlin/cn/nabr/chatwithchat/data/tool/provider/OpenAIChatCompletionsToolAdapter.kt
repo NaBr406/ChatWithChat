@@ -36,6 +36,9 @@ class OpenAIChatCompletionsToolAdapter {
         )
     }
 
+    fun advertisedToolChars(definitions: List<ToolDefinition>): Int =
+        toolProtocolJson.encodeToString(toChatCompletionTools(definitions)).length
+
     fun toolCallsFromChunks(
         chunks: List<ChatCompletionChunk>,
         config: ToolLoopConfig = ToolLoopConfig.Default
@@ -75,13 +78,15 @@ class OpenAIChatCompletionsToolAdapter {
     fun continuationMessages(
         calls: List<ToolCall>,
         results: List<ToolResult>,
-        config: ToolLoopConfig = ToolLoopConfig.Default
+        config: ToolLoopConfig = ToolLoopConfig.Default,
+        reasoningContent: String? = null
     ): List<ChatMessage> {
         if (calls.isEmpty()) return emptyList()
 
         val assistantMessage = ChatMessage(
             role = Role.ASSISTANT,
-            toolCalls = calls.map { call -> call.toChatCompletionMessageToolCall() }
+            toolCalls = calls.map { call -> call.toChatCompletionMessageToolCall() },
+            reasoningContent = reasoningContent?.trim()?.takeIf { content -> content.isNotBlank() }
         )
         val resultMessages = results.map { result -> result.toToolMessage(config) }
         return listOf(assistantMessage) + resultMessages

@@ -8,6 +8,9 @@ interface ToolProvider {
     val settingsMetadata: ToolSettingsMetadata
         get() = ToolSettingsMetadata()
 
+    val discoveryMetadata: ToolDiscoveryMetadata
+        get() = ToolDiscoveryMetadata()
+
     val securityPolicy: ToolSecurityPolicy
 
     val policy: ToolPolicy

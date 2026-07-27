@@ -21,6 +21,13 @@ class SendStickerToolProvider(
         enablementGroup = ToolEnablementGroup.AutomaticStickerReplies
     )
 
+    override val discoveryMetadata: ToolDiscoveryMetadata = ToolDiscoveryMetadata(
+        exposure = ToolExposure.Resident,
+        intentTags = setOf("sticker", "emoji", "reaction", "表情", "表情包", "反应", "情绪"),
+        requiredCompanionToolNames = setOf(ToolDefinition.SearchStickers.name),
+        priority = 100
+    )
+
     override val securityPolicy: ToolSecurityPolicy = ToolSecurityPolicy.ReadOnlyPrivate
     override val policy: ToolPolicy = ToolPolicy(
         maxCallsPerRequest = 1,

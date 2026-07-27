@@ -20,6 +20,7 @@ import cn.nabr.chatwithchat.data.database.entity.Message
 import cn.nabr.chatwithchat.data.database.entity.MessageSourceMetadata
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
+import cn.nabr.chatwithchat.data.database.entity.effectiveContent
 import cn.nabr.chatwithchat.data.database.entity.effectiveStickerRefs
 import cn.nabr.chatwithchat.data.database.entity.safeDedupeKey
 import cn.nabr.chatwithchat.data.debug.PromptTraceStage
@@ -99,6 +100,7 @@ import cn.nabr.chatwithchat.data.sticker.StickerPresentationArtifact
 import cn.nabr.chatwithchat.data.sticker.toMessageStickerRef
 import cn.nabr.chatwithchat.data.token.TokenUsageEstimator
 import cn.nabr.chatwithchat.data.token.TokenUsageRecord
+import cn.nabr.chatwithchat.data.tool.ToolAdvertisementSizer
 import cn.nabr.chatwithchat.data.tool.ToolArgumentStreamLimiter
 import cn.nabr.chatwithchat.data.tool.ToolCall
 import cn.nabr.chatwithchat.data.tool.ToolCallingMode
@@ -111,6 +113,7 @@ import cn.nabr.chatwithchat.data.tool.ToolLoopOrchestrator
 import cn.nabr.chatwithchat.data.tool.ToolLoopResult
 import cn.nabr.chatwithchat.data.tool.ToolResult
 import cn.nabr.chatwithchat.data.tool.appendToolProtocolFragment
+import cn.nabr.chatwithchat.data.tool.hasSuccessfulToolDiscovery
 import cn.nabr.chatwithchat.data.tool.maxToolProtocolResponseChars
 import cn.nabr.chatwithchat.data.tool.provider.AnthropicNativeToolAdapter
 import cn.nabr.chatwithchat.data.tool.provider.AnthropicToolAdapter
@@ -298,6 +301,28 @@ class ChatRepositoryImpl @Inject constructor(
                     reasoningMode = reasoningMode,
                     activeToolDefinitions = activeToolDefinitions
                 )
+                ClientType.CUSTOM -> {
+                    if (platform.usesOfficialDeepSeekApi()) {
+                        completeChatWithOpenAIChatCompletionsNativeToolLoop(
+                            userMessages = userMessages,
+                            assistantMessages = assistantMessages,
+                            platform = platform,
+                            memoryPrompt = memoryPrompt,
+                            reasoningMode = reasoningMode,
+                            activeToolDefinitions = activeToolDefinitions,
+                            fallbackToJsonToolLoop = true
+                        )
+                    } else {
+                        completeChatWithToolLoopFallback(
+                            userMessages = userMessages,
+                            assistantMessages = assistantMessages,
+                            platform = platform,
+                            memoryPrompt = memoryPrompt,
+                            reasoningMode = reasoningMode,
+                            activeToolDefinitions = activeToolDefinitions
+                        )
+                    }
+                }
                 ClientType.ANTHROPIC -> completeChatWithAnthropicNativeToolLoop(
                     userMessages = userMessages,
                     assistantMessages = assistantMessages,
@@ -466,11 +491,18 @@ class ChatRepositoryImpl @Inject constructor(
 
         val config = toolLoopOrchestrator.configuration
         val toolCallingAdapter = toolCallingAdapterFor(platform.compatibleType)
+        val toolScope = toolLoopOrchestrator.createToolScope(
+            activeToolDefinitions = activeToolDefinitions,
+            initialIntent = userMessages.latestToolIntent(),
+            advertisementSizer = ToolAdvertisementSizer { definitions ->
+                toolCallingAdapter.advertisedToolChars(definitions)
+            }
+        )
         val toolUsageRecords = mutableListOf<TokenUsageRecord>()
         val loopResult = toolLoopOrchestrator.runLoop(
             adapter = toolCallingAdapter,
             onProgress = { progress -> emit(progress) },
-            tools = activeToolDefinitions,
+            scope = toolScope,
             requestModel = { toolPrompt ->
                 collectProviderText(
                     states = completeChatByProvider(
@@ -748,6 +780,13 @@ class ChatRepositoryImpl @Inject constructor(
         openAIAPI.setToken(platform.token)
         openAIAPI.setAPIUrl(platform.apiUrl)
         val traceContext = promptTraceContext(userMessages, platform)
+        val toolScope = toolLoopOrchestrator.createToolScope(
+            activeToolDefinitions = activeToolDefinitions,
+            initialIntent = userMessages.latestToolIntent(),
+            advertisementSizer = ToolAdvertisementSizer { definitions ->
+                openAIResponsesToolAdapter.advertisedToolChars(definitions)
+            }
+        )
 
         val prepared = withContext(Dispatchers.Default) {
             val reasoningParameters = mapReasoningMode(platform, reasoningMode)
@@ -761,7 +800,7 @@ class ChatRepositoryImpl @Inject constructor(
                     currentRuntimeContextPrompt(),
                     memoryPrompt,
                     conversationContext.summary,
-                    openAINativeToolInstruction(activeToolDefinitions)
+                    openAINativeToolInstruction(toolScope.definitions)
                 ),
                 temperature = if (reasoningParameters.hasExplicitReasoning) null else platform.temperature,
                 topP = if (reasoningParameters.hasExplicitReasoning) null else platform.topP,
@@ -775,7 +814,6 @@ class ChatRepositoryImpl @Inject constructor(
         }
 
         val config = toolLoopOrchestrator.configuration
-        val tools = openAIResponsesToolAdapter.toResponseTools(activeToolDefinitions)
         val continuationItems = mutableListOf<ResponseInputItem>()
         val allResults = mutableListOf<ToolResult>()
         val toolUsageRecords = mutableListOf<TokenUsageRecord>()
@@ -804,13 +842,26 @@ class ChatRepositoryImpl @Inject constructor(
             return@flow
         }
 
-        repeat(maxRounds) { roundIndex ->
+        if (toolScope.definitions.isEmpty()) {
+            emitProviderStatesSkippingLoading(
+                completeChatByProvider(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+            )
+            return@flow
+        }
+
+        var allowedRounds = maxRounds
+        var discoveryRounds = 0
+        var roundIndex = 0
+        while (roundIndex < allowedRounds) {
             val round = collectOpenAIResponsesNativeRound(
                 request = prepared.toRequest(
                     continuationItems = continuationItems,
-                    tools = tools,
+                    tools = openAIResponsesToolAdapter.toResponseTools(toolScope.definitions),
                     toolChoice = ResponseToolChoice.Auto,
-                    extraInstruction = stickerContinuationInstruction(allResults)
+                    extraInstruction = mergePromptSections(
+                        nativeToolScopeInstruction(toolScope.definitions),
+                        stickerContinuationInstruction(allResults)
+                    )
                 ),
                 timeoutSeconds = platform.timeout,
                 platform = platform,
@@ -853,9 +904,9 @@ class ChatRepositoryImpl @Inject constructor(
             }
             hasToolInteraction = true
 
-            val results = toolLoopOrchestrator.executeBoundedToolCalls(
+            val results = toolLoopOrchestrator.executeScopedToolCalls(
                 calls = calls,
-                tools = activeToolDefinitions,
+                scope = toolScope,
                 executionSession = toolExecutionSession
             ) { progress -> emit(progress) }
             allResults += results
@@ -866,6 +917,13 @@ class ChatRepositoryImpl @Inject constructor(
                     emit(ApiState.SourcesUpdated(sources))
                 }
             continuationItems += openAIResponsesToolAdapter.continuationInputItems(round.events, calls, results, config)
+            if (results.hasSuccessfulToolDiscovery() &&
+                discoveryRounds < toolScope.maxDiscoveryRounds
+            ) {
+                allowedRounds += 1
+                discoveryRounds += 1
+            }
+            roundIndex += 1
         }
 
         if (continuationItems.isEmpty()) {
@@ -878,8 +936,8 @@ class ChatRepositoryImpl @Inject constructor(
         val finalRound = collectOpenAIResponsesNativeRound(
             request = prepared.toRequest(
                 continuationItems = continuationItems,
-                tools = tools,
-                toolChoice = ResponseToolChoice.None,
+                tools = null,
+                toolChoice = null,
                 extraInstruction = nativeFinalToolInstruction(allResults)
             ),
             timeoutSeconds = platform.timeout,
@@ -988,12 +1046,20 @@ class ChatRepositoryImpl @Inject constructor(
         platform: PlatformV2,
         memoryPrompt: String?,
         reasoningMode: ReasoningMode,
-        activeToolDefinitions: List<ToolDefinition>
+        activeToolDefinitions: List<ToolDefinition>,
+        fallbackToJsonToolLoop: Boolean = false
     ): Flow<ApiState> = flow {
         emit(ApiState.Loading)
         openAIAPI.setToken(platform.token)
         openAIAPI.setAPIUrl(platform.apiUrl)
         val traceContext = promptTraceContext(userMessages, platform)
+        val toolScope = toolLoopOrchestrator.createToolScope(
+            activeToolDefinitions = activeToolDefinitions,
+            initialIntent = userMessages.latestToolIntent(),
+            advertisementSizer = ToolAdvertisementSizer { definitions ->
+                openAIChatCompletionsToolAdapter.advertisedToolChars(definitions)
+            }
+        )
 
         val searchDecisionExecution = executeSearchDecisionIfNeeded(
             userMessages = userMessages,
@@ -1016,6 +1082,13 @@ class ChatRepositoryImpl @Inject constructor(
             return@flow
         }
 
+        if (toolScope.definitions.isEmpty()) {
+            emitProviderStatesSkippingLoading(
+                completeChatByProvider(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+            )
+            return@flow
+        }
+
         val prepared = withContext(Dispatchers.Default) {
             val reasoningParameters = mapReasoningMode(platform, reasoningMode)
             val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
@@ -1027,7 +1100,7 @@ class ChatRepositoryImpl @Inject constructor(
                     currentRuntimeContextPrompt(),
                     memoryPrompt,
                     conversationContext.summary,
-                    openAINativeToolInstruction(activeToolDefinitions)
+                    openAINativeToolInstruction(toolScope.definitions)
                 )
             )
             val thinking = reasoningParameters.openAICompatibleThinkingType?.let { type ->
@@ -1044,7 +1117,6 @@ class ChatRepositoryImpl @Inject constructor(
         }
 
         val config = toolLoopOrchestrator.configuration
-        val tools = openAIChatCompletionsToolAdapter.toChatCompletionTools(activeToolDefinitions)
         val continuationMessages = mutableListOf<ChatMessage>()
         val allResults = mutableListOf<ToolResult>()
         val toolUsageRecords = mutableListOf<TokenUsageRecord>()
@@ -1052,13 +1124,19 @@ class ChatRepositoryImpl @Inject constructor(
         val toolExecutionSession = toolLoopOrchestrator.createExecutionSession()
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)
 
-        repeat(maxRounds) { roundIndex ->
+        var allowedRounds = maxRounds
+        var discoveryRounds = 0
+        var roundIndex = 0
+        while (roundIndex < allowedRounds) {
             val round = collectOpenAIChatCompletionsNativeRound(
                 request = prepared.toRequest(
                     continuationMessages = continuationMessages,
-                    tools = tools,
+                    tools = openAIChatCompletionsToolAdapter.toChatCompletionTools(toolScope.definitions),
                     toolChoice = ChatCompletionToolChoice.Auto,
-                    extraInstruction = stickerContinuationInstruction(allResults)
+                    extraInstruction = mergePromptSections(
+                        nativeToolScopeInstruction(toolScope.definitions),
+                        stickerContinuationInstruction(allResults)
+                    )
                 ),
                 timeoutSeconds = platform.timeout,
                 platform = platform,
@@ -1071,9 +1149,28 @@ class ChatRepositoryImpl @Inject constructor(
             hasToolInteraction = hasToolInteraction || openAIChatCompletionsToolAdapter.hasToolCallIntent(round.chunks)
             if (round.errorMessage != null) {
                 if (!hasToolInteraction) {
-                    emitProviderStatesSkippingLoading(
-                        completeChatWithOpenAIChatCompletions(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
-                    )
+                    val fallback = if (
+                        fallbackToJsonToolLoop &&
+                        round.errorMessage.isNativeToolRequestRejected()
+                    ) {
+                        completeChatWithToolLoopFallback(
+                            userMessages = userMessages,
+                            assistantMessages = assistantMessages,
+                            platform = platform,
+                            memoryPrompt = memoryPrompt,
+                            reasoningMode = reasoningMode,
+                            activeToolDefinitions = activeToolDefinitions
+                        )
+                    } else {
+                        completeChatWithOpenAIChatCompletions(
+                            userMessages,
+                            assistantMessages,
+                            platform,
+                            memoryPrompt,
+                            reasoningMode
+                        )
+                    }
+                    emitProviderStatesSkippingLoading(fallback)
                 } else {
                     emit(ApiState.Error(round.errorMessage))
                     aggregateToolUsage(currentAnswerUsage = null, toolUsages = toolUsageRecords)?.let { usage ->
@@ -1101,9 +1198,9 @@ class ChatRepositoryImpl @Inject constructor(
             }
             hasToolInteraction = true
 
-            val results = toolLoopOrchestrator.executeBoundedToolCalls(
+            val results = toolLoopOrchestrator.executeScopedToolCalls(
                 calls = calls,
-                tools = activeToolDefinitions,
+                scope = toolScope,
                 executionSession = toolExecutionSession
             ) { progress -> emit(progress) }
             allResults += results
@@ -1113,7 +1210,21 @@ class ChatRepositoryImpl @Inject constructor(
                 .takeIf { it.isNotEmpty() }?.let { sources ->
                     emit(ApiState.SourcesUpdated(sources))
                 }
-            continuationMessages += openAIChatCompletionsToolAdapter.continuationMessages(calls, results, config)
+            continuationMessages += openAIChatCompletionsToolAdapter.continuationMessages(
+                calls = calls,
+                results = results,
+                config = config,
+                reasoningContent = round.reasoningContent.takeIf {
+                    platform.usesOfficialDeepSeekApi()
+                }
+            )
+            if (results.hasSuccessfulToolDiscovery() &&
+                discoveryRounds < toolScope.maxDiscoveryRounds
+            ) {
+                allowedRounds += 1
+                discoveryRounds += 1
+            }
+            roundIndex += 1
         }
 
         if (continuationMessages.isEmpty()) {
@@ -1126,8 +1237,8 @@ class ChatRepositoryImpl @Inject constructor(
         val finalRound = collectOpenAIChatCompletionsNativeRound(
             request = prepared.toRequest(
                 continuationMessages = continuationMessages,
-                tools = tools,
-                toolChoice = ChatCompletionToolChoice.None,
+                tools = null,
+                toolChoice = null,
                 extraInstruction = nativeFinalToolInstruction(allResults)
             ),
             timeoutSeconds = platform.timeout,
@@ -1217,6 +1328,7 @@ class ChatRepositoryImpl @Inject constructor(
         return OpenAIChatCompletionsNativeRound(
             chunks = chunks,
             errorMessage = errorMessage,
+            reasoningContent = chunks.toolContinuationReasoning(),
             usage = openAIChatUsageFromChunks(
                 chunks = chunks,
                 request = request,
@@ -1239,6 +1351,13 @@ class ChatRepositoryImpl @Inject constructor(
         anthropicAPI.setToken(platform.token)
         anthropicAPI.setAPIUrl(platform.apiUrl)
         val traceContext = promptTraceContext(userMessages, platform)
+        val toolScope = toolLoopOrchestrator.createToolScope(
+            activeToolDefinitions = activeToolDefinitions,
+            initialIntent = userMessages.latestToolIntent(),
+            advertisementSizer = ToolAdvertisementSizer { definitions ->
+                anthropicNativeToolAdapter.advertisedToolChars(definitions)
+            }
+        )
 
         val searchDecisionExecution = executeSearchDecisionIfNeeded(
             userMessages = userMessages,
@@ -1261,6 +1380,13 @@ class ChatRepositoryImpl @Inject constructor(
             return@flow
         }
 
+        if (toolScope.definitions.isEmpty()) {
+            emitProviderStatesSkippingLoading(
+                completeChatByProvider(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+            )
+            return@flow
+        }
+
         val prepared = withContext(Dispatchers.Default) {
             val reasoningParameters = mapReasoningMode(platform, reasoningMode)
             val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
@@ -1274,7 +1400,7 @@ class ChatRepositoryImpl @Inject constructor(
                     currentRuntimeContextPrompt(),
                     memoryPrompt,
                     conversationContext.summary,
-                    openAINativeToolInstruction(activeToolDefinitions)
+                    openAINativeToolInstruction(toolScope.definitions)
                 ),
                 temperature = if (reasoningParameters.hasExplicitReasoning) null else platform.temperature,
                 topP = if (reasoningParameters.hasExplicitReasoning) null else platform.topP,
@@ -1288,7 +1414,6 @@ class ChatRepositoryImpl @Inject constructor(
         }
 
         val config = toolLoopOrchestrator.configuration
-        val tools = anthropicNativeToolAdapter.toAnthropicTools(activeToolDefinitions)
         val continuationMessages = mutableListOf<InputMessage>()
         val allResults = mutableListOf<ToolResult>()
         val toolUsageRecords = mutableListOf<TokenUsageRecord>()
@@ -1296,13 +1421,19 @@ class ChatRepositoryImpl @Inject constructor(
         val toolExecutionSession = toolLoopOrchestrator.createExecutionSession()
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)
 
-        repeat(maxRounds) { roundIndex ->
+        var allowedRounds = maxRounds
+        var discoveryRounds = 0
+        var roundIndex = 0
+        while (roundIndex < allowedRounds) {
             val round = collectAnthropicNativeRound(
                 request = prepared.toRequest(
                     continuationMessages = continuationMessages,
-                    tools = tools,
+                    tools = anthropicNativeToolAdapter.toAnthropicTools(toolScope.definitions),
                     toolChoice = AnthropicToolChoice.Auto,
-                    extraInstruction = stickerContinuationInstruction(allResults)
+                    extraInstruction = mergePromptSections(
+                        nativeToolScopeInstruction(toolScope.definitions),
+                        stickerContinuationInstruction(allResults)
+                    )
                 ),
                 timeoutSeconds = platform.timeout,
                 platform = platform,
@@ -1345,9 +1476,9 @@ class ChatRepositoryImpl @Inject constructor(
             }
             hasToolInteraction = true
 
-            val results = toolLoopOrchestrator.executeBoundedToolCalls(
+            val results = toolLoopOrchestrator.executeScopedToolCalls(
                 calls = calls,
-                tools = activeToolDefinitions,
+                scope = toolScope,
                 executionSession = toolExecutionSession
             ) { progress -> emit(progress) }
             allResults += results
@@ -1358,6 +1489,13 @@ class ChatRepositoryImpl @Inject constructor(
                     emit(ApiState.SourcesUpdated(sources))
                 }
             continuationMessages += anthropicNativeToolAdapter.continuationMessages(calls, results, config)
+            if (results.hasSuccessfulToolDiscovery() &&
+                discoveryRounds < toolScope.maxDiscoveryRounds
+            ) {
+                allowedRounds += 1
+                discoveryRounds += 1
+            }
+            roundIndex += 1
         }
 
         if (continuationMessages.isEmpty()) {
@@ -1370,8 +1508,8 @@ class ChatRepositoryImpl @Inject constructor(
         val finalRound = collectAnthropicNativeRound(
             request = prepared.toRequest(
                 continuationMessages = continuationMessages,
-                tools = tools,
-                toolChoice = AnthropicToolChoice.None,
+                tools = null,
+                toolChoice = null,
                 extraInstruction = nativeFinalToolInstruction(allResults)
             ),
             timeoutSeconds = platform.timeout,
@@ -1485,6 +1623,13 @@ class ChatRepositoryImpl @Inject constructor(
         googleAPI.setToken(platform.token)
         googleAPI.setAPIUrl(platform.apiUrl)
         val traceContext = promptTraceContext(userMessages, platform)
+        val toolScope = toolLoopOrchestrator.createToolScope(
+            activeToolDefinitions = activeToolDefinitions,
+            initialIntent = userMessages.latestToolIntent(),
+            advertisementSizer = ToolAdvertisementSizer { definitions ->
+                googleNativeToolAdapter.advertisedToolChars(definitions)
+            }
+        )
 
         val searchDecisionExecution = executeSearchDecisionIfNeeded(
             userMessages = userMessages,
@@ -1503,6 +1648,13 @@ class ChatRepositoryImpl @Inject constructor(
                     extraPrompt = searchDecisionExecution.finalAnswerPrompt
                 ),
                 searchDecisionExecution.usage
+            )
+            return@flow
+        }
+
+        if (toolScope.definitions.isEmpty()) {
+            emitProviderStatesSkippingLoading(
+                completeChatByProvider(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
             )
             return@flow
         }
@@ -1528,7 +1680,7 @@ class ChatRepositoryImpl @Inject constructor(
                     currentRuntimeContextPrompt(),
                     memoryPrompt,
                     conversationContext.summary,
-                    openAINativeToolInstruction(activeToolDefinitions)
+                    openAINativeToolInstruction(toolScope.definitions)
                 )?.let { prompt ->
                     Content(
                         parts = listOf(Part.text(prompt))
@@ -1538,7 +1690,6 @@ class ChatRepositoryImpl @Inject constructor(
         }
 
         val config = toolLoopOrchestrator.configuration
-        val tools = googleNativeToolAdapter.toGoogleTools(activeToolDefinitions)
         val continuationContents = mutableListOf<Content>()
         val allResults = mutableListOf<ToolResult>()
         val toolUsageRecords = mutableListOf<TokenUsageRecord>()
@@ -1546,13 +1697,19 @@ class ChatRepositoryImpl @Inject constructor(
         val toolExecutionSession = toolLoopOrchestrator.createExecutionSession()
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)
 
-        repeat(maxRounds) { roundIndex ->
+        var allowedRounds = maxRounds
+        var discoveryRounds = 0
+        var roundIndex = 0
+        while (roundIndex < allowedRounds) {
             val round = collectGoogleNativeRound(
                 request = prepared.toRequest(
                     continuationContents = continuationContents,
-                    tools = tools,
+                    tools = googleNativeToolAdapter.toGoogleTools(toolScope.definitions),
                     toolConfig = GoogleToolConfig.Auto,
-                    extraInstruction = stickerContinuationInstruction(allResults)
+                    extraInstruction = mergePromptSections(
+                        nativeToolScopeInstruction(toolScope.definitions),
+                        stickerContinuationInstruction(allResults)
+                    )
                 ),
                 model = platform.model,
                 timeoutSeconds = platform.timeout,
@@ -1596,9 +1753,9 @@ class ChatRepositoryImpl @Inject constructor(
             }
             hasToolInteraction = true
 
-            val results = toolLoopOrchestrator.executeBoundedToolCalls(
+            val results = toolLoopOrchestrator.executeScopedToolCalls(
                 calls = calls,
-                tools = activeToolDefinitions,
+                scope = toolScope,
                 executionSession = toolExecutionSession
             ) { progress -> emit(progress) }
             allResults += results
@@ -1609,6 +1766,13 @@ class ChatRepositoryImpl @Inject constructor(
                     emit(ApiState.SourcesUpdated(sources))
                 }
             continuationContents += googleNativeToolAdapter.continuationContents(calls, results, config)
+            if (results.hasSuccessfulToolDiscovery() &&
+                discoveryRounds < toolScope.maxDiscoveryRounds
+            ) {
+                allowedRounds += 1
+                discoveryRounds += 1
+            }
+            roundIndex += 1
         }
 
         if (continuationContents.isEmpty()) {
@@ -1621,8 +1785,8 @@ class ChatRepositoryImpl @Inject constructor(
         val finalRound = collectGoogleNativeRound(
             request = prepared.toRequest(
                 continuationContents = continuationContents,
-                tools = tools,
-                toolConfig = GoogleToolConfig.None,
+                tools = null,
+                toolConfig = null,
                 extraInstruction = nativeFinalToolInstruction(allResults)
             ),
             model = platform.model,
@@ -2816,8 +2980,8 @@ private data class OpenAIResponsesNativeToolRequest(
 ) {
     fun toRequest(
         continuationItems: List<ResponseInputItem>,
-        tools: List<ResponseTool>,
-        toolChoice: ResponseToolChoice,
+        tools: List<ResponseTool>?,
+        toolChoice: ResponseToolChoice?,
         extraInstruction: String? = null
     ): ResponsesRequest = ResponsesRequest(
         model = model,
@@ -2848,8 +3012,8 @@ private data class OpenAIChatCompletionsNativeToolRequest(
 ) {
     fun toRequest(
         continuationMessages: List<ChatMessage>,
-        tools: List<ChatCompletionTool>,
-        toolChoice: ChatCompletionToolChoice,
+        tools: List<ChatCompletionTool>?,
+        toolChoice: ChatCompletionToolChoice?,
         extraInstruction: String? = null
     ): ChatCompletionRequest = ChatCompletionRequest(
         model = model,
@@ -2868,8 +3032,33 @@ private data class OpenAIChatCompletionsNativeToolRequest(
 private data class OpenAIChatCompletionsNativeRound(
     val chunks: List<ChatCompletionChunk>,
     val errorMessage: String?,
+    val reasoningContent: String,
     val usage: TokenUsageRecord?
 )
+
+private fun List<ChatCompletionChunk>.toolContinuationReasoning(): String = asSequence()
+    .flatMap { chunk -> chunk.choices.orEmpty().asSequence() }
+    .filter { choice -> choice.index == 0 }
+    .mapNotNull { choice ->
+        choice.delta.reasoningContent?.takeIf { content -> content.isNotEmpty() }
+            ?: choice.delta.reasoning?.takeIf { content -> content.isNotEmpty() }
+    }
+    .joinToString(separator = "")
+
+private fun String.isNativeToolRequestRejected(): Boolean {
+    val normalized = lowercase()
+    val namesNativeToolField = normalized.contains("tool") ||
+        normalized.contains("function_call") ||
+        normalized.contains("function call")
+    val indicatesUnsupportedField = normalized.contains("unsupported") ||
+        normalized.contains("unknown parameter") ||
+        normalized.contains("invalid parameter") ||
+        normalized.contains("invalid value") ||
+        normalized.contains("not support") ||
+        normalized.contains("not supported") ||
+        normalized.contains("not allowed")
+    return namesNativeToolField && indicatesUnsupportedField
+}
 
 private data class AnthropicNativeToolRequest(
     val model: String,
@@ -2882,8 +3071,8 @@ private data class AnthropicNativeToolRequest(
 ) {
     fun toRequest(
         continuationMessages: List<InputMessage>,
-        tools: List<AnthropicTool>,
-        toolChoice: AnthropicToolChoice,
+        tools: List<AnthropicTool>?,
+        toolChoice: AnthropicToolChoice?,
         extraInstruction: String? = null
     ): MessageRequest = MessageRequest(
         model = model,
@@ -2912,8 +3101,8 @@ private data class GoogleNativeToolRequest(
 ) {
     fun toRequest(
         continuationContents: List<Content>,
-        tools: List<GoogleTool>,
-        toolConfig: GoogleToolConfig,
+        tools: List<GoogleTool>?,
+        toolConfig: GoogleToolConfig?,
         extraInstruction: String? = null
     ): GenerateContentRequest = GenerateContentRequest(
         contents = contents + continuationContents,
@@ -3020,8 +3209,25 @@ private fun openAINativeToolInstruction(activeToolDefinitions: List<ToolDefiniti
     val stickerInstruction = stickerToolUsageRules(activeToolDefinitions)
         .joinToString(separator = " ")
         .takeIf(String::isNotBlank)
-    return listOfNotNull(baseInstruction, stickerInstruction).joinToString(separator = "\n\n")
+    return listOfNotNull(
+        baseInstruction,
+        stickerInstruction
+    ).joinToString(separator = "\n\n")
 }
+
+private fun nativeToolScopeInstruction(toolDefinitions: List<ToolDefinition>): String? = buildList {
+    val toolNames = toolDefinitions.map(ToolDefinition::name).toSet()
+    if (ToolDefinition.DiscoverTools.name in toolNames) {
+        add(
+            "Only the functions included in this request are executable. " +
+                "When a needed capability is not listed, call discover_tools first; any returned functions are available only in the next response."
+        )
+    }
+    if (ToolDefinition.WebSearch.name in toolNames) {
+        add("For web_search, use a focused query with useful entity, date, place, and source terms.")
+    }
+}.joinToString(separator = "\n")
+    .takeIf(String::isNotBlank)
 
 private fun nativeFinalToolInstruction(results: Collection<ToolResult>): String = listOfNotNull(
     OPENAI_NATIVE_FINAL_TOOL_INSTRUCTION,
@@ -3032,6 +3238,14 @@ internal fun mergePromptSections(vararg sections: String?): String? = sections
     .mapNotNull { section -> section?.trim()?.takeIf { it.isNotBlank() } }
     .takeIf { it.isNotEmpty() }
     ?.joinToString(separator = "\n\n")
+
+private fun List<MessageV2>.latestToolIntent(): String = lastOrNull()
+    ?.effectiveContent()
+    ?.trim()
+    ?.take(MAX_TOOL_SCOPE_INTENT_CHARS)
+    .orEmpty()
+
+private const val MAX_TOOL_SCOPE_INTENT_CHARS = 1_000
 
 internal fun MessageV2.sendableAssistantContent(): String {
     val strippedContent = stripAssistantErrorNote(semanticAssistantContent()).trim()

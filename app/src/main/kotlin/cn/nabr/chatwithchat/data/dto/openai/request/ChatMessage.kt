@@ -14,7 +14,6 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonDecoder
 import kotlinx.serialization.json.JsonEncoder
 import kotlinx.serialization.json.JsonNull
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -36,6 +35,9 @@ data class ChatMessage(
 
     @SerialName("tool_call_id")
     val toolCallId: String? = null,
+
+    @SerialName("reasoning_content")
+    val reasoningContent: String? = null,
 
     val contentText: String? = null
 )
@@ -70,6 +72,9 @@ object ChatMessageSerializer : KSerializer<ChatMessage> {
             value.toolCallId?.takeIf { it.isNotBlank() }?.let { callId ->
                 put("tool_call_id", JsonPrimitive(callId))
             }
+            value.reasoningContent?.takeIf { it.isNotBlank() }?.let { reasoning ->
+                put("reasoning_content", JsonPrimitive(reasoning))
+            }
         }
         jsonEncoder.encodeJsonElement(element)
     }
@@ -94,6 +99,7 @@ object ChatMessageSerializer : KSerializer<ChatMessage> {
                 )
             },
             toolCallId = element["tool_call_id"]?.jsonPrimitive?.contentOrNull,
+            reasoningContent = element["reasoning_content"]?.jsonPrimitive?.contentOrNull,
             contentText = when (contentElement) {
                 is JsonPrimitive -> contentElement.takeUnless { it is JsonNull }?.contentOrNull
                 else -> null

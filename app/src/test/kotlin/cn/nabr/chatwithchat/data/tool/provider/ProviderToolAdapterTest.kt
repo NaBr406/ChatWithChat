@@ -39,8 +39,8 @@ class ProviderToolAdapterTest {
         assertFalse(adapter.supportsNativeToolCalling)
         assertEquals("openai_compatible_json", adapter.name)
         assertTrue(definitions.contains("Name: web_search"))
-        assertTrue(prompt.contains("Return only valid JSON"))
-        assertTrue(prompt.contains("Use at most 1 tool calls"))
+        assertTrue(prompt.contains("Return exactly one JSON object"))
+        assertTrue(prompt.contains("Enabled tool signatures:"))
         assertTrue(output is JsonToolModelOutput.ToolCalls)
         assertEquals("web_search", (output as JsonToolModelOutput.ToolCalls).calls.single().name)
         assertTrue(finalPrompt.contains("Tool results are available"))
@@ -95,7 +95,7 @@ class ProviderToolAdapterTest {
 
         assertEquals("anthropic_json_fallback", adapter.name)
         assertFalse(adapter.supportsNativeToolCalling)
-        assertTrue(prompt.contains("Return only valid JSON"))
+        assertTrue(prompt.contains("Return exactly one JSON object"))
         assertTrue(prompt.contains("fetch_url"))
     }
 

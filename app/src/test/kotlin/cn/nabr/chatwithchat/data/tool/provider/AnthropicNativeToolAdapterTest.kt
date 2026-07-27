@@ -15,6 +15,7 @@ import cn.nabr.chatwithchat.data.tool.ToolLoopConfig
 import cn.nabr.chatwithchat.data.tool.ToolResult
 import cn.nabr.chatwithchat.data.tool.ToolSource
 import cn.nabr.chatwithchat.data.tool.complexSchemaToolDefinition
+import cn.nabr.chatwithchat.data.tool.toolProtocolJson
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -72,6 +73,16 @@ class AnthropicNativeToolAdapterTest {
 
         assertTrue(payload.contains(""""name":"current_datetime""""))
         assertTrue(payload.contains(""""input_schema":{"type":"object","properties":{},"required":[],"additionalProperties":false}"""))
+    }
+
+    @Test
+    fun `advertised tool chars match serialized anthropic tools`() {
+        val definitions = listOf(ToolDefinition.WebSearch, ToolDefinition.CurrentDateTime)
+
+        assertEquals(
+            toolProtocolJson.encodeToString(adapter.toAnthropicTools(definitions)).length,
+            adapter.advertisedToolChars(definitions)
+        )
     }
 
     @Test

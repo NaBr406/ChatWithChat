@@ -18,6 +18,12 @@ interface ToolCallingAdapter {
         config: ToolLoopConfig
     ): String
 
+    fun advertisedToolChars(tools: List<ToolDefinition>): Int = buildToolPrompt(
+        tools = tools,
+        scratchpad = emptyList(),
+        config = ToolLoopConfig.Default
+    ).length
+
     fun parseModelOutput(
         rawText: String,
         config: ToolLoopConfig = ToolLoopConfig.Default

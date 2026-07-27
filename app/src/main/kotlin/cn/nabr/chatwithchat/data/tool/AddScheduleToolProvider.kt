@@ -168,6 +168,11 @@ class AddScheduleToolProvider(
         iconKey = "event"
     )
 
+    override val discoveryMetadata: ToolDiscoveryMetadata = ToolDiscoveryMetadata(
+        intentTags = setOf("calendar", "schedule", "event", "appointment", "reminder", "日历", "日程", "安排", "约会", "提醒"),
+        priority = 20
+    )
+
     override val securityPolicy: ToolSecurityPolicy = ToolSecurityPolicy(
         effect = ToolEffect.EXTERNAL_WRITE,
         approvalPolicy = ToolApprovalPolicy.REQUIRE_SYSTEM_PERMISSION

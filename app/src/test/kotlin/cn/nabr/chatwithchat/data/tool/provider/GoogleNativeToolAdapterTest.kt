@@ -16,6 +16,7 @@ import cn.nabr.chatwithchat.data.tool.ToolLoopConfig
 import cn.nabr.chatwithchat.data.tool.ToolResult
 import cn.nabr.chatwithchat.data.tool.ToolSource
 import cn.nabr.chatwithchat.data.tool.complexSchemaToolDefinition
+import cn.nabr.chatwithchat.data.tool.toolProtocolJson
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.buildJsonObject
@@ -62,6 +63,19 @@ class GoogleNativeToolAdapterTest {
 
         assertTrue(payload.contains(""""name":"current_datetime""""))
         assertTrue(payload.contains(""""parameters":{"type":"object","properties":{},"required":[]}"""))
+    }
+
+    @Test
+    fun `advertised tool chars match serialized google tool wrapper`() {
+        val definitions = listOf(ToolDefinition.WebSearch, ToolDefinition.CurrentDateTime)
+        val tools = adapter.toGoogleTools(definitions)
+
+        assertEquals(1, tools.size)
+        assertEquals(2, tools.single().functionDeclarations.size)
+        assertEquals(
+            toolProtocolJson.encodeToString(tools).length,
+            adapter.advertisedToolChars(definitions)
+        )
     }
 
     @Test
