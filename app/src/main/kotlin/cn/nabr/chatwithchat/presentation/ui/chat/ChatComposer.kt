@@ -1,5 +1,6 @@
 package cn.nabr.chatwithchat.presentation.ui.chat
 
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.net.Uri
 import android.os.Environment
@@ -15,6 +16,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -22,7 +24,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -32,6 +33,8 @@ import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -64,7 +67,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -134,22 +136,28 @@ fun ChatComposer(
         }
     }
 
-    val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickMultipleVisualMedia()
-    ) { uris ->
-        if (uris.isNotEmpty()) {
-            isCopyingPickedImages = true
-            scope.launch {
-                try {
-                    copyPickedImages(context, uris) { result ->
-                        onFilesSelected(result.copiedPaths, result.failedCount)
-                    }
-                } finally {
-                    isCopyingPickedImages = false
+    fun importPickedImages(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        isCopyingPickedImages = true
+        scope.launch {
+            try {
+                copyPickedImages(context, uris) { result ->
+                    onFilesSelected(result.copiedPaths, result.failedCount)
                 }
+            } finally {
+                isCopyingPickedImages = false
             }
         }
     }
+
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia(),
+        onResult = { uris -> importPickedImages(uris) }
+    )
+    val documentPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments(),
+        onResult = { uris -> importPickedImages(uris) }
+    )
 
     val cameraLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicture()
@@ -187,6 +195,20 @@ fun ChatComposer(
             pendingCameraPhotoPath = null
             photoFile.delete()
             Toast.makeText(context, context.getString(R.string.failed_to_start_camera), Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun launchImagePicker() {
+        try {
+            filePickerLauncher.launch(
+                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+            )
+        } catch (_: ActivityNotFoundException) {
+            try {
+                documentPickerLauncher.launch(arrayOf("image/*"))
+            } catch (_: ActivityNotFoundException) {
+                Toast.makeText(context, context.getString(R.string.failed_to_prepare_attachment), Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -235,7 +257,7 @@ fun ChatComposer(
                             Box(contentAlignment = Alignment.Center) {
                                 Box(
                                     modifier = Modifier
-                                        .size(34.dp)
+                                        .size(30.dp)
                                         .background(attachmentButtonColor, CircleShape)
                                 )
                                 IconButton(
@@ -247,59 +269,61 @@ fun ChatComposer(
                                     )
                                 ) {
                                     Icon(
-                                        modifier = Modifier.size(22.dp),
+                                        modifier = Modifier.size(20.dp),
                                         imageVector = ImageVector.vectorResource(R.drawable.ic_attach_file),
                                         contentDescription = stringResource(R.string.attach_file)
                                     )
                                 }
                                 DropdownMenu(
-                                    modifier = Modifier.widthIn(min = 208.dp, max = 260.dp),
+                                    modifier = Modifier.width(184.dp),
                                     expanded = isAttachmentMenuExpanded,
                                     onDismissRequest = { isAttachmentMenuExpanded = false },
                                     offset = DpOffset(x = (-4).dp, y = 4.dp),
-                                    shape = RoundedCornerShape(14.dp),
-                                    containerColor = materialColors.grouped,
+                                    shape = RoundedCornerShape(12.dp),
+                                    containerColor = materialColors.navigation,
                                     tonalElevation = 0.dp,
-                                    shadowElevation = 12.dp,
-                                    border = BorderStroke(0.5.dp, materialColors.separatorStrong)
+                                    shadowElevation = 6.dp,
+                                    border = BorderStroke(0.5.dp, materialColors.separator)
                                 ) {
                                     DropdownMenuItem(
-                                        modifier = Modifier.heightIn(min = 52.dp),
+                                        modifier = Modifier.heightIn(min = 48.dp),
                                         text = {
                                             Text(
                                                 text = stringResource(R.string.choose_image),
-                                                style = MaterialTheme.typography.bodyLarge,
-                                                fontWeight = FontWeight.Medium
+                                                style = MaterialTheme.typography.bodyMedium
                                             )
                                         },
                                         leadingIcon = {
                                             Icon(
-                                                imageVector = ImageVector.vectorResource(R.drawable.ic_image),
-                                                contentDescription = null
+                                                imageVector = Icons.Outlined.Image,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(20.dp),
+                                                tint = materialColors.secondaryLabel
                                             )
                                         },
+                                        contentPadding = PaddingValues(horizontal = 14.dp),
                                         onClick = {
                                             isAttachmentMenuExpanded = false
-                                            filePickerLauncher.launch(
-                                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                            )
+                                            launchImagePicker()
                                         }
                                     )
                                     DropdownMenuItem(
-                                        modifier = Modifier.heightIn(min = 52.dp),
+                                        modifier = Modifier.heightIn(min = 48.dp),
                                         text = {
                                             Text(
                                                 text = stringResource(R.string.take_photo),
-                                                style = MaterialTheme.typography.bodyLarge,
-                                                fontWeight = FontWeight.Medium
+                                                style = MaterialTheme.typography.bodyMedium
                                             )
                                         },
                                         leadingIcon = {
                                             Icon(
-                                                imageVector = ImageVector.vectorResource(R.drawable.ic_photo_camera),
-                                                contentDescription = null
+                                                imageVector = Icons.Outlined.PhotoCamera,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(20.dp),
+                                                tint = materialColors.secondaryLabel
                                             )
                                         },
+                                        contentPadding = PaddingValues(horizontal = 14.dp),
                                         onClick = {
                                             isAttachmentMenuExpanded = false
                                             launchCameraCapture()
