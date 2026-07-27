@@ -7,6 +7,7 @@ import cn.nabr.chatwithchat.data.tool.ToolLoopConfig
 import cn.nabr.chatwithchat.data.tool.ToolMessage
 import cn.nabr.chatwithchat.data.tool.ToolPromptBuilder
 import cn.nabr.chatwithchat.data.tool.ToolResult
+import cn.nabr.chatwithchat.data.tool.stickerFinalAnswerInstruction
 
 class OpenAICompatibleJsonToolAdapter(
     private val toolPromptBuilder: ToolPromptBuilder = ToolPromptBuilder(),
@@ -50,6 +51,9 @@ class OpenAICompatibleJsonToolAdapter(
             appendLine("Use them only when relevant. If you use web sources, cite the source URLs in the answer.")
             appendLine("If a tool result reports tool_permission_denied, explain the missing Android permission and ask the user to enable it before retrying.")
             appendLine("If the user's request is broad or underspecified but the tool results are usable, answer with the most reasonable default scope, state that scope briefly, and avoid asking a clarifying question before giving useful content.")
+            stickerFinalAnswerInstruction(results)?.let { instruction ->
+                appendLine(instruction)
+            }
             draftFinalAnswer?.trim()?.takeIf { it.isNotBlank() }?.let { draft ->
                 appendLine()
                 appendLine("The tool loop drafted this final answer. Use it as guidance, but answer naturally:")

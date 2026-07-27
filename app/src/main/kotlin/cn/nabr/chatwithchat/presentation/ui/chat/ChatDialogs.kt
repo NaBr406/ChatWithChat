@@ -37,6 +37,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import cn.nabr.chatwithchat.R
+import cn.nabr.chatwithchat.data.context.stripInternalStickerMarkers
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.effectiveContent
 import cn.nabr.chatwithchat.data.database.entity.effectiveThoughts
@@ -214,8 +215,10 @@ fun AssistantMessageEditDialog(
     val screenHeight = with(LocalDensity.current) { configuration.containerSize.height.toDp() }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var responseText by remember { mutableStateOf(initialMessage.effectiveContent()) }
-    var thoughtsText by remember { mutableStateOf(initialMessage.effectiveThoughts()) }
+    val initialResponseText = initialMessage.effectiveContent().stripInternalStickerMarkers()
+    val initialThoughtsText = initialMessage.effectiveThoughts().stripInternalStickerMarkers()
+    var responseText by remember { mutableStateOf(initialResponseText) }
+    var thoughtsText by remember { mutableStateOf(initialThoughtsText) }
     var isCopyingPickedImages by remember { mutableStateOf(false) }
     val isAttachmentBusy = isAttachmentImportInProgress || isCopyingPickedImages
     val filePickerLauncher = rememberLauncherForActivityResult(
@@ -285,8 +288,8 @@ fun AssistantMessageEditDialog(
                     !hasPendingOrFailedAttachments &&
                     (responseText.isNotBlank() || thoughtsText.isNotBlank() || attachments.isNotEmpty()) &&
                     (
-                        responseText != initialMessage.effectiveContent() ||
-                            thoughtsText != initialMessage.effectiveThoughts() ||
+                        responseText != initialResponseText ||
+                            thoughtsText != initialThoughtsText ||
                             attachments.mapNotNull { it.attachment } != initialMessage.attachments
                         ),
                 onClick = {

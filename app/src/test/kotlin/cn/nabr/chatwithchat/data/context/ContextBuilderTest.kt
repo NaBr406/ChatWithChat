@@ -194,6 +194,40 @@ class ContextBuilderTest {
     }
 
     @Test
+    fun `internal sticker marker leaked by a model is removed from visible semantic content`() {
+        val message = MessageV2(
+            content = "Sent naturally.\n[assistant sent sticker: builtin.reactions.crying_cat]",
+            platformType = "provider"
+        )
+
+        assertEquals("Sent naturally.", message.semanticAssistantContent())
+        assertEquals(
+            "Before  after",
+            "Before [assistant sent sticker: hidden marker] after".stripInternalStickerMarkers()
+        )
+    }
+
+    @Test
+    fun `sticker marker escapes brackets in alt text`() {
+        val message = MessageV2(
+            content = "",
+            platformType = "provider",
+            stickerRefs = listOf(
+                MessageStickerRef(
+                    instanceId = "call_sticker",
+                    stickerId = "builtin.reactions.crying_cat",
+                    assetKey = "sha256:sticker",
+                    altText = "cat ] [ tail"
+                )
+            )
+        )
+
+        val marker = message.semanticAssistantContent()
+        assertEquals("[assistant sent sticker: cat \\] \\[ tail]", marker)
+        assertEquals("", marker.stripInternalStickerMarkers())
+    }
+
+    @Test
     fun `sticker only assistant history remains in omitted turn summary`() {
         val context = ContextBuilder().buildContext(
             userMessages = listOf(

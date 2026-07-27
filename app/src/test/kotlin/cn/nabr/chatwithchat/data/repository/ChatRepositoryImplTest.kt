@@ -230,6 +230,24 @@ class ChatRepositoryImplTest {
     }
 
     @Test
+    fun `sticker-only assistant payload remains sendable`() {
+        val assistantMessage = MessageV2(
+            content = "",
+            platformType = "provider",
+            stickerRefs = listOf(
+                MessageStickerRef(
+                    instanceId = "instance-only",
+                    stickerId = "builtin.reactions.crying_cat",
+                    assetKey = "a".repeat(64),
+                    altText = "A crying cat"
+                )
+            )
+        )
+
+        assertTrue(assistantMessage.hasSendableAssistantPayload())
+    }
+
+    @Test
     fun `loading is emitted before expensive request preparation finishes`() = runBlocking {
         val firstState = withTimeout(100) {
             streamPreparedApiState(
@@ -1149,6 +1167,306 @@ class ChatRepositoryImplTest {
             openAIAPI.responsesRequests.map { request -> request.instructions.orEmpty() },
             chronologicalTraces.map { trace -> trace.systemPrompt }
         )
+    }
+
+    @Test
+    fun `openai native sticker tools forbid text imitation and require send sticker`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            responsesResponses = mutableListOf(responseTextFlow("No sticker needed", null))
+        )
+        val stickerProviders = listOf(
+            noOpToolProvider(ToolDefinition.SearchStickers),
+            noOpToolProvider(ToolDefinition.SendSticker)
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Off,
+                toolCallingMode = ToolCallingMode.Auto
+            ),
+            toolLoopOrchestrator = ToolLoopOrchestrator(
+                ToolExecutor(ToolRegistry(stickerProviders))
+            )
+        )
+
+        repository.completeChat(
+            userMessages = listOf(MessageV2(content = "Send a sticker", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = openAIPlatform()
+        ).toList()
+
+        val request = openAIAPI.responsesRequests.single()
+        assertEquals(
+            listOf(ToolDefinition.SearchStickers.name, ToolDefinition.SendSticker.name),
+            request.tools.orEmpty().map { tool -> tool.name }
+        )
+        assertTrue(request.instructions.orEmpty().contains("part of your own response voice"))
+        assertTrue(request.instructions.orEmpty().contains("Do not merely mirror the user's mood"))
+        assertTrue(request.instructions.orEmpty().contains("the emotional choice remains yours"))
+        assertTrue(request.instructions.orEmpty().contains("Only a successful send_sticker sends a sticker"))
+        assertTrue(request.instructions.orEmpty().contains("[assistant sent sticker: ...]"))
+    }
+
+    @Test
+    fun `openai native sticker flow directs search to send without an automatic retry`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            responsesResponses = mutableListOf(
+                flowOf(
+                    FunctionCallArgumentsDoneEvent(
+                        itemId = "sticker_search",
+                        outputIndex = 0,
+                        callId = "sticker_search_1",
+                        name = ToolDefinition.SearchStickers.name,
+                        arguments = "{\"query\":\"sticker\"}"
+                    )
+                ),
+                flowOf(
+                    FunctionCallArgumentsDoneEvent(
+                        itemId = "sticker_send",
+                        outputIndex = 0,
+                        callId = "sticker_send_1",
+                        name = ToolDefinition.SendSticker.name,
+                        arguments = "{\"sticker_id\":\"builtin.reactions.crying_cat\"}"
+                    )
+                ),
+                responseTextFlow("Final answer without a marker", null)
+            )
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Off,
+                toolCallingMode = ToolCallingMode.Auto
+            ),
+            toolLoopOrchestrator = ToolLoopOrchestrator(
+                ToolExecutor(
+                    ToolRegistry(
+                        listOf(
+                            noOpToolProvider(
+                                definition = ToolDefinition.SearchStickers,
+                                content = "sticker_id=builtin.reactions.crying_cat",
+                                metadata = mapOf("candidate_count" to "1")
+                            ),
+                            noOpToolProvider(
+                                definition = ToolDefinition.SendSticker,
+                                content = "Sticker queued for local rendering."
+                            )
+                        )
+                    )
+                )
+            )
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "Send a sticker", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = openAIPlatform()
+        ).toList()
+
+        assertTrue(states.contains(ApiState.Success("Final answer without a marker")))
+        assertEquals(3, openAIAPI.streamResponsesCalls)
+        val sendRequest = openAIAPI.responsesRequests[1]
+        assertTrue(sendRequest.instructions.orEmpty().contains("your own reaction"))
+        assertTrue(sendRequest.instructions.orEmpty().contains("call send_sticker now"))
+        assertTrue(sendRequest.instructions.orEmpty().contains("search once more"))
+        val finalRequest = openAIAPI.responsesRequests[2]
+        assertTrue(finalRequest.instructions.orEmpty().contains("The sticker is queued"))
+        assertTrue(finalRequest.instructions.orEmpty().contains("Do not call another sticker tool"))
+    }
+
+    @Test
+    fun `openrouter sticker search candidates inject send sticker continuation`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatToolCallFlow(
+                    callId = "sticker_search_1",
+                    name = ToolDefinition.SearchStickers.name,
+                    arguments = """{"query":"crying cat"}"""
+                ),
+                chatCompletionFlow("Final sticker answer")
+            )
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Off,
+                toolCallingMode = ToolCallingMode.Auto
+            ),
+            toolLoopOrchestrator = ToolLoopOrchestrator(
+                ToolExecutor(
+                    ToolRegistry(
+                        listOf(
+                            noOpToolProvider(
+                                definition = ToolDefinition.SearchStickers,
+                                content = "sticker_id=builtin.reactions.crying_cat",
+                                metadata = mapOf("candidate_count" to "1")
+                            ),
+                            noOpToolProvider(ToolDefinition.SendSticker)
+                        )
+                    )
+                )
+            )
+        )
+
+        repository.completeChat(
+            userMessages = listOf(MessageV2(content = "Send a sticker", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = openRouterPlatform()
+        ).toList()
+
+        assertEquals(2, openAIAPI.chatCompletionRequests.size)
+        val continuationPrompt = openAIAPI.chatCompletionRequests[1]
+            .messages
+            .filter { message -> message.role == OpenAIRole.SYSTEM }
+            .flatMap { message -> message.content }
+            .filterIsInstance<OpenAITextContent>()
+            .joinToString("\n") { content -> content.text }
+        assertTrue(continuationPrompt.contains("call send_sticker now"))
+        assertTrue(continuationPrompt.contains("your own reaction"))
+    }
+
+    @Test
+    fun `anthropic sticker search candidates inject send sticker continuation`() = runBlocking {
+        val anthropicAPI = RecordingAnthropicAPI(
+            responses = mutableListOf(
+                flowOf(
+                    ContentStartResponseChunk(
+                        index = 0,
+                        contentBlock = ContentBlock(
+                            type = ContentBlockType.TOOL_USE,
+                            id = "sticker_search_1",
+                            name = ToolDefinition.SearchStickers.name,
+                            input = buildJsonObject {}
+                        )
+                    ),
+                    ContentDeltaResponseChunk(
+                        index = 0,
+                        delta = ContentBlock(
+                            type = ContentBlockType.INPUT_JSON_DELTA,
+                            partialJson = """{"query":"crying cat"}"""
+                        )
+                    )
+                ),
+                flowOf(
+                    ContentDeltaResponseChunk(
+                        index = 0,
+                        delta = ContentBlock(
+                            type = ContentBlockType.DELTA,
+                            text = "Final sticker answer"
+                        )
+                    )
+                )
+            )
+        )
+        val repository = createRepository(
+            anthropicAPI = anthropicAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Off,
+                toolCallingMode = ToolCallingMode.Auto
+            ),
+            toolLoopOrchestrator = ToolLoopOrchestrator(
+                ToolExecutor(
+                    ToolRegistry(
+                        listOf(
+                            noOpToolProvider(
+                                definition = ToolDefinition.SearchStickers,
+                                content = "sticker_id=builtin.reactions.crying_cat",
+                                metadata = mapOf("candidate_count" to "1")
+                            ),
+                            noOpToolProvider(ToolDefinition.SendSticker)
+                        )
+                    )
+                )
+            )
+        )
+
+        repository.completeChat(
+            userMessages = listOf(MessageV2(content = "Send a sticker", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = anthropicPlatform()
+        ).toList()
+
+        assertEquals(2, anthropicAPI.requests.size)
+        val continuationPrompt = anthropicAPI.requests[1].systemPrompt.orEmpty()
+        assertTrue(continuationPrompt.contains("call send_sticker now"))
+        assertTrue(continuationPrompt.contains("your own reaction"))
+    }
+
+    @Test
+    fun `google sticker search candidates inject send sticker continuation`() = runBlocking {
+        val googleAPI = RecordingGoogleAPI(
+            responses = mutableListOf(
+                flowOf(
+                    GenerateContentResponse(
+                        candidates = listOf(
+                            Candidate(
+                                content = Content(
+                                    role = GoogleRole.MODEL,
+                                    parts = listOf(
+                                        Part.functionCall(
+                                            id = "sticker_search_1",
+                                            name = ToolDefinition.SearchStickers.name,
+                                            args = buildJsonObject {
+                                                put("query", JsonPrimitive("crying cat"))
+                                            }
+                                        )
+                                    )
+                                )
+                            )
+                        )
+                    )
+                ),
+                flowOf(
+                    GenerateContentResponse(
+                        candidates = listOf(
+                            Candidate(
+                                content = Content(
+                                    role = GoogleRole.MODEL,
+                                    parts = listOf(Part.text("Final sticker answer"))
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        )
+        val repository = createRepository(
+            googleAPI = googleAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Off,
+                toolCallingMode = ToolCallingMode.Auto
+            ),
+            toolLoopOrchestrator = ToolLoopOrchestrator(
+                ToolExecutor(
+                    ToolRegistry(
+                        listOf(
+                            noOpToolProvider(
+                                definition = ToolDefinition.SearchStickers,
+                                content = "sticker_id=builtin.reactions.crying_cat",
+                                metadata = mapOf("candidate_count" to "1")
+                            ),
+                            noOpToolProvider(ToolDefinition.SendSticker)
+                        )
+                    )
+                )
+            )
+        )
+
+        repository.completeChat(
+            userMessages = listOf(MessageV2(content = "Send a sticker", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = googlePlatform()
+        ).toList()
+
+        assertEquals(2, googleAPI.requests.size)
+        val continuationPrompt = googleAPI.requests[1]
+            .systemInstruction
+            ?.parts
+            .orEmpty()
+            .mapNotNull { part -> part.text }
+            .joinToString("\n")
+        assertTrue(continuationPrompt.contains("call send_sticker now"))
+        assertTrue(continuationPrompt.contains("your own reaction"))
     }
 
     @Test
@@ -2933,6 +3251,22 @@ class ChatRepositoryImplTest {
             name = call.name,
             content = "Source result",
             sources = listOf(ToolSource.PublicUrl(title = call.name, url = url))
+        )
+    }
+
+    private fun noOpToolProvider(
+        definition: ToolDefinition,
+        content: String = "ok",
+        metadata: Map<String, String> = emptyMap()
+    ): ToolProvider = object : ToolProvider {
+        override val definition: ToolDefinition = definition
+        override val securityPolicy: ToolSecurityPolicy = ToolSecurityPolicy.ReadOnlyPrivate
+
+        override suspend fun execute(call: ToolCall, config: ToolLoopConfig): ToolResult = ToolResult(
+            callId = call.id,
+            name = call.name,
+            content = content,
+            metadata = metadata
         )
     }
 

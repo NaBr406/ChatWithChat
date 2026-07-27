@@ -95,7 +95,7 @@ import androidx.core.content.FileProvider.getUriForFile
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.nabr.chatwithchat.R
-import cn.nabr.chatwithchat.data.context.semanticAssistantContent
+import cn.nabr.chatwithchat.data.context.stripInternalStickerMarkers
 import cn.nabr.chatwithchat.data.database.entity.ACTIVE_REVISION_LATEST
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
@@ -712,9 +712,8 @@ private fun ChatMessagePair(
 ) {
     val selectedAssistantMessage = assistantMessages.getOrNull(platformIndexState)
     val selectedAssistantRevisionIndex = selectedAssistantMessage?.activeRevisionIndex ?: ACTIVE_REVISION_LATEST
-    val assistantContent = selectedAssistantMessage?.effectiveContent() ?: ""
-    val assistantContentForInteraction = selectedAssistantMessage?.semanticAssistantContent().orEmpty()
-    val assistantThoughts = selectedAssistantMessage?.effectiveThoughts() ?: ""
+    val assistantContent = selectedAssistantMessage?.effectiveContent()?.stripInternalStickerMarkers() ?: ""
+    val assistantThoughts = selectedAssistantMessage?.effectiveThoughts()?.stripInternalStickerMarkers() ?: ""
     val assistantStickerRefs = selectedAssistantMessage?.effectiveStickerRefs().orEmpty()
     val selectedTokenUsage = selectedAssistantMessage?.effectiveTokenUsage()
     val turnTokenUsages = remember(assistantMessages) { assistantMessages.mapNotNull { it.effectiveTokenUsage() } }
@@ -845,12 +844,12 @@ private fun ChatMessagePair(
                 canShowNextRevision = canShowNextRevision,
                 onCopyClick = {
                     onCopyText(
-                        if (isInterruptedInitialRequest) displayedAssistantContent else assistantContentForInteraction
+                        if (isInterruptedInitialRequest) displayedAssistantContent else assistantContent
                     )
                 },
                 onSelectClick = {
                     onSelectText(
-                        if (isInterruptedInitialRequest) displayedAssistantContent else assistantContentForInteraction
+                        if (isInterruptedInitialRequest) displayedAssistantContent else assistantContent
                     )
                 },
                 onRetryClick = { onRetry(messageIndex, platformIndexState) },

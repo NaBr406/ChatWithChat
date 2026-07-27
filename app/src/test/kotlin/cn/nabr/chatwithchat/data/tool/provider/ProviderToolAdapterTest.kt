@@ -50,6 +50,40 @@ class ProviderToolAdapterTest {
     }
 
     @Test
+    fun `sticker final prompt distinguishes search from a successful send`() {
+        val adapter = OpenAICompatibleJsonToolAdapter()
+        val config = ToolLoopConfig(maxToolResultChars = 500)
+
+        val searchOnlyPrompt = adapter.buildFinalAnswerPrompt(
+            results = listOf(
+                ToolResult(
+                    callId = "call_search",
+                    name = ToolDefinition.SearchStickers.name,
+                    content = "sticker_id=builtin.reactions.crying_cat"
+                )
+            ),
+            draftFinalAnswer = "Sticker sent.",
+            config = config
+        ).orEmpty()
+        val sentPrompt = adapter.buildFinalAnswerPrompt(
+            results = listOf(
+                ToolResult(
+                    callId = "call_send",
+                    name = ToolDefinition.SendSticker.name,
+                    content = "Sticker sent successfully."
+                )
+            ),
+            draftFinalAnswer = "Done.",
+            config = config
+        ).orEmpty()
+
+        assertTrue(searchOnlyPrompt.contains("No sticker was sent"))
+        assertTrue(searchOnlyPrompt.contains("Do not claim or simulate a send"))
+        assertTrue(sentPrompt.contains("already queued for local rendering"))
+        assertTrue(sentPrompt.contains("without its ID"))
+    }
+
+    @Test
     fun `anthropic json fallback adapter remains available for unsupported paths`() {
         val adapter = AnthropicToolAdapter()
 

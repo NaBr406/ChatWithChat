@@ -77,6 +77,55 @@ class ToolPromptBuilderTest {
     }
 
     @Test
+    fun `fallback prompt requires a real sticker send and forbids marker imitation`() {
+        val prompt = ToolPromptBuilder().buildJsonFallbackPrompt(
+            tools = listOf(ToolDefinition.SearchStickers, ToolDefinition.SendSticker)
+        )
+
+        assertTrue(prompt.contains("part of your own response voice"))
+        assertTrue(prompt.contains("Do not merely mirror the user's mood"))
+        assertTrue(prompt.contains("the emotional choice remains yours"))
+        assertTrue(prompt.contains("no candidate expresses your intended reaction"))
+        assertTrue(prompt.contains("Only a successful send_sticker sends a sticker"))
+        assertTrue(prompt.contains("[assistant sent sticker: ...]"))
+        assertTrue(prompt.contains("answer briefly without describing or identifying the sticker"))
+    }
+
+    @Test
+    fun `sticker continuation moves candidates to send while bounding retries`() {
+        val firstCandidates = listOf(
+            ToolResult(
+                callId = "search_1",
+                name = ToolDefinition.SearchStickers.name,
+                content = "sticker_id=builtin.reactions.one",
+                metadata = mapOf("candidate_count" to "1")
+            )
+        )
+        val secondCandidates = firstCandidates + ToolResult(
+            callId = "search_2",
+            name = ToolDefinition.SearchStickers.name,
+            content = "sticker_id=builtin.reactions.two",
+            metadata = mapOf("candidate_count" to "1")
+        )
+        val firstEmpty = listOf(
+            ToolResult(
+                callId = "search_empty_1",
+                name = ToolDefinition.SearchStickers.name,
+                content = "No sticker candidates found.",
+                metadata = mapOf("candidate_count" to "0")
+            )
+        )
+        val secondEmpty = firstEmpty + firstEmpty.single().copy(callId = "search_empty_2")
+
+        assertTrue(stickerContinuationInstruction(firstCandidates).orEmpty().contains("your own reaction"))
+        assertTrue(stickerContinuationInstruction(firstCandidates).orEmpty().contains("call send_sticker now"))
+        assertTrue(stickerContinuationInstruction(firstCandidates).orEmpty().contains("search once more"))
+        assertTrue(stickerContinuationInstruction(secondCandidates).orEmpty().contains("Do not search again"))
+        assertTrue(stickerContinuationInstruction(firstEmpty).orEmpty().contains("may search_stickers once more"))
+        assertTrue(stickerContinuationInstruction(secondEmpty).orEmpty().contains("No sticker candidate is available"))
+    }
+
+    @Test
     fun `fallback prompt requires structured search query planning`() {
         val prompt = ToolPromptBuilder().buildJsonFallbackPrompt(tools = listOf(ToolDefinition.WebSearch))
 

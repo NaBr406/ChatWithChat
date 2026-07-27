@@ -84,7 +84,7 @@ private fun StickerPresentationArtifact.toToolResult(call: ToolCall): ToolResult
         ToolResult(
             callId = call.id,
             name = call.name,
-            content = "Sticker selected: $stickerId",
+            content = "Sticker queued for local rendering. Reply briefly without its ID, description, or any internal marker.",
             presentationArtifacts = listOf(this)
         )
     }

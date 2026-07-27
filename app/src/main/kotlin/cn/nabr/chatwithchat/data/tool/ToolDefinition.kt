@@ -188,12 +188,12 @@ data class ToolDefinition(
 
         val SearchStickers = ToolDefinition(
             name = "search_stickers",
-            description = "Search enabled local stickers by a concise semantic query before choosing one. Use stickers sparingly, only when one improves a conversational response with tone or empathy. Search before send_sticker; never guess a sticker ID or repeat the same search.",
+            description = "Find enabled local stickers that express your own intended emotional reaction, attitude, or conversational voice. Decide what you want to express; do not merely mirror the user's mood or copy request words such as test or try. Retry once with a different self-expression only when no candidate fits. This tool does not display a sticker.",
             parameters = Parameters(
                 properties = mapOf(
                     "query" to Parameter(
                         type = "string",
-                        description = "Concise emotion, reaction, or conversational-tone query for enabled stickers.",
+                        description = "Your intended emotion, attitude, or reaction for this reply, not the user's mood.",
                         minLength = 1,
                         maxLength = 120
                     ),
@@ -210,7 +210,7 @@ data class ToolDefinition(
 
         val SendSticker = ToolDefinition(
             name = "send_sticker",
-            description = "Select one enabled sticker returned by search_stickers for the current assistant response. Use at most one sticker, only when it adds tone or empathy. Never guess a sticker ID, and do not call this tool for safety-sensitive, medical, legal, account, payment, or error-recovery replies unless the user explicitly asks for that style.",
+            description = "Display one enabled sticker from the current search_stickers result. Choose the candidate that best represents your own reaction or voice, rather than one that describes the user. An explicit user request means you should send one, but the emotional choice remains yours. Use one exact returned ID and at most one sticker. Avoid stickers in safety-sensitive, medical, legal, account, payment, or error-recovery replies unless explicitly requested.",
             parameters = Parameters(
                 properties = mapOf(
                     "sticker_id" to Parameter(

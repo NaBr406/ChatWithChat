@@ -5,6 +5,7 @@ import cn.nabr.chatwithchat.data.database.entity.AppSourceNavigationTarget
 import cn.nabr.chatwithchat.data.database.entity.AssistantRevision
 import cn.nabr.chatwithchat.data.database.entity.MessageSourceMetadata
 import cn.nabr.chatwithchat.data.database.entity.MessageSourceType
+import cn.nabr.chatwithchat.data.database.entity.MessageStickerRef
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.dto.ApiState
 import cn.nabr.chatwithchat.presentation.ui.chat.ChatViewModel
@@ -19,6 +20,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -209,6 +211,56 @@ class ApiStateFlowExtensionsTest {
     }
 
     @Test
+    fun `handleStates removes sticker markers from thoughts`() = runBlocking {
+        val messageFlow = MutableStateFlow(
+            ChatViewModel.GroupedMessages(
+                userMessages = listOf(MessageV2(content = "Hello", platformType = null)),
+                assistantMessages = listOf(
+                    listOf(MessageV2(content = "", platformType = "platform-1"))
+                )
+            )
+        )
+
+        flowOf(
+            ApiState.Thinking("Reasoning\n[assistant sent sticker: hidden marker]"),
+            ApiState.Done
+        ).handleStates(
+            messageFlow = messageFlow,
+            turnIndex = 0,
+            platformIdx = 0,
+            onLoadingComplete = {}
+        )
+
+        val thoughts = messageFlow.value.assistantMessages[0][0].thoughts
+        assertEquals("Reasoning", thoughts)
+        assertFalse(thoughts.contains("assistant sent sticker"))
+    }
+
+    @Test
+    fun `handleStates hides an unfinished sticker marker in thoughts`() = runBlocking {
+        val messageFlow = MutableStateFlow(
+            ChatViewModel.GroupedMessages(
+                userMessages = listOf(MessageV2(content = "Hello", platformType = null)),
+                assistantMessages = listOf(
+                    listOf(MessageV2(content = "", platformType = "platform-1"))
+                )
+            )
+        )
+
+        flowOf(
+            ApiState.Thinking("Reasoning\n[assistant sent sticker: hidden"),
+            ApiState.Done
+        ).handleStates(
+            messageFlow = messageFlow,
+            turnIndex = 0,
+            platformIdx = 0,
+            onLoadingComplete = {}
+        )
+
+        assertEquals("Reasoning", messageFlow.value.assistantMessages[0][0].thoughts)
+    }
+
+    @Test
     fun `handleStates flushes pending text when collection is cancelled`() = runBlocking {
         val messageFlow = MutableStateFlow(
             ChatViewModel.GroupedMessages(
@@ -343,6 +395,81 @@ class ApiStateFlowExtensionsTest {
         )
 
         assertEquals(listOf(localSource), messageFlow.value.assistantMessages[0][0].sourceMetadata)
+    }
+
+    @Test
+    fun `handleStates defers stickers until the final answer completes`() = runBlocking {
+        val messageFlow = MutableStateFlow(
+            ChatViewModel.GroupedMessages(
+                userMessages = listOf(MessageV2(content = "Hello", platformType = null)),
+                assistantMessages = listOf(
+                    listOf(MessageV2(content = "", platformType = "platform-1"))
+                )
+            )
+        )
+        val sticker = MessageStickerRef(
+            instanceId = "sticker-instance",
+            stickerId = "builtin.reactions.crying_cat",
+            assetKey = "sha256:sticker",
+            altText = "A crying cat"
+        )
+        val stickerEmitted = CompletableDeferred<Unit>()
+        val allowCompletion = CompletableDeferred<Unit>()
+
+        val collection = launch {
+            flow {
+                emit(ApiState.Thinking("Reasoning"))
+                emit(ApiState.StickerAdded(sticker))
+                emit(ApiState.Success("Answer\n[assistant sent sticker: builtin.reactions.crying_cat]"))
+                stickerEmitted.complete(Unit)
+                allowCompletion.await()
+                emit(ApiState.Done)
+            }.handleStates(
+                messageFlow = messageFlow,
+                turnIndex = 0,
+                platformIdx = 0,
+                onLoadingComplete = {}
+            )
+        }
+
+        stickerEmitted.await()
+        assertTrue(messageFlow.value.assistantMessages[0][0].stickerRefs.isEmpty())
+
+        allowCompletion.complete(Unit)
+        collection.join()
+
+        assertEquals(listOf(sticker), messageFlow.value.assistantMessages[0][0].stickerRefs)
+        assertEquals("Answer", messageFlow.value.assistantMessages[0][0].content)
+    }
+
+    @Test
+    fun `handleStates drops pending stickers when the stream fails`() = runBlocking {
+        val messageFlow = MutableStateFlow(
+            ChatViewModel.GroupedMessages(
+                userMessages = listOf(MessageV2(content = "Hello", platformType = null)),
+                assistantMessages = listOf(
+                    listOf(MessageV2(content = "", platformType = "platform-1"))
+                )
+            )
+        )
+        val sticker = MessageStickerRef(
+            instanceId = "sticker-instance",
+            stickerId = "builtin.reactions.crying_cat",
+            assetKey = "sha256:sticker",
+            altText = "A crying cat"
+        )
+
+        flowOf(
+            ApiState.StickerAdded(sticker),
+            ApiState.Error("Request timed out.")
+        ).handleStates(
+            messageFlow = messageFlow,
+            turnIndex = 0,
+            platformIdx = 0,
+            onLoadingComplete = {}
+        )
+
+        assertTrue(messageFlow.value.assistantMessages[0][0].stickerRefs.isEmpty())
     }
 
     @Test

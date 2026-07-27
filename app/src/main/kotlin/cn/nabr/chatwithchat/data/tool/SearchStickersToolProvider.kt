@@ -30,7 +30,7 @@ class SearchStickersToolProvider(
     override val securityPolicy: ToolSecurityPolicy = ToolSecurityPolicy.ReadOnlyPrivate
     override val policy: ToolPolicy = ToolPolicy(
         maxCallsPerRequest = 1,
-        maxCallsPerChat = 1,
+        maxCallsPerChat = MAX_STICKER_SEARCH_CALLS_PER_REQUEST,
         timeoutSeconds = 2,
         maxResultChars = MAX_SEARCH_RESULT_CHARS,
         maxCallsPerRequestErrorKey = "max_sticker_searches_per_request",
@@ -51,7 +51,7 @@ class SearchStickersToolProvider(
             return call.errorResult(STICKER_UNAVAILABLE, STICKER_UNAVAILABLE)
         }.asSequence()
             .mapNotNull(::boundedCandidateOrNull)
-            .take(MAX_STICKER_CANDIDATES)
+            .take(request.limit)
             .toList()
 
         return ToolResult(
@@ -83,7 +83,7 @@ class SearchStickersToolProvider(
             val primitive = value as? JsonPrimitive
                 ?: throw IllegalArgumentException("limit_integer_expected")
             primitive.intOrNull ?: throw IllegalArgumentException("limit_integer_expected")
-        } ?: MAX_STICKER_CANDIDATES
+        } ?: DEFAULT_STICKER_CANDIDATES
         require(limit in 1..MAX_STICKER_CANDIDATES) { "limit_out_of_range" }
 
         StickerSearchRequest(query = query, limit = limit)
@@ -119,20 +119,25 @@ private data class StickerSearchRequest(
 )
 
 private fun List<StickerSearchCandidate>.toFallbackContent(): String = when {
-    isEmpty() -> "No enabled sticker candidates found."
-    else -> joinToString(separator = "\n") { candidate ->
-        buildString {
-            append("sticker_id=")
-            append(candidate.stickerId)
-            append("; title=")
-            append(candidate.title)
-            append("; alt_text=")
-            append(candidate.altText)
-            candidate.tags.takeIf { tags -> tags.isNotEmpty() }?.let { tags ->
-                append("; tags=")
-                append(tags.joinToString(separator = ","))
+    isEmpty() -> "No sticker candidates found."
+    else -> buildString {
+        appendLine("Sticker candidates:")
+        append(
+            joinToString(separator = "\n") { candidate ->
+                buildString {
+                    append("sticker_id=")
+                    append(candidate.stickerId)
+                    append("; title=")
+                    append(candidate.title)
+                    append("; alt_text=")
+                    append(candidate.altText)
+                    candidate.tags.takeIf { tags -> tags.isNotEmpty() }?.let { tags ->
+                        append("; tags=")
+                        append(tags.joinToString(separator = ","))
+                    }
+                }
             }
-        }
+        )
     }
 }
 
@@ -188,8 +193,10 @@ private fun ToolResult.visibleCandidateIds(): Set<String> {
 internal const val STICKER_PROGRESS_LABEL = "正在挑选表情"
 internal const val STICKER_UNAVAILABLE = "sticker_unavailable"
 internal const val STICKER_CANDIDATE_IDS_SESSION_KEY = "sticker_search_candidates"
+internal const val MAX_STICKER_SEARCH_CALLS_PER_REQUEST = 2
 private const val MAX_QUERY_CHARS = 120
 private const val MAX_STICKER_CANDIDATES = 6
+private const val DEFAULT_STICKER_CANDIDATES = 3
 private const val MAX_STICKER_ID_CHARS = 160
 private const val MAX_TITLE_CHARS = 80
 private const val MAX_ALT_TEXT_CHARS = 160

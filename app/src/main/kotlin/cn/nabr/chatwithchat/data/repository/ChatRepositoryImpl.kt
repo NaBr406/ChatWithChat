@@ -20,12 +20,10 @@ import cn.nabr.chatwithchat.data.database.entity.Message
 import cn.nabr.chatwithchat.data.database.entity.MessageSourceMetadata
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
-import cn.nabr.chatwithchat.data.database.entity.effectiveContent
+import cn.nabr.chatwithchat.data.database.entity.effectiveStickerRefs
 import cn.nabr.chatwithchat.data.database.entity.safeDedupeKey
 import cn.nabr.chatwithchat.data.debug.PromptTraceStage
 import cn.nabr.chatwithchat.data.debug.PromptTraceStore
-import cn.nabr.chatwithchat.data.sticker.StickerPresentationArtifact
-import cn.nabr.chatwithchat.data.sticker.toMessageStickerRef
 import cn.nabr.chatwithchat.data.dto.ApiState
 import cn.nabr.chatwithchat.data.dto.ProviderUsage
 import cn.nabr.chatwithchat.data.dto.anthropic.common.ImageContent as AnthropicImageContent
@@ -97,6 +95,8 @@ import cn.nabr.chatwithchat.data.network.GoogleAPI
 import cn.nabr.chatwithchat.data.network.GroqAPI
 import cn.nabr.chatwithchat.data.network.NetworkClient
 import cn.nabr.chatwithchat.data.network.OpenAIAPI
+import cn.nabr.chatwithchat.data.sticker.StickerPresentationArtifact
+import cn.nabr.chatwithchat.data.sticker.toMessageStickerRef
 import cn.nabr.chatwithchat.data.token.TokenUsageEstimator
 import cn.nabr.chatwithchat.data.token.TokenUsageRecord
 import cn.nabr.chatwithchat.data.tool.ToolArgumentStreamLimiter
@@ -120,6 +120,9 @@ import cn.nabr.chatwithchat.data.tool.provider.OpenAIChatCompletionsToolAdapter
 import cn.nabr.chatwithchat.data.tool.provider.OpenAICompatibleJsonToolAdapter
 import cn.nabr.chatwithchat.data.tool.provider.OpenAIResponsesToolAdapter
 import cn.nabr.chatwithchat.data.tool.provider.ToolCallingAdapter
+import cn.nabr.chatwithchat.data.tool.stickerContinuationInstruction
+import cn.nabr.chatwithchat.data.tool.stickerFinalAnswerInstruction
+import cn.nabr.chatwithchat.data.tool.stickerToolUsageRules
 import cn.nabr.chatwithchat.data.tool.toolLimitErrorCodeOrNull
 import cn.nabr.chatwithchat.data.tool.toolProtocolJson
 import cn.nabr.chatwithchat.data.websearch.SearchDecision
@@ -806,7 +809,8 @@ class ChatRepositoryImpl @Inject constructor(
                 request = prepared.toRequest(
                     continuationItems = continuationItems,
                     tools = tools,
-                    toolChoice = ResponseToolChoice.Auto
+                    toolChoice = ResponseToolChoice.Auto,
+                    extraInstruction = stickerContinuationInstruction(allResults)
                 ),
                 timeoutSeconds = platform.timeout,
                 platform = platform,
@@ -876,7 +880,7 @@ class ChatRepositoryImpl @Inject constructor(
                 continuationItems = continuationItems,
                 tools = tools,
                 toolChoice = ResponseToolChoice.None,
-                extraInstruction = OPENAI_NATIVE_FINAL_TOOL_INSTRUCTION
+                extraInstruction = nativeFinalToolInstruction(allResults)
             ),
             timeoutSeconds = platform.timeout,
             platform = platform,
@@ -1053,7 +1057,8 @@ class ChatRepositoryImpl @Inject constructor(
                 request = prepared.toRequest(
                     continuationMessages = continuationMessages,
                     tools = tools,
-                    toolChoice = ChatCompletionToolChoice.Auto
+                    toolChoice = ChatCompletionToolChoice.Auto,
+                    extraInstruction = stickerContinuationInstruction(allResults)
                 ),
                 timeoutSeconds = platform.timeout,
                 platform = platform,
@@ -1123,7 +1128,7 @@ class ChatRepositoryImpl @Inject constructor(
                 continuationMessages = continuationMessages,
                 tools = tools,
                 toolChoice = ChatCompletionToolChoice.None,
-                extraInstruction = OPENAI_NATIVE_FINAL_TOOL_INSTRUCTION
+                extraInstruction = nativeFinalToolInstruction(allResults)
             ),
             timeoutSeconds = platform.timeout,
             platform = platform,
@@ -1296,7 +1301,8 @@ class ChatRepositoryImpl @Inject constructor(
                 request = prepared.toRequest(
                     continuationMessages = continuationMessages,
                     tools = tools,
-                    toolChoice = AnthropicToolChoice.Auto
+                    toolChoice = AnthropicToolChoice.Auto,
+                    extraInstruction = stickerContinuationInstruction(allResults)
                 ),
                 timeoutSeconds = platform.timeout,
                 platform = platform,
@@ -1366,7 +1372,7 @@ class ChatRepositoryImpl @Inject constructor(
                 continuationMessages = continuationMessages,
                 tools = tools,
                 toolChoice = AnthropicToolChoice.None,
-                extraInstruction = OPENAI_NATIVE_FINAL_TOOL_INSTRUCTION
+                extraInstruction = nativeFinalToolInstruction(allResults)
             ),
             timeoutSeconds = platform.timeout,
             platform = platform,
@@ -1545,7 +1551,8 @@ class ChatRepositoryImpl @Inject constructor(
                 request = prepared.toRequest(
                     continuationContents = continuationContents,
                     tools = tools,
-                    toolConfig = GoogleToolConfig.Auto
+                    toolConfig = GoogleToolConfig.Auto,
+                    extraInstruction = stickerContinuationInstruction(allResults)
                 ),
                 model = platform.model,
                 timeoutSeconds = platform.timeout,
@@ -1616,7 +1623,7 @@ class ChatRepositoryImpl @Inject constructor(
                 continuationContents = continuationContents,
                 tools = tools,
                 toolConfig = GoogleToolConfig.None,
-                extraInstruction = OPENAI_NATIVE_FINAL_TOOL_INSTRUCTION
+                extraInstruction = nativeFinalToolInstruction(allResults)
             ),
             model = platform.model,
             timeoutSeconds = platform.timeout,
@@ -2930,9 +2937,11 @@ private fun GroqChatCompletionRequest.systemPromptText(): String? = messages.sys
 private fun List<ChatMessage>.systemPromptText(): String? =
     filter { message -> message.role == OpenAIRole.SYSTEM }
         .mapNotNull { message ->
-            (message.contentText ?: message.content
-                .filterIsInstance<OpenAITextContent>()
-                .joinToString(separator = "\n\n") { content -> content.text })
+            (
+                message.contentText ?: message.content
+                    .filterIsInstance<OpenAITextContent>()
+                    .joinToString(separator = "\n\n") { content -> content.text }
+                )
                 .takeIf { prompt -> prompt.isNotBlank() }
         }
         .takeIf { prompts -> prompts.isNotEmpty() }
@@ -3002,12 +3011,22 @@ internal fun currentRuntimeContextPrompt(): String {
         "- Use this runtime context for simple date, time, and timezone questions. Do not use external lookup to determine local clock time."
 }
 
-private fun openAINativeToolInstruction(activeToolDefinitions: List<ToolDefinition>): String =
-    if (activeToolDefinitions.any { definition -> definition.name == ToolDefinition.WebSearch.name }) {
+private fun openAINativeToolInstruction(activeToolDefinitions: List<ToolDefinition>): String {
+    val baseInstruction = if (activeToolDefinitions.any { definition -> definition.name == ToolDefinition.WebSearch.name }) {
         OPENAI_NATIVE_TOOL_INSTRUCTION
     } else {
         OPENAI_NATIVE_GENERIC_TOOL_INSTRUCTION
     }
+    val stickerInstruction = stickerToolUsageRules(activeToolDefinitions)
+        .joinToString(separator = " ")
+        .takeIf(String::isNotBlank)
+    return listOfNotNull(baseInstruction, stickerInstruction).joinToString(separator = "\n\n")
+}
+
+private fun nativeFinalToolInstruction(results: Collection<ToolResult>): String = listOfNotNull(
+    OPENAI_NATIVE_FINAL_TOOL_INSTRUCTION,
+    stickerFinalAnswerInstruction(results)
+).joinToString(separator = "\n\n")
 
 internal fun mergePromptSections(vararg sections: String?): String? = sections
     .mapNotNull { section -> section?.trim()?.takeIf { it.isNotBlank() } }
@@ -3020,7 +3039,9 @@ internal fun MessageV2.sendableAssistantContent(): String {
 }
 
 internal fun MessageV2.hasSendableAssistantPayload(): Boolean =
-    sendableAssistantContent().isNotBlank() || attachments.isNotEmpty()
+    sendableAssistantContent().isNotBlank() ||
+        attachments.isNotEmpty() ||
+        effectiveStickerRefs().isNotEmpty()
 
 internal fun validateResponseInputPartsOrThrow(messageContent: String, partCount: Int, messageId: Int) {
     if (messageContent.isBlank() && partCount == 0) {

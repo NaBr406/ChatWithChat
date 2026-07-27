@@ -1,5 +1,6 @@
 package cn.nabr.chatwithchat.util
 
+import cn.nabr.chatwithchat.data.context.stripInternalStickerMarkers
 import cn.nabr.chatwithchat.data.database.entity.AssistantRevision
 import cn.nabr.chatwithchat.data.database.entity.MessageSourceMetadata
 import cn.nabr.chatwithchat.data.database.entity.MessageStickerRef
@@ -29,6 +30,7 @@ suspend fun Flow<ApiState>.handleStates(
     onToolProgress: (ApiState) -> Unit = {}
 ) = coroutineScope {
     val buffer = StreamingMessageBuffer()
+    val pendingStickers = linkedMapOf<String, MessageStickerRef>()
     val publishSignals = Channel<Unit>(capacity = Channel.CONFLATED)
     val publisher = launch {
         for (signal in publishSignals) {
@@ -38,6 +40,7 @@ suspend fun Flow<ApiState>.handleStates(
     }
     var isCompletedSuccessfully = false
     var terminalError: String? = null
+    var streamCompletedNormally = false
 
     try {
         collect { chunk ->
@@ -63,7 +66,9 @@ suspend fun Flow<ApiState>.handleStates(
                 }
 
                 is ApiState.StickerAdded -> {
-                    messageFlow.addStickerReference(turnIndex, platformIdx, chunk.sticker)
+                    // Tool results can arrive while the model is still reasoning. Keep the
+                    // presentation artifact local until the final answer completes.
+                    pendingStickers.putIfAbsent(chunk.sticker.instanceId, chunk.sticker)
                 }
 
                 is ApiState.UsageUpdated -> {
@@ -87,6 +92,7 @@ suspend fun Flow<ApiState>.handleStates(
                 else -> {}
             }
         }
+        streamCompletedNormally = true
     } finally {
         publishSignals.close()
         publisher.cancel()
@@ -101,12 +107,17 @@ suspend fun Flow<ApiState>.handleStates(
                 revisionToAppend = revisionToAppendOnSuccess
             )
 
-            isCompletedSuccessfully -> messageFlow.setTimestamp(
-                turnIndex = turnIndex,
-                platformIdx = platformIdx,
-                currentTimeProvider = currentTimeProvider,
-                revisionToAppend = revisionToAppendOnSuccess
-            )
+            streamCompletedNormally && isCompletedSuccessfully -> {
+                pendingStickers.values.forEach { sticker ->
+                    messageFlow.addStickerReference(turnIndex, platformIdx, sticker)
+                }
+                messageFlow.setTimestamp(
+                    turnIndex = turnIndex,
+                    platformIdx = platformIdx,
+                    currentTimeProvider = currentTimeProvider,
+                    revisionToAppend = revisionToAppendOnSuccess
+                )
+            }
         }
         onLoadingComplete()
     }
@@ -272,12 +283,14 @@ private fun MutableStateFlow<ChatViewModel.GroupedMessages>.setBufferedText(
             turnIndex = turnIndex,
             platformIndex = platformIdx
         ) { currentMessage ->
-            if (currentMessage.content == content && currentMessage.thoughts == thoughts) {
+            val visibleContent = content.stripInternalStickerMarkers()
+            val visibleThoughts = thoughts.stripInternalStickerMarkers()
+            if (currentMessage.content == visibleContent && currentMessage.thoughts == visibleThoughts) {
                 currentMessage
             } else {
                 currentMessage.copy(
-                    content = content,
-                    thoughts = thoughts
+                    content = visibleContent,
+                    thoughts = visibleThoughts
                 )
             }
         }
@@ -298,7 +311,7 @@ private fun MutableStateFlow<ChatViewModel.GroupedMessages>.setErrorMessage(
             platformIndex = platformIdx
         ) { currentMessage ->
             currentMessage.copy(
-                content = buildAssistantErrorContent(currentMessage.content, error),
+                content = buildAssistantErrorContent(currentMessage.content.stripInternalStickerMarkers(), error),
                 createdAt = currentTimeProvider(),
                 revisions = revisionToAppend
                     ?.let { listOf(it) + currentMessage.revisions }
@@ -321,6 +334,7 @@ private fun MutableStateFlow<ChatViewModel.GroupedMessages>.setTimestamp(
             platformIndex = platformIdx
         ) { currentMessage ->
             currentMessage.copy(
+                content = currentMessage.content.stripInternalStickerMarkers(),
                 createdAt = currentTimeProvider(),
                 revisions = revisionToAppend
                     ?.let { listOf(it) + currentMessage.revisions }

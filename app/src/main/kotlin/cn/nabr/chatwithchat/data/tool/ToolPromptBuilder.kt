@@ -44,6 +44,9 @@ class ToolPromptBuilder(
             if (tools.any { tool -> tool.name == ToolDefinition.FetchUrl.name }) {
                 appendLine("- Use fetch_url only for pages that are clearly worth reading.")
             }
+            stickerToolUsageRules(tools).forEach { rule ->
+                appendLine("- $rule")
+            }
             appendLine("- Prefer final_answer when the existing conversation is enough.")
             appendLine()
             appendLine("Available tools:")
@@ -245,3 +248,71 @@ class ToolPromptBuilder(
         private const val DEFAULT_MAX_PROMPT_CHARS = 12_000
     }
 }
+
+internal fun stickerToolUsageRules(tools: Collection<ToolDefinition>): List<String> {
+    val activeToolNames = tools.map(ToolDefinition::name).toSet()
+    val hasSearch = ToolDefinition.SearchStickers.name in activeToolNames
+    val hasSend = ToolDefinition.SendSticker.name in activeToolNames
+    if (!hasSearch && !hasSend) return emptyList()
+
+    return buildList {
+        if (hasSearch && hasSend) {
+            add("Treat a sticker as part of your own response voice. Decide the reaction or attitude you want to express, search for that self-expression, and send the candidate that represents it best. Do not merely mirror the user's mood or let the user choose the emotion. An explicit sticker request requires a send, but the emotional choice remains yours. A second different search is allowed only when no candidate expresses your intended reaction.")
+        } else if (hasSearch) {
+            add("search_stickers only discovers candidates and does not display a sticker.")
+        }
+        if (hasSend) {
+            add("Only a successful send_sticker sends a sticker. Never guess an ID or simulate a send with text, Markdown, or an [assistant sent sticker: ...] marker. After success, answer briefly without describing or identifying the sticker.")
+        }
+    }
+}
+
+internal fun stickerContinuationInstruction(results: Collection<ToolResult>): String? {
+    val stickerResults = results.filter { result ->
+        result.name == ToolDefinition.SearchStickers.name || result.name == ToolDefinition.SendSticker.name
+    }
+    if (stickerResults.isEmpty()) return null
+
+    if (stickerResults.any { result -> result.name == ToolDefinition.SendSticker.name && !result.isError }) {
+        return "The sticker is queued. Do not call another sticker tool. Return a brief final answer without its ID, description, or internal marker."
+    }
+
+    val latestResult = stickerResults.last()
+    val searchCount = stickerResults.count { result -> result.name == ToolDefinition.SearchStickers.name }
+    return when {
+        latestResult.name == ToolDefinition.SearchStickers.name &&
+            !latestResult.isError &&
+            latestResult.hasStickerCandidates() &&
+            searchCount < MAX_STICKER_SEARCH_CALLS_PER_REQUEST ->
+            "Choose the returned candidate that best expresses your own reaction and call send_sticker now. Only if none expresses it may you search once more with a different description of your reaction."
+        latestResult.name == ToolDefinition.SearchStickers.name && latestResult.hasStickerCandidates() ->
+            "Choose the returned candidate that best expresses your own reaction and call send_sticker now. Do not search again or answer before that call."
+        latestResult.name == ToolDefinition.SearchStickers.name &&
+            searchCount < MAX_STICKER_SEARCH_CALLS_PER_REQUEST ->
+            "No candidate expressed your intended reaction. You may search_stickers once more with a different description of what you want to express. Do not repeat the same query."
+        latestResult.name == ToolDefinition.SearchStickers.name ->
+            "No sticker candidate is available. Do not call another sticker tool; answer normally without claiming a sticker was sent."
+        else ->
+            "The sticker was not sent. Do not call another sticker tool; answer normally without claiming otherwise."
+    }
+}
+
+internal fun stickerFinalAnswerInstruction(results: Collection<ToolResult>): String? {
+    val stickerResults = results.filter { result ->
+        result.name == ToolDefinition.SearchStickers.name || result.name == ToolDefinition.SendSticker.name
+    }
+    if (stickerResults.isEmpty()) return null
+
+    val hasSuccessfulSend = stickerResults.any { result ->
+        result.name == ToolDefinition.SendSticker.name && !result.isError
+    }
+    return if (hasSuccessfulSend) {
+        "The sticker is already queued for local rendering. Answer briefly without its ID, description, or internal marker."
+    } else {
+        "No sticker was sent. Do not claim or simulate a send with text, Markdown, an ID, or an internal marker."
+    }
+}
+
+private fun ToolResult.hasStickerCandidates(): Boolean =
+    metadata["candidate_count"]?.toIntOrNull()?.let { count -> count > 0 }
+        ?: content.contains("sticker_id=")

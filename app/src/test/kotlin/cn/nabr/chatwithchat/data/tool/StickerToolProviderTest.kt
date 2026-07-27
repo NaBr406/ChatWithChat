@@ -8,6 +8,7 @@ import cn.nabr.chatwithchat.data.sticker.StickerPresentationArtifact
 import cn.nabr.chatwithchat.data.sticker.StickerRepository
 import cn.nabr.chatwithchat.data.sticker.StickerResolution
 import cn.nabr.chatwithchat.data.sticker.StickerSearchCandidate
+import java.io.InputStream
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
@@ -20,7 +21,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.InputStream
 
 class StickerToolProviderTest {
     @Test
@@ -45,6 +45,7 @@ class StickerToolProviderTest {
         assertEquals("reaction", repository.searchQuery)
         assertEquals(6, repository.searchLimit)
         assertEquals(1, repository.ensureInitializedCalls)
+        assertTrue(result.content.startsWith("Sticker candidates:"))
         assertTrue(result.content.contains("sticker_id=builtin.reactions.1"))
         assertTrue(result.content.contains("sticker_id=builtin.reactions.6"))
         assertFalse(result.content.contains("builtin.reactions.7"))
@@ -58,6 +59,88 @@ class StickerToolProviderTest {
             "builtin.reactions.1",
             structuredCandidates.first().jsonObject.getValue("sticker_id").jsonPrimitive.contentOrNull
         )
+    }
+
+    @Test
+    fun `search defaults to three candidates to keep selection concise`() = runBlocking {
+        val repository = FakeStickerRepository(
+            candidates = (1..6).map { index ->
+                StickerSearchCandidate(
+                    stickerId = "builtin.reactions.$index",
+                    title = "Reaction $index",
+                    altText = "Reaction alt text $index",
+                    tags = listOf("reaction")
+                )
+            }
+        )
+        val provider = SearchStickersToolProvider(repository)
+
+        val result = provider.execute(
+            ToolCall("call_search", "search_stickers", """{"query":"试试"}"""),
+            ToolLoopConfig.Default
+        )
+
+        assertFalse(result.isError)
+        assertEquals(3, repository.searchLimit)
+        assertEquals(3, result.structuredContent?.jsonObject?.get("candidates")?.jsonArray?.size)
+    }
+
+    @Test
+    fun `search permits one bounded retry within the same assistant request`() = runBlocking {
+        val repository = FakeStickerRepository(
+            candidates = listOf(
+                StickerSearchCandidate(
+                    stickerId = "builtin.reactions.crying_cat",
+                    title = "Crying cat",
+                    altText = "A crying cat",
+                    tags = listOf("sad")
+                )
+            )
+        )
+        val provider = SearchStickersToolProvider(repository)
+        val orchestrator = ToolLoopOrchestrator(ToolExecutor(ToolRegistry(listOf(provider))))
+        val session = orchestrator.createExecutionSession()
+
+        val first = orchestrator.executeToolCalls(
+            calls = listOf(ToolCall("call_first", "search_stickers", "{\"query\":\"hello\"}")),
+            tools = listOf(provider.definition),
+            executionSession = session
+        ).single()
+        val retry = orchestrator.executeToolCalls(
+            calls = listOf(ToolCall("call_retry", "search_stickers", "{\"query\":\"表情\"}")),
+            tools = listOf(provider.definition),
+            executionSession = session
+        ).single()
+        val third = orchestrator.executeToolCalls(
+            calls = listOf(ToolCall("call_third", "search_stickers", "{\"query\":\"sad\"}")),
+            tools = listOf(provider.definition),
+            executionSession = session
+        ).single()
+
+        assertFalse(first.isError)
+        assertFalse(retry.isError)
+        assertTrue(third.isError)
+        assertTrue(third.content.contains("max_sticker_searches_per_request"))
+    }
+
+    @Test
+    fun `search rejects parallel retries before seeing the first result`() = runBlocking {
+        val repository = FakeStickerRepository(candidates = emptyList())
+        val provider = SearchStickersToolProvider(repository)
+        val orchestrator = ToolLoopOrchestrator(ToolExecutor(ToolRegistry(listOf(provider))))
+
+        val results = orchestrator.executeToolCalls(
+            calls = listOf(
+                ToolCall("call_first", "search_stickers", "{\"query\":\"happy\"}"),
+                ToolCall("call_parallel_retry", "search_stickers", "{\"query\":\"sad\"}")
+            ),
+            tools = listOf(provider.definition)
+        )
+
+        assertEquals(2, results.size)
+        assertFalse(results.first().isError)
+        assertTrue(results.last().isError)
+        assertTrue(results.last().content.contains("max_sticker_searches_per_request"))
     }
 
     @Test
@@ -82,7 +165,10 @@ class StickerToolProviderTest {
         val serialized = toolProtocolJson.encodeToString(result)
 
         assertFalse(result.isError)
-        assertTrue(result.content.contains("builtin.reactions.crying_cat"))
+        assertTrue(result.content.contains("queued for local rendering"))
+        assertTrue(result.content.contains("without its ID"))
+        assertFalse(result.content.contains("builtin.reactions.crying_cat"))
+        assertFalse(result.content.contains("[assistant sent sticker:"))
         assertFalse(result.content.contains(artifact.assetKey))
         assertEquals(listOf(artifact), provider.presentationArtifacts(result))
         assertFalse(serialized.contains(artifact.assetKey))
@@ -341,7 +427,7 @@ private class FakeStickerRepository(
     override suspend fun searchEnabledStatic(query: String, limit: Int): List<StickerSearchCandidate> {
         searchQuery = query
         searchLimit = limit
-        return candidates
+        return candidates.take(limit)
     }
 
     override suspend fun resolveEnabledStatic(stickerId: String, instanceId: String): StickerResolution =

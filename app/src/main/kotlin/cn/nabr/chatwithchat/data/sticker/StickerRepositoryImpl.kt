@@ -15,11 +15,11 @@ import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 
 @Singleton
 class StickerRepositoryImpl @Inject constructor(
@@ -303,8 +303,24 @@ internal fun StickerCatalogItem.stickerMatchScore(query: String, tokens: List<St
     val normalizedAliases = aliases.map { alias -> alias.normalizedStickerSearchText() }
     val semanticTerms = normalizedTags + normalizedAliases
     val fields = listOf(normalizedTitle, normalizedAltText) + semanticTerms
-    return tokens.sumOf { token ->
+    val genericIntentScore = if (
+        tokens.any { token -> token in GENERIC_STICKER_QUERY_TERMS } ||
+        GENERIC_STICKER_QUERY_MARKERS.any { marker -> query.contains(marker) }
+    ) {
+        1
+    } else {
+        0
+    }
+    val embeddedSemanticScore = when {
+        semanticTerms.any { term -> term.length >= 2 && query.contains(term) } ||
+            normalizedTitle.length >= 2 &&
+            query.contains(normalizedTitle) -> 10
+        fields.any { field -> field.length >= 2 && query.contains(field) } -> 4
+        else -> 0
+    }
+    return genericIntentScore + embeddedSemanticScore + tokens.sumOf { token ->
         when {
+            token in GENERIC_STICKER_QUERY_TERMS -> 0
             semanticTerms.any { term -> term == token } || normalizedTitle == token -> 12
             fields.any { field -> field.startsWith(token) } -> 6
             fields.any { field -> field.contains(token) } -> 2
@@ -315,3 +331,38 @@ internal fun StickerCatalogItem.stickerMatchScore(query: String, tokens: List<St
 }
 
 private fun String.normalizedStickerSearchText(): String = trim().lowercase(Locale.ROOT)
+
+private val GENERIC_STICKER_QUERY_TERMS = setOf(
+    "表情",
+    "表情包",
+    "贴纸",
+    "测试",
+    "随便",
+    "任意",
+    "你好",
+    "嗨",
+    "emoji",
+    "emojis",
+    "hello",
+    "hi",
+    "random",
+    "sticker",
+    "stickers",
+    "test",
+    "try",
+    "reaction",
+    "reactions"
+)
+
+private val GENERIC_STICKER_QUERY_MARKERS = setOf(
+    "表情",
+    "贴纸",
+    "试试",
+    "试一下",
+    "试试看",
+    "尝试",
+    "看看",
+    "看一下",
+    "随便",
+    "任意"
+)
