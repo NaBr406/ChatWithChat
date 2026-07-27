@@ -1,5 +1,7 @@
 package cn.nabr.chatwithchat.presentation.ui.setting
 
+import android.content.ActivityNotFoundException
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -47,8 +49,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -79,6 +81,24 @@ fun StickerLibraryScreen(
         contract = ActivityResultContracts.PickMultipleVisualMedia()
     ) { uris ->
         stickerLibraryViewModel.importStaticImages(uris)
+    }
+    val fallbackImagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetMultipleContents()
+    ) { uris ->
+        stickerLibraryViewModel.importStaticImages(uris)
+    }
+    val launchImagePicker = {
+        try {
+            photoPickerLauncher.launch(
+                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+            )
+        } catch (_: ActivityNotFoundException) {
+            try {
+                fallbackImagePickerLauncher.launch("image/*")
+            } catch (_: ActivityNotFoundException) {
+                Toast.makeText(context, context.getString(R.string.sticker_import_failed_generic), Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     val metadataSavedText = stringResource(R.string.sticker_library_saved)
@@ -136,11 +156,7 @@ fun StickerLibraryScreen(
                 actions = {
                     IconButton(
                         enabled = !uiState.isImporting,
-                        onClick = {
-                            photoPickerLauncher.launch(
-                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                            )
-                        }
+                        onClick = launchImagePicker
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.AddPhotoAlternate,
@@ -190,11 +206,7 @@ fun StickerLibraryScreen(
                     item(key = "custom-empty") {
                         StickerLibraryEmptyState(
                             isUnavailable = uiState.isCatalogUnavailable,
-                            onAddClick = {
-                                photoPickerLauncher.launch(
-                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                )
-                            }
+                            onAddClick = launchImagePicker
                         )
                     }
                 }
