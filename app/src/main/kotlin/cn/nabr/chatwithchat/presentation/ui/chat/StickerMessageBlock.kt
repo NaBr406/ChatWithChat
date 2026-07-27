@@ -201,11 +201,12 @@ private suspend fun decodeStickerPreview(
         val boundsOptions = BitmapFactory.Options().apply {
             inJustDecodeBounds = true
         }
-        assetResolver.openStickerAsset(assetKey)?.use { input ->
-            BitmapFactory.decodeStream(input, null, boundsOptions)
-        } ?: run {
-            Log.w(STICKER_PREVIEW_LOG_TAG, "Unable to read sticker asset bounds for preview")
+        val boundsInput = assetResolver.openStickerAsset(assetKey) ?: run {
+            Log.w(STICKER_PREVIEW_LOG_TAG, "Unable to open sticker asset for preview bounds")
             return@withContext null
+        }
+        boundsInput.use { input ->
+            BitmapFactory.decodeStream(input, null, boundsOptions)
         }
 
         if (boundsOptions.outWidth <= 0 || boundsOptions.outHeight <= 0) {
