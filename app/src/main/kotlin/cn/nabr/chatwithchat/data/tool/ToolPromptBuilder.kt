@@ -163,14 +163,22 @@ class ToolPromptBuilder(
     private fun formatToolDefinitionsWithinBudget(tools: List<ToolDefinition>): String {
         val boundedMax = maxToolDefinitionChars.coerceAtLeast(0)
         val result = StringBuilder()
-        tools.forEach { tool ->
-            val block = tool.toPromptText()
-            val separator = if (result.isEmpty()) "" else "\n\n"
-            if (result.length + separator.length + block.length <= boundedMax) {
-                result.append(separator)
-                result.append(block)
+        tools
+            .withIndex()
+            .sortedWith(
+                compareByDescending<IndexedValue<ToolDefinition>> { indexed ->
+                    indexed.value.isStickerTool()
+                }.thenBy { indexed -> indexed.index }
+            )
+            .map { indexed -> indexed.value }
+            .forEach { tool ->
+                val block = tool.toPromptText()
+                val separator = if (result.isEmpty()) "" else "\n\n"
+                if (result.length + separator.length + block.length <= boundedMax) {
+                    result.append(separator)
+                    result.append(block)
+                }
             }
-        }
         return result.toString()
     }
 
@@ -248,6 +256,9 @@ class ToolPromptBuilder(
         private const val DEFAULT_MAX_PROMPT_CHARS = 12_000
     }
 }
+
+private fun ToolDefinition.isStickerTool(): Boolean = name == ToolDefinition.SearchStickers.name ||
+    name == ToolDefinition.SendSticker.name
 
 internal fun stickerToolUsageRules(tools: Collection<ToolDefinition>): List<String> {
     val activeToolNames = tools.map(ToolDefinition::name).toSet()

@@ -100,7 +100,7 @@ extensions.configure<ApplicationExtension> {
         applicationId = "cn.nabr.chatwithchat"
         minSdk = 31
         targetSdk = 36
-        versionCode = 22
+        versionCode = 23
         versionName = "1.0.0"
 
         testInstrumentationRunner = memoryTestInstrumentationRunner

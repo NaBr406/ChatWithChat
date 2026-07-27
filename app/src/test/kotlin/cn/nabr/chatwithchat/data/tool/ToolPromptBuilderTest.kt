@@ -154,6 +154,15 @@ class ToolPromptBuilderTest {
     }
 
     @Test
+    fun `fallback definition budget keeps sticker tools visible`() {
+        val prompt = ToolPromptBuilder().buildJsonFallbackPrompt(tools = ToolDefinition.BuiltIns)
+        val definitions = prompt.substringAfter("Available tools:")
+
+        assertTrue(definitions.contains("Name: search_stickers"))
+        assertTrue(definitions.contains("Name: send_sticker"))
+    }
+
+    @Test
     fun `fallback tool call json parses successfully`() {
         val result = ToolCall.parseFallbackCalls(
             """
