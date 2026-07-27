@@ -11,8 +11,16 @@
       "mediaKind": "static_raster",
       "title": "企鹅心碎",
       "altText": "一只心碎难过的企鹅",
-      "tags": ["心碎", "失落", "难过", "失望"],
-      "aliases": ["企鹅哭泣", "brokenhearted penguin"],
+      "tags": [
+        "心碎",
+        "失落",
+        "难过",
+        "失望"
+      ],
+      "aliases": [
+        "企鹅哭泣",
+        "brokenhearted penguin"
+      ],
       "byteSize": 29055,
       "width": 444,
       "height": 439
@@ -25,8 +33,16 @@
       "mediaKind": "static_raster",
       "title": "小猫痛哭",
       "altText": "一只委屈痛哭的小猫",
-      "tags": ["痛哭", "委屈", "悲伤", "难过"],
-      "aliases": ["哭哭猫", "大哭"],
+      "tags": [
+        "痛哭",
+        "委屈",
+        "悲伤",
+        "难过"
+      ],
+      "aliases": [
+        "哭哭猫",
+        "大哭"
+      ],
       "byteSize": 14094,
       "width": 402,
       "height": 382
@@ -39,11 +55,1392 @@
       "mediaKind": "static_raster",
       "title": "直视灵魂的大脸猫",
       "altText": "一只大脸猫沉默凝视",
-      "tags": ["凝视", "无语", "沉默", "尴尬"],
-      "aliases": ["猫猫凝视", "灵魂拷问"],
+      "tags": [
+        "凝视",
+        "无语",
+        "沉默",
+        "尴尬"
+      ],
+      "aliases": [
+        "猫猫凝视",
+        "灵魂拷问"
+      ],
       "byteSize": 50111,
       "width": 831,
       "height": 831
+    },
+    {
+      "stickerId": "builtin.reactions.heart_burst",
+      "assetPath": "stickers/builtin.reactions/v1/heart_burst.png",
+      "sha256": "dba9e56ea591340374e3edecf341661beeabd48a0a8834aa3dbb051ddbac7f62",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "爱心爆发",
+      "altText": "一个粉色心形角色被许多小红心围绕，表达热烈的爱意",
+      "tags": [
+        "心动",
+        "喜欢",
+        "爱意",
+        "甜蜜",
+        "恋爱",
+        "表白"
+      ],
+      "aliases": [
+        "比心",
+        "love burst",
+        "心心相印"
+      ],
+      "byteSize": 66261,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.happy_dog",
+      "assetPath": "stickers/builtin.reactions/v1/happy_dog.png",
+      "sha256": "581e5b2bb0c03f63d991b3879cc2b2a4b12ad30f0241bf096a6df4d6ef53339f",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "开心小狗",
+      "altText": "一只白色小狗睁着闪闪发光的大眼睛微笑，显得非常开心",
+      "tags": [
+        "开心",
+        "高兴",
+        "快乐",
+        "可爱",
+        "治愈",
+        "满足"
+      ],
+      "aliases": [
+        "快乐小狗",
+        "happy puppy"
+      ],
+      "byteSize": 49073,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.scared_crying",
+      "assetPath": "stickers/builtin.reactions/v1/scared_crying.png",
+      "sha256": "875c65c13e2b8ae3478a1e85d22884ec8793bca855456e3cb870b89357d69e19",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "吓哭了",
+      "altText": "白色小狗角色张大嘴巴嚎啕大哭，写着\"吓哭了！\"",
+      "tags": [
+        "害怕",
+        "吓哭",
+        "惊恐",
+        "崩溃",
+        "可怜",
+        "搞笑"
+      ],
+      "aliases": [
+        "吓到哭",
+        "吓死宝宝了"
+      ],
+      "byteSize": 56680,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.walk_away_sad",
+      "assetPath": "stickers/builtin.reactions/v1/walk_away_sad.png",
+      "sha256": "97ed047274c158a171747bdf51a28bbc1349435d840bc8e905909b42fc0893cd",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "失落地走开",
+      "altText": "白色小狗角色垂头丧气地走开，写着\"扁扁地走开…\"",
+      "tags": [
+        "失落",
+        "委屈",
+        "走开",
+        "难过",
+        "不想理",
+        "无语"
+      ],
+      "aliases": [
+        "委屈走开",
+        "我走了"
+      ],
+      "byteSize": 43420,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.shocked",
+      "assetPath": "stickers/builtin.reactions/v1/shocked.png",
+      "sha256": "533e9c95f43e6633f5091ecf8920ef68fb113a093743a364ab47cc904bb27093",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "震惊",
+      "altText": "白色角色张大嘴巴、瞪大眼睛，配有感叹号和问号，表示极度震惊",
+      "tags": [
+        "震惊",
+        "惊讶",
+        "懵了",
+        "什么",
+        "不可能"
+      ],
+      "aliases": [
+        "吓到了",
+        "shocked",
+        "目瞪口呆"
+      ],
+      "byteSize": 65766,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.angry_frown",
+      "assetPath": "stickers/builtin.reactions/v1/angry_frown.png",
+      "sha256": "dc0d0215ffcae38fac566c61f80886697a84f0e3c33969b23e9c5e72af5065c3",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "皱眉生气",
+      "altText": "白色小狗角色眉头紧锁、撅嘴，露出小虎牙表示不满",
+      "tags": [
+        "生气",
+        "不满",
+        "皱眉",
+        "哼",
+        "讨厌",
+        "抗议"
+      ],
+      "aliases": [
+        "不满",
+        "哼"
+      ],
+      "byteSize": 22735,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.heart_hands",
+      "assetPath": "stickers/builtin.reactions/v1/heart_hands.png",
+      "sha256": "5a1a5328c7b47aba35d0e740021b7779d4db792d861f324def569d5b8a0ebafb",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "比心",
+      "altText": "白色角色用双手比出心形，周围漂浮着粉色爱心",
+      "tags": [
+        "比心",
+        "爱心",
+        "喜欢",
+        "表白",
+        "感谢",
+        "甜蜜"
+      ],
+      "aliases": [
+        "比心手势",
+        "心心"
+      ],
+      "byteSize": 59883,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.thumbs_up_relax",
+      "assetPath": "stickers/builtin.reactions/v1/thumbs_up_relax.png",
+      "sha256": "110314b470a2e388a1626b2d52b6bb8253a48bdeb27afc20aad9983223c8a934",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "得劲儿",
+      "altText": "白色角色靠着枕头伸懒腰竖起大拇指，写着\"得劲儿！\"",
+      "tags": [
+        "点赞",
+        "舒服",
+        "惬意",
+        "满足",
+        "棒",
+        "爽"
+      ],
+      "aliases": [
+        "舒服",
+        "爽",
+        "thumbs up"
+      ],
+      "byteSize": 60127,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.collapsed",
+      "assetPath": "stickers/builtin.reactions/v1/collapsed.png",
+      "sha256": "9f6495c882e8218ceaa3396310dc8038294d3379467dc9d953f95f1d07b6da23",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "倒下了",
+      "altText": "白色小狗角色趴在地上，写着\"倒下了\"",
+      "tags": [
+        "倒下",
+        "躺平",
+        "累了",
+        "认输",
+        "摆烂",
+        "放弃"
+      ],
+      "aliases": [
+        "躺平",
+        "摆烂"
+      ],
+      "byteSize": 35162,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.awkward_shrug",
+      "assetPath": "stickers/builtin.reactions/v1/awkward_shrug.png",
+      "sha256": "dffab59c548826ecd7587487f8c0622110bfc2f02984f1ed1d10b7793b6b2b20",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "尴尬摊手",
+      "altText": "白色角色尴尬地微笑，头顶出现两个黄色小手指，害羞不知所措",
+      "tags": [
+        "尴尬",
+        "摊手",
+        "不好意思",
+        "害羞",
+        "装傻",
+        "无语"
+      ],
+      "aliases": [
+        "尴尬",
+        "shrug",
+        "我也不知道"
+      ],
+      "byteSize": 48249,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.sold_out",
+      "assetPath": "stickers/builtin.reactions/v1/sold_out.png",
+      "sha256": "906b12fd210434f8d14e3a9152e5910fbc466abbe2e538b6f5ce28a09afb8ded",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "卖掉了",
+      "altText": "白色小狗角色笑嘻嘻地拿着一个写着\"卖掉了\"的印章",
+      "tags": [
+        "卖掉",
+        "售罄",
+        "完结",
+        "搞定",
+        "交易",
+        "成交"
+      ],
+      "aliases": [
+        "售罄",
+        "sold out"
+      ],
+      "byteSize": 47466,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.well_done",
+      "assetPath": "stickers/builtin.reactions/v1/well_done.png",
+      "sha256": "e070cc99caf04c3143cd316a6c7590944c3c6beb1fb63fe4a4887dacae616a98",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "干得漂亮",
+      "altText": "白色角色竖起两个大拇指，写着\"干得漂亮！\"周围有花朵点缀",
+      "tags": [
+        "夸奖",
+        "棒",
+        "厉害",
+        "佩服",
+        "鼓掌",
+        "庆祝"
+      ],
+      "aliases": [
+        "干得漂亮",
+        "干得不错",
+        "well done"
+      ],
+      "byteSize": 70986,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.give_flowers",
+      "assetPath": "stickers/builtin.reactions/v1/give_flowers.png",
+      "sha256": "3de4f9181bea904e8b80e62074316d47c029a564f434d9b32b8419a589a3d965",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "花花送你",
+      "altText": "白色角色捧着一大束玫瑰花，写着\"花花送你！\"",
+      "tags": [
+        "送花",
+        "浪漫",
+        "表白",
+        "礼物",
+        "感谢",
+        "喜欢"
+      ],
+      "aliases": [
+        "送花",
+        "送你一束花"
+      ],
+      "byteSize": 90036,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.tiny_love",
+      "assetPath": "stickers/builtin.reactions/v1/tiny_love.png",
+      "sha256": "c5324acdde981b2a962146e6242556669fa26f82350593306756a27f16feabd1",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "小小爱心",
+      "altText": "一个很小的白色角色配上一只超大的点赞手，旁边飘着粉色爱心",
+      "tags": [
+        "点赞",
+        "可爱",
+        "比心",
+        "支持",
+        "萌",
+        "喜欢"
+      ],
+      "aliases": [
+        "小小比心",
+        "超萌点赞"
+      ],
+      "byteSize": 52699,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.furious",
+      "assetPath": "stickers/builtin.reactions/v1/furious.png",
+      "sha256": "b82b5d372439e85c76428043db54e9156c5724a2471f9fde0ba16b130cad912c",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "怒火中烧",
+      "altText": "角色脸红发紫、愤怒地咬牙切齿，头顶冒着蒸汽",
+      "tags": [
+        "暴怒",
+        "怒火",
+        "气炸",
+        "生气",
+        "抓狂",
+        "冒火"
+      ],
+      "aliases": [
+        "气炸了",
+        "火大"
+      ],
+      "byteSize": 63849,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.eating_happy",
+      "assetPath": "stickers/builtin.reactions/v1/eating_happy.png",
+      "sha256": "9f108bb2de83948a608f5e59a91f6e34eb71b2cdcf5974f9aa0d21d8624a5133",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "幸福干饭",
+      "altText": "白色角色脸蛋红扑扑，睁着闪亮星星眼激动地捧着一根小胡萝卜",
+      "tags": [
+        "吃饭",
+        "美味",
+        "开心",
+        "流口水",
+        "期待",
+        "吃货"
+      ],
+      "aliases": [
+        "干饭",
+        "吃货"
+      ],
+      "byteSize": 55447,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.speechless",
+      "assetPath": "stickers/builtin.reactions/v1/speechless.png",
+      "sha256": "52123058b8a14c336389f80a738dc756ef03b8ff1f9e2aed75cfc82eb27318e1",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "无语沉默",
+      "altText": "白色角色表情复杂，脑海里浮现一部手机，配有省略号表示无语",
+      "tags": [
+        "无语",
+        "沉默",
+        "拒绝",
+        "不想说话",
+        "尴尬",
+        "冷漠"
+      ],
+      "aliases": [
+        "不想理",
+        "无语子"
+      ],
+      "byteSize": 53664,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.daydreaming",
+      "assetPath": "stickers/builtin.reactions/v1/daydreaming.png",
+      "sha256": "0b29e58a839e2ff8aa33713e9722e80c02fcd82c320dd63f684501b9756e5dcc",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "发呆走神",
+      "altText": "白色小狗角色望向天空中的云朵，陷入白日梦",
+      "tags": [
+        "发呆",
+        "走神",
+        "幻想",
+        "做梦",
+        "摸鱼",
+        "放空"
+      ],
+      "aliases": [
+        "白日梦",
+        "想什么呢"
+      ],
+      "byteSize": 45325,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.walking_away",
+      "assetPath": "stickers/builtin.reactions/v1/walking_away.png",
+      "sha256": "b11f27a057ca624ee5f67be995fbd724cf8a230d68504fef84b7a48f3184f95d",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "快步走开",
+      "altText": "白色小狗角色一副看淡一切的表情快速离开，留下速度线",
+      "tags": [
+        "走开",
+        "离开",
+        "拜拜",
+        "算了",
+        "不想说",
+        "再见"
+      ],
+      "aliases": [
+        "溜了溜了",
+        "我先走了"
+      ],
+      "byteSize": 34431,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.tired_walking",
+      "assetPath": "stickers/builtin.reactions/v1/tired_walking.png",
+      "sha256": "c54e4004ddbce3f9a05063912fdd0a9895c4b4df524edd85c3c89155da02b7d9",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "疲惫赶路",
+      "altText": "白色小狗角色无精打采地走着，配有拖沓的脚步线",
+      "tags": [
+        "疲惫",
+        "累",
+        "不想动",
+        "摆烂",
+        "无奈",
+        "苦"
+      ],
+      "aliases": [
+        "累瘫",
+        "打工人"
+      ],
+      "byteSize": 30761,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.being_cuddled",
+      "assetPath": "stickers/builtin.reactions/v1/being_cuddled.png",
+      "sha256": "ebfc7792225bd3b018b5f4c95fb57226f389f2b60cb89c9ae1a61d04add2c7fc",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "被温柔抚摸",
+      "altText": "白色小狗被黄色的大手温柔捧在手心，写着\"喂喂\"，周围有爱心",
+      "tags": [
+        "被摸头",
+        "撒娇",
+        "依偎",
+        "治愈",
+        "温柔",
+        "宠物"
+      ],
+      "aliases": [
+        "被宠",
+        "摸摸头"
+      ],
+      "byteSize": 77898,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.eat_with_joy",
+      "assetPath": "stickers/builtin.reactions/v1/eat_with_joy.png",
+      "sha256": "1a8056076ec8c15c61d978cdfc5d84ad49d53089629e075f1c5f66ed8b9d02c2",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "幸福干饭",
+      "altText": "白色小狗角色端着一碗饭边吃边流泪，写着\"太幸福了\"",
+      "tags": [
+        "吃饭",
+        "好吃",
+        "感动",
+        "幸福",
+        "美味",
+        "吃货"
+      ],
+      "aliases": [
+        "太好吃了",
+        "干饭人"
+      ],
+      "byteSize": 80956,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.cat_in_rain",
+      "assetPath": "stickers/builtin.reactions/v1/cat_in_rain.png",
+      "sha256": "6fcbc4bf3688b6f362996d5d5af04cacea379faec0b633065f5dc99cfb0a4dbb",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "阴天小猫",
+      "altText": "蓝色小猫站在雨云下，表情失落，滴滴雨水落下",
+      "tags": [
+        "难过",
+        "下雨",
+        "失落",
+        "忧郁",
+        "孤独",
+        "心酸"
+      ],
+      "aliases": [
+        "蓝猫淋雨",
+        "心酸"
+      ],
+      "byteSize": 21385,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.cat_crying",
+      "assetPath": "stickers/builtin.reactions/v1/cat_crying.png",
+      "sha256": "4401a12113a717cf9ff205d62505fe377aab0514be9fd4adf7e9abe2588a9d89",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "小猫哭泣",
+      "altText": "蓝色小猫脸挂两条粗粗的泪痕，眼神悲伤",
+      "tags": [
+        "哭泣",
+        "难过",
+        "伤心",
+        "流泪",
+        "可怜",
+        "委屈"
+      ],
+      "aliases": [
+        "哭了",
+        "伤心猫"
+      ],
+      "byteSize": 20197,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.cat_in_bag",
+      "assetPath": "stickers/builtin.reactions/v1/cat_in_bag.png",
+      "sha256": "27d673b5ddd0b1d28fd680fe39746821ad20fd74d066dd0a77048234fde9bf84",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "包里的小猫",
+      "altText": "蓝色小猫只露出脑袋，被装在深色包里，眼巴巴地看着外面",
+      "tags": [
+        "躲藏",
+        "可怜",
+        "委屈",
+        "小猫",
+        "装包",
+        "萌"
+      ],
+      "aliases": [
+        "躲猫猫",
+        "装起来"
+      ],
+      "byteSize": 21720,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.angel_cat",
+      "assetPath": "stickers/builtin.reactions/v1/angel_cat.png",
+      "sha256": "93c4549d39f6b9abf8bd9e1da6010654d09804d0a48aa128278261e7d6f5ecee",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "天使小猫",
+      "altText": "蓝色小猫长出白色翅膀，头顶有金色光环，闭眼祈祷",
+      "tags": [
+        "天使",
+        "可爱",
+        "治愈",
+        "祈祷",
+        "萌",
+        "圣洁"
+      ],
+      "aliases": [
+        "小天使",
+        "angel"
+      ],
+      "byteSize": 20513,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.cat_on_swing",
+      "assetPath": "stickers/builtin.reactions/v1/cat_on_swing.png",
+      "sha256": "650609baa4eb52389399a3609ecc269b0d8df7822c583f7709694447d139e953",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "荡秋千小猫",
+      "altText": "蓝色小猫安静地坐在秋千上，表情有点呆",
+      "tags": [
+        "秋千",
+        "发呆",
+        "安静",
+        "无聊",
+        "放松",
+        "摸鱼"
+      ],
+      "aliases": [
+        "荡秋千",
+        "无聊发呆"
+      ],
+      "byteSize": 49369,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.peeking_cat",
+      "assetPath": "stickers/builtin.reactions/v1/peeking_cat.png",
+      "sha256": "6f255d2b08ad596b098752ff93827ef199272480f6d6a99ceac152bef57858a6",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "偷看的小猫",
+      "altText": "灰色小猫从墙角探出大脑袋，大眼睛偷偷张望",
+      "tags": [
+        "偷看",
+        "偷瞄",
+        "好奇",
+        "观察",
+        "萌",
+        "窥视"
+      ],
+      "aliases": [
+        "偷偷看",
+        "偷瞄"
+      ],
+      "byteSize": 36486,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.smirking_cat",
+      "assetPath": "stickers/builtin.reactions/v1/smirking_cat.png",
+      "sha256": "72530ad0d6277973a5821d462b6a572fe394cba48f27525a5f76024afbd06379",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "坏笑小猫",
+      "altText": "灰色小猫眯起黄色眼睛，嘴角露出坏坏的微笑",
+      "tags": [
+        "坏笑",
+        "得意",
+        "狡猾",
+        "调侃",
+        "玩味",
+        "坏心思"
+      ],
+      "aliases": [
+        "坏笑",
+        "得意笑"
+      ],
+      "byteSize": 33830,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.nervous_cat",
+      "assetPath": "stickers/builtin.reactions/v1/nervous_cat.png",
+      "sha256": "50edacc044f73a00edff35cfdc5a4dcc6afaff679ee35405fcad045c0729f31c",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "紧张小猫",
+      "altText": "灰色小猫睁着大大的黑黄眼睛，眉头冒出三颗蓝色汗珠",
+      "tags": [
+        "紧张",
+        "焦虑",
+        "担心",
+        "汗颜",
+        "不安",
+        "害怕"
+      ],
+      "aliases": [
+        "紧张",
+        "慌"
+      ],
+      "byteSize": 37358,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.scared_of_ghost",
+      "assetPath": "stickers/builtin.reactions/v1/scared_of_ghost.png",
+      "sha256": "13d43bcd6236cbcc9dfa0293d08ddc16fbe3308ea36df682cf40ab545ce0454b",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "害怕的小猫",
+      "altText": "灰色小猫抬头看到自己虚化的巨大身影，吓得眼睛瞪大",
+      "tags": [
+        "害怕",
+        "惊恐",
+        "吓到",
+        "胆小",
+        "恐怖",
+        "吃惊"
+      ],
+      "aliases": [
+        "吓一跳",
+        "见鬼了"
+      ],
+      "byteSize": 39084,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.cat_in_love",
+      "assetPath": "stickers/builtin.reactions/v1/cat_in_love.png",
+      "sha256": "380c1e8cb00f0b0dbca22d50592819728ee6e8b06884ee272113edee0e8b7b5b",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "恋爱小猫",
+      "altText": "灰色小猫头顶长出问号触角，周围布满粉色爱心，露出甜蜜笑容",
+      "tags": [
+        "恋爱",
+        "心动",
+        "喜欢",
+        "甜蜜",
+        "少女心",
+        "萌"
+      ],
+      "aliases": [
+        "恋爱脑",
+        "心动猫"
+      ],
+      "byteSize": 62441,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.surprised_cat",
+      "assetPath": "stickers/builtin.reactions/v1/surprised_cat.png",
+      "sha256": "06905ce5610566bfed797ff4aa95b4c5d576fa1bc428a93f3915507d42263d2b",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "惊讶小猫",
+      "altText": "灰色小猫凑近镜头，黑黄分明的大眼睛充满惊讶",
+      "tags": [
+        "惊讶",
+        "震惊",
+        "好奇",
+        "瞪眼",
+        "什么",
+        "惊呆"
+      ],
+      "aliases": [
+        "啥",
+        "惊讶猫"
+      ],
+      "byteSize": 32858,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.angry_cat",
+      "assetPath": "stickers/builtin.reactions/v1/angry_cat.png",
+      "sha256": "1fd02b042de54d853e6d44ec19286acf13986c0673bd2554c59c774cce228581",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "凶猛小猫",
+      "altText": "灰色小猫眼神凶狠、表情狰狞，在黑紫色背景中杀气腾腾",
+      "tags": [
+        "凶",
+        "生气",
+        "狠",
+        "打架",
+        "黑化",
+        "震慑"
+      ],
+      "aliases": [
+        "凶猫",
+        "发怒"
+      ],
+      "byteSize": 74567,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.cat_ghost_scared",
+      "assetPath": "stickers/builtin.reactions/v1/cat_ghost_scared.png",
+      "sha256": "f70d6926fae50285daf82172b2e230a444e9ad77ee2bea15a8a24ba4615fe214",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "见鬼的小猫",
+      "altText": "灰色小猫盯着自己巨大的鬼魂般虚像，紧张地坐着",
+      "tags": [
+        "害怕",
+        "见鬼",
+        "恐怖",
+        "发抖",
+        "惊吓",
+        "虚像"
+      ],
+      "aliases": [
+        "吓死猫",
+        "害怕"
+      ],
+      "byteSize": 39789,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.sad_frustrated_cat",
+      "assetPath": "stickers/builtin.reactions/v1/sad_frustrated_cat.png",
+      "sha256": "eb16449eb3c9e255056e7436e3115b074c8916af566f8edf9d2d1b4570823589",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "委屈小猫",
+      "altText": "灰色小猫低头流泪，头顶有青筋标记，委屈又生气",
+      "tags": [
+        "委屈",
+        "难过",
+        "生气",
+        "哭泣",
+        "心塞",
+        "烦"
+      ],
+      "aliases": [
+        "委屈",
+        "气哭了"
+      ],
+      "byteSize": 36769,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.cat_with_knife",
+      "assetPath": "stickers/builtin.reactions/v1/cat_with_knife.png",
+      "sha256": "655ddc54dadbac63f88413fef719bf92d2720cadbc770dac7d80e70b52efecd3",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "拿刀小猫",
+      "altText": "灰色小猫手拿尖刀，露出凶狠的微笑，准备出击",
+      "tags": [
+        "凶狠",
+        "威胁",
+        "可怕",
+        "生气",
+        "拿刀",
+        "搞笑"
+      ],
+      "aliases": [
+        "猫刀",
+        "威胁"
+      ],
+      "byteSize": 53357,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.cat_fight_ghost",
+      "assetPath": "stickers/builtin.reactions/v1/cat_fight_ghost.png",
+      "sha256": "d3a5020234bfa6b5a487aada02706cc2484fa825014f9d2cbeceeb96ecf86975",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "挥棒小猫",
+      "altText": "灰色小猫手持棒子警惕出击，背景是自己凶狠的虚影",
+      "tags": [
+        "打架",
+        "出击",
+        "战斗",
+        "威胁",
+        "凶",
+        "勇敢"
+      ],
+      "aliases": [
+        "出击",
+        "开打"
+      ],
+      "byteSize": 48343,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.blow_heart",
+      "assetPath": "stickers/builtin.reactions/v1/blow_heart.png",
+      "sha256": "58a8135de39bfcaa6ee4fcebf1e0e4385cec91bd860c4a4075063b0ef1e92923",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "吹出爱心",
+      "altText": "一只棕色小动物闭眼吹出一个超大的粉色爱心气泡",
+      "tags": [
+        "爱心",
+        "喜欢",
+        "表白",
+        "浪漫",
+        "可爱",
+        "甜蜜"
+      ],
+      "aliases": [
+        "吹泡泡",
+        "送心"
+      ],
+      "byteSize": 32756,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.nervous_smile_cat",
+      "assetPath": "stickers/builtin.reactions/v1/nervous_smile_cat.png",
+      "sha256": "990a489de1808833ea7be04dab189f046627ddd9ce6ed756660dc9d5f4294e8b",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "紧张干笑",
+      "altText": "灰色小猫头上冒着汗珠，尴尬地吐着小舌头笑",
+      "tags": [
+        "紧张",
+        "尴尬",
+        "傻笑",
+        "不好意思",
+        "汗颜",
+        "应付"
+      ],
+      "aliases": [
+        "尴尬笑",
+        "赔笑"
+      ],
+      "byteSize": 52581,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.angry_stomp",
+      "assetPath": "stickers/builtin.reactions/v1/angry_stomp.png",
+      "sha256": "9ee20e1af5834a089c093b6d7dbf2492595aa2084903768740f74604de7fe26e",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "气到跺脚",
+      "altText": "灰色小猫恶狠狠踩碎脚下东西，地面出现裂痕",
+      "tags": [
+        "暴怒",
+        "气炸",
+        "跺脚",
+        "生气",
+        "抓狂",
+        "烦躁"
+      ],
+      "aliases": [
+        "气炸",
+        "跺脚"
+      ],
+      "byteSize": 36995,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.cat_double_ghost",
+      "assetPath": "stickers/builtin.reactions/v1/cat_double_ghost.png",
+      "sha256": "825653ed461c9744f7bc50a27c14c907f0df51e89b5a71f11085cbcbf55e2b84",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "双重小猫",
+      "altText": "灰色小猫被另一个流汗的自己虚像笼罩，尴尬到分裂",
+      "tags": [
+        "尴尬",
+        "分裂",
+        "无奈",
+        "无语",
+        "内心戏",
+        "搞笑"
+      ],
+      "aliases": [
+        "尬住",
+        "社死"
+      ],
+      "byteSize": 38883,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.peek_over_edge",
+      "assetPath": "stickers/builtin.reactions/v1/peek_over_edge.png",
+      "sha256": "05261fe31b6faf88c9fd60042d429baa7d9e6cf252fbbd8284bd83179748f9be",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "探出脑袋",
+      "altText": "灰色小猫趴在橙色桌沿后只露出大脑袋和眼睛偷偷张望",
+      "tags": [
+        "偷看",
+        "窥探",
+        "萌",
+        "观察",
+        "好奇",
+        "躲猫猫"
+      ],
+      "aliases": [
+        "偷看",
+        "peek"
+      ],
+      "byteSize": 29500,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.embarrassed_cat",
+      "assetPath": "stickers/builtin.reactions/v1/embarrassed_cat.png",
+      "sha256": "58845ceb4e399d04b6fe09ad763c86bf4e7f65b068156bbe460d450844dbc65f",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "羞羞小猫",
+      "altText": "灰色小猫脸蛋红扑扑，害羞地低眉顺眼",
+      "tags": [
+        "害羞",
+        "脸红",
+        "不好意思",
+        "娇羞",
+        "心动",
+        "腼腆"
+      ],
+      "aliases": [
+        "害羞",
+        "脸红"
+      ],
+      "byteSize": 36189,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.starry_eyes_cat",
+      "assetPath": "stickers/builtin.reactions/v1/starry_eyes_cat.png",
+      "sha256": "45cd7fbd96eed644da00c51a7dec562d2fedc3a2b6c31bdf2c2c02e861616b11",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "星星眼小猫",
+      "altText": "灰色小猫睁着充满星空图案的闪亮大眼睛，表情陶醉",
+      "tags": [
+        "崇拜",
+        "喜欢",
+        "迷妹",
+        "花痴",
+        "星星眼",
+        "心动"
+      ],
+      "aliases": [
+        "迷妹",
+        "崇拜"
+      ],
+      "byteSize": 62839,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.cat_realization",
+      "assetPath": "stickers/builtin.reactions/v1/cat_realization.png",
+      "sha256": "90e7082d02ba8f11006bac92450ba9ce609ec8d946662e9acd8b824b179bb768",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "恍然大悟",
+      "altText": "一只戴眼镜的橘猫和一只手指比心，写着\"恍然大悟\"",
+      "tags": [
+        "领悟",
+        "明白",
+        "原来如此",
+        "开窍",
+        "懂了",
+        "恍然"
+      ],
+      "aliases": [
+        "懂了",
+        "原来如此"
+      ],
+      "byteSize": 52989,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.cat_sweating",
+      "assetPath": "stickers/builtin.reactions/v1/cat_sweating.png",
+      "sha256": "324b9f64dd50c644c6ced5494d4122f0fb2da713e8992502b0e0d6bd00c5593e",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "满头小汗",
+      "altText": "一只橘猫闭眼表情紧张，额头上挂着小汗珠，写着\"满头小汗\"",
+      "tags": [
+        "紧张",
+        "出汗",
+        "尴尬",
+        "担心",
+        "压力",
+        "社恐"
+      ],
+      "aliases": [
+        "紧张",
+        "汗颜"
+      ],
+      "byteSize": 51320,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.cat_arms_angry",
+      "assetPath": "stickers/builtin.reactions/v1/cat_arms_angry.png",
+      "sha256": "0bea82da7c193f6fb46360c1ed7e46dd52af9c7871f1617ded37c47303a10ec0",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "勃然大怒",
+      "altText": "一只橘猫气鼓鼓，两只小手交叉抱胸，写着\"勃然大怒\"",
+      "tags": [
+        "生气",
+        "愤怒",
+        "抱胸",
+        "不满",
+        "抗议",
+        "怒"
+      ],
+      "aliases": [
+        "怒了",
+        "生气"
+      ],
+      "byteSize": 53308,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.cat_trouble_wave",
+      "assetPath": "stickers/builtin.reactions/v1/cat_trouble_wave.png",
+      "sha256": "7a793c87d5515d4d785816925a8c549631dce2ab1c89dcc2dea31934115846c4",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "小事不妙",
+      "altText": "一只橘猫警觉地竖耳，旁边一只手做出停下或打招呼的姿势，写着\"小事不妙\"",
+      "tags": [
+        "不妙",
+        "紧张",
+        "警惕",
+        "停",
+        "不安",
+        "担心"
+      ],
+      "aliases": [
+        "有情况",
+        "糟糕"
+      ],
+      "byteSize": 56960,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.cat_slight_shock",
+      "assetPath": "stickers/builtin.reactions/v1/cat_slight_shock.png",
+      "sha256": "45240daf41d13258d597baee7aec68233919a5a536c95468b2619bf64f1a014f",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "小吃一惊",
+      "altText": "一只橘猫睁大眼睛微微惊讶，写着\"小吃一惊\"",
+      "tags": [
+        "惊讶",
+        "震惊",
+        "有点",
+        "小事",
+        "惊",
+        "意外"
+      ],
+      "aliases": [
+        "小惊",
+        "惊到"
+      ],
+      "byteSize": 37006,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.cat_laughing",
+      "assetPath": "stickers/builtin.reactions/v1/cat_laughing.png",
+      "sha256": "664f723299173c3ba80a63be7a0864d1360946c43b13c95c1e96fb895fc64765",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "捧腹小笑",
+      "altText": "一只橘猫眯眼大笑，嘴巴弯成月牙，写着\"捧腹小笑\"",
+      "tags": [
+        "大笑",
+        "开心",
+        "爆笑",
+        "搞笑",
+        "欢乐",
+        "笑死"
+      ],
+      "aliases": [
+        "笑死",
+        "大笑"
+      ],
+      "byteSize": 42365,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.cat_thumbs_up",
+      "assetPath": "stickers/builtin.reactions/v1/cat_thumbs_up.png",
+      "sha256": "24a479cb384d0792b4d8ffb660fafaa51955a3ee0421e77b3121c5ff822212e3",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "小发雷霆",
+      "altText": "一只橘猫眯眼嘟嘴，旁边一只手竖起大拇指，写着\"小发雷霆\"",
+      "tags": [
+        "点赞",
+        "生气",
+        "傲娇",
+        "表扬",
+        "哼",
+        "夸我"
+      ],
+      "aliases": [
+        "傲娇",
+        "哼"
+      ],
+      "byteSize": 49921,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.cat_with_money",
+      "assetPath": "stickers/builtin.reactions/v1/cat_with_money.png",
+      "sha256": "a973ded3ef03b973a30d14ff3d8412bcae79711b4d8ae8d43730ef42ac9d15f5",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "财小气细",
+      "altText": "一只橘猫眯眼狡黠地笑，旁边一只手拿着一叠写着\"多少钱？\"的钱，写着\"财小气细\"",
+      "tags": [
+        "抠门",
+        "精明",
+        "财迷",
+        "算账",
+        "搞笑",
+        "生意"
+      ],
+      "aliases": [
+        "抠门",
+        "精打细算"
+      ],
+      "byteSize": 60226,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.sad_dog_ignored",
+      "assetPath": "stickers/builtin.reactions/v1/sad_dog_ignored.png",
+      "sha256": "77e41f5ba2b311cf271b5b5cf1ae78c1ddbc8e1677ecd00863867756089bbc21",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "被看扁的小狗",
+      "altText": "一只棕白小狗眼神哀怨，写着\"真是被看扁了\"",
+      "tags": [
+        "委屈",
+        "被忽视",
+        "难过",
+        "被小看",
+        "可怜",
+        "丧"
+      ],
+      "aliases": [
+        "被小看",
+        "委屈"
+      ],
+      "byteSize": 24794,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.sad_dog_thought",
+      "assetPath": "stickers/builtin.reactions/v1/sad_dog_thought.png",
+      "sha256": "e559857b30c5bfe1044d15974a1a850311beaf7146a43eabef0b21e456129e54",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "沉思小狗",
+      "altText": "一只棕白小狗忧伤地用手托腮陷入沉思",
+      "tags": [
+        "沉思",
+        "忧郁",
+        "思考",
+        "心累",
+        "发呆",
+        "文艺"
+      ],
+      "aliases": [
+        "思考",
+        "忧郁狗"
+      ],
+      "byteSize": 30641,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.crying_dog",
+      "assetPath": "stickers/builtin.reactions/v1/crying_dog.png",
+      "sha256": "61146c3437aeafc1d041b8391b75bde16aa108a2f5207bc6b774ab307abe9a5b",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "哭哭小狗",
+      "altText": "一只棕白小狗眼眶含泪，下巴上挂着大颗泪珠",
+      "tags": [
+        "哭",
+        "流泪",
+        "难过",
+        "委屈",
+        "心酸",
+        "伤心"
+      ],
+      "aliases": [
+        "哭了",
+        "crying"
+      ],
+      "byteSize": 22358,
+      "width": 240,
+      "height": 240
+    },
+    {
+      "stickerId": "builtin.reactions.dog_smoking_fire",
+      "assetPath": "stickers/builtin.reactions/v1/dog_smoking_fire.png",
+      "sha256": "e9e1399dd127e037c52c5f95308ebc2aa11f77fade5c0fbb0c9b7f8145ed1457",
+      "mimeType": "image/png",
+      "mediaKind": "static_raster",
+      "title": "淡定抽烟小狗",
+      "altText": "一只小狗叼着香烟，身后房屋正在燃烧，神情淡定地看向前方",
+      "tags": [
+        "淡定",
+        "围观",
+        "火灾",
+        "无语",
+        "看戏",
+        "抽烟"
+      ],
+      "aliases": [
+        "问题不大",
+        "this is fine",
+        "淡定围观"
+      ],
+      "byteSize": 59748,
+      "width": 240,
+      "height": 240
     }
   ]
 }
