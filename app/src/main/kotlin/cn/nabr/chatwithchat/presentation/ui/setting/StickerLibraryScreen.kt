@@ -17,13 +17,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.toggleable
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.AddPhotoAlternate
-import androidx.compose.material.icons.rounded.Delete
-import androidx.compose.material.icons.rounded.Edit
-import androidx.compose.material.icons.rounded.Image
-import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.outlined.AddPhotoAlternate
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -36,7 +35,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -58,7 +56,6 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.sticker.StickerCatalogItem
-import cn.nabr.chatwithchat.presentation.common.AppleBlue
 import cn.nabr.chatwithchat.presentation.common.SettingsMaterialGroup
 import cn.nabr.chatwithchat.presentation.common.SettingsTopAppBar
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
@@ -146,7 +143,7 @@ fun StickerLibraryScreen(
                         }
                     ) {
                         Icon(
-                            imageVector = Icons.Rounded.AddPhotoAlternate,
+                            imageVector = Icons.Outlined.AddPhotoAlternate,
                             contentDescription = stringResource(R.string.sticker_library_add)
                         )
                     }
@@ -292,18 +289,12 @@ private fun StickerAutomaticRepliesItem(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Surface(
-                modifier = Modifier.size(32.dp),
-                shape = RoundedCornerShape(7.dp),
-                color = AppleBlue
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.Image,
-                    contentDescription = null,
-                    modifier = Modifier.padding(7.dp),
-                    tint = MaterialTheme.colorScheme.onPrimary
-                )
-            }
+            Icon(
+                imageVector = Icons.Outlined.Image,
+                contentDescription = null,
+                modifier = Modifier.size(22.dp),
+                tint = settingsMaterialColors().primaryLabel
+            )
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -383,7 +374,7 @@ private fun StickerLibraryEmptyState(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Icon(
-            imageVector = Icons.Rounded.AddPhotoAlternate,
+            imageVector = Icons.Outlined.AddPhotoAlternate,
             contentDescription = null,
             modifier = Modifier.size(28.dp),
             tint = settingsMaterialColors().tertiaryLabel
@@ -481,7 +472,7 @@ private fun StickerCatalogRow(
                     Box {
                         IconButton(onClick = { menuExpanded = true }) {
                             Icon(
-                                imageVector = Icons.Rounded.MoreVert,
+                                imageVector = Icons.Outlined.MoreVert,
                                 contentDescription = stringResource(R.string.options)
                             )
                         }
@@ -492,7 +483,7 @@ private fun StickerCatalogRow(
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.sticker_library_edit)) },
                                 leadingIcon = {
-                                    Icon(imageVector = Icons.Rounded.Edit, contentDescription = null)
+                                    Icon(imageVector = Icons.Outlined.Edit, contentDescription = null)
                                 },
                                 onClick = {
                                     menuExpanded = false
@@ -502,7 +493,7 @@ private fun StickerCatalogRow(
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.sticker_library_delete)) },
                                 leadingIcon = {
-                                    Icon(imageVector = Icons.Rounded.Delete, contentDescription = null)
+                                    Icon(imageVector = Icons.Outlined.Delete, contentDescription = null)
                                 },
                                 onClick = {
                                     menuExpanded = false

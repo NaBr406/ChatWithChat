@@ -13,8 +13,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Check
-import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -157,7 +157,7 @@ private fun PlatformModelGroup(
                     )
                 } else {
                     Icon(
-                        imageVector = Icons.Rounded.Refresh,
+                        imageVector = Icons.Outlined.Refresh,
                         contentDescription = null,
                         modifier = Modifier.size(18.dp)
                     )
@@ -210,7 +210,7 @@ private fun ModelManagementRow(
             ) {
                 if (model.isDefault) {
                     Icon(
-                        imageVector = Icons.Rounded.Check,
+                        imageVector = Icons.Outlined.Check,
                         contentDescription = null,
                         tint = if (model.enabled) AppleBlue else settingsMaterialColors().tertiaryLabel
                     )

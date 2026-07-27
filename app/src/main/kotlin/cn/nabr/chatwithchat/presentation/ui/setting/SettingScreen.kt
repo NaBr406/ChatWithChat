@@ -1,6 +1,5 @@
 package cn.nabr.chatwithchat.presentation.ui.setting
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,23 +18,23 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBackIos
-import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.Alarm
-import androidx.compose.material.icons.rounded.Check
-import androidx.compose.material.icons.rounded.ChevronRight
-import androidx.compose.material.icons.rounded.Cloud
-import androidx.compose.material.icons.rounded.EmojiEmotions
-import androidx.compose.material.icons.rounded.Event
-import androidx.compose.material.icons.rounded.Extension
-import androidx.compose.material.icons.rounded.Info
-import androidx.compose.material.icons.rounded.Language
-import androidx.compose.material.icons.rounded.LocationOn
-import androidx.compose.material.icons.rounded.Memory
-import androidx.compose.material.icons.rounded.Notifications
-import androidx.compose.material.icons.rounded.Schedule
-import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Alarm
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Cloud
+import androidx.compose.material.icons.outlined.EmojiEmotions
+import androidx.compose.material.icons.outlined.Event
+import androidx.compose.material.icons.outlined.Extension
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Language
+import androidx.compose.material.icons.outlined.LocationOn
+import androidx.compose.material.icons.outlined.Memory
+import androidx.compose.material.icons.outlined.Notifications
+import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -58,7 +57,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -78,12 +76,6 @@ import cn.nabr.chatwithchat.data.tool.ToolCallingMode
 import cn.nabr.chatwithchat.data.tool.ToolCatalogEntry
 import cn.nabr.chatwithchat.data.websearch.WebSearchMode
 import cn.nabr.chatwithchat.presentation.common.AppleBlue
-import cn.nabr.chatwithchat.presentation.common.AppleGray
-import cn.nabr.chatwithchat.presentation.common.AppleGreen
-import cn.nabr.chatwithchat.presentation.common.AppleIndigo
-import cn.nabr.chatwithchat.presentation.common.AppleOrange
-import cn.nabr.chatwithchat.presentation.common.ApplePurple
-import cn.nabr.chatwithchat.presentation.common.AppleRed
 import cn.nabr.chatwithchat.presentation.common.HigActionDialog
 import cn.nabr.chatwithchat.presentation.common.LocalNotificationPermissionRequester
 import cn.nabr.chatwithchat.presentation.common.LocalToolPermissionRequester
@@ -142,7 +134,7 @@ fun SettingScreen(
                 navigationIcon = {
                     IconButton(onClick = onNavigationClick) {
                         Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.ArrowBackIos,
+                            imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
                             contentDescription = stringResource(R.string.go_back)
                         )
                     }
@@ -162,16 +154,12 @@ fun SettingScreen(
             SettingsSection(title = stringResource(R.string.settings_section_models_providers)) {
                 SettingsRow(
                     title = stringResource(R.string.add_platform),
-                    description = stringResource(R.string.add_platform_description),
-                    leadingIcon = Icons.Rounded.Add,
-                    iconContainerColor = AppleBlue,
+                    leadingIcon = Icons.Outlined.Add,
                     onClick = onNavigateToAddPlatform
                 )
                 SettingsRow(
                     title = stringResource(R.string.model_management),
-                    description = stringResource(R.string.model_management_description),
-                    leadingIcon = Icons.Rounded.Tune,
-                    iconContainerColor = AppleIndigo,
+                    leadingIcon = Icons.Outlined.Tune,
                     showDivider = platformState.isNotEmpty(),
                     onClick = onNavigateToModelManagement
                 )
@@ -200,39 +188,28 @@ fun SettingScreen(
                 )
                 SettingsRow(
                     title = stringResource(R.string.memory),
-                    description = stringResource(R.string.memory_page_description),
-                    leadingIcon = Icons.Rounded.Memory,
-                    iconContainerColor = ApplePurple,
+                    leadingIcon = Icons.Outlined.Memory,
                     showDivider = true,
                     onClick = onNavigateToMemory
                 )
                 SettingsRow(
                     title = stringResource(R.string.sticker_library),
-                    description = stringResource(R.string.sticker_library_description),
-                    leadingIcon = Icons.Rounded.EmojiEmotions,
-                    iconContainerColor = AppleOrange,
+                    leadingIcon = Icons.Outlined.EmojiEmotions,
                     showDivider = false,
                     onClick = onNavigateToStickerLibrary
                 )
             }
 
-            SettingsSection(title = stringResource(R.string.settings_section_tools)) {
-                SettingsRow(
-                    title = stringResource(R.string.tool_settings_title),
-                    description = stringResource(R.string.tool_settings_description),
-                    leadingIcon = Icons.Rounded.Extension,
-                    iconContainerColor = AppleOrange,
-                    showDivider = false,
-                    onClick = onNavigateToToolSettings
-                )
-            }
-
             SettingsSection(title = stringResource(R.string.settings_section_app)) {
                 SettingsRow(
+                    title = stringResource(R.string.tool_settings_title),
+                    leadingIcon = Icons.Outlined.Extension,
+                    showDivider = true,
+                    onClick = onNavigateToToolSettings
+                )
+                SettingsRow(
                     title = stringResource(R.string.about),
-                    description = stringResource(R.string.about_description),
-                    leadingIcon = Icons.Rounded.Info,
-                    iconContainerColor = AppleGray,
+                    leadingIcon = Icons.Outlined.Info,
                     showDivider = false,
                     onClick = onNavigateToAboutPage
                 )
@@ -290,7 +267,7 @@ fun ToolSettingsScreen(
                 navigationIcon = {
                     IconButton(onClick = onNavigationClick) {
                         Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.ArrowBackIos,
+                            imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
                             contentDescription = stringResource(R.string.go_back)
                         )
                     }
@@ -339,7 +316,6 @@ fun ToolSettingsScreen(
                         title = entry.settingsTitle(),
                         description = description,
                         icon = entry.settingsIcon(),
-                        iconContainerColor = entry.settingsIconColor(),
                         enabled = resolvedEntry.isEnabled,
                         showDivider = index != webSearchSettings.tools.lastIndex,
                         onEnabledChange = { _, enabled ->
@@ -427,23 +403,13 @@ private fun ToolCatalogEntry.settingsDescription(): String = when (settings.pres
 }
 
 private fun ToolCatalogEntry.settingsIcon(): ImageVector = when (settings.iconKey) {
-    "search" -> Icons.Rounded.Search
-    "language" -> Icons.Rounded.Language
-    "schedule" -> Icons.Rounded.Schedule
-    "location" -> Icons.Rounded.LocationOn
-    "event" -> Icons.Rounded.Event
-    "alarm" -> Icons.Rounded.Alarm
-    else -> Icons.Rounded.Extension
-}
-
-private fun ToolCatalogEntry.settingsIconColor(): Color = when (settings.iconKey) {
-    "search" -> AppleBlue
-    "language" -> AppleIndigo
-    "schedule" -> AppleOrange
-    "location" -> AppleGreen
-    "event" -> AppleBlue
-    "alarm" -> AppleRed
-    else -> AppleGray
+    "search" -> Icons.Outlined.Search
+    "language" -> Icons.Outlined.Language
+    "schedule" -> Icons.Outlined.Schedule
+    "location" -> Icons.Outlined.LocationOn
+    "event" -> Icons.Outlined.Event
+    "alarm" -> Icons.Outlined.Alarm
+    else -> Icons.Outlined.Extension
 }
 
 @Composable
@@ -453,21 +419,24 @@ private fun SettingsSection(
 ) {
     val materialColors = settingsMaterialColors()
     Text(
-        modifier = Modifier.padding(start = 16.dp, top = 20.dp, end = 16.dp, bottom = 7.dp),
+        modifier = Modifier.padding(start = 12.dp, top = 18.dp, end = 12.dp, bottom = 6.dp),
         text = title,
-        style = MaterialTheme.typography.labelMedium,
+        style = MaterialTheme.typography.titleSmall,
         color = materialColors.secondaryLabel
     )
-    SettingsMaterialGroup(content = content)
+    SettingsMaterialGroup(
+        shape = RoundedCornerShape(8.dp),
+        showBorder = false,
+        content = content
+    )
 }
 
 @Composable
 private fun SettingsRow(
     title: String,
-    description: String?,
+    description: String? = null,
     onClick: () -> Unit,
     leadingIcon: ImageVector? = null,
-    iconContainerColor: Color = AppleBlue,
     showNavigationIndicator: Boolean = true,
     showDivider: Boolean = true,
     toggleValue: Boolean? = null,
@@ -489,22 +458,20 @@ private fun SettingsRow(
             modifier = Modifier
                 .fillMaxWidth()
                 .then(interactionModifier)
-                .defaultMinSize(minHeight = 56.dp)
-                .padding(horizontal = 16.dp, vertical = 10.dp),
+                .defaultMinSize(minHeight = 52.dp)
+                .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (leadingIcon != null) {
                 Box(
-                    modifier = Modifier
-                        .size(30.dp)
-                        .background(iconContainerColor, RoundedCornerShape(7.dp)),
+                    modifier = Modifier.size(28.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = leadingIcon,
                         contentDescription = null,
-                        modifier = Modifier.size(19.dp),
-                        tint = Color.White
+                        modifier = Modifier.size(22.dp),
+                        tint = materialColors.primaryLabel
                     )
                 }
                 Spacer(modifier = Modifier.size(12.dp))
@@ -536,16 +503,16 @@ private fun SettingsRow(
             } else if (showNavigationIndicator) {
                 Spacer(modifier = Modifier.size(8.dp))
                 Icon(
-                    imageVector = Icons.Rounded.ChevronRight,
+                    imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
                     contentDescription = null,
-                    modifier = Modifier.size(20.dp),
+                    modifier = Modifier.size(18.dp),
                     tint = materialColors.tertiaryLabel
                 )
             }
         }
         if (showDivider) {
             HorizontalDivider(
-                modifier = Modifier.padding(start = if (leadingIcon == null) 16.dp else 58.dp),
+                modifier = Modifier.padding(start = if (leadingIcon == null) 16.dp else 56.dp),
                 color = materialColors.separator
             )
         }
@@ -579,7 +546,6 @@ private fun ToolEnabledItem(
     title: String,
     description: String,
     icon: ImageVector,
-    iconContainerColor: Color,
     enabled: Boolean,
     showDivider: Boolean = true,
     onEnabledChange: (String, Boolean) -> Unit
@@ -589,7 +555,6 @@ private fun ToolEnabledItem(
         description = description,
         onClick = { onEnabledChange(toolName, !enabled) },
         leadingIcon = icon,
-        iconContainerColor = iconContainerColor,
         showNavigationIndicator = false,
         showDivider = showDivider,
         toggleValue = enabled,
@@ -662,7 +627,7 @@ private fun SettingsSelectionCheckmark(selected: Boolean) {
     ) {
         if (selected) {
             Icon(
-                imageVector = Icons.Rounded.Check,
+                imageVector = Icons.Outlined.Check,
                 contentDescription = null,
                 modifier = Modifier.size(22.dp),
                 tint = AppleBlue
@@ -681,8 +646,7 @@ private fun PlatformItem(
     SettingsRow(
         title = platform.name,
         description = "${getClientTypeDisplayName(platform.compatibleType)} · $statusText",
-        leadingIcon = Icons.Rounded.Cloud,
-        iconContainerColor = if (platform.enabled) AppleGreen else AppleGray,
+        leadingIcon = Icons.Outlined.Cloud,
         showDivider = showDivider,
         onClick = onItemClick
     )
@@ -695,10 +659,8 @@ fun MemoryEnabledItem(
 ) {
     SettingsRow(
         title = stringResource(R.string.memory_enabled_title),
-        description = stringResource(R.string.memory_enabled_description),
         onClick = { onCheckedChange(!memoryEnabled) },
-        leadingIcon = Icons.Rounded.Memory,
-        iconContainerColor = ApplePurple,
+        leadingIcon = Icons.Outlined.Memory,
         showNavigationIndicator = false,
         trailingContent = {
             Switch(
@@ -717,10 +679,8 @@ fun MemoryMaintenanceNotificationsItem(
 ) {
     SettingsRow(
         title = stringResource(R.string.memory_maintenance_notifications_title),
-        description = stringResource(R.string.memory_maintenance_notifications_description),
         onClick = { onCheckedChange(!enabled) },
-        leadingIcon = Icons.Rounded.Notifications,
-        iconContainerColor = AppleRed,
+        leadingIcon = Icons.Outlined.Notifications,
         showNavigationIndicator = false,
         trailingContent = {
             Switch(

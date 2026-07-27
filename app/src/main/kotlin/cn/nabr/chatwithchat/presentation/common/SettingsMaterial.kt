@@ -7,7 +7,7 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBackIos
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -22,6 +22,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -99,7 +100,7 @@ fun SettingsTopAppBar(
                 onClick = onNavigationClick
             ) {
                 Icon(
-                    imageVector = Icons.AutoMirrored.Rounded.ArrowBackIos,
+                    imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
                     contentDescription = stringResource(R.string.go_back)
                 )
             }
@@ -112,14 +113,16 @@ fun SettingsTopAppBar(
 @Composable
 fun SettingsMaterialGroup(
     modifier: Modifier = Modifier,
+    shape: Shape = RoundedCornerShape(8.dp),
+    showBorder: Boolean = false,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val materialColors = settingsMaterialColors()
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
+        shape = shape,
         color = materialColors.grouped,
-        border = BorderStroke(0.5.dp, materialColors.separator),
+        border = if (showBorder) BorderStroke(0.5.dp, materialColors.separator) else null,
         content = { Column(content = content) }
     )
 }
@@ -133,14 +136,16 @@ fun settingsTextFieldColors() = OutlinedTextFieldDefaults.colors(
 )
 
 @Composable
-fun settingsSwitchColors() = SwitchDefaults.colors(
-    checkedThumbColor = Color.White,
-    checkedTrackColor = AppleGreen,
-    checkedBorderColor = AppleGreen,
-    uncheckedThumbColor = Color.White,
-    uncheckedTrackColor = settingsMaterialColors().controlFill,
-    uncheckedBorderColor = Color.Transparent
-)
+fun settingsSwitchColors() = settingsMaterialColors().let { materialColors ->
+    SwitchDefaults.colors(
+        checkedThumbColor = materialColors.canvas,
+        checkedTrackColor = materialColors.primaryLabel,
+        checkedBorderColor = Color.Transparent,
+        uncheckedThumbColor = materialColors.canvas,
+        uncheckedTrackColor = materialColors.controlFill,
+        uncheckedBorderColor = Color.Transparent
+    )
+}
 
 val AppleBlue = Color(0xFF007AFF)
 val AppleGreen = Color(0xFF34C759)

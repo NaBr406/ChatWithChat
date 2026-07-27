@@ -4,6 +4,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
@@ -12,9 +15,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cn.nabr.chatwithchat.R
@@ -42,6 +43,7 @@ fun SettingItem(
             .padding(horizontal = 8.dp)
     }
     val colors = ListItemDefaults.colors()
+    val materialColors = settingsMaterialColors()
 
     Column(modifier = Modifier.fillMaxWidth()) {
         if (showLeadingIcon) {
@@ -55,8 +57,9 @@ fun SettingItem(
                 trailingContent = {
                     if (showTrailingIcon) {
                         Icon(
-                            ImageVector.vectorResource(id = R.drawable.ic_round_arrow_right),
-                            contentDescription = stringResource(R.string.arrow_icon)
+                            imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                            contentDescription = stringResource(R.string.arrow_icon),
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 },
@@ -64,6 +67,7 @@ fun SettingItem(
                     containerColor = Color.Transparent,
                     headlineColor = if (enabled) colors.headlineColor else colors.disabledHeadlineColor,
                     supportingColor = if (enabled) colors.supportingTextColor else colors.disabledHeadlineColor,
+                    leadingIconColor = if (enabled) materialColors.primaryLabel else colors.disabledLeadingIconColor,
                     trailingIconColor = if (enabled) colors.trailingIconColor else colors.disabledTrailingIconColor
                 )
             )
@@ -77,8 +81,9 @@ fun SettingItem(
                 trailingContent = {
                     if (showTrailingIcon) {
                         Icon(
-                            ImageVector.vectorResource(id = R.drawable.ic_round_arrow_right),
-                            contentDescription = stringResource(R.string.arrow_icon)
+                            imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                            contentDescription = stringResource(R.string.arrow_icon),
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 },

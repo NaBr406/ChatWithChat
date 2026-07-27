@@ -1,8 +1,6 @@
 package cn.nabr.chatwithchat.presentation.ui.setting
 
 import androidx.compose.foundation.LocalIndication
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,12 +10,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Label
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.automirrored.outlined.Article
+import androidx.compose.material.icons.automirrored.outlined.Label
+import androidx.compose.material.icons.automirrored.outlined.ShowChart
+import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Thermostat
+import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -26,7 +28,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -36,10 +37,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -105,7 +104,7 @@ fun PlatformSettingScreen(
                         showDivider = true,
                         leadingIcon = {
                             Icon(
-                                imageVector = Icons.AutoMirrored.Filled.Label,
+                                imageVector = Icons.AutoMirrored.Outlined.Label,
                                 contentDescription = stringResource(R.string.platform_name_icon)
                             )
                         }
@@ -121,7 +120,7 @@ fun PlatformSettingScreen(
                         showDivider = true,
                         leadingIcon = {
                             Icon(
-                                ImageVector.vectorResource(id = R.drawable.ic_link),
+                                imageVector = Icons.Outlined.Link,
                                 contentDescription = stringResource(R.string.url_icon)
                             )
                         }
@@ -141,7 +140,7 @@ fun PlatformSettingScreen(
                         showDivider = true,
                         leadingIcon = {
                             Icon(
-                                ImageVector.vectorResource(id = R.drawable.ic_key),
+                                imageVector = Icons.Outlined.Key,
                                 contentDescription = stringResource(R.string.key_icon)
                             )
                         }
@@ -158,7 +157,7 @@ fun PlatformSettingScreen(
                         showDivider = true,
                         leadingIcon = {
                             Icon(
-                                ImageVector.vectorResource(id = R.drawable.ic_temperature),
+                                imageVector = Icons.Outlined.Thermostat,
                                 contentDescription = stringResource(R.string.temperature_icon)
                             )
                         }
@@ -174,7 +173,7 @@ fun PlatformSettingScreen(
                         showDivider = true,
                         leadingIcon = {
                             Icon(
-                                ImageVector.vectorResource(id = R.drawable.ic_chart),
+                                imageVector = Icons.AutoMirrored.Outlined.ShowChart,
                                 contentDescription = stringResource(R.string.top_p_icon)
                             )
                         }
@@ -190,7 +189,7 @@ fun PlatformSettingScreen(
                         showDivider = true,
                         leadingIcon = {
                             Icon(
-                                ImageVector.vectorResource(id = R.drawable.ic_instructions),
+                                imageVector = Icons.AutoMirrored.Outlined.Article,
                                 contentDescription = stringResource(R.string.system_prompt_icon)
                             )
                         }
@@ -205,7 +204,7 @@ fun PlatformSettingScreen(
                         showLeadingIcon = true,
                         leadingIcon = {
                             Icon(
-                                ImageVector.vectorResource(id = R.drawable.ic_info),
+                                imageVector = Icons.Outlined.Timer,
                                 contentDescription = stringResource(R.string.timeout_icon)
                             )
                         }
@@ -240,7 +239,7 @@ fun PlatformTopAppBar(
         actions = {
             IconButton(onClick = { showMenu = true }) {
                 Icon(
-                    imageVector = Icons.Filled.MoreVert,
+                    imageVector = Icons.Outlined.MoreVert,
                     contentDescription = stringResource(R.string.more_options)
                 )
             }
@@ -267,67 +266,47 @@ fun PreferenceSwitchWithContainer(
     isChecked: Boolean,
     onClick: () -> Unit
 ) {
-    val thumbContent: (@Composable () -> Unit)? = remember(isChecked) {
-        if (isChecked) {
-            {
-                Icon(
-                    imageVector = Icons.Outlined.Check,
-                    contentDescription = null,
-                    modifier = Modifier.size(SwitchDefaults.IconSize)
-                )
-            }
-        } else {
-            null
-        }
-    }
-
     val interactionSource = remember { MutableInteractionSource() }
     val materialColors = settingsMaterialColors()
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(materialColors.grouped)
-            .border(0.5.dp, materialColors.separator, RoundedCornerShape(12.dp))
-            .toggleable(
-                value = isChecked,
-                onValueChange = { onClick() },
-                interactionSource = interactionSource,
-                indication = LocalIndication.current
-            )
-            .padding(horizontal = 16.dp, vertical = 20.dp),
-        verticalAlignment = Alignment.CenterVertically
+    SettingsMaterialGroup(
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
     ) {
-        icon?.let {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                modifier = Modifier
-                    .padding(start = 8.dp, end = 16.dp)
-                    .size(24.dp),
-                tint = materialColors.secondaryLabel
-            )
-        }
-        Column(
+        Row(
             modifier = Modifier
-                .weight(1f)
-                .padding(start = if (icon == null) 12.dp else 0.dp, end = 12.dp)
+                .fillMaxWidth()
+                .toggleable(
+                    value = isChecked,
+                    onValueChange = { onClick() },
+                    interactionSource = interactionSource,
+                    indication = LocalIndication.current
+                )
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
+            icon?.let {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .padding(end = 12.dp)
+                        .size(22.dp),
+                    tint = materialColors.primaryLabel
+                )
+            }
             Text(
+                modifier = Modifier.weight(1f),
                 text = title,
                 maxLines = 1,
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.bodyLarge,
                 color = materialColors.primaryLabel
             )
+            Switch(
+                checked = isChecked,
+                interactionSource = interactionSource,
+                onCheckedChange = null,
+                modifier = Modifier.padding(start = 12.dp),
+                colors = settingsSwitchColors()
+            )
         }
-        Switch(
-            checked = isChecked,
-            interactionSource = interactionSource,
-            onCheckedChange = null,
-            modifier = Modifier.padding(start = 12.dp, end = 6.dp),
-            thumbContent = thumbContent,
-            colors = settingsSwitchColors()
-        )
     }
 }

@@ -14,7 +14,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -94,16 +94,7 @@ fun AddPlatformScreen(
                 .imePadding()
                 .padding(horizontal = 16.dp)
         ) {
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Header text
-            Text(
-                text = stringResource(R.string.add_platform_description),
-                style = MaterialTheme.typography.bodyLarge,
-                color = materialColors.secondaryLabel
-            )
-
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             SettingsMaterialGroup {
                 Column(modifier = Modifier.padding(16.dp)) {
@@ -117,10 +108,7 @@ fun AddPlatformScreen(
                         enabled = !isBusy && !platformSaved,
                         singleLine = true,
                         shape = RoundedCornerShape(10.dp),
-                        colors = settingsTextFieldColors(),
-                        supportingText = {
-                            Text(stringResource(R.string.platform_name_supporting))
-                        }
+                        colors = settingsTextFieldColors()
                     )
 
                     Spacer(modifier = Modifier.height(24.dp))
@@ -184,7 +172,7 @@ fun AddPlatformScreen(
                                     trailingIcon = if (isSelected) {
                                         {
                                             Icon(
-                                                imageVector = Icons.Rounded.Check,
+                                                imageVector = Icons.Outlined.Check,
                                                 contentDescription = null,
                                                 tint = AppleBlue
                                             )
