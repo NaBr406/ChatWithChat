@@ -97,6 +97,118 @@ class MemoryMaintenanceSchedulerTest {
     }
 
     @Test
+    fun `model binding freezes exact pair and advances row version once`() = runBlocking {
+        val dao = InMemoryMaintenanceJobDao(
+            listOf(job("whole-corpus", MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH))
+        )
+        val scheduler = createScheduler(dao)
+        val claimed = checkNotNull(
+            scheduler.claimNextRunnable(MemoryMaintenanceJobFamily.SEMANTIC, "owner-1")
+        )
+
+        val bound = scheduler.bindResolvedModel(
+            job = claimed,
+            platformUid = "platform-1",
+            modelId = "model-1",
+            resolvedAt = 150L
+        )
+
+        assertEquals("platform-1", bound.resolvedPlatformUid)
+        assertEquals("model-1", bound.resolvedModelId)
+        assertEquals(150L, bound.resolvedAt)
+        assertEquals(150L, bound.updatedAt)
+        assertEquals(claimed.rowVersion + 1, bound.rowVersion)
+        assertEquals(bound, dao.getById(bound.jobId))
+        assertEquals(claimed.leaseOwner, bound.leaseOwner)
+        assertEquals(claimed.leaseExpiresAt, bound.leaseExpiresAt)
+    }
+
+    @Test
+    fun `exact model binding replay returns persisted pair without rewriting timestamp`() = runBlocking {
+        val dao = InMemoryMaintenanceJobDao(
+            listOf(job("whole-corpus", MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH))
+        )
+        val scheduler = createScheduler(dao)
+        val claimed = checkNotNull(
+            scheduler.claimNextRunnable(MemoryMaintenanceJobFamily.SEMANTIC, "owner-1")
+        )
+        val bound = scheduler.bindResolvedModel(
+            job = claimed,
+            platformUid = "platform-1",
+            modelId = "model-1",
+            resolvedAt = 150L
+        )
+
+        val replayed = scheduler.bindResolvedModel(
+            job = claimed,
+            platformUid = "platform-1",
+            modelId = "model-1",
+            resolvedAt = 175L
+        )
+
+        assertEquals(bound, replayed)
+        assertEquals(150L, checkNotNull(dao.getById(bound.jobId)).resolvedAt)
+        assertEquals(150L, checkNotNull(dao.getById(bound.jobId)).updatedAt)
+    }
+
+    @Test
+    fun `expired claim cannot bind a resolved model`() = runBlocking {
+        val dao = InMemoryMaintenanceJobDao(
+            listOf(job("whole-corpus", MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH))
+        )
+        val scheduler = createScheduler(dao)
+        val claimed = checkNotNull(
+            scheduler.claimNextRunnable(MemoryMaintenanceJobFamily.SEMANTIC, "owner-1")
+        )
+
+        assertThrows(IllegalStateException::class.java) {
+            runBlocking {
+                scheduler.bindResolvedModel(
+                    job = claimed,
+                    platformUid = "platform-1",
+                    modelId = "model-1",
+                    resolvedAt = checkNotNull(claimed.leaseExpiresAt)
+                )
+            }
+        }
+
+        val persisted = checkNotNull(dao.getById(claimed.jobId))
+        assertNull(persisted.resolvedPlatformUid)
+        assertNull(persisted.resolvedModelId)
+        assertNull(persisted.resolvedAt)
+    }
+
+    @Test
+    fun `bound model rejects a conflicting replacement pair`() = runBlocking {
+        val dao = InMemoryMaintenanceJobDao(
+            listOf(job("whole-corpus", MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH))
+        )
+        val scheduler = createScheduler(dao)
+        val claimed = checkNotNull(
+            scheduler.claimNextRunnable(MemoryMaintenanceJobFamily.SEMANTIC, "owner-1")
+        )
+        val bound = scheduler.bindResolvedModel(
+            job = claimed,
+            platformUid = "platform-1",
+            modelId = "model-1",
+            resolvedAt = 150L
+        )
+
+        assertThrows(IllegalStateException::class.java) {
+            runBlocking {
+                scheduler.bindResolvedModel(
+                    job = claimed,
+                    platformUid = "platform-2",
+                    modelId = "model-2",
+                    resolvedAt = 175L
+                )
+            }
+        }
+
+        assertEquals(bound, dao.getById(bound.jobId))
+    }
+
+    @Test
     fun `stale lease owner cannot complete a replacement claim`() = runBlocking {
         val dao = InMemoryMaintenanceJobDao(listOf(job("index-1", MemoryMaintenanceJobType.REBUILD_MEMORY_INDEX)))
         val scheduler = createScheduler(dao)

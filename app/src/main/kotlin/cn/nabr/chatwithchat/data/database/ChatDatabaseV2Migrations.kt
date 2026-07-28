@@ -406,6 +406,29 @@ object ChatDatabaseV2Migrations {
         }
     }
 
+    val MIGRATION_18_19 = object : Migration(18, 19) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE memory_maintenance_job ADD COLUMN resolved_platform_uid TEXT")
+            db.execSQL("ALTER TABLE memory_maintenance_job ADD COLUMN resolved_model_id TEXT")
+            db.execSQL("ALTER TABLE memory_maintenance_job ADD COLUMN resolved_at INTEGER")
+            db.execSQL("ALTER TABLE memory_activity_log ADD COLUMN job_id TEXT")
+            db.execSQL("ALTER TABLE memory_activity_log ADD COLUMN job_type TEXT")
+            db.execSQL("ALTER TABLE memory_activity_log ADD COLUMN phase TEXT")
+            db.execSQL("ALTER TABLE memory_activity_log ADD COLUMN trigger_reason TEXT")
+            db.execSQL("ALTER TABLE memory_activity_log ADD COLUMN platform_uid TEXT")
+            db.execSQL("ALTER TABLE memory_activity_log ADD COLUMN model_id TEXT")
+            db.execSQL("ALTER TABLE memory_activity_log ADD COLUMN input_count INTEGER")
+            db.execSQL("ALTER TABLE memory_activity_log ADD COLUMN error_code TEXT")
+            db.execSQL("ALTER TABLE memory_activity_log ADD COLUMN phase_summary_json TEXT")
+            db.execSQL("ALTER TABLE memory_activity_log ADD COLUMN row_version INTEGER NOT NULL DEFAULT 0")
+            db.execSQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS `index_memory_activity_log_job_id_attempt` ON `memory_activity_log` (`job_id`, `attempt`)"
+            )
+            db.execSQL("ALTER TABLE memory_mutation_receipt ADD COLUMN material_mutation_count INTEGER NOT NULL DEFAULT 0")
+            ensureMemoryLongTermConsolidationCheckpointTable(db)
+        }
+    }
+
     internal fun legacyFilesToAttachmentsJson(filesValue: String): String {
         val attachments = filesValue
             .split(",")
@@ -703,6 +726,60 @@ object ChatDatabaseV2Migrations {
         )
         db.execSQL(
             "CREATE INDEX IF NOT EXISTS `index_memory_maintenance_job_generation_status` ON `memory_maintenance_job` (`generation`, `status`)"
+        )
+    }
+
+    private fun ensureMemoryLongTermConsolidationCheckpointTable(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `memory_long_term_consolidation_checkpoint` (
+                `checkpoint_id` TEXT NOT NULL,
+                `job_id` TEXT NOT NULL,
+                `active_key` TEXT,
+                `trigger_reason` TEXT NOT NULL,
+                `source_path` TEXT NOT NULL,
+                `base_source_hash` TEXT NOT NULL,
+                `result_source_hash` TEXT NOT NULL,
+                `base_generation` INTEGER NOT NULL,
+                `completed_generation` INTEGER,
+                `recall_projection_hash` TEXT NOT NULL,
+                `entry_count` INTEGER NOT NULL,
+                `ordered_snapshot_hash` TEXT NOT NULL,
+                `ordered_entry_ids_json` TEXT NOT NULL,
+                `partition_cursor` INTEGER NOT NULL DEFAULT 0,
+                `proposal_hash` TEXT,
+                `proposal_json` TEXT,
+                `continuation_required` INTEGER NOT NULL DEFAULT 0,
+                `material_mutation_count_at_start` INTEGER NOT NULL DEFAULT 0,
+                `status` TEXT NOT NULL,
+                `attempt` INTEGER NOT NULL DEFAULT 0,
+                `last_error` TEXT,
+                `resolved_platform_uid` TEXT,
+                `resolved_model_id` TEXT,
+                `resolved_at` INTEGER,
+                `mutation_group_id` TEXT,
+                `created_at` INTEGER NOT NULL,
+                `updated_at` INTEGER NOT NULL,
+                `completed_at` INTEGER,
+                `row_version` INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(`checkpoint_id`)
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS `index_memory_long_term_consolidation_checkpoint_job_id` ON `memory_long_term_consolidation_checkpoint` (`job_id`)"
+        )
+        db.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS `index_memory_long_term_consolidation_checkpoint_active_key` ON `memory_long_term_consolidation_checkpoint` (`active_key`)"
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_memory_long_term_consolidation_checkpoint_status_completed_at` ON `memory_long_term_consolidation_checkpoint` (`status`, `completed_at`)"
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_memory_long_term_consolidation_checkpoint_mutation_group_id` ON `memory_long_term_consolidation_checkpoint` (`mutation_group_id`)"
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_memory_long_term_consolidation_checkpoint_base_source_hash` ON `memory_long_term_consolidation_checkpoint` (`base_source_hash`)"
         )
     }
 

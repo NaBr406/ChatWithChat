@@ -46,7 +46,9 @@ class MemoryMaintenanceScheduler(
         val inserted = jobDao.insertIgnore(job)
         if (inserted != -1L) return job
 
-        return jobDao.getByIdempotencyKey(persistedIdempotencyKey) ?: job
+        return jobDao.getByIdempotencyKey(persistedIdempotencyKey)
+            ?: jobDao.getById(jobId)
+            ?: error("Memory maintenance job insert did not converge")
     }
 
     suspend fun claimNextRunnable(
@@ -82,6 +84,39 @@ class MemoryMaintenanceScheduler(
         return job.copy(leaseExpiresAt = maxOf(checkNotNull(job.leaseExpiresAt), leaseExpiresAt))
     }
 
+    suspend fun bindResolvedModel(
+        job: MemoryMaintenanceJob,
+        platformUid: String,
+        modelId: String,
+        resolvedAt: Long = now()
+    ): MemoryMaintenanceJob {
+        require(platformUid.isNotBlank()) { "Resolved platform UID must not be blank" }
+        require(modelId.isNotBlank()) { "Resolved model ID must not be blank" }
+        val existingPair = job.resolvedPlatformUid to job.resolvedModelId
+        if (existingPair == (platformUid to modelId) && job.resolvedAt != null) return job
+        check(job.resolvedPlatformUid == null && job.resolvedModelId == null && job.resolvedAt == null) {
+            "Memory maintenance job is already bound to another model"
+        }
+        val leaseOwner = job.leaseOwner ?: throw MemoryMaintenanceLeaseLostException(job.jobId)
+        val changed = jobDao.bindResolvedModelCas(
+            jobId = job.jobId,
+            leaseOwner = leaseOwner,
+            expectedRowVersion = job.rowVersion,
+            platformUid = platformUid,
+            modelId = modelId,
+            resolvedAt = resolvedAt
+        )
+        val current = checkNotNull(jobDao.getById(job.jobId))
+        if (changed != 1) {
+            check(
+                current.resolvedPlatformUid == platformUid &&
+                    current.resolvedModelId == modelId &&
+                    current.resolvedAt != null
+            ) { "Memory maintenance model binding changed before it could be persisted" }
+        }
+        return current
+    }
+
     suspend fun nextScheduledRunAt(
         family: String,
         now: Long = now()
@@ -100,6 +135,8 @@ class MemoryMaintenanceScheduler(
     internal fun currentEpochSecond(): Long = now()
 
     suspend fun jobType(jobId: String): String? = jobDao.getById(jobId)?.type
+
+    internal suspend fun jobStatus(jobId: String): String? = jobDao.getById(jobId)?.status
 
     internal suspend fun isRecoveredSourceJobActive(jobId: String): Boolean {
         val job = jobDao.getById(jobId) ?: return false
@@ -149,6 +186,31 @@ class MemoryMaintenanceScheduler(
             blockedReason = null,
             nextRunAt = null
         )
+
+    suspend fun deferClaimedWithoutRetry(
+        job: MemoryMaintenanceJob,
+        nextRunAt: Long? = null
+    ): MemoryMaintenanceJob {
+        require(job.attempts > 0) { "A claimed memory maintenance job must have a positive attempt" }
+        val leaseOwner = job.leaseOwner ?: throw MemoryMaintenanceLeaseLostException(job.jobId)
+        val timestamp = now()
+        val resolvedNextRunAt = nextRunAt ?: timestamp
+        require(resolvedNextRunAt >= timestamp) { "Deferred memory maintenance work cannot run in the past" }
+        val changed = jobDao.deferClaimedJobWithoutRetry(
+            jobId = job.jobId,
+            leaseOwner = leaseOwner,
+            expectedRowVersion = job.rowVersion,
+            updatedAt = timestamp,
+            nextRunAt = resolvedNextRunAt
+        )
+        if (changed != 1) throw MemoryMaintenanceLeaseLostException(job.jobId)
+        val updated = checkNotNull(jobDao.getById(job.jobId))
+        check(updated.attempts == job.attempts - 1) {
+            "Deferred memory maintenance work consumed an automatic retry attempt"
+        }
+        emitStatusChanged(job, updated, timestamp)
+        return updated
+    }
 
     suspend fun markRecoveredSucceeded(jobId: String): MemoryRecoveredJobDisposition {
         val job = jobDao.getById(jobId) ?: return MemoryRecoveredJobDisposition.MISSING
@@ -413,11 +475,16 @@ class MemoryMaintenanceScheduler(
         return updated
     }
 
-    suspend fun reviveDismissedDailyDistillation(jobId: String): MemoryMaintenanceJob? = reviveDismissedDailyJob(jobId, MemoryMaintenanceJobType.DISTILL_DAILY_NOTES)
+    suspend fun reviveDismissedDailyDistillation(jobId: String): MemoryMaintenanceJob? = reviveDismissedJob(jobId, MemoryMaintenanceJobType.DISTILL_DAILY_NOTES)
 
-    suspend fun reviveDismissedDailyPlan(jobId: String): MemoryMaintenanceJob? = reviveDismissedDailyJob(jobId, MemoryMaintenanceJobType.PLAN_DAILY_DISTILLATION)
+    suspend fun reviveDismissedDailyPlan(jobId: String): MemoryMaintenanceJob? = reviveDismissedJob(jobId, MemoryMaintenanceJobType.PLAN_DAILY_DISTILLATION)
 
-    private suspend fun reviveDismissedDailyJob(
+    suspend fun reviveDismissedLongTermConsolidation(jobId: String): MemoryMaintenanceJob? = reviveDismissedJob(
+        jobId,
+        MemoryMaintenanceJobType.CONSOLIDATE_LONG_TERM_MEMORY
+    )
+
+    private suspend fun reviveDismissedJob(
         jobId: String,
         expectedType: String
     ): MemoryMaintenanceJob? {
@@ -613,7 +680,8 @@ object MemoryMaintenanceJobFamily {
         MemoryMaintenanceJobType.DISTILL_DAILY_NOTES,
         MemoryMaintenanceJobType.PROMOTE_LONG_TERM_CANDIDATE,
         MemoryMaintenanceJobType.COMPACTION_FLUSH,
-        MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH -> SEMANTIC
+        MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH,
+        MemoryMaintenanceJobType.CONSOLIDATE_LONG_TERM_MEMORY -> SEMANTIC
         else -> REPAIR
     }
 }
@@ -630,6 +698,7 @@ object MemoryMaintenanceJobType {
     const val PLAN_DAILY_DISTILLATION = "plan_daily_distillation"
     const val COMPACTION_FLUSH = "compaction_flush"
     const val CONSOLIDATE_TURN_BATCH = "consolidate_turn_batch"
+    const val CONSOLIDATE_LONG_TERM_MEMORY = "consolidate_long_term_memory"
 }
 
 object MemoryMaintenanceJobStatus {

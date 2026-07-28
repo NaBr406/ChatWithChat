@@ -11,7 +11,8 @@ import androidx.room.PrimaryKey
         Index(value = ["batch_id"]),
         Index(value = ["category"]),
         Index(value = ["status"]),
-        Index(value = ["started_at"])
+        Index(value = ["started_at"]),
+        Index(value = ["job_id", "attempt"], unique = true)
     ]
 )
 data class MemoryActivityLog(
@@ -41,5 +42,25 @@ data class MemoryActivityLog(
     @ColumnInfo(name = "completed_at")
     val completedAt: Long?,
     @ColumnInfo(name = "updated_at")
-    val updatedAt: Long
+    val updatedAt: Long,
+    @ColumnInfo(name = "job_id")
+    val jobId: String? = null,
+    @ColumnInfo(name = "job_type")
+    val jobType: String? = null,
+    @ColumnInfo(name = "phase")
+    val phase: String? = null,
+    @ColumnInfo(name = "trigger_reason")
+    val triggerReason: String? = null,
+    @ColumnInfo(name = "platform_uid")
+    val platformUid: String? = null,
+    @ColumnInfo(name = "model_id")
+    val modelId: String? = null,
+    @ColumnInfo(name = "input_count")
+    val inputCount: Int? = null,
+    @ColumnInfo(name = "error_code")
+    val errorCode: String? = null,
+    @ColumnInfo(name = "phase_summary_json")
+    val phaseSummaryJson: String? = null,
+    @ColumnInfo(name = "row_version", defaultValue = "0")
+    val rowVersion: Long = 0
 )

@@ -12,4 +12,9 @@ interface MemoryIntelligence {
         request: MemoryDailyDistillationFrozenInput,
         preferredPlatform: PlatformV2? = null
     ): MemoryDailyDistillationProposal?
+
+    suspend fun consolidateLongTermMemory(
+        request: MemoryLongTermConsolidationPartitionRequest,
+        resolvedPlatform: PlatformV2
+    ): MemoryLongTermConsolidationProposal?
 }

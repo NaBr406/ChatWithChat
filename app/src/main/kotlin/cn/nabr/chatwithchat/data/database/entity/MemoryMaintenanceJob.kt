@@ -71,5 +71,14 @@ data class MemoryMaintenanceJob(
     val retryCycle: Int = 0,
 
     @ColumnInfo(name = "blocked_reason")
-    val blockedReason: String? = null
+    val blockedReason: String? = null,
+
+    @ColumnInfo(name = "resolved_platform_uid")
+    val resolvedPlatformUid: String? = null,
+
+    @ColumnInfo(name = "resolved_model_id")
+    val resolvedModelId: String? = null,
+
+    @ColumnInfo(name = "resolved_at")
+    val resolvedAt: Long? = null
 )

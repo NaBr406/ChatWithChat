@@ -1,12 +1,8 @@
 package cn.nabr.chatwithchat.di
 
 import android.content.Context
-import dagger.Module
-import dagger.Provides
-import dagger.hilt.InstallIn
-import dagger.hilt.android.qualifiers.ApplicationContext
-import dagger.hilt.components.SingletonComponent
 import cn.nabr.chatwithchat.data.database.dao.MemoryActivityLogDao
+import cn.nabr.chatwithchat.data.database.dao.MemoryLongTermConsolidationDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryMaintenanceJobDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryRecoveryDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryTurnBatchDao
@@ -28,6 +24,10 @@ import cn.nabr.chatwithchat.data.memory.MemoryFileStore
 import cn.nabr.chatwithchat.data.memory.MemoryIndexSyncService
 import cn.nabr.chatwithchat.data.memory.MemoryIndexSynchronizer
 import cn.nabr.chatwithchat.data.memory.MemoryIntelligence
+import cn.nabr.chatwithchat.data.memory.MemoryLongTermConsolidationOperationController
+import cn.nabr.chatwithchat.data.memory.MemoryLongTermConsolidationRecoveryFinalizer
+import cn.nabr.chatwithchat.data.memory.MemoryLongTermConsolidationScheduler
+import cn.nabr.chatwithchat.data.memory.MemoryLongTermConsolidationService
 import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceCorpusReader
 import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceEventSink
 import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceLeaseWatchdog
@@ -36,6 +36,7 @@ import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceNotificationPolicy
 import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceScheduler
 import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceWorkEnqueuer
 import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceWorkScheduler
+import cn.nabr.chatwithchat.data.memory.MemoryModelResolver
 import cn.nabr.chatwithchat.data.memory.MemoryMutationCoordinator
 import cn.nabr.chatwithchat.data.memory.MemoryMutationRecoveryService
 import cn.nabr.chatwithchat.data.memory.MemoryPromptBuilder
@@ -61,6 +62,11 @@ import cn.nabr.chatwithchat.data.network.OpenAIAPI
 import cn.nabr.chatwithchat.data.repository.MemoryRepository
 import cn.nabr.chatwithchat.data.repository.MemoryRepositoryImpl
 import cn.nabr.chatwithchat.data.repository.SettingRepository
+import dagger.Module
+import dagger.Provides
+import dagger.hilt.InstallIn
+import dagger.hilt.android.qualifiers.ApplicationContext
+import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 
 @Module
@@ -246,16 +252,36 @@ object MemoryRepositoryModule {
 
     @Provides
     @Singleton
+    fun provideMemoryLongTermConsolidationScheduler(
+        memoryFileStore: MemoryFileStore,
+        markdownMemoryCodec: MarkdownMemoryCodec,
+        memoryLongTermConsolidationDao: MemoryLongTermConsolidationDao,
+        memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
+        settingRepository: SettingRepository,
+        memoryMaintenanceWorkEnqueuer: MemoryMaintenanceWorkEnqueuer
+    ): MemoryLongTermConsolidationScheduler = MemoryLongTermConsolidationScheduler(
+        memoryFileStore = memoryFileStore,
+        markdownMemoryCodec = markdownMemoryCodec,
+        checkpointDao = memoryLongTermConsolidationDao,
+        maintenanceScheduler = memoryMaintenanceScheduler,
+        settingRepository = settingRepository,
+        workEnqueuer = memoryMaintenanceWorkEnqueuer
+    )
+
+    @Provides
+    @Singleton
     fun provideMemoryMutationCoordinator(
         memoryRecoveryDao: MemoryRecoveryDao,
         memoryFileStore: MemoryFileStore,
         memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
-        memoryMaintenanceWorkEnqueuer: MemoryMaintenanceWorkEnqueuer
+        memoryMaintenanceWorkEnqueuer: MemoryMaintenanceWorkEnqueuer,
+        memoryLongTermConsolidationScheduler: MemoryLongTermConsolidationScheduler
     ): MemoryMutationCoordinator = MemoryMutationCoordinator(
         recoveryDao = memoryRecoveryDao,
         memoryFileStore = memoryFileStore,
         maintenanceScheduler = memoryMaintenanceScheduler,
-        workEnqueuer = memoryMaintenanceWorkEnqueuer
+        workEnqueuer = memoryMaintenanceWorkEnqueuer,
+        materialMutationObserver = memoryLongTermConsolidationScheduler
     )
 
     @Provides
@@ -276,12 +302,14 @@ object MemoryRepositoryModule {
         memoryMutationCoordinator: MemoryMutationCoordinator,
         memoryTurnBatchDao: MemoryTurnBatchDao,
         memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
-        memoryDailyDistillationRecoveryFinalizer: MemoryDailyDistillationRecoveryFinalizer
+        memoryDailyDistillationRecoveryFinalizer: MemoryDailyDistillationRecoveryFinalizer,
+        memoryLongTermConsolidationRecoveryFinalizer: MemoryLongTermConsolidationRecoveryFinalizer
     ): MemoryMutationRecoveryService = MemoryMutationRecoveryService(
         memoryMutationCoordinator = memoryMutationCoordinator,
         turnBatchDao = memoryTurnBatchDao,
         maintenanceScheduler = memoryMaintenanceScheduler,
-        dailyDistillationFinalizer = memoryDailyDistillationRecoveryFinalizer
+        dailyDistillationFinalizer = memoryDailyDistillationRecoveryFinalizer,
+        longTermConsolidationFinalizer = memoryLongTermConsolidationRecoveryFinalizer
     )
 
     @Provides
@@ -371,6 +399,51 @@ object MemoryRepositoryModule {
 
     @Provides
     @Singleton
+    fun provideMemoryModelResolver(
+        settingRepository: SettingRepository
+    ): MemoryModelResolver = MemoryModelResolver(settingRepository)
+
+    @Provides
+    @Singleton
+    fun provideMemoryLongTermConsolidationOperationController(
+        markdownMemoryCodec: MarkdownMemoryCodec
+    ): MemoryLongTermConsolidationOperationController =
+        MemoryLongTermConsolidationOperationController(markdownMemoryCodec)
+
+    @Provides
+    @Singleton
+    fun provideMemoryLongTermConsolidationService(
+        memoryLongTermConsolidationDao: MemoryLongTermConsolidationDao,
+        memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
+        settingRepository: SettingRepository,
+        memoryModelResolver: MemoryModelResolver,
+        memoryIntelligence: MemoryIntelligence,
+        memoryFileStore: MemoryFileStore,
+        markdownMemoryCodec: MarkdownMemoryCodec,
+        operationController: MemoryLongTermConsolidationOperationController,
+        memoryMutationCoordinator: MemoryMutationCoordinator,
+        memoryLongTermConsolidationScheduler: MemoryLongTermConsolidationScheduler
+    ): MemoryLongTermConsolidationService = MemoryLongTermConsolidationService(
+        checkpointDao = memoryLongTermConsolidationDao,
+        maintenanceScheduler = memoryMaintenanceScheduler,
+        settingRepository = settingRepository,
+        modelResolver = memoryModelResolver,
+        memoryIntelligence = memoryIntelligence,
+        memoryFileStore = memoryFileStore,
+        markdownMemoryCodec = markdownMemoryCodec,
+        operationController = operationController,
+        memoryMutationCoordinator = memoryMutationCoordinator,
+        longTermScheduler = memoryLongTermConsolidationScheduler
+    )
+
+    @Provides
+    @Singleton
+    fun provideMemoryLongTermConsolidationRecoveryFinalizer(
+        service: MemoryLongTermConsolidationService
+    ): MemoryLongTermConsolidationRecoveryFinalizer = service
+
+    @Provides
+    @Singleton
     fun provideMemoryBatchConsolidationService(
         memoryTurnBatchDao: MemoryTurnBatchDao,
         memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
@@ -414,6 +487,7 @@ object MemoryRepositoryModule {
         memoryTurnBatchCoordinator: MemoryTurnBatchCoordinator,
         memoryTurnBatchScheduler: MemoryTurnBatchScheduler,
         memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler,
+        memoryLongTermConsolidationScheduler: MemoryLongTermConsolidationScheduler,
         promptTraceStore: PromptTraceStore
     ): MemoryRepository = MemoryRepositoryImpl(
         memoryPromptBuilder = memoryPromptBuilder,
@@ -422,6 +496,7 @@ object MemoryRepositoryModule {
         memoryTurnBatchCoordinator = memoryTurnBatchCoordinator,
         memoryTurnBatchScheduler = memoryTurnBatchScheduler,
         memoryDailyDistillationScheduler = memoryDailyDistillationScheduler,
+        memoryLongTermConsolidationScheduler = memoryLongTermConsolidationScheduler,
         promptTraceStore = promptTraceStore
     )
 }

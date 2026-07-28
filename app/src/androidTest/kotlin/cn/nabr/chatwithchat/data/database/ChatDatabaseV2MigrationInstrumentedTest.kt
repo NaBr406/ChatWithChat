@@ -159,7 +159,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 ChatDatabaseV2Migrations.MIGRATION_14_15,
                 ChatDatabaseV2Migrations.MIGRATION_15_16,
                 ChatDatabaseV2Migrations.MIGRATION_16_17,
-                ChatDatabaseV2Migrations.MIGRATION_17_18
+                ChatDatabaseV2Migrations.MIGRATION_17_18,
+                ChatDatabaseV2Migrations.MIGRATION_18_19
             )
             .build()
         try {
@@ -274,7 +275,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
             .addMigrations(
                 ChatDatabaseV2Migrations.MIGRATION_15_16,
                 ChatDatabaseV2Migrations.MIGRATION_16_17,
-                ChatDatabaseV2Migrations.MIGRATION_17_18
+                ChatDatabaseV2Migrations.MIGRATION_17_18,
+                ChatDatabaseV2Migrations.MIGRATION_18_19
             )
             .build()
         try {
@@ -325,7 +327,7 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                     assertEquals("dismissed", roomDatabase.memoryMaintenanceJobDao().getById(jobId)?.status)
                 }
             }
-            assertEquals(SCHEMA_18_TABLES, roomDatabase.openHelper.writableDatabase.userTableNames())
+            assertEquals(SCHEMA_19_TABLES, roomDatabase.openHelper.writableDatabase.userTableNames())
             assertLegacySemanticTablesAbsent(roomDatabase.openHelper.writableDatabase)
         } finally {
             roomDatabase.close()
@@ -461,7 +463,10 @@ class ChatDatabaseV2MigrationInstrumentedTest {
 
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val roomDatabase = Room.databaseBuilder(context, ChatDatabaseV2::class.java, TEST_DATABASE)
-            .addMigrations(ChatDatabaseV2Migrations.MIGRATION_17_18)
+            .addMigrations(
+                ChatDatabaseV2Migrations.MIGRATION_17_18,
+                ChatDatabaseV2Migrations.MIGRATION_18_19
+            )
             .build()
         try {
             runBlocking {
@@ -474,15 +479,208 @@ class ChatDatabaseV2MigrationInstrumentedTest {
     }
 
     @Test
-    fun freshSchema18_opensAndReopensWithStickerCatalogTables() {
+    fun migration18To19_preservesPopulatedRowsAndCreatesLongTermConsolidationState() {
+        migrationHelper.createDatabase(TEST_DATABASE, 18).apply {
+            insertSchema18LongTermMigrationRows(this)
+            close()
+        }
+
+        migrationHelper.runMigrationsAndValidate(
+            TEST_DATABASE,
+            19,
+            true,
+            ChatDatabaseV2Migrations.MIGRATION_18_19
+        ).use { database ->
+            database.query(
+                """
+                SELECT status, payload_json, family, generation, row_version,
+                    resolved_platform_uid, resolved_model_id, resolved_at
+                FROM memory_maintenance_job
+                WHERE job_id = 'whole-corpus-18'
+                """.trimIndent()
+            ).use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("running", cursor.getString(0))
+                assertEquals("{\"sentinel\":\"job-18\"}", cursor.getString(1))
+                assertEquals("semantic", cursor.getString(2))
+                assertEquals(18L, cursor.getLong(3))
+                assertEquals(4L, cursor.getLong(4))
+                assertNull(cursor.getString(5))
+                assertNull(cursor.getString(6))
+                assertTrue(cursor.isNull(7))
+            }
+
+            database.query(
+                """
+                SELECT batch_id, category, status, attempt, detail, updated_at,
+                    job_id, job_type, phase, trigger_reason, platform_uid, model_id,
+                    input_count, error_code, phase_summary_json, row_version
+                FROM memory_activity_log
+                WHERE log_id = 'activity-18'
+                """.trimIndent()
+            ).use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("batch-18", cursor.getString(0))
+                assertEquals("organization", cursor.getString(1))
+                assertEquals("running", cursor.getString(2))
+                assertEquals(2, cursor.getInt(3))
+                assertEquals("activity sentinel", cursor.getString(4))
+                assertEquals(306L, cursor.getLong(5))
+                (6..14).forEach { columnIndex -> assertTrue(cursor.isNull(columnIndex)) }
+                assertEquals(0L, cursor.getLong(15))
+            }
+            assertEquals(
+                2L,
+                database.singleLong(
+                    "SELECT COUNT(*) FROM memory_activity_log WHERE attempt = 2 AND job_id IS NULL"
+                )
+            )
+
+            database.query(
+                """
+                SELECT group_id, generation, source_path, base_source_hash,
+                    target_source_hash, state, row_version, material_mutation_count
+                FROM memory_mutation_receipt
+                WHERE receipt_id = 'receipt-18'
+                """.trimIndent()
+            ).use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("group-18", cursor.getString(0))
+                assertEquals(18L, cursor.getLong(1))
+                assertEquals("MEMORY.md", cursor.getString(2))
+                assertEquals("base-hash-18", cursor.getString(3))
+                assertEquals("target-hash-18", cursor.getString(4))
+                assertEquals("indexed", cursor.getString(5))
+                assertEquals(3L, cursor.getLong(6))
+                assertEquals(0, cursor.getInt(7))
+            }
+
+            assertEquals(
+                "0",
+                database.singleString(
+                    "SELECT dflt_value FROM pragma_table_info('memory_activity_log') WHERE name = 'row_version'"
+                )
+            )
+            assertEquals(
+                "0",
+                database.singleString(
+                    "SELECT dflt_value FROM pragma_table_info('memory_mutation_receipt') WHERE name = 'material_mutation_count'"
+                )
+            )
+            assertEquals(
+                "0",
+                database.singleString(
+                    "SELECT dflt_value FROM pragma_table_info('memory_long_term_consolidation_checkpoint') WHERE name = 'partition_cursor'"
+                )
+            )
+            assertEquals(
+                "0",
+                database.singleString(
+                    "SELECT dflt_value FROM pragma_table_info('memory_long_term_consolidation_checkpoint') WHERE name = 'continuation_required'"
+                )
+            )
+            assertEquals(
+                1L,
+                database.singleLong(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'index_memory_activity_log_job_id_attempt' AND sql LIKE 'CREATE UNIQUE INDEX%'"
+                )
+            )
+
+            database.execSQL(
+                """
+                INSERT INTO memory_long_term_consolidation_checkpoint (
+                    checkpoint_id, job_id, active_key, trigger_reason, source_path,
+                    base_source_hash, result_source_hash, base_generation,
+                    recall_projection_hash, entry_count, ordered_snapshot_hash,
+                    ordered_entry_ids_json, status, created_at, updated_at
+                ) VALUES (
+                    'checkpoint-18', 'whole-corpus-18', 'whole-corpus-active', 'material_threshold',
+                    'MEMORY.md', 'base-hash-18', 'base-hash-18', 18,
+                    'recall-hash-18', 2, 'ordered-hash-18', '[\"memory-a\",\"memory-b\"]',
+                    'partitioning', 400, 401
+                )
+                """.trimIndent()
+            )
+            database.execSQL(
+                """
+                INSERT OR IGNORE INTO memory_long_term_consolidation_checkpoint (
+                    checkpoint_id, job_id, active_key, trigger_reason, source_path,
+                    base_source_hash, result_source_hash, base_generation,
+                    recall_projection_hash, entry_count, ordered_snapshot_hash,
+                    ordered_entry_ids_json, status, created_at, updated_at
+                ) VALUES (
+                    'checkpoint-duplicate-active', 'whole-corpus-duplicate', 'whole-corpus-active',
+                    'age_threshold', 'MEMORY.md', 'base-hash-duplicate', 'base-hash-duplicate', 18,
+                    'recall-hash-duplicate', 0, 'ordered-hash-duplicate', '[]',
+                    'partitioning', 402, 402
+                )
+                """.trimIndent()
+            )
+            assertEquals(
+                1L,
+                database.singleLong(
+                    "SELECT COUNT(*) FROM memory_long_term_consolidation_checkpoint WHERE active_key = 'whole-corpus-active'"
+                )
+            )
+            database.query(
+                """
+                SELECT partition_cursor, continuation_required, material_mutation_count_at_start, attempt,
+                    proposal_hash, resolved_platform_uid, mutation_group_id, row_version
+                FROM memory_long_term_consolidation_checkpoint
+                WHERE checkpoint_id = 'checkpoint-18'
+                """.trimIndent()
+            ).use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(0, cursor.getInt(0))
+                assertEquals(0, cursor.getInt(1))
+                assertEquals(0, cursor.getInt(2))
+                assertEquals(0, cursor.getInt(3))
+                assertNull(cursor.getString(4))
+                assertNull(cursor.getString(5))
+                assertNull(cursor.getString(6))
+                assertEquals(0L, cursor.getLong(7))
+            }
+
+            assertEquals(SCHEMA_19_TABLES, database.userTableNames())
+            assertEquals(19L, database.singleLong("PRAGMA user_version"))
+            database.query("PRAGMA foreign_key_check").use { cursor ->
+                assertEquals(0, cursor.count)
+            }
+            assertEquals("ok", database.singleString("PRAGMA integrity_check"))
+        }
+
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val roomDatabase = Room.databaseBuilder(context, ChatDatabaseV2::class.java, TEST_DATABASE)
+            .addMigrations(ChatDatabaseV2Migrations.MIGRATION_18_19)
+            .build()
+        try {
+            runBlocking {
+                val checkpoint = roomDatabase.memoryLongTermConsolidationDao().getById("checkpoint-18")
+                assertEquals("whole-corpus-18", checkpoint?.jobId)
+                assertEquals("whole-corpus-active", checkpoint?.activeKey)
+                assertEquals(0, checkpoint?.partitionCursor)
+                assertEquals(false, checkpoint?.continuationRequired)
+                assertNull(roomDatabase.memoryMaintenanceJobDao().getById("whole-corpus-18")?.resolvedPlatformUid)
+                assertEquals(0, roomDatabase.memoryRecoveryDao().getMutationReceipt("receipt-18")?.materialMutationCount)
+                val legacyActivity = roomDatabase.memoryActivityLogDao().observeLatest(10).first()
+                    .first { activity -> activity.logId == "activity-18" }
+                assertNull(legacyActivity.jobId)
+            }
+        } finally {
+            roomDatabase.close()
+        }
+    }
+
+    @Test
+    fun freshSchema19_opensAndReopensWithLongTermConsolidationState() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val freshDatabase = Room.databaseBuilder(context, ChatDatabaseV2::class.java, TEST_DATABASE).build()
         try {
             val database = freshDatabase
             val sqliteDatabase = database.openHelper.writableDatabase
-            assertEquals(SCHEMA_18_TABLES, sqliteDatabase.userTableNames())
+            assertEquals(SCHEMA_19_TABLES, sqliteDatabase.userTableNames())
             assertLegacySemanticTablesAbsent(sqliteDatabase)
-            assertEquals(18L, sqliteDatabase.singleLong("PRAGMA user_version"))
+            assertEquals(19L, sqliteDatabase.singleLong("PRAGMA user_version"))
             sqliteDatabase.query("PRAGMA foreign_key_check").use { cursor ->
                 assertEquals(0, cursor.count)
             }
@@ -495,9 +693,9 @@ class ChatDatabaseV2MigrationInstrumentedTest {
         try {
             val database = reopenedDatabase
             val sqliteDatabase = database.openHelper.writableDatabase
-            assertEquals(SCHEMA_18_TABLES, sqliteDatabase.userTableNames())
+            assertEquals(SCHEMA_19_TABLES, sqliteDatabase.userTableNames())
             assertLegacySemanticTablesAbsent(sqliteDatabase)
-            assertEquals(18L, sqliteDatabase.singleLong("PRAGMA user_version"))
+            assertEquals(19L, sqliteDatabase.singleLong("PRAGMA user_version"))
             assertEquals("ok", sqliteDatabase.singleString("PRAGMA integrity_check"))
             runBlocking {
                 assertTrue(database.chatRoomDao().getChatRooms().isEmpty())
@@ -507,10 +705,77 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 assertNull(database.memoryRecoveryDao().getCorpusState("chat_recall_long_term"))
                 assertNull(database.memoryTurnBatchDao().getCheckpoint(1))
                 assertTrue(database.memoryActivityLogDao().observeLatest(10).first().isEmpty())
+                assertNull(database.memoryLongTermConsolidationDao().getById("missing"))
             }
         } finally {
             reopenedDatabase.close()
         }
+    }
+
+    private fun insertSchema18LongTermMigrationRows(database: SupportSQLiteDatabase) {
+        database.execSQL(
+            """
+            INSERT INTO memory_maintenance_job (
+                job_id, type, status, idempotency_key, payload_json, attempts,
+                last_error, created_at, started_at, updated_at, next_run_at,
+                family, generation, row_version, lease_owner, lease_expires_at,
+                retry_cycle, blocked_reason
+            ) VALUES (
+                'whole-corpus-18', 'consolidate_long_term_memory', 'running',
+                'whole-corpus-key-18', '{"sentinel":"job-18"}', 2, NULL,
+                300, 301, 302, 303, 'semantic', 18, 4, 'worker-18', 304, 1, NULL
+            )
+            """.trimIndent()
+        )
+        database.execSQL(
+            """
+            INSERT INTO memory_mutation_group (
+                group_id, generation, semantic_job_id, semantic_batch_id, state,
+                idempotency_key, last_error, created_at, updated_at, completed_at,
+                expected_receipt_count, row_version
+            ) VALUES (
+                'group-18', 18, 'whole-corpus-18', NULL, 'indexed',
+                'group-key-18', NULL, 300, 305, 305, 1, 2
+            )
+            """.trimIndent()
+        )
+        database.execSQL(
+            """
+            INSERT INTO memory_mutation_receipt (
+                receipt_id, group_id, generation, source_path, base_source_hash,
+                target_source_hash, staged_target_path, state, idempotency_key,
+                target_index_fingerprint, attempts, last_error, created_at, updated_at,
+                file_committed_at, indexed_at, row_version
+            ) VALUES (
+                'receipt-18', 'group-18', 18, 'MEMORY.md', 'base-hash-18',
+                'target-hash-18', '.staging/receipt-18.md', 'indexed', 'receipt-key-18',
+                'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                1, NULL, 300, 305, 305, 305, 3
+            )
+            """.trimIndent()
+        )
+        database.execSQL(
+            """
+            INSERT INTO memory_activity_log (
+                log_id, batch_id, category, status, platform_name, model_name, attempt,
+                turn_count, operation_count, detail, started_at, completed_at, updated_at
+            ) VALUES (
+                'activity-18', 'batch-18', 'organization', 'running',
+                'Provider 18', 'model-18', 2, 3, 4, 'activity sentinel', 300, NULL, 306
+            )
+            """.trimIndent()
+        )
+        database.execSQL(
+            """
+            INSERT INTO memory_activity_log (
+                log_id, batch_id, category, status, platform_name, model_name, attempt,
+                turn_count, operation_count, detail, started_at, completed_at, updated_at
+            ) VALUES (
+                'activity-18-same-attempt', 'batch-18-b', 'organization', 'succeeded',
+                'Provider 18', 'model-18', 2, 1, 1, 'same legacy attempt', 299, 300, 300
+            )
+            """.trimIndent()
+        )
     }
 
     private fun insertSchema15Rows(database: SupportSQLiteDatabase) {
@@ -1013,6 +1278,7 @@ class ChatDatabaseV2MigrationInstrumentedTest {
             "sticker_assets",
             "sticker_items"
         )
+        private val SCHEMA_19_TABLES = SCHEMA_18_TABLES + "memory_long_term_consolidation_checkpoint"
         private val LEGACY_SEMANTIC_TABLES = setOf("personal_memory", "chat_classification")
         private val SCHEMA_16_TABLES = SCHEMA_17_TABLES + LEGACY_SEMANTIC_TABLES
         private val UNCHANGED_SCHEMA_16_TABLES = SCHEMA_16_TABLES - "memory_maintenance_job"

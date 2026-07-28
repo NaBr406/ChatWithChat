@@ -29,7 +29,15 @@ data class MarkdownMemoryParseResult(
 data class SkippedMarkdownMemoryEntry(
     val lineNumber: Int,
     val reason: String,
-    val metadata: Map<String, String> = emptyMap()
+    val metadata: Map<String, String> = emptyMap(),
+    val recoverableEntry: MarkdownMemoryEntry? = null
+)
+
+internal data class MarkdownMemoryRelationshipRepair(
+    val markdown: String,
+    val entries: List<MarkdownMemoryEntry>,
+    val repairedCount: Int,
+    val hasRemainingRepairs: Boolean = false
 )
 
 data class MarkdownMemoryObservationUpdate(

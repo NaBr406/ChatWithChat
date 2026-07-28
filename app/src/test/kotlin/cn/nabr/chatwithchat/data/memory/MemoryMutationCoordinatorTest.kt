@@ -32,6 +32,41 @@ import org.junit.Test
 class MemoryMutationCoordinatorTest {
 
     @Test
+    fun `material observer runs only after material long term commits`() = runBlocking {
+        val observer = RecordingMaterialMutationObserver()
+        val fixture = Fixture(observer)
+        val initial = fixture.fileStore.readLongTermMemory().getOrThrow()
+        val materialTarget = fixture.longTermTarget(
+            baseContent = initial,
+            targetContent = "# ChatWithChat Memory\n\n- Material fact"
+        ).copy(materialMutationCount = 2)
+        val material = fixture.coordinator.prepare(
+            semanticJobId = "material-observer-job",
+            semanticBatchId = "material-observer-batch",
+            targets = listOf(materialTarget)
+        )
+
+        fixture.coordinator.reconcile(material)
+
+        assertEquals(1, observer.committedCount)
+        val materialContent = fixture.fileStore.readLongTermMemory().getOrThrow()
+        val metadata = fixture.coordinator.prepare(
+            semanticJobId = "metadata-observer-job",
+            semanticBatchId = "metadata-observer-batch",
+            targets = listOf(
+                fixture.metadataOnlyLongTermTarget(
+                    baseContent = materialContent,
+                    targetContent = materialContent.trimEnd() + "\n\n<!-- metadata-only -->\n"
+                )
+            )
+        )
+
+        fixture.coordinator.reconcile(metadata)
+
+        assertEquals(1, observer.committedCount)
+    }
+
+    @Test
     fun `concurrent local prepare keeps one durable staged receipt`() = runBlocking {
         val fixture = Fixture()
         val baseContent = fixture.fileStore.readLongTermMemory().getOrThrow()
@@ -1035,7 +1070,9 @@ class MemoryMutationCoordinatorTest {
         assertEquals(0, secondPage.failedCount)
     }
 
-    private class Fixture {
+    private class Fixture(
+        private val materialMutationObserver: MemoryMaterialMutationObserver = MemoryMaterialMutationObserver.None
+    ) {
         val root: File = Files.createTempDirectory("memory-mutation-coordinator-test").toFile()
         val paths = MemoryFilePaths(root)
         val fileStore = MemoryFileStore(paths, FIXED_CLOCK)
@@ -1070,6 +1107,7 @@ class MemoryMutationCoordinatorTest {
                 memoryFileStore = store,
                 maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK),
                 workEnqueuer = workEnqueuer,
+                materialMutationObserver = materialMutationObserver,
                 clock = FIXED_CLOCK
             )
     }
@@ -1089,5 +1127,13 @@ class MemoryMutationCoordinatorTest {
                 "canonical_key=communication.response_style scope=general observed=$observedAt " +
                 "validity=current recall=query -->\n" +
                 "- Prefers concise answers."
+    }
+}
+
+private class RecordingMaterialMutationObserver : MemoryMaterialMutationObserver {
+    var committedCount = 0
+
+    override suspend fun onMaterialMutationCommitted() {
+        committedCount += 1
     }
 }

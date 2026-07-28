@@ -20,7 +20,8 @@ class MemoryMaintenanceProcessor @Inject constructor(
     private val memoryVectorIndexBootstrapService: MemoryVectorIndexBootstrapService? = null,
     private val memoryIndexSyncService: MemoryIndexSyncService? = null,
     private val memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler? = null,
-    private val memoryDailyDistillationService: MemoryDailyDistillationService? = null
+    private val memoryDailyDistillationService: MemoryDailyDistillationService? = null,
+    private val memoryLongTermConsolidationService: MemoryLongTermConsolidationService? = null
 ) {
     suspend fun processRunnableJobs(
         family: String,
@@ -34,8 +35,9 @@ class MemoryMaintenanceProcessor @Inject constructor(
         var terminalCount = 0
         var blockedCount = 0
         var deferredCount = 0
+        var shouldContinue = true
 
-        while (processedCount < limit) {
+        while (processedCount < limit && shouldContinue) {
             val job = maintenanceScheduler.claimNextRunnable(
                 family = family,
                 leaseOwner = leaseOwner
@@ -62,7 +64,10 @@ class MemoryMaintenanceProcessor @Inject constructor(
                 MemoryMaintenanceOutcome.RETRYABLE -> retryableCount += 1
                 MemoryMaintenanceOutcome.TERMINAL -> terminalCount += 1
                 MemoryMaintenanceOutcome.BLOCKED -> blockedCount += 1
-                MemoryMaintenanceOutcome.DEFERRED -> deferredCount += 1
+                MemoryMaintenanceOutcome.DEFERRED -> {
+                    deferredCount += 1
+                    shouldContinue = false
+                }
                 MemoryMaintenanceOutcome.SKIPPED -> Unit
             }
         }
@@ -106,6 +111,8 @@ class MemoryMaintenanceProcessor @Inject constructor(
                 memoryBatchConsolidationService?.processLegacy(job)?.toOutcome() ?: unavailableConsolidation(job)
             MemoryMaintenanceJobType.DISTILL_DAILY_NOTES ->
                 memoryDailyDistillationService?.process(job)?.toOutcome() ?: unavailableDistillation(job)
+            MemoryMaintenanceJobType.CONSOLIDATE_LONG_TERM_MEMORY ->
+                memoryLongTermConsolidationService?.process(job)?.toOutcome() ?: unavailableLongTermConsolidation(job)
             MemoryMaintenanceJobType.PROMOTE_LONG_TERM_CANDIDATE -> {
                 maintenanceScheduler.markDismissed(job, "superseded_by_daily_distillation")
                 MemoryMaintenanceOutcome.TERMINAL
@@ -214,6 +221,11 @@ class MemoryMaintenanceProcessor @Inject constructor(
         return failedJob.toFailureOutcome()
     }
 
+    private suspend fun unavailableLongTermConsolidation(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome {
+        val failedJob = maintenanceScheduler.markFailedRetryable(job, "long_term_consolidation_not_available")
+        return failedJob.toFailureOutcome()
+    }
+
     private suspend fun unavailableMutationRecovery(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome {
         val failedJob = maintenanceScheduler.markFailedRetryable(job, "memory_mutation_recovery_not_available")
         return failedJob.toFailureOutcome()
@@ -247,6 +259,15 @@ class MemoryMaintenanceProcessor @Inject constructor(
         MemoryDailyDistillationProcessResult.STATUS_SUCCEEDED,
         MemoryDailyDistillationProcessResult.STATUS_DUPLICATE -> MemoryMaintenanceOutcome.SUCCEEDED
         MemoryDailyDistillationProcessResult.STATUS_TERMINAL -> MemoryMaintenanceOutcome.TERMINAL
+        else -> MemoryMaintenanceOutcome.RETRYABLE
+    }
+
+    private fun MemoryLongTermProcessResult.toOutcome(): MemoryMaintenanceOutcome = when (status) {
+        MemoryLongTermProcessResult.STATUS_SUCCEEDED,
+        MemoryLongTermProcessResult.STATUS_DUPLICATE -> MemoryMaintenanceOutcome.SUCCEEDED
+        MemoryLongTermProcessResult.STATUS_BLOCKED -> MemoryMaintenanceOutcome.BLOCKED
+        MemoryLongTermProcessResult.STATUS_TERMINAL -> MemoryMaintenanceOutcome.TERMINAL
+        MemoryLongTermProcessResult.STATUS_DEFERRED -> MemoryMaintenanceOutcome.DEFERRED
         else -> MemoryMaintenanceOutcome.RETRYABLE
     }
 

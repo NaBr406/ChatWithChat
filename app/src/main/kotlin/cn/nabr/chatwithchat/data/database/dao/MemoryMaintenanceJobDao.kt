@@ -149,6 +149,33 @@ interface MemoryMaintenanceJobDao {
         leaseExpiresAt: Long
     ): Int
 
+    @Query(
+        """
+        UPDATE memory_maintenance_job
+        SET resolved_platform_uid = :platformUid,
+            resolved_model_id = :modelId,
+            resolved_at = :resolvedAt,
+            updated_at = :resolvedAt,
+            row_version = row_version + 1
+        WHERE job_id = :jobId
+            AND status = 'running'
+            AND lease_owner = :leaseOwner
+            AND row_version = :expectedRowVersion
+            AND lease_expires_at > :resolvedAt
+            AND resolved_platform_uid IS NULL
+            AND resolved_model_id IS NULL
+            AND resolved_at IS NULL
+        """
+    )
+    suspend fun bindResolvedModelCas(
+        jobId: String,
+        leaseOwner: String,
+        expectedRowVersion: Long,
+        platformUid: String,
+        modelId: String,
+        resolvedAt: Long
+    ): Int
+
     @Transaction
     suspend fun claimNextRunnable(
         family: String,
@@ -203,6 +230,34 @@ interface MemoryMaintenanceJobDao {
         blockedReason: String?,
         updatedAt: Long,
         nextRunAt: Long?
+    ): Int
+
+    @Query(
+        """
+        UPDATE memory_maintenance_job
+        SET status = 'pending',
+            attempts = CASE WHEN attempts > 0 THEN attempts - 1 ELSE 0 END,
+            last_error = NULL,
+            blocked_reason = NULL,
+            started_at = NULL,
+            updated_at = :updatedAt,
+            next_run_at = :nextRunAt,
+            lease_owner = NULL,
+            lease_expires_at = NULL,
+            row_version = row_version + 1
+        WHERE job_id = :jobId
+            AND status = 'running'
+            AND lease_owner = :leaseOwner
+            AND row_version = :expectedRowVersion
+            AND lease_expires_at > :updatedAt
+        """
+    )
+    suspend fun deferClaimedJobWithoutRetry(
+        jobId: String,
+        leaseOwner: String,
+        expectedRowVersion: Long,
+        updatedAt: Long,
+        nextRunAt: Long
     ): Int
 
     @Query(

@@ -680,6 +680,7 @@ class MemoryBatchConsolidationService(
         var dailyWriteCount = 0
         var longTermWriteCount = 0
         var longTermRequiresIndexSync = false
+        var longTermMaterialMutationCount = 0
 
         val indexedOperationsByPath = operations
             .withIndex()
@@ -723,6 +724,7 @@ class MemoryBatchConsolidationService(
                     mergeResult.acceptedCandidateCount
                 }
                 longTermRequiresIndexSync = removeCount > 0 || mergeResult.requiresIndexSync
+                longTermMaterialMutationCount = removeCount + mergeResult.materialMutationCount
                 return@forEach
             }
 
@@ -809,6 +811,11 @@ class MemoryBatchConsolidationService(
                     targetContent = markdown,
                     targetIndexFingerprint = targetIndexFingerprint.takeIf {
                         sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME && longTermRequiresIndexSync
+                    },
+                    materialMutationCount = if (sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME) {
+                        longTermMaterialMutationCount
+                    } else {
+                        0
                     }
                 )
             },

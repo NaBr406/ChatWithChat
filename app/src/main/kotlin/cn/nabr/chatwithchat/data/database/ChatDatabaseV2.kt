@@ -6,6 +6,7 @@ import androidx.room.TypeConverters
 import cn.nabr.chatwithchat.data.database.dao.ChatPlatformModelV2Dao
 import cn.nabr.chatwithchat.data.database.dao.ChatRoomV2Dao
 import cn.nabr.chatwithchat.data.database.dao.MemoryActivityLogDao
+import cn.nabr.chatwithchat.data.database.dao.MemoryLongTermConsolidationDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryMaintenanceJobDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryRecoveryDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryTurnBatchDao
@@ -21,6 +22,7 @@ import cn.nabr.chatwithchat.data.database.entity.MemoryActivityLog
 import cn.nabr.chatwithchat.data.database.entity.MemoryChatCheckpoint
 import cn.nabr.chatwithchat.data.database.entity.MemoryCorpusState
 import cn.nabr.chatwithchat.data.database.entity.MemoryDistillationCheckpoint
+import cn.nabr.chatwithchat.data.database.entity.MemoryLongTermConsolidationCheckpoint
 import cn.nabr.chatwithchat.data.database.entity.MemoryMaintenanceJob
 import cn.nabr.chatwithchat.data.database.entity.MemoryMutationGroup
 import cn.nabr.chatwithchat.data.database.entity.MemoryMutationReceipt
@@ -48,6 +50,7 @@ import cn.nabr.chatwithchat.data.database.entity.TokenUsageRecordConverter
         MemoryMutationReceipt::class,
         MemoryCorpusState::class,
         MemoryDistillationCheckpoint::class,
+        MemoryLongTermConsolidationCheckpoint::class,
         MemoryChatCheckpoint::class,
         MemoryPendingTurn::class,
         MemoryActivityLog::class,
@@ -55,7 +58,7 @@ import cn.nabr.chatwithchat.data.database.entity.TokenUsageRecordConverter
         StickerAssetEntity::class,
         StickerItemEntity::class
     ],
-    version = 18,
+    version = 19,
     exportSchema = true
 )
 @TypeConverters(
@@ -77,5 +80,6 @@ abstract class ChatDatabaseV2 : RoomDatabase() {
     abstract fun memoryRecoveryDao(): MemoryRecoveryDao
     abstract fun memoryTurnBatchDao(): MemoryTurnBatchDao
     abstract fun memoryActivityLogDao(): MemoryActivityLogDao
+    abstract fun memoryLongTermConsolidationDao(): MemoryLongTermConsolidationDao
     abstract fun stickerCatalogDao(): StickerCatalogDao
 }

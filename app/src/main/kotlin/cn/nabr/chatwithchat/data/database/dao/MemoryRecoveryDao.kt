@@ -383,7 +383,8 @@ interface MemoryRecoveryDao {
                 createdAt = request.createdAt,
                 updatedAt = request.createdAt,
                 fileCommittedAt = null,
-                indexedAt = null
+                indexedAt = null,
+                materialMutationCount = draft.materialMutationCount
             )
         }
 
@@ -670,6 +671,7 @@ interface MemoryRecoveryDao {
         require(stagedTargetPath.isNotBlank()) { "Mutation staged path must not be blank" }
         require(state.isNotBlank()) { "Mutation receipt state must not be blank" }
         require(idempotencyKeyBase.isNotBlank()) { "Mutation receipt idempotency key must not be blank" }
+        require(materialMutationCount >= 0) { "Material mutation count must not be negative" }
     }
 
     private fun validateIdempotentReplay(
@@ -693,7 +695,8 @@ interface MemoryRecoveryDao {
                     receipt.baseSourceHash == expected.baseSourceHash &&
                     receipt.targetSourceHash == expected.targetSourceHash &&
                     receipt.stagedTargetPath == expected.stagedTargetPath &&
-                    receipt.targetIndexFingerprint == expected.targetIndexFingerprint
+                    receipt.targetIndexFingerprint == expected.targetIndexFingerprint &&
+                    receipt.materialMutationCount == expected.materialMutationCount
             ) { "Existing mutation receipt does not match the requested target" }
         }
     }
@@ -805,7 +808,8 @@ data class MemoryMutationReceiptDraft(
     val stagedTargetPath: String,
     val state: String,
     val idempotencyKeyBase: String,
-    val targetIndexFingerprint: String?
+    val targetIndexFingerprint: String?,
+    val materialMutationCount: Int
 )
 
 data class MemoryMutationConflictRequest(

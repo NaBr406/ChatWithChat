@@ -116,6 +116,35 @@ internal class InMemoryMaintenanceJobDao(
         return 1
     }
 
+    override suspend fun bindResolvedModelCas(
+        jobId: String,
+        leaseOwner: String,
+        expectedRowVersion: Long,
+        platformUid: String,
+        modelId: String,
+        resolvedAt: Long
+    ): Int {
+        val index = jobs.indexOfFirst { job ->
+            job.jobId == jobId &&
+                job.status == MemoryMaintenanceJobStatus.RUNNING &&
+                job.leaseOwner == leaseOwner &&
+                job.rowVersion == expectedRowVersion &&
+                (job.leaseExpiresAt ?: Long.MIN_VALUE) > resolvedAt &&
+                job.resolvedPlatformUid == null &&
+                job.resolvedModelId == null &&
+                job.resolvedAt == null
+        }
+        if (index == -1) return 0
+        jobs[index] = jobs[index].copy(
+            resolvedPlatformUid = platformUid,
+            resolvedModelId = modelId,
+            resolvedAt = resolvedAt,
+            updatedAt = resolvedAt,
+            rowVersion = jobs[index].rowVersion + 1
+        )
+        return 1
+    }
+
     override suspend fun transitionClaimedJob(
         jobId: String,
         leaseOwner: String,
@@ -138,6 +167,36 @@ internal class InMemoryMaintenanceJobDao(
             status = newStatus,
             lastError = lastError,
             blockedReason = blockedReason,
+            startedAt = null,
+            updatedAt = updatedAt,
+            nextRunAt = nextRunAt,
+            rowVersion = jobs[index].rowVersion + 1,
+            leaseOwner = null,
+            leaseExpiresAt = null
+        )
+        return 1
+    }
+
+    override suspend fun deferClaimedJobWithoutRetry(
+        jobId: String,
+        leaseOwner: String,
+        expectedRowVersion: Long,
+        updatedAt: Long,
+        nextRunAt: Long
+    ): Int {
+        val index = jobs.indexOfFirst { job ->
+            job.jobId == jobId &&
+                job.status == MemoryMaintenanceJobStatus.RUNNING &&
+                job.leaseOwner == leaseOwner &&
+                job.rowVersion == expectedRowVersion &&
+                (job.leaseExpiresAt ?: Long.MIN_VALUE) > updatedAt
+        }
+        if (index == -1) return 0
+        jobs[index] = jobs[index].copy(
+            status = MemoryMaintenanceJobStatus.PENDING,
+            attempts = (jobs[index].attempts - 1).coerceAtLeast(0),
+            lastError = null,
+            blockedReason = null,
             startedAt = null,
             updatedAt = updatedAt,
             nextRunAt = nextRunAt,

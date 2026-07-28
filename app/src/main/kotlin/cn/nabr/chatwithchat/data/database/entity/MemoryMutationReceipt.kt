@@ -75,5 +75,8 @@ data class MemoryMutationReceipt(
     val indexedAt: Long?,
 
     @ColumnInfo(name = "row_version", defaultValue = "0")
-    val rowVersion: Long = 0
+    val rowVersion: Long = 0,
+
+    @ColumnInfo(name = "material_mutation_count", defaultValue = "0")
+    val materialMutationCount: Int = 0
 )

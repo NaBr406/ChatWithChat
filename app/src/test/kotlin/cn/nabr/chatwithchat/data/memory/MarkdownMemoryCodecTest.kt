@@ -449,6 +449,115 @@ class MarkdownMemoryCodecTest {
     }
 
     @Test
+    fun `structural repair deterministically renames duplicate ids without dropping content`() {
+        val markdown = uncheckedDocument(
+            canonicalEntry(id = "mem_duplicate", text = "First value."),
+            canonicalEntry(id = "mem_duplicate", text = "Second value.", canonicalKey = "project.other")
+        ) + "\n## Manual Notes\n\nKeep this paragraph unchanged.\n"
+
+        val repaired = checkNotNull(codec.repairStructuralRelationships(markdown))
+        val parsed = codec.parse(repaired.markdown)
+        val replay = checkNotNull(codec.repairStructuralRelationships(repaired.markdown))
+
+        assertEquals(1, repaired.repairedCount)
+        assertTrue(parsed.skippedEntries.isEmpty())
+        assertEquals(setOf("First value.", "Second value."), parsed.entries.map(MarkdownMemoryEntry::text).toSet())
+        assertEquals(2, parsed.entries.map(MarkdownMemoryEntry::id).distinct().size)
+        assertTrue(parsed.entries.any { entry -> entry.id == "mem_duplicate" })
+        assertTrue(repaired.markdown.contains("## Manual Notes\n\nKeep this paragraph unchanged."))
+        assertEquals(0, replay.repairedCount)
+        assertEquals(repaired.markdown, replay.markdown)
+    }
+
+    @Test
+    fun `structural repair quarantines missing and dangling supersessions as contested history`() {
+        val dangling = canonicalEntry(
+            id = "mem_dangling",
+            text = "Historical preference.",
+            validity = MemoryValidity.OBSOLETE,
+            supersededBy = "mem_missing",
+            recallState = MemoryRecallState.MAINTENANCE_ONLY
+        )
+        val missingTarget = canonicalEntry(
+            id = "mem_missing_target",
+            text = "Historical preference without a successor.",
+            validity = MemoryValidity.OBSOLETE,
+            supersededBy = "mem_legacy_placeholder",
+            recallState = MemoryRecallState.MAINTENANCE_ONLY
+        )
+        val markdown = uncheckedDocument(dangling, missingTarget)
+            .replace(" superseded_by=mem_legacy_placeholder", "")
+
+        val repaired = checkNotNull(codec.repairStructuralRelationships(markdown))
+        val entries = codec.parse(repaired.markdown).entries.associateBy(MarkdownMemoryEntry::id)
+
+        assertEquals(2, repaired.repairedCount)
+        listOf(dangling, missingTarget).forEach { original ->
+            val entry = checkNotNull(entries[original.id])
+            assertEquals(original.text, entry.text)
+            assertEquals(MemoryValidity.CONTESTED, entry.validity)
+            assertEquals(MemoryRecallState.MAINTENANCE_ONLY, entry.recallState)
+            assertEquals(null, entry.supersededBy)
+        }
+    }
+
+    @Test
+    fun `structural repair bounds actual edits instead of skipped duplicate rows`() {
+        val entries = (0 until 17).flatMap { index ->
+            listOf(
+                canonicalEntry(
+                    id = "mem_duplicate_$index",
+                    text = "First duplicate value $index."
+                ),
+                canonicalEntry(
+                    id = "mem_duplicate_$index",
+                    text = "Second duplicate value $index.",
+                    canonicalKey = "project.duplicate_$index"
+                )
+            )
+        }
+        val markdown = uncheckedDocument(*entries.toTypedArray())
+
+        val repaired = checkNotNull(codec.repairStructuralRelationships(markdown))
+        val parsed = codec.parse(repaired.markdown)
+
+        assertEquals(34, codec.parse(markdown).skippedEntries.size)
+        assertEquals(17, repaired.repairedCount)
+        assertTrue(!repaired.hasRemainingRepairs)
+        assertTrue(parsed.skippedEntries.isEmpty())
+        assertEquals(entries.map(MarkdownMemoryEntry::text).toSet(), parsed.entries.map(MarkdownMemoryEntry::text).toSet())
+    }
+
+    @Test
+    fun `structural repair continues oversized relationship damage in bounded batches`() {
+        val entries = (0 until MemoryControlledOperationPolicy.MAX_OPERATIONS + 8).map { index ->
+            canonicalEntry(
+                id = "mem_dangling_$index",
+                text = "Historical value $index.",
+                canonicalKey = "project.history_$index",
+                validity = MemoryValidity.OBSOLETE,
+                supersededBy = "mem_missing_$index",
+                recallState = MemoryRecallState.MAINTENANCE_ONLY
+            )
+        }
+        val markdown = uncheckedDocument(*entries.toTypedArray())
+
+        val first = checkNotNull(codec.repairStructuralRelationships(markdown))
+        val second = checkNotNull(codec.repairStructuralRelationships(first.markdown))
+        val replay = checkNotNull(codec.repairStructuralRelationships(second.markdown))
+        val parsed = codec.parse(second.markdown)
+
+        assertEquals(MemoryControlledOperationPolicy.MAX_OPERATIONS, first.repairedCount)
+        assertTrue(first.hasRemainingRepairs)
+        assertEquals(8, second.repairedCount)
+        assertTrue(!second.hasRemainingRepairs)
+        assertEquals(0, replay.repairedCount)
+        assertEquals(second.markdown, replay.markdown)
+        assertTrue(parsed.skippedEntries.isEmpty())
+        assertEquals(entries.map(MarkdownMemoryEntry::text).toSet(), parsed.entries.map(MarkdownMemoryEntry::text).toSet())
+    }
+
+    @Test
     fun `targeted replace preserves canonical lifecycle and unknown metadata`() {
         val markdown = """
             # ChatWithChat Memory

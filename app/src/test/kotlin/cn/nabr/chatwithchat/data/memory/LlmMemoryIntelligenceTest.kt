@@ -36,6 +36,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LlmMemoryIntelligenceTest {
@@ -254,6 +255,88 @@ class LlmMemoryIntelligenceTest {
         assertEquals(1, openAIAPI.streamChatCompletionCalls)
     }
 
+    @Test
+    fun `long term consolidation uses the exact frozen platform`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(chatChunks = chatChunks(EMPTY_LONG_TERM_PROPOSAL_JSON))
+        val intelligence = intelligence(
+            platforms = listOf(platform(ClientType.OPENROUTER, "fallback-model")),
+            openAIAPI = openAIAPI
+        )
+
+        val result = intelligence.consolidateLongTermMemory(
+            request = longTermRequest(),
+            resolvedPlatform = platform(ClientType.CUSTOM, "frozen-model")
+        )
+
+        assertEquals(0, result?.decisions?.size)
+        assertEquals(1, openAIAPI.streamChatCompletionCalls)
+        assertEquals("frozen-model", openAIAPI.lastChatRequest?.model)
+    }
+
+    @Test
+    fun `long term consolidation rejects an oversized serialized request before provider call`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(chatChunks = chatChunks(EMPTY_LONG_TERM_PROPOSAL_JSON))
+        val intelligence = intelligence(
+            platforms = emptyList(),
+            openAIAPI = openAIAPI
+        )
+        val request = longTermRequest().copy(
+            candidateGroups = longTermRequest().candidateGroups.map { group ->
+                group.copy(
+                    entries = group.entries.map { entry ->
+                        entry.copy(text = "\"".repeat(MemoryLongTermConsolidationPolicy.MAX_SERIALIZED_REQUEST_CHARS))
+                    }
+                )
+            }
+        )
+
+        val failure = runCatching {
+            intelligence.consolidateLongTermMemory(
+                request = request,
+                resolvedPlatform = platform(ClientType.OPENROUTER, "frozen-model")
+            )
+        }.exceptionOrNull()
+
+        assertTrue(failure is IllegalArgumentException)
+        assertEquals(0, openAIAPI.streamChatCompletionCalls)
+    }
+
+    @Test
+    fun `unavailable frozen long term platform never falls back`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(chatChunks = chatChunks(EMPTY_LONG_TERM_PROPOSAL_JSON))
+        val intelligence = intelligence(
+            platforms = listOf(platform(ClientType.OPENROUTER, "fallback-model")),
+            openAIAPI = openAIAPI
+        )
+
+        val result = intelligence.consolidateLongTermMemory(
+            request = longTermRequest(),
+            resolvedPlatform = platform(ClientType.CUSTOM, "frozen-model").copy(token = null)
+        )
+
+        assertNull(result)
+        assertEquals(0, openAIAPI.streamChatCompletionCalls)
+    }
+
+    @Test
+    fun `long term consolidation rejects unknown response fields after one call`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatChunks = chatChunks("""{"decisions":[],"unexpected":true}""")
+        )
+        val intelligence = intelligence(
+            platforms = emptyList(),
+            openAIAPI = openAIAPI
+        )
+
+        val result = intelligence.consolidateLongTermMemory(
+            request = longTermRequest(),
+            resolvedPlatform = platform(ClientType.OPENROUTER, "frozen-model")
+        )
+
+        assertNull(result)
+        assertEquals(1, openAIAPI.streamChatCompletionCalls)
+    }
+
     private fun intelligence(
         platforms: List<PlatformV2>,
         openAIAPI: RecordingOpenAIAPI = RecordingOpenAIAPI(),
@@ -318,6 +401,29 @@ class LlmMemoryIntelligenceTest {
         createdAt = 10
     )
 
+    private fun longTermRequest() = MemoryLongTermConsolidationPartitionRequest(
+        checkpointId = "checkpoint-1",
+        partitionStart = 0,
+        partitionEndExclusive = 1,
+        candidateGroups = listOf(
+            MemoryLongTermCandidateGroup(
+                groupId = "group-1",
+                anchorMemoryIds = listOf("memory-1"),
+                entries = listOf(
+                    MemoryLongTermCandidateEntry(
+                        memoryId = "memory-1",
+                        text = "Prefers concise answers.",
+                        type = "communication_style",
+                        source = MemorySource.EXPLICIT_USER_STATEMENT,
+                        scope = MemoryScope.GENERAL,
+                        lastObservedAt = 2,
+                        recallState = MemoryRecallState.QUERY
+                    )
+                )
+            )
+        )
+    )
+
     private fun platform(
         compatibleType: ClientType,
         model: String,
@@ -336,6 +442,7 @@ class LlmMemoryIntelligenceTest {
 
     private companion object {
         const val EMPTY_PROPOSAL_JSON = """{"operations":[]}"""
+        const val EMPTY_LONG_TERM_PROPOSAL_JSON = """{"decisions":[]}"""
     }
 }
 

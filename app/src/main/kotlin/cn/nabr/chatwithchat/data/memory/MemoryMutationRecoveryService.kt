@@ -9,6 +9,7 @@ class MemoryMutationRecoveryService(
     private val turnBatchDao: MemoryTurnBatchDao,
     private val maintenanceScheduler: MemoryMaintenanceScheduler,
     private val dailyDistillationFinalizer: MemoryDailyDistillationRecoveryFinalizer? = null,
+    private val longTermConsolidationFinalizer: MemoryLongTermConsolidationRecoveryFinalizer? = null,
     private val clock: Clock = Clock.systemDefaultZone()
 ) {
     suspend fun recoverIncomplete(scheduleRetry: Boolean = true): MemoryMutationRecoveryResult {
@@ -35,12 +36,21 @@ class MemoryMutationRecoveryService(
                         activeSourceJobCount += 1
                         return@forEach
                     }
-                    val finalizedDailyDistillation = dailyDistillationFinalizer
+                    val sourceJobType = maintenanceScheduler.jobType(recovered.semanticJobId)
+                    val finalizedLongTermConsolidation = longTermConsolidationFinalizer
                         ?.finalizeRecoveredMutation(recovered)
                         ?: false
-                    if (!finalizedDailyDistillation) {
-                        check(maintenanceScheduler.jobType(recovered.semanticJobId) != MemoryMaintenanceJobType.DISTILL_DAILY_NOTES) {
+                    val finalizedDailyDistillation = if (finalizedLongTermConsolidation) {
+                        false
+                    } else {
+                        dailyDistillationFinalizer?.finalizeRecoveredMutation(recovered) ?: false
+                    }
+                    if (!finalizedLongTermConsolidation && !finalizedDailyDistillation) {
+                        check(sourceJobType != MemoryMaintenanceJobType.DISTILL_DAILY_NOTES) {
                             "Recovered daily distillation mutation has no checkpoint finalizer"
+                        }
+                        check(sourceJobType != MemoryMaintenanceJobType.CONSOLIDATE_LONG_TERM_MEMORY) {
+                            "Recovered long-term consolidation mutation has no checkpoint finalizer"
                         }
                         turnBatchDao.completeClaimedBatch(recovered.semanticJobId, now())
                     }

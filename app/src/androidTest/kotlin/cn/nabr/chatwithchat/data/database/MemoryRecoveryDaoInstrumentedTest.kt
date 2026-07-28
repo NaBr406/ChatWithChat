@@ -3,14 +3,6 @@ package cn.nabr.chatwithchat.data.database
 import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import org.junit.After
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
-import org.junit.Before
-import org.junit.Test
-import org.junit.runner.RunWith
 import cn.nabr.chatwithchat.data.database.dao.MemoryCorpusAdvanceOutcome
 import cn.nabr.chatwithchat.data.database.dao.MemoryCorpusAdvanceRequest
 import cn.nabr.chatwithchat.data.database.dao.MemoryMutationPrepareRequest
@@ -23,6 +15,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class MemoryRecoveryDaoInstrumentedTest {
@@ -59,9 +59,11 @@ class MemoryRecoveryDaoInstrumentedTest {
 
         assertEquals((1L..12L).toList(), results.map { it.group.generation }.sorted())
         assertTrue(results.all { it.isNew })
-        assertTrue(results.all { result ->
-            result.receipts.size == 1 && result.receipts.single().generation == result.group.generation
-        })
+        assertTrue(
+            results.all { result ->
+                result.receipts.size == 1 && result.receipts.single().generation == result.group.generation
+            }
+        )
         assertEquals(12L, dao.getLatestMutationGeneration())
     }
 
@@ -478,7 +480,8 @@ class MemoryRecoveryDaoInstrumentedTest {
         stagedTargetPath = ".staging/group-$index/$receiptId.md",
         state = STATE_PREPARED,
         idempotencyKeyBase = "receipt-key-$index-$receiptId",
-        targetIndexFingerprint = FINGERPRINT
+        targetIndexFingerprint = FINGERPRINT,
+        materialMutationCount = 0
     )
 
     private fun corpusRequest(

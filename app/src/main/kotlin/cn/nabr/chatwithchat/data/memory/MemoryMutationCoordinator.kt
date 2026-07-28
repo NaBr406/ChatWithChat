@@ -20,6 +20,7 @@ class MemoryMutationCoordinator(
     private val memoryFileStore: MemoryFileStore,
     private val maintenanceScheduler: MemoryMaintenanceScheduler,
     private val workEnqueuer: MemoryMaintenanceWorkEnqueuer,
+    private val materialMutationObserver: MemoryMaterialMutationObserver = MemoryMaterialMutationObserver.None,
     private val clock: Clock = Clock.systemDefaultZone(),
     private val json: Json = Json { encodeDefaults = true }
 ) {
@@ -71,7 +72,8 @@ class MemoryMutationCoordinator(
                         stagedTargetPath = staged.stagedTargetPath,
                         state = MemoryMutationState.PREPARED,
                         idempotencyKeyBase = "memory-mutation-receipt:$semanticJobId:${target.sourcePath}",
-                        targetIndexFingerprint = target.targetIndexFingerprint
+                        targetIndexFingerprint = target.targetIndexFingerprint,
+                        materialMutationCount = target.materialMutationCount
                     )
                 },
                 createdAt = now()
@@ -160,7 +162,8 @@ class MemoryMutationCoordinator(
                         stagedTargetPath = staged.stagedTargetPath,
                         state = MemoryMutationState.PREPARED,
                         idempotencyKeyBase = "$idempotencyKeyBase:${target.sourcePath}",
-                        targetIndexFingerprint = target.targetIndexFingerprint
+                        targetIndexFingerprint = target.targetIndexFingerprint,
+                        materialMutationCount = target.materialMutationCount
                     )
                 },
                 createdAt = now()
@@ -230,7 +233,8 @@ class MemoryMutationCoordinator(
                         stagedTargetPath = staged.stagedTargetPath,
                         state = MemoryMutationState.PREPARED,
                         idempotencyKeyBase = "$idempotencyKeyBase:${staged.sourcePath}",
-                        targetIndexFingerprint = targetIndexFingerprint
+                        targetIndexFingerprint = targetIndexFingerprint,
+                        materialMutationCount = 0
                     )
                 ),
                 createdAt = now()
@@ -351,6 +355,15 @@ class MemoryMutationCoordinator(
         current = completeCanonicalGroup(current)
         if (indexableLongTermReceipt != null) {
             scheduleIndexSync(current.group, indexableLongTermReceipt)
+        }
+        if ((longTermReceipt?.materialMutationCount ?: 0) > 0) {
+            try {
+                materialMutationObserver.onMaterialMutationCommitted()
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Throwable) {
+                Unit
+            }
         }
         return MemoryMutationCommitResult.CanonicalCommitted(
             mutation = current,

@@ -8,7 +8,8 @@ data class MemoryMutationTarget(
     val sourcePath: String,
     val baseContent: String,
     val targetContent: String,
-    val targetIndexFingerprint: String?
+    val targetIndexFingerprint: String?,
+    val materialMutationCount: Int = 0
 )
 
 data class MemoryPreparedMutation(
@@ -50,6 +51,14 @@ data class MemoryRecoveredSemanticMutation(
     val generation: Long,
     val terminalReason: String? = null
 )
+
+interface MemoryMaterialMutationObserver {
+    suspend fun onMaterialMutationCommitted()
+
+    data object None : MemoryMaterialMutationObserver {
+        override suspend fun onMaterialMutationCommitted() = Unit
+    }
+}
 
 object MemoryCorpusIndexStatus {
     const val PENDING = "pending"

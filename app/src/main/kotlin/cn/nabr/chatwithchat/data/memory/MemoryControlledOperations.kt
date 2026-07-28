@@ -173,7 +173,8 @@ class MemoryDailyDistillationOperationController(
                     sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
                     baseContent = baseMarkdown,
                     targetContent = mergeResult.markdown,
-                    targetIndexFingerprint = targetIndexFingerprint.takeIf { mergeResult.requiresIndexSync }
+                    targetIndexFingerprint = targetIndexFingerprint.takeIf { mergeResult.requiresIndexSync },
+                    materialMutationCount = mergeResult.materialMutationCount
                 )
             )
         }

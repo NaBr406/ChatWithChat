@@ -11,10 +11,11 @@ import cn.nabr.chatwithchat.data.memory.MemoryCorpus
 import cn.nabr.chatwithchat.data.memory.MemoryDailyDistillationScheduler
 import cn.nabr.chatwithchat.data.memory.MemoryFilePaths
 import cn.nabr.chatwithchat.data.memory.MemoryFileStore
+import cn.nabr.chatwithchat.data.memory.MemoryLongTermConsolidationScheduler
 import cn.nabr.chatwithchat.data.memory.MemoryPromptBuilder
-import cn.nabr.chatwithchat.data.memory.MemoryRetrievalRequest
 import cn.nabr.chatwithchat.data.memory.MemoryRetrievalMode
 import cn.nabr.chatwithchat.data.memory.MemoryRetrievalReport
+import cn.nabr.chatwithchat.data.memory.MemoryRetrievalRequest
 import cn.nabr.chatwithchat.data.memory.MemoryRetrievalStrategy
 import cn.nabr.chatwithchat.data.memory.MemoryRetriever
 import cn.nabr.chatwithchat.data.memory.MemoryTurnBatchCoordinator
@@ -34,12 +35,16 @@ class MemoryRepositoryImpl(
     private val memoryTurnBatchCoordinator: MemoryTurnBatchCoordinator? = null,
     private val memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null,
     private val memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler? = null,
+    private val memoryLongTermConsolidationScheduler: MemoryLongTermConsolidationScheduler? = null,
     private val promptTraceStore: PromptTraceStore? = null
 ) : MemoryRepository {
 
     override suspend fun onMemoryEnabledChanged(enabled: Boolean) {
         memoryTurnBatchScheduler?.onMemoryEnabledChanged(enabled)
-        if (enabled) memoryDailyDistillationScheduler?.ensurePlanningJobs()
+        if (enabled) {
+            memoryDailyDistillationScheduler?.ensurePlanningJobs()
+            memoryLongTermConsolidationScheduler?.ensureScheduled()
+        }
     }
 
     override suspend fun recordUserActivity(chatId: Int, activityAt: Long) {

@@ -19,7 +19,9 @@ internal data class CanonicalMemoryMergeResult(
     val acceptedCandidateCount: Int = 0,
     val changedEntryCount: Int = 0,
     val materialMutationCount: Int = 0,
-    val requiresIndexSync: Boolean = false
+    val materialEntryMutationCount: Int = 0,
+    val requiresIndexSync: Boolean = false,
+    val hasMoreMutations: Boolean = false
 )
 
 internal class CanonicalMemoryMergePolicy(
@@ -28,17 +30,24 @@ internal class CanonicalMemoryMergePolicy(
     fun merge(
         baseMarkdown: String,
         candidates: List<CanonicalMemoryCandidate>,
-        mutationAt: Long
+        mutationAt: Long,
+        allowCanonicalRebinding: Boolean = false,
+        maxEntryMutations: Int? = null
     ): CanonicalMemoryMergeResult {
         require(mutationAt >= 0L) { "invalid canonical mutation time" }
         require(candidates.size <= MemoryControlledOperationPolicy.MAX_OPERATIONS) {
             "too many canonical candidates"
         }
+        require(maxEntryMutations == null || maxEntryMutations in 1..MemoryControlledOperationPolicy.MAX_OPERATIONS) {
+            "invalid canonical entry mutation limit"
+        }
         val parsed = parseEntriesOrThrow(baseMarkdown)
         if (candidates.isEmpty()) return CanonicalMemoryMergeResult(markdown = baseMarkdown)
 
         val entriesById = parsed.entries.associateBy(MarkdownMemoryEntry::id)
-        val normalizedCandidates = candidates.map { candidate -> normalizeAndValidate(candidate, entriesById) }
+        val normalizedCandidates = candidates.map { candidate ->
+            normalizeAndValidate(candidate, entriesById, allowCanonicalRebinding)
+        }
         validateTargetIdentities(normalizedCandidates)
 
         val replacements = linkedMapOf<String, MarkdownMemoryEntry>()
@@ -47,14 +56,24 @@ internal class CanonicalMemoryMergePolicy(
         val observationUpdates = linkedMapOf<String, MarkdownMemoryObservationUpdate>()
         val reservedIds = entriesById.keys.toMutableSet()
         val explicitlyTargetedIds = normalizedCandidates.mapNotNull(CanonicalMemoryCandidate::targetMemoryId).toSet()
+        val touchedIdentities = linkedSetOf<CanonicalMemoryIdentity>()
+        val completedIdentities = linkedSetOf<CanonicalMemoryIdentity>()
         var acceptedCandidateCount = 0
         var materialMutationCount = 0
+        var materialEntryMutationCount = 0
         var requiresIndexSync = false
+        var hasMoreMutations = false
+        var remainingEntryMutations = maxEntryMutations ?: Int.MAX_VALUE
+        var stopPlanning = false
 
         normalizedCandidates
             .groupBy { candidate -> candidate.identity() }
             .toSortedMap(compareBy<CanonicalMemoryIdentity> { identity -> identity.canonicalKey }.thenBy { it.scope })
             .forEach { (identity, identityCandidates) ->
+                if (stopPlanning) {
+                    hasMoreMutations = true
+                    return@forEach
+                }
                 val targetIds = identityCandidates.mapNotNull(CanonicalMemoryCandidate::targetMemoryId).toSet()
                 val candidateTexts = identityCandidates
                     .map { candidate -> normalizeExactMemoryText(candidate.text) }
@@ -69,11 +88,13 @@ internal class CanonicalMemoryMergePolicy(
                                 normalizeExactMemoryText(entry.text) in candidateTexts
                             )
                 }
-                require(
-                    identityEntries.all { entry ->
-                        entry.canonicalKey == null || entry.identityOrNull() == identity
-                    }
-                ) { "canonical target identity mismatch" }
+                if (!allowCanonicalRebinding) {
+                    require(
+                        identityEntries.all { entry ->
+                            entry.canonicalKey == null || entry.identityOrNull() == identity
+                        }
+                    ) { "canonical target identity mismatch" }
+                }
                 val currentEntries = identityEntries
                     .filter { entry -> entry.validity == MemoryValidity.CURRENT }
                     .sortedBy(MarkdownMemoryEntry::id)
@@ -95,11 +116,21 @@ internal class CanonicalMemoryMergePolicy(
                 acceptedCandidateCount += acceptedCandidates.size
 
                 val survivor = currentEntries.firstOrNull()
+                val identityReplacements = linkedMapOf<String, MarkdownMemoryEntry>()
+                val identityRemovals = linkedSetOf<String>()
+                val identityAppends = linkedMapOf<String, MarkdownMemoryEntry>()
+                val identityObservationUpdates = linkedMapOf<String, MarkdownMemoryObservationUpdate>()
+                val activeId: String
+                val losingCurrentIds: Set<String>
+                var identityMaterialMutationCount = 0
+                var identityRequiresIndexSync = false
                 if (
                     survivor != null &&
                     currentEntries.size == 1 &&
                     winningVariant.normalizedText == normalizeExactMemoryText(survivor.text)
                 ) {
+                    activeId = survivor.id
+                    losingCurrentIds = emptySet()
                     val evidenceRefs = mergeEvidenceRefs(
                         existing = survivor.evidenceRefs,
                         additions = acceptedCandidates.flatMap(CanonicalMemoryCandidate::evidenceRefs)
@@ -108,43 +139,40 @@ internal class CanonicalMemoryMergePolicy(
                         survivor.lastObservedAt,
                         acceptedCandidates.maxOfOrNull(CanonicalMemoryCandidate::evidenceAt) ?: 0L
                     )
-                    if (survivor.canonicalKey == null) {
-                        replacements[survivor.id] = survivor.copy(
+                    if (survivor.identityOrNull() != identity) {
+                        identityReplacements[survivor.id] = survivor.copy(
                             canonicalKey = identity.canonicalKey,
                             scope = identity.scope,
                             updatedAt = mutationAt,
                             lastObservedAt = lastObservedAt,
                             evidenceRefs = evidenceRefs
                         )
-                        materialMutationCount += 1
+                        identityMaterialMutationCount = 1
                     } else if (lastObservedAt > survivor.lastObservedAt || evidenceRefs != survivor.evidenceRefs) {
-                        observationUpdates[survivor.id] = MarkdownMemoryObservationUpdate(
+                        identityObservationUpdates[survivor.id] = MarkdownMemoryObservationUpdate(
                             entryId = survivor.id,
                             lastObservedAt = lastObservedAt,
                             evidenceRefs = evidenceRefs
                         )
                     }
-                    return@forEach
-                }
-
-                val activeId = survivor?.id ?: generatedActiveId(identity)
-                if (survivor == null) {
-                    require(reservedIds.add(activeId)) { "generated canonical active id conflict" }
-                }
-                val winningExistingEntries = currentEntries.filter { entry ->
-                    normalizeExactMemoryText(entry.text) == winningVariant.normalizedText
-                }
-                val winningText = winningExistingEntries.firstOrNull()?.text ?: winningVariant.text
-                val evidenceRefs = mergeEvidenceRefs(
-                    existing = winningExistingEntries.flatMap(MarkdownMemoryEntry::evidenceRefs),
-                    additions = acceptedCandidates.flatMap(CanonicalMemoryCandidate::evidenceRefs)
-                )
-                val lastObservedAt = maxOf(
-                    winningVariant.evidenceAt,
-                    acceptedCandidates.maxOfOrNull(CanonicalMemoryCandidate::evidenceAt) ?: 0L
-                )
-                val activeEntry = (
-                    survivor ?: MarkdownMemoryEntry(
+                } else {
+                    activeId = survivor?.id ?: generatedActiveId(identity)
+                    if (survivor == null) {
+                        require(reservedIds.add(activeId)) { "generated canonical active id conflict" }
+                    }
+                    val winningExistingEntries = currentEntries.filter { entry ->
+                        normalizeExactMemoryText(entry.text) == winningVariant.normalizedText
+                    }
+                    val winningText = winningExistingEntries.firstOrNull()?.text ?: winningVariant.text
+                    val evidenceRefs = mergeEvidenceRefs(
+                        existing = winningExistingEntries.flatMap(MarkdownMemoryEntry::evidenceRefs),
+                        additions = acceptedCandidates.flatMap(CanonicalMemoryCandidate::evidenceRefs)
+                    )
+                    val lastObservedAt = maxOf(
+                        winningVariant.evidenceAt,
+                        acceptedCandidates.maxOfOrNull(CanonicalMemoryCandidate::evidenceAt) ?: 0L
+                    )
+                    val activeBase = survivor ?: MarkdownMemoryEntry(
                         id = activeId,
                         text = winningText,
                         type = winningVariant.type,
@@ -155,80 +183,134 @@ internal class CanonicalMemoryMergePolicy(
                         updatedAt = mutationAt,
                         section = null
                     )
-                    ).copy(
-                    id = activeId,
-                    text = winningText,
-                    type = winningVariant.type,
-                    sensitivity = winningVariant.sensitivity,
-                    source = winningVariant.source,
-                    updatedAt = mutationAt,
-                    canonicalKey = identity.canonicalKey,
-                    scope = identity.scope,
-                    lastObservedAt = lastObservedAt,
-                    validity = MemoryValidity.CURRENT,
-                    supersededBy = null,
-                    recallState = winningVariant.recallState,
-                    evidenceRefs = evidenceRefs
-                )
+                    val activeAtExistingTimestamp = activeBase.copy(
+                        id = activeId,
+                        text = winningText,
+                        type = winningVariant.type,
+                        sensitivity = winningVariant.sensitivity,
+                        source = winningVariant.source,
+                        updatedAt = survivor?.updatedAt ?: mutationAt,
+                        canonicalKey = identity.canonicalKey,
+                        scope = identity.scope,
+                        lastObservedAt = lastObservedAt,
+                        validity = MemoryValidity.CURRENT,
+                        supersededBy = null,
+                        recallState = winningVariant.recallState,
+                        evidenceRefs = evidenceRefs
+                    )
+                    val materialActiveChanged = survivor == null ||
+                        activeAtExistingTimestamp.copy(
+                            lastObservedAt = survivor.lastObservedAt,
+                            evidenceRefs = survivor.evidenceRefs
+                        ) != survivor
+                    val survivorAlreadyStable = survivor != null &&
+                        currentEntries.drop(1).all { loser -> survivor.updatedAt > loser.updatedAt }
+                    val shouldRefreshStableTimestamp = currentEntries.size > 1 && !survivorAlreadyStable
+                    val shouldReplaceActive = materialActiveChanged || shouldRefreshStableTimestamp
+                    val activeEntry = activeAtExistingTimestamp.copy(
+                        updatedAt = if (shouldReplaceActive) mutationAt else activeAtExistingTimestamp.updatedAt
+                    )
 
-                if (survivor == null) {
-                    appends[activeId] = activeEntry
-                } else {
-                    replacements[activeId] = activeEntry
-                }
+                    if (survivor == null) {
+                        identityAppends[activeId] = activeEntry
+                    } else if (shouldReplaceActive) {
+                        identityReplacements[activeId] = activeEntry
+                    } else if (
+                        activeEntry.lastObservedAt != survivor.lastObservedAt ||
+                        activeEntry.evidenceRefs != survivor.evidenceRefs
+                    ) {
+                        identityObservationUpdates[activeId] = MarkdownMemoryObservationUpdate(
+                            entryId = activeId,
+                            lastObservedAt = activeEntry.lastObservedAt,
+                            evidenceRefs = activeEntry.evidenceRefs
+                        )
+                    }
 
-                val losingCurrentIds = currentEntries.drop(1).map(MarkdownMemoryEntry::id).toSet()
-                currentEntries.drop(1).forEach { loser ->
-                    if (normalizeExactMemoryText(loser.text) == winningVariant.normalizedText) {
-                        removals += loser.id
-                    } else {
-                        replacements[loser.id] = loser.toHistory(activeId, identity, mutationAt)
-                    }
-                }
-                parsed.entries
-                    .filter { entry ->
-                        entry.validity == MemoryValidity.OBSOLETE && entry.supersededBy in losingCurrentIds
-                    }
-                    .forEach { obsolete -> replacements[obsolete.id] = obsolete.copy(supersededBy = activeId) }
-
-                survivor?.takeIf { entry ->
-                    normalizeExactMemoryText(entry.text) != winningVariant.normalizedText
-                }?.let { replacedFact ->
-                    val oldNormalizedText = normalizeExactMemoryText(replacedFact.text)
-                    val oldFactAlreadyPreserved = identityEntries.any { entry ->
-                        entry.id != replacedFact.id &&
-                            normalizeExactMemoryText(entry.text) == oldNormalizedText &&
-                            (entry.validity == MemoryValidity.OBSOLETE || entry.id in losingCurrentIds)
-                    }
-                    if (!oldFactAlreadyPreserved) {
-                        val historyId = generatedHistoryId(identity, activeId, replacedFact)
-                        entriesById[historyId]?.let { existingHistory ->
-                            require(
-                                existingHistory.identityOrNull() == identity &&
-                                    normalizeExactMemoryText(existingHistory.text) == oldNormalizedText &&
-                                    existingHistory.validity == MemoryValidity.OBSOLETE &&
-                                    existingHistory.supersededBy == activeId
-                            ) { "generated canonical history id conflict" }
-                        } ?: run {
-                            require(reservedIds.add(historyId)) { "generated canonical history id conflict" }
-                            appends[historyId] = replacedFact.copy(id = historyId).toHistory(
-                                activeId = activeId,
-                                identity = identity,
-                                mutationAt = mutationAt
-                            )
+                    losingCurrentIds = currentEntries.drop(1).map(MarkdownMemoryEntry::id).toSet()
+                    currentEntries.drop(1).forEach { loser ->
+                        if (normalizeExactMemoryText(loser.text) == winningVariant.normalizedText) {
+                            identityRemovals += loser.id
+                        } else {
+                            identityReplacements[loser.id] = loser.toHistory(activeId, identity, mutationAt)
                         }
                     }
-                }
-                materialMutationCount += 1
-                requiresIndexSync = true
-            }
+                    parsed.entries
+                        .filter { entry ->
+                            entry.validity == MemoryValidity.OBSOLETE && entry.supersededBy in losingCurrentIds
+                        }
+                        .forEach { obsolete ->
+                            identityReplacements[obsolete.id] = obsolete.copy(supersededBy = activeId)
+                        }
 
-        pruneExpandedHistoryAppends(
-            originalEntries = parsed.entries,
-            replacements = replacements,
-            removals = removals,
-            appends = appends
-        )
+                    survivor?.takeIf { entry ->
+                        normalizeExactMemoryText(entry.text) != winningVariant.normalizedText
+                    }?.let { replacedFact ->
+                        val oldNormalizedText = normalizeExactMemoryText(replacedFact.text)
+                        val oldFactAlreadyPreserved = identityEntries.any { entry ->
+                            entry.id != replacedFact.id &&
+                                normalizeExactMemoryText(entry.text) == oldNormalizedText &&
+                                (entry.validity == MemoryValidity.OBSOLETE || entry.id in losingCurrentIds)
+                        }
+                        if (!oldFactAlreadyPreserved) {
+                            val historyId = generatedHistoryId(identity, activeId, replacedFact)
+                            entriesById[historyId]?.let { existingHistory ->
+                                require(
+                                    existingHistory.identityOrNull() == identity &&
+                                        normalizeExactMemoryText(existingHistory.text) == oldNormalizedText &&
+                                        existingHistory.validity == MemoryValidity.OBSOLETE &&
+                                        existingHistory.supersededBy == activeId
+                                ) { "generated canonical history id conflict" }
+                            } ?: run {
+                                require(reservedIds.add(historyId)) { "generated canonical history id conflict" }
+                                identityAppends[historyId] = replacedFact.copy(id = historyId).toHistory(
+                                    activeId = activeId,
+                                    identity = identity,
+                                    mutationAt = mutationAt
+                                )
+                            }
+                        }
+                    }
+                    identityMaterialMutationCount = 1
+                    identityRequiresIndexSync = true
+                }
+
+                pruneExpandedHistoryAppends(
+                    originalEntries = parsed.entries,
+                    replacements = identityReplacements,
+                    removals = identityRemovals,
+                    appends = identityAppends
+                )
+                val selection = selectBoundedIdentityMutations(
+                    plan = CanonicalIdentityMutationPlan(
+                        activeId = activeId,
+                        losingCurrentIds = losingCurrentIds,
+                        replacements = identityReplacements,
+                        removals = identityRemovals,
+                        appends = identityAppends,
+                        observationUpdates = identityObservationUpdates
+                    ),
+                    originalEntries = parsed.entries,
+                    originalEntriesById = entriesById,
+                    limit = remainingEntryMutations
+                )
+                replacements.putAll(selection.replacements)
+                removals.addAll(selection.removals)
+                appends.putAll(selection.appends)
+                observationUpdates.putAll(selection.observationUpdates)
+                remainingEntryMutations -= selection.changedEntryCount
+                if (selection.changedEntryCount > 0) touchedIdentities += identity
+                if (selection.isComplete) {
+                    completedIdentities += identity
+                } else {
+                    hasMoreMutations = true
+                    stopPlanning = true
+                }
+                if (selection.materialEntryMutationCount > 0) {
+                    materialMutationCount += identityMaterialMutationCount
+                    materialEntryMutationCount += selection.materialEntryMutationCount
+                    requiresIndexSync = requiresIndexSync || identityRequiresIndexSync
+                }
+            }
 
         var markdown = baseMarkdown
         if (replacements.isNotEmpty()) {
@@ -254,20 +336,28 @@ internal class CanonicalMemoryMergePolicy(
         validateRenderedDocument(
             baseMarkdown = baseMarkdown,
             renderedMarkdown = markdown,
-            touchedIdentities = normalizedCandidates.map { candidate -> candidate.identity() }.toSet()
+            touchedIdentities = touchedIdentities,
+            completedIdentities = completedIdentities
         )
+        val changedEntryCount = replacements.size + removals.size + appends.size + observationUpdates.size
+        require(maxEntryMutations == null || changedEntryCount <= maxEntryMutations) {
+            "canonical entry mutation limit exceeded"
+        }
         return CanonicalMemoryMergeResult(
             markdown = markdown,
             acceptedCandidateCount = acceptedCandidateCount,
-            changedEntryCount = replacements.size + removals.size + appends.size + observationUpdates.size,
+            changedEntryCount = changedEntryCount,
             materialMutationCount = materialMutationCount,
-            requiresIndexSync = requiresIndexSync
+            materialEntryMutationCount = materialEntryMutationCount,
+            requiresIndexSync = requiresIndexSync,
+            hasMoreMutations = hasMoreMutations
         )
     }
 
     private fun normalizeAndValidate(
         candidate: CanonicalMemoryCandidate,
-        entriesById: Map<String, MarkdownMemoryEntry>
+        entriesById: Map<String, MarkdownMemoryEntry>,
+        allowCanonicalRebinding: Boolean
     ): CanonicalMemoryCandidate {
         val text = candidate.text.trim().replace(WHITESPACE_REGEX, " ")
         require(text.isNotBlank() && text.length <= MemoryControlledOperationPolicy.MAX_MEMORY_TEXT_CHARS) {
@@ -288,11 +378,13 @@ internal class CanonicalMemoryMergePolicy(
             require(MarkdownMemoryMetadataPolicy.isSafeReference(targetId)) { "invalid canonical target id" }
             val target = requireNotNull(entriesById[targetId]) { "unknown canonical target" }
             require(target.type == candidate.type) { "canonical target type mismatch" }
-            require(target.canonicalKey == null || target.canonicalKey == candidate.canonicalKey) {
-                "canonical target key mismatch"
-            }
-            require(target.canonicalKey == null || target.scope == candidate.scope) {
-                "canonical target scope mismatch"
+            if (!allowCanonicalRebinding) {
+                require(target.canonicalKey == null || target.canonicalKey == candidate.canonicalKey) {
+                    "canonical target key mismatch"
+                }
+                require(target.canonicalKey == null || target.scope == candidate.scope) {
+                    "canonical target scope mismatch"
+                }
             }
         }
         return candidate.copy(
@@ -370,16 +462,123 @@ internal class CanonicalMemoryMergePolicy(
         recallState = MemoryRecallState.MAINTENANCE_ONLY
     )
 
+    private fun selectBoundedIdentityMutations(
+        plan: CanonicalIdentityMutationPlan,
+        originalEntries: List<MarkdownMemoryEntry>,
+        originalEntriesById: Map<String, MarkdownMemoryEntry>,
+        limit: Int
+    ): CanonicalIdentityMutationSelection {
+        require(limit >= 0) { "invalid remaining canonical mutation budget" }
+        val effectiveReplacements = linkedMapOf<String, MarkdownMemoryEntry>()
+        plan.replacements.forEach { (id, replacement) ->
+            if (originalEntriesById[id] != replacement) effectiveReplacements[id] = replacement
+        }
+        val effectiveRemovals = plan.removals.filterTo(linkedSetOf()) { id -> id in originalEntriesById }
+        val effectiveAppends = linkedMapOf<String, MarkdownMemoryEntry>()
+        plan.appends.forEach { (id, append) ->
+            if (id !in originalEntriesById) effectiveAppends[id] = append
+        }
+        val effectiveObservationUpdates = linkedMapOf<String, MarkdownMemoryObservationUpdate>()
+        plan.observationUpdates.forEach { (id, update) ->
+            val original = checkNotNull(originalEntriesById[id])
+            if (original.lastObservedAt != update.lastObservedAt || original.evidenceRefs != update.evidenceRefs) {
+                effectiveObservationUpdates[id] = update
+            }
+        }
+        val fullSelection = CanonicalIdentityMutationSelection(
+            replacements = effectiveReplacements,
+            removals = effectiveRemovals,
+            appends = effectiveAppends,
+            observationUpdates = effectiveObservationUpdates,
+            isComplete = true
+        )
+        if (fullSelection.changedEntryCount <= limit) return fullSelection
+
+        val selectedReplacements = linkedMapOf<String, MarkdownMemoryEntry>()
+        val selectedRemovals = linkedSetOf<String>()
+        val selectedAppends = linkedMapOf<String, MarkdownMemoryEntry>()
+        val selectedObservationUpdates = linkedMapOf<String, MarkdownMemoryObservationUpdate>()
+        var remaining = limit
+
+        fun selection(isComplete: Boolean) = CanonicalIdentityMutationSelection(
+            replacements = selectedReplacements,
+            removals = selectedRemovals,
+            appends = selectedAppends,
+            observationUpdates = selectedObservationUpdates,
+            isComplete = isComplete
+        )
+
+        val activeReplacement = effectiveReplacements[plan.activeId]
+        val activeAppend = effectiveAppends[plan.activeId]
+        val activeObservationUpdate = effectiveObservationUpdates[plan.activeId]
+        val historyAppends = effectiveAppends
+            .filterKeys { id -> id != plan.activeId }
+            .toSortedMap()
+        val activeBundleSize =
+            listOfNotNull(activeReplacement, activeAppend, activeObservationUpdate).size + historyAppends.size
+        if (activeBundleSize > remaining) return selection(isComplete = false)
+        activeReplacement?.let { replacement -> selectedReplacements[plan.activeId] = replacement }
+        activeAppend?.let { append -> selectedAppends[plan.activeId] = append }
+        activeObservationUpdate?.let { update -> selectedObservationUpdates[plan.activeId] = update }
+        selectedAppends.putAll(historyAppends)
+        remaining -= activeBundleSize
+
+        plan.losingCurrentIds.sorted().forEach { loserId ->
+            val dependentIds = originalEntries
+                .asSequence()
+                .filter { entry ->
+                    entry.validity == MemoryValidity.OBSOLETE && entry.supersededBy == loserId
+                }
+                .map(MarkdownMemoryEntry::id)
+                .filter(effectiveReplacements::containsKey)
+                .sorted()
+                .toList()
+            dependentIds.forEach { dependentId ->
+                if (remaining == 0) return selection(isComplete = false)
+                selectedReplacements[dependentId] = checkNotNull(effectiveReplacements[dependentId])
+                remaining -= 1
+            }
+
+            val loserReplacement = effectiveReplacements[loserId]
+            val removeLoser = loserId in effectiveRemovals
+            check(loserReplacement == null || !removeLoser) { "canonical loser has conflicting mutations" }
+            if (loserReplacement != null || removeLoser) {
+                if (remaining == 0) return selection(isComplete = false)
+                if (loserReplacement != null) {
+                    selectedReplacements[loserId] = loserReplacement
+                } else {
+                    selectedRemovals += loserId
+                }
+                remaining -= 1
+            }
+        }
+
+        effectiveObservationUpdates.toSortedMap().forEach { (id, update) ->
+            if (id in selectedObservationUpdates) return@forEach
+            if (remaining == 0) return selection(isComplete = false)
+            selectedObservationUpdates[id] = update
+            remaining -= 1
+        }
+        check(selectedReplacements.keys == effectiveReplacements.keys) { "unclassified canonical replacement" }
+        check(selectedRemovals == effectiveRemovals) { "unclassified canonical removal" }
+        check(selectedAppends.keys == effectiveAppends.keys) { "unclassified canonical append" }
+        check(selectedObservationUpdates.keys == effectiveObservationUpdates.keys) {
+            "unclassified canonical observation update"
+        }
+        return selection(isComplete = true)
+    }
+
     private fun validateRenderedDocument(
         baseMarkdown: String,
         renderedMarkdown: String,
-        touchedIdentities: Set<CanonicalMemoryIdentity>
+        touchedIdentities: Set<CanonicalMemoryIdentity>,
+        completedIdentities: Set<CanonicalMemoryIdentity>
     ) {
         val parsed = parseEntriesOrThrow(renderedMarkdown)
         require(parsed.entries.map(MarkdownMemoryEntry::id).distinct().size == parsed.entries.size) {
             "duplicate canonical memory id"
         }
-        touchedIdentities.forEach { identity ->
+        completedIdentities.forEach { identity ->
             require(
                 parsed.entries.count { entry ->
                     entry.identityOrNull() == identity && entry.validity == MemoryValidity.CURRENT
@@ -524,6 +723,29 @@ internal class CanonicalMemoryMergePolicy(
             .thenByDescending(FactVariant::evidenceAt)
             .thenBy(FactVariant::origin)
             .thenBy(FactVariant::tieId)
+
+    private data class CanonicalIdentityMutationPlan(
+        val activeId: String,
+        val losingCurrentIds: Set<String>,
+        val replacements: Map<String, MarkdownMemoryEntry>,
+        val removals: Set<String>,
+        val appends: Map<String, MarkdownMemoryEntry>,
+        val observationUpdates: Map<String, MarkdownMemoryObservationUpdate>
+    )
+
+    private data class CanonicalIdentityMutationSelection(
+        val replacements: Map<String, MarkdownMemoryEntry>,
+        val removals: Set<String>,
+        val appends: Map<String, MarkdownMemoryEntry>,
+        val observationUpdates: Map<String, MarkdownMemoryObservationUpdate>,
+        val isComplete: Boolean
+    ) {
+        val changedEntryCount: Int
+            get() = replacements.size + removals.size + appends.size + observationUpdates.size
+
+        val materialEntryMutationCount: Int
+            get() = replacements.size + removals.size + appends.size
+    }
 
     private data class CanonicalMemoryIdentity(
         val canonicalKey: String,

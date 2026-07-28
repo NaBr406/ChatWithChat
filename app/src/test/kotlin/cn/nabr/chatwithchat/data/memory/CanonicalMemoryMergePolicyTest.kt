@@ -514,6 +514,53 @@ class CanonicalMemoryMergePolicyTest {
         assertEquals(replacement.text, active.text)
     }
 
+    @Test
+    fun `canonical rebinding is restricted to the explicit whole corpus mode`() {
+        val legacy = canonicalEntry(
+            id = "legacy_address",
+            text = "Address the user as Captain.",
+            canonicalKey = "identity.nickname"
+        )
+        val canonical = canonicalEntry(
+            id = "preferred_address",
+            text = "The user's preferred address is Captain.",
+            canonicalKey = "identity.preferred_address",
+            source = MemorySource.USER_CONFIRMED,
+            lastObservedAt = 40
+        )
+        val base = codec.renderLongTerm(listOf(legacy, canonical))
+        val candidates = listOf(legacy, canonical).map { entry ->
+            candidate(
+                text = entry.text,
+                source = entry.source,
+                canonicalKey = "identity.preferred_address",
+                evidenceAt = entry.lastObservedAt,
+                targetMemoryId = entry.id
+            )
+        }
+
+        assertThrows(IllegalArgumentException::class.java) {
+            policy.merge(base, candidates, mutationAt = 50)
+        }
+
+        val merged = policy.merge(
+            baseMarkdown = base,
+            candidates = candidates,
+            mutationAt = 50,
+            allowCanonicalRebinding = true
+        )
+        val parsed = codec.parse(merged.markdown)
+        val active = parsed.entries.filter { entry -> entry.validity == MemoryValidity.CURRENT }
+
+        assertEquals(1, active.size)
+        assertEquals("identity.preferred_address", active.single().canonicalKey)
+        assertTrue(
+            parsed.entries
+                .filter { entry -> entry.validity == MemoryValidity.OBSOLETE }
+                .all { entry -> entry.canonicalKey == active.single().canonicalKey }
+        )
+    }
+
     private fun currentEntries(markdown: String): List<MarkdownMemoryEntry> = codec
         .parse(markdown)
         .entries

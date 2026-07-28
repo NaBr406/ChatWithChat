@@ -27,6 +27,94 @@ class MarkdownMemoryCodec {
     fun renderLongTermAppend(entries: List<MarkdownMemoryEntry>): String =
         renderEntryBlocks(entries, defaultSection = null)
 
+    internal fun repairStructuralRelationships(markdown: String): MarkdownMemoryRelationshipRepair? {
+        val parsed = parse(markdown)
+        if (parsed.skippedEntries.isEmpty()) {
+            return MarkdownMemoryRelationshipRepair(markdown, parsed.entries, repairedCount = 0)
+        }
+        if (parsed.skippedEntries.any { skipped ->
+                skipped.reason !in REPAIRABLE_DOCUMENT_ERRORS || skipped.recoverableEntry == null
+            }
+        ) {
+            return null
+        }
+
+        val candidatesByLine = parsed.skippedEntries.associate { skipped ->
+            skipped.lineNumber to checkNotNull(skipped.recoverableEntry)
+        }.toMutableMap()
+        val occupiedIds = (
+            parsed.entries.map(MarkdownMemoryEntry::id) +
+                candidatesByLine.values.map(MarkdownMemoryEntry::id)
+            ).toMutableSet()
+        parsed.skippedEntries
+            .filter { skipped -> skipped.reason == ERROR_DUPLICATE_MEMORY_ID }
+            .groupBy { skipped -> checkNotNull(skipped.recoverableEntry).id }
+            .toSortedMap()
+            .forEach { (_, duplicates) ->
+                val ordered = duplicates.sortedWith(
+                    compareByDescending<SkippedMarkdownMemoryEntry> { skipped ->
+                        skipped.recoverableEntry?.validity == MemoryValidity.CURRENT
+                    }.thenBy(SkippedMarkdownMemoryEntry::lineNumber)
+                )
+                ordered.drop(1).forEach { skipped ->
+                    val entry = checkNotNull(candidatesByLine[skipped.lineNumber])
+                    val repairedId = repairedRelationshipId(entry, skipped.lineNumber, occupiedIds)
+                    occupiedIds += repairedId
+                    candidatesByLine[skipped.lineNumber] = entry.copy(id = repairedId)
+                }
+            }
+
+        val initialEntries = parsed.entries + candidatesByLine.toSortedMap().values
+        val initialEntriesById = initialEntries.associateBy(MarkdownMemoryEntry::id)
+        if (initialEntriesById.size != initialEntries.size) return null
+        candidatesByLine.replaceAll { _, entry ->
+            if (documentLifecycleError(entry, initialEntriesById) == null) {
+                entry
+            } else {
+                entry.copy(
+                    validity = MemoryValidity.CONTESTED,
+                    supersededBy = null,
+                    recallState = MemoryRecallState.MAINTENANCE_ONLY
+                )
+            }
+        }
+
+        val sourceLines = sourceLines(markdown)
+        val originalByLine = parsed.skippedEntries.associate { skipped ->
+            skipped.lineNumber to checkNotNull(skipped.recoverableEntry)
+        }
+        val changedEntries = candidatesByLine
+            .filter { (lineNumber, entry) -> originalByLine[lineNumber] != entry }
+            .toSortedMap()
+            .entries
+            .take(MemoryControlledOperationPolicy.MAX_OPERATIONS)
+            .associate { (lineNumber, entry) -> lineNumber to entry }
+        if (changedEntries.isEmpty()) return null
+        var repairedMarkdown = markdown
+        changedEntries.toSortedMap(reverseOrder()).forEach { (lineNumber, entry) ->
+            val sourceLine = sourceLines.getOrNull(lineNumber - 1) ?: return null
+            if (!sourceLine.text.trim().startsWith(MarkdownMemoryMetadataPolicy.COMMENT_PREFIX)) return null
+            repairedMarkdown = repairedMarkdown.replaceRange(
+                sourceLine.startOffset,
+                sourceLine.endOffset,
+                metadataComment(entry)
+            )
+        }
+        val verified = parse(repairedMarkdown)
+        if (verified.skippedEntries.any { skipped ->
+                skipped.reason !in REPAIRABLE_DOCUMENT_ERRORS || skipped.recoverableEntry == null
+            }
+        ) {
+            return null
+        }
+        return MarkdownMemoryRelationshipRepair(
+            markdown = repairedMarkdown,
+            entries = verified.entries,
+            repairedCount = changedEntries.size,
+            hasRemainingRepairs = verified.skippedEntries.isNotEmpty()
+        )
+    }
+
     internal fun removeEntriesById(
         markdown: String,
         entryIds: Set<String>
@@ -181,7 +269,8 @@ class MarkdownMemoryCodec {
                 skippedEntries += SkippedMarkdownMemoryEntry(
                     lineNumber = lineNumber,
                     reason = built.error ?: skippedReason(metadata, text),
-                    metadata = metadata
+                    metadata = metadata,
+                    recoverableEntry = built.recoverableEntry
                 )
             } else {
                 candidates += ParsedEntryCandidate(
@@ -508,9 +597,13 @@ class MarkdownMemoryCodec {
             evidenceRefs = evidenceRefs,
             extraMetadata = metadata.filterKeys { key -> key !in MarkdownMemoryMetadataPolicy.KNOWN_KEYS }
         )
+        val validationError = MarkdownMemoryMetadataPolicy.validateEntry(entry)
         return EntryBuildResult(
-            entry = entry.takeIf { MarkdownMemoryMetadataPolicy.validateEntry(it) == null },
-            error = MarkdownMemoryMetadataPolicy.validateEntry(entry)
+            entry = entry.takeIf { validationError == null },
+            error = validationError,
+            recoverableEntry = entry.takeIf {
+                validationError == ERROR_OBSOLETE_ENTRY_REQUIRES_SUPERSESSION_TARGET
+            }
         )
     }
 
@@ -519,7 +612,7 @@ class MarkdownMemoryCodec {
         entriesById: Map<String, MarkdownMemoryEntry>
     ): String? {
         if (entry.validity != MemoryValidity.OBSOLETE) return null
-        val targetId = entry.supersededBy ?: return "obsolete entry requires supersession target"
+        val targetId = entry.supersededBy ?: return ERROR_OBSOLETE_ENTRY_REQUIRES_SUPERSESSION_TARGET
         if (targetId == entry.id) return "obsolete entry cannot supersede itself"
         val target = entriesById[targetId] ?: return "supersession target not found"
         if (target.validity != MemoryValidity.CURRENT) return "supersession target must be current"
@@ -527,6 +620,25 @@ class MarkdownMemoryCodec {
             return "supersession target identity mismatch"
         }
         return null
+    }
+
+    private fun repairedRelationshipId(
+        entry: MarkdownMemoryEntry,
+        lineNumber: Int,
+        occupiedIds: Set<String>
+    ): String {
+        repeat(MAX_REPAIRED_ID_ATTEMPTS) { attempt ->
+            val identity = listOf(
+                STRUCTURAL_REPAIR_ID_VERSION,
+                entry.id,
+                lineNumber.toString(),
+                entry.text,
+                attempt.toString()
+            ).joinToString("|")
+            val candidate = "mem_repaired_${identity.sha256Utf8().take(REPAIRED_ID_HASH_LENGTH)}"
+            if (candidate !in occupiedIds) return candidate
+        }
+        error("unable to allocate repaired memory id")
     }
 
     private fun memoryCommentLineIndexes(lines: List<String>): List<Int> {
@@ -603,7 +715,21 @@ class MarkdownMemoryCodec {
 
     companion object {
         private const val DAILY_CONVERSATION_SECTION = "Conversation Notes"
+        private const val ERROR_DUPLICATE_MEMORY_ID = "duplicate memory id"
+        private const val ERROR_OBSOLETE_ENTRY_REQUIRES_SUPERSESSION_TARGET =
+            "obsolete entry requires supersession target"
+        private const val MAX_REPAIRED_ID_ATTEMPTS = 8
+        private const val REPAIRED_ID_HASH_LENGTH = 24
+        private const val STRUCTURAL_REPAIR_ID_VERSION = "memory-relationship-repair:v1"
         private val REQUIRED_METADATA_KEYS = setOf("id", "type", "sensitivity", "source")
+        private val REPAIRABLE_DOCUMENT_ERRORS = setOf(
+            ERROR_DUPLICATE_MEMORY_ID,
+            ERROR_OBSOLETE_ENTRY_REQUIRES_SUPERSESSION_TARGET,
+            "obsolete entry cannot supersede itself",
+            "supersession target not found",
+            "supersession target must be current",
+            "supersession target identity mismatch"
+        )
         private val LINE_BREAK_REGEX = Regex("\\r\\n|\\n|\\r")
     }
 }
@@ -622,13 +748,15 @@ private data class ParsedEntryCandidate(
     fun toSkipped(reason: String): SkippedMarkdownMemoryEntry = SkippedMarkdownMemoryEntry(
         lineNumber = lineNumber,
         reason = reason,
-        metadata = metadata
+        metadata = metadata,
+        recoverableEntry = entry
     )
 }
 
 private data class EntryBuildResult(
     val entry: MarkdownMemoryEntry? = null,
-    val error: String? = null
+    val error: String? = null,
+    val recoverableEntry: MarkdownMemoryEntry? = null
 )
 
 private data class OptionalParsedMetadata<T>(

@@ -304,6 +304,85 @@ class ChatDatabaseV2MigrationsTest {
         assertTrue(executedSql.any { it == "CREATE INDEX IF NOT EXISTS `index_sticker_items_enabled` ON `sticker_items` (`enabled`)" })
     }
 
+    @Test
+    fun `migration 18 to 19 adds durable whole corpus consolidation state without rewriting rows`() {
+        val executedSql = mutableListOf<String>()
+        val db = recordingDatabase(executedSql)
+
+        ChatDatabaseV2Migrations.MIGRATION_18_19.migrate(db)
+
+        assertEquals(
+            listOf(
+                "ALTER TABLE memory_maintenance_job ADD COLUMN resolved_platform_uid TEXT",
+                "ALTER TABLE memory_maintenance_job ADD COLUMN resolved_model_id TEXT",
+                "ALTER TABLE memory_maintenance_job ADD COLUMN resolved_at INTEGER",
+                "ALTER TABLE memory_activity_log ADD COLUMN job_id TEXT",
+                "ALTER TABLE memory_activity_log ADD COLUMN job_type TEXT",
+                "ALTER TABLE memory_activity_log ADD COLUMN phase TEXT",
+                "ALTER TABLE memory_activity_log ADD COLUMN trigger_reason TEXT",
+                "ALTER TABLE memory_activity_log ADD COLUMN platform_uid TEXT",
+                "ALTER TABLE memory_activity_log ADD COLUMN model_id TEXT",
+                "ALTER TABLE memory_activity_log ADD COLUMN input_count INTEGER",
+                "ALTER TABLE memory_activity_log ADD COLUMN error_code TEXT",
+                "ALTER TABLE memory_activity_log ADD COLUMN phase_summary_json TEXT",
+                "ALTER TABLE memory_activity_log ADD COLUMN row_version INTEGER NOT NULL DEFAULT 0",
+                "CREATE UNIQUE INDEX IF NOT EXISTS `index_memory_activity_log_job_id_attempt` ON `memory_activity_log` (`job_id`, `attempt`)",
+                "ALTER TABLE memory_mutation_receipt ADD COLUMN material_mutation_count INTEGER NOT NULL DEFAULT 0"
+            ),
+            executedSql.take(15)
+        )
+
+        val migrationSql = executedSql.joinToString(separator = "\n")
+        assertTrue(migrationSql.contains("CREATE TABLE IF NOT EXISTS `memory_long_term_consolidation_checkpoint`"))
+        assertTrue(migrationSql.contains("`active_key` TEXT"))
+        assertTrue(migrationSql.contains("`base_source_hash` TEXT NOT NULL"))
+        assertTrue(migrationSql.contains("`result_source_hash` TEXT NOT NULL"))
+        assertTrue(migrationSql.contains("`completed_generation` INTEGER"))
+        assertTrue(migrationSql.contains("`recall_projection_hash` TEXT NOT NULL"))
+        assertTrue(migrationSql.contains("`ordered_entry_ids_json` TEXT NOT NULL"))
+        assertTrue(migrationSql.contains("`partition_cursor` INTEGER NOT NULL DEFAULT 0"))
+        assertTrue(migrationSql.contains("`proposal_hash` TEXT"))
+        assertTrue(migrationSql.contains("`proposal_json` TEXT"))
+        assertTrue(migrationSql.contains("`continuation_required` INTEGER NOT NULL DEFAULT 0"))
+        assertTrue(migrationSql.contains("`material_mutation_count_at_start` INTEGER NOT NULL DEFAULT 0"))
+        assertTrue(migrationSql.contains("`attempt` INTEGER NOT NULL DEFAULT 0"))
+        assertTrue(migrationSql.contains("`row_version` INTEGER NOT NULL DEFAULT 0"))
+        assertTrue(
+            executedSql.any {
+                it == "CREATE UNIQUE INDEX IF NOT EXISTS `index_memory_long_term_consolidation_checkpoint_job_id` ON `memory_long_term_consolidation_checkpoint` (`job_id`)"
+            }
+        )
+        assertTrue(
+            executedSql.any {
+                it == "CREATE UNIQUE INDEX IF NOT EXISTS `index_memory_long_term_consolidation_checkpoint_active_key` ON `memory_long_term_consolidation_checkpoint` (`active_key`)"
+            }
+        )
+        assertTrue(
+            executedSql.any {
+                it == "CREATE INDEX IF NOT EXISTS `index_memory_long_term_consolidation_checkpoint_status_completed_at` ON `memory_long_term_consolidation_checkpoint` (`status`, `completed_at`)"
+            }
+        )
+        assertTrue(
+            executedSql.any {
+                it == "CREATE INDEX IF NOT EXISTS `index_memory_long_term_consolidation_checkpoint_mutation_group_id` ON `memory_long_term_consolidation_checkpoint` (`mutation_group_id`)"
+            }
+        )
+        assertTrue(
+            executedSql.any {
+                it == "CREATE INDEX IF NOT EXISTS `index_memory_long_term_consolidation_checkpoint_base_source_hash` ON `memory_long_term_consolidation_checkpoint` (`base_source_hash`)"
+            }
+        )
+        assertTrue(
+            executedSql.none { sql ->
+                val normalized = sql.trimStart().uppercase()
+                normalized.startsWith("DROP ") ||
+                    normalized.startsWith("DELETE ") ||
+                    normalized.startsWith("UPDATE ") ||
+                    normalized.startsWith("INSERT ")
+            }
+        )
+    }
+
     private fun recordingDatabase(executedSql: MutableList<String>): SupportSQLiteDatabase = Proxy.newProxyInstance(
         SupportSQLiteDatabase::class.java.classLoader,
         arrayOf(SupportSQLiteDatabase::class.java),

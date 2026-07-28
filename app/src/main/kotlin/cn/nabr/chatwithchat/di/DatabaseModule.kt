@@ -2,11 +2,6 @@ package cn.nabr.chatwithchat.di
 
 import android.content.Context
 import androidx.room.Room
-import dagger.Module
-import dagger.Provides
-import dagger.hilt.InstallIn
-import dagger.hilt.android.qualifiers.ApplicationContext
-import dagger.hilt.components.SingletonComponent
 import cn.nabr.chatwithchat.data.database.ChatDatabase
 import cn.nabr.chatwithchat.data.database.ChatDatabaseV2
 import cn.nabr.chatwithchat.data.database.ChatDatabaseV2Migrations
@@ -14,6 +9,7 @@ import cn.nabr.chatwithchat.data.database.dao.ChatPlatformModelV2Dao
 import cn.nabr.chatwithchat.data.database.dao.ChatRoomDao
 import cn.nabr.chatwithchat.data.database.dao.ChatRoomV2Dao
 import cn.nabr.chatwithchat.data.database.dao.MemoryActivityLogDao
+import cn.nabr.chatwithchat.data.database.dao.MemoryLongTermConsolidationDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryMaintenanceJobDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryRecoveryDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryTurnBatchDao
@@ -22,6 +18,11 @@ import cn.nabr.chatwithchat.data.database.dao.MessageV2Dao
 import cn.nabr.chatwithchat.data.database.dao.PlatformModelV2Dao
 import cn.nabr.chatwithchat.data.database.dao.PlatformV2Dao
 import cn.nabr.chatwithchat.data.database.dao.StickerCatalogDao
+import dagger.Module
+import dagger.Provides
+import dagger.hilt.InstallIn
+import dagger.hilt.android.qualifiers.ApplicationContext
+import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 
 @Module
@@ -64,6 +65,10 @@ object DatabaseModule {
     fun provideMemoryActivityLogDao(chatDatabaseV2: ChatDatabaseV2): MemoryActivityLogDao = chatDatabaseV2.memoryActivityLogDao()
 
     @Provides
+    fun provideMemoryLongTermConsolidationDao(chatDatabaseV2: ChatDatabaseV2): MemoryLongTermConsolidationDao =
+        chatDatabaseV2.memoryLongTermConsolidationDao()
+
+    @Provides
     fun provideStickerCatalogDao(chatDatabaseV2: ChatDatabaseV2): StickerCatalogDao = chatDatabaseV2.stickerCatalogDao()
 
     @Provides
@@ -97,6 +102,7 @@ object DatabaseModule {
         ChatDatabaseV2Migrations.MIGRATION_14_15,
         ChatDatabaseV2Migrations.MIGRATION_15_16,
         ChatDatabaseV2Migrations.MIGRATION_16_17,
-        ChatDatabaseV2Migrations.MIGRATION_17_18
+        ChatDatabaseV2Migrations.MIGRATION_17_18,
+        ChatDatabaseV2Migrations.MIGRATION_18_19
     ).build()
 }

@@ -629,29 +629,29 @@ git diff --check
 
 **Implementation requirements:**
 
-- [ ] 增加明确的 `CONSOLIDATE_LONG_TERM_MEMORY` job type，放入 semantic family；不得复用 daily plan 名称掩盖其语义。
-- [ ] 增加 durable checkpoint，至少记录 checkpoint/job identity、trigger reason、canonical file base hash/generation、recall projection hash、entry count、ordered snapshot identity、partition cursor、persisted proposal hash/content、status、row version、attempt/error、首次 claim 后冻结的 resolved memory `platformUid/modelId` 和时间。
-- [ ] 当前 live schema 仍为 18 时，建立 18 -> 19 migration；同一 migration 同时预留 Task 6 需要的 resolved job model identity 与 nullable activity-run structured columns，避免连续无意义 bump。
-- [ ] planner 在累计 20 次 material mutations 或距离上次成功全检 7 天时 enqueue；阈值和周期集中配置并有纯单元测试。
-- [ ] 同一时刻最多一个 active whole-corpus checkpoint/job；startup、boot、manual retry 和 repeated repair 必须收敛到同一 idempotency key。
-- [ ] 本地预检先扫描全部 entries，按 identity、type/scope、normalized text 和可用本地 similarity 生成 bounded candidate groups。
-- [ ] 已有 canonical identity 的确定性 collision 优先本地解决；只把 unkeyed/ambiguous semantic groups交给 LLM。
-- [ ] 大 corpus 用 persisted partitions 遍历全部 frozen entry IDs；每个 request 限制 entries/chars/operations。不得通过 `.take(100)` 声称完成全集整理。
-- [ ] 每个 partition 的 LLM response 一旦校验并持久化，process restart 不再重复调用该 partition；最终 proposal 在 commit 前对整个 snapshot 做 invariant validation。
-- [ ] 第一次需要语义调用时通过共享 `MemoryModelResolver` 解析并 CAS 冻结模型；所有 partitions/retries 使用同一 resolved pair，不因 Memory 页面设置或最近聊天模型变化而漂移。
-- [ ] commit 必须复用 `MemoryMutationCoordinator` 的 CAS、receipt、staging、index reconciliation 和 recovery；禁止直接覆盖 `MEMORY.md`。
-- [ ] base hash 冲突时 discard/replan，不把 stale proposal 套到新文件。
-- [ ] no-op pass 必须不改文件 bytes、不推进 material generation、不 enqueue vector sync；只更新 checkpoint completion/activity。
-- [ ] 每次 pass 最多应用 bounded operations；仍有 work 时基于新 generation 安排 continuation，不能无限单 job。
-- [ ] memory disabled 时 future periodic work 取消或 dismissed，不形成 retry loop；重新启用只恢复一个有效 planner。
+- [x] 增加明确的 `CONSOLIDATE_LONG_TERM_MEMORY` job type，放入 semantic family；不得复用 daily plan 名称掩盖其语义。
+- [x] 增加 durable checkpoint，至少记录 checkpoint/job identity、trigger reason、canonical file base hash/generation、recall projection hash、entry count、ordered snapshot identity、partition cursor、persisted proposal hash/content、status、row version、attempt/error、首次 claim 后冻结的 resolved memory `platformUid/modelId` 和时间。
+- [x] 当前 live schema 仍为 18 时，建立 18 -> 19 migration；同一 migration 同时预留 Task 6 需要的 resolved job model identity 与 nullable activity-run structured columns，避免连续无意义 bump。
+- [x] planner 在累计 20 次 material mutations 或距离上次成功全检 7 天时 enqueue；阈值和周期集中配置并有纯单元测试。
+- [x] 同一时刻最多一个 active whole-corpus checkpoint/job；startup、boot、manual retry 和 repeated repair 必须收敛到同一 idempotency key。
+- [x] 本地预检先扫描全部 entries，按 identity、type/scope、normalized text 和可用本地 similarity 生成 bounded candidate groups。
+- [x] 已有 canonical identity 的确定性 collision 优先本地解决；只把 unkeyed/ambiguous semantic groups交给 LLM。
+- [x] 大 corpus 用 persisted partitions 遍历全部 frozen entry IDs；每个 request 限制 entries/chars/operations。不得通过 `.take(100)` 声称完成全集整理。
+- [x] 每个 partition 的 LLM response 一旦校验并持久化，process restart 不再重复调用该 partition；最终 proposal 在 commit 前对整个 snapshot 做 invariant validation。
+- [x] 第一次需要语义调用时通过共享 `MemoryModelResolver` 解析并 CAS 冻结模型；所有 partitions/retries 使用同一 resolved pair，不因 Memory 页面设置或最近聊天模型变化而漂移。
+- [x] commit 必须复用 `MemoryMutationCoordinator` 的 CAS、receipt、staging、index reconciliation 和 recovery；禁止直接覆盖 `MEMORY.md`。
+- [x] base hash 冲突时 discard/replan，不把 stale proposal 套到新文件。
+- [x] no-op pass 必须不改文件 bytes、不推进 material generation、不 enqueue vector sync；只更新 checkpoint completion/activity。
+- [x] 每次 pass 最多应用 bounded operations；仍有 work 时基于新 generation 安排 continuation，不能无限单 job。
+- [x] memory disabled 时 future periodic work 取消或 dismissed，不形成 retry loop；重新启用只恢复一个有效 planner。
 
 **Acceptance criteria:**
 
-- [ ] 一个超过单请求上限的 corpus 最终每个 entry 都被扫描，cursor 可从 process death 继续。
-- [ ] 两个历史同义称呼在 pass 后收敛为一个 active survivor，且 replay byte-identical。
-- [ ] clean corpus weekly pass 零 LLM calls、零 file/index mutation。
-- [ ] concurrent foreground write 导致 safe replan，不丢新记忆。
-- [ ] populated 18 -> 19 upgrade 保留所有旧表、rows、memory jobs 和 activity logs。
+- [x] 一个超过单请求上限的 corpus 最终每个 entry 都被扫描，cursor 可从 process death 继续。
+- [x] 两个历史同义称呼在 pass 后收敛为一个 active survivor，且 replay byte-identical。
+- [x] clean corpus weekly pass 零 LLM calls、零 file/index mutation。
+- [x] concurrent foreground write 导致 safe replan，不丢新记忆。
+- [x] populated 18 -> 19 upgrade 保留所有旧表、rows、memory jobs 和 activity logs。
 
 **Focused verification:**
 
@@ -660,6 +660,26 @@ git diff --check
 ./gradlew.bat :app:compileDebugKotlin
 git diff --check
 ```
+
+#### Task 3 Implementation Record (2026-07-28)
+
+**Durable whole-corpus pipeline**
+
+- Added the semantic `CONSOLIDATE_LONG_TERM_MEMORY` job, one-active-checkpoint uniqueness, threshold/weekly/continuation planning, persisted frozen entry order and cursor, bounded serialized requests, validated proposal persistence, exact model binding on both job and checkpoint, and per-invocation partition/LLM limits that defer without consuming an automatic retry.
+- Clean canonical corpora complete byte-identically without an LLM or file/index mutation. Deterministic canonical collisions are resolved locally; ambiguous unkeyed or cross-key semantic groups use the frozen memory model. Every commit uses `MemoryMutationCoordinator`, and stale source hashes terminate the old checkpoint before an idempotent replan.
+- Structural duplicate IDs and invalid supersession relationships remain fail-closed for ordinary parsing, but the explicit maintenance path repairs at most 32 actual edits per pass, quarantines unsafe history as contested/maintenance-only, and persists a continuation until all repairable damage is exhausted.
+- The 32-operation cap is enforced against actual changed entries after canonical-identity expansion, not selected candidates or identities. A 40-entry collision changes exactly 32 entries in the first pass and 8 in the continuation, keeps the stable `collision_0` survivor, reports the same actual counts through `operationCount` and the mutation receipt, and becomes byte-identical on replay.
+
+**Schema, recovery, and scheduling**
+
+- Bumped Room from 18 to 19 with the durable checkpoint table, material mutation receipt count, frozen job model columns, and nullable activity-run columns reserved for Task 6. The migration preserves legacy rows and exported schema `19.json`; real Room SQL proves the checkpoint CAS version chain and unique active key.
+- Startup repair, process-death mutation finalization, completed-checkpoint continuation, memory disable/re-enable, operation-cap crash points, and concurrent foreground writes all converge without repeating a persisted LLM partition or losing newer canonical bytes.
+
+**Verification**
+
+- Final focused JVM run passed 170 tests with zero failures/errors/skips across 12 suites: `MarkdownMemoryCodecTest`, `CanonicalMemoryMergePolicyTest`, all `MemoryLongTermConsolidation*` suites, `MemoryModelResolverTest`, `LlmMemoryIntelligenceTest`, `MemoryMaintenanceSchedulerTest`, `MemoryMaintenanceProcessorTest`, `MemoryMutationCoordinatorTest`, and `ChatDatabaseV2MigrationsTest`. Service-level fixtures cover both a 40-entry canonical collision (`32 + 8`) and 40 dangling structural repairs (`32 + 8`, followed by a zero-LLM clean semantic scan).
+- `:app:compileDebugKotlin` and `:app:compileDebugAndroidTestKotlin` passed. ktlint 1.3.1 over every changed Kotlin file and `git diff --check` passed; remaining Java native-access/Unsafe and CRLF messages are informational.
+- On `emulator-5556` (API 35, 16K x86_64), the populated 18 -> 19 migration plus fresh schema 19 reopen passed 2/2, and `MemoryLongTermConsolidationDaoInstrumentedTest` passed 1/1. The generated debug APK manifest application ID was verified as `cn.nabr.chatwithchat`; no pre-existing app package/data was present before connected testing.
 
 ### Task 4: Separate Maintenance, Recall, Embedding, And Prompt Projections
 

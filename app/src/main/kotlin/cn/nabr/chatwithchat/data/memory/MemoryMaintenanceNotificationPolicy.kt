@@ -80,7 +80,8 @@ class MemoryMaintenanceNotificationPolicy {
             MemoryMaintenanceJobType.DISTILL_DAILY_NOTES,
             MemoryMaintenanceJobType.PROMOTE_LONG_TERM_CANDIDATE,
             MemoryMaintenanceJobType.COMPACTION_FLUSH,
-            MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH
+            MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH,
+            MemoryMaintenanceJobType.CONSOLIDATE_LONG_TERM_MEMORY
         )
         val FAILURE_NOTIFICATION_STATUSES = setOf(
             MemoryMaintenanceJobStatus.FAILED_RETRYABLE,
