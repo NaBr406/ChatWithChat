@@ -12,6 +12,7 @@ class ToolPromptBuilder(
         config: ToolLoopConfig = ToolLoopConfig.Default
     ): String {
         val toolManifest = formatFallbackToolManifest(tools)
+        val priorResults = scratchpad.mapNotNull(ToolMessage::toolResult)
         val promptPrefix = buildString {
             appendLine("You may call an enabled tool before answering.")
             appendLine("Return exactly one JSON object. Never use Markdown, XML, tool tags, or bare IDs.")
@@ -31,6 +32,9 @@ class ToolPromptBuilder(
                 appendLine("- fetch_url: read only a page that is useful to the answer.")
             }
             fallbackStickerToolUsageRules(tools).forEach { rule -> appendLine("- $rule") }
+            stickerContinuationInstruction(priorResults)?.let { instruction ->
+                appendLine("- Next sticker action: $instruction")
+            }
             appendLine()
             appendLine("Enabled tool signatures:")
             append(toolManifest)
@@ -192,7 +196,7 @@ private fun fallbackStickerToolUsageRules(tools: Collection<ToolDefinition>): Li
 
     return buildList {
         if (hasSearch && hasSend) {
-            add("Stickers express your own response. Search first, then send one exact returned ID; never mirror the user's mood by default.")
+            add("Stickers are a proactive part of your reply voice; no request is needed. In low-stakes casual conversation, when you feel a clear reaction, usually express it with one sticker. Choose what you feel like expressing, not a label for the user's mood. Search first, then send one exact returned ID. Do not skip only because stickers were not mentioned or force one into every reply. Skip proactive use in safety-sensitive, medical, legal, financial, account, payment, or error-recovery replies.")
         } else if (hasSearch) {
             add("search_stickers only finds candidates and does not display one.")
         }
@@ -210,7 +214,7 @@ internal fun stickerToolUsageRules(tools: Collection<ToolDefinition>): List<Stri
 
     return buildList {
         if (hasSearch && hasSend) {
-            add("Treat a sticker as part of your own response voice. Decide the reaction or attitude you want to express, search for that self-expression, and send the candidate that represents it best. Do not merely mirror the user's mood or let the user choose the emotion. An explicit sticker request requires a send, but the emotional choice remains yours. A second different search is allowed only when no candidate expresses your intended reaction.")
+            add("Treat stickers as a normal optional reply modality; the user need not request one. In low-stakes casual conversation, when you feel a clear reaction, usually express it with one sticker. Base the decision on what you feel like expressing, not a label copied from the user's mood. Never skip only because stickers were not mentioned, but do not force one into every reply. Search first, then send the best returned candidate. An explicit request requires a send; retry once only if no candidate fits. Skip proactive use in safety-sensitive, medical, legal, financial, account, payment, or error-recovery replies.")
         } else if (hasSearch) {
             add("search_stickers only discovers candidates and does not display a sticker.")
         }

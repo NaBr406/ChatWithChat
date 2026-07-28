@@ -2937,15 +2937,14 @@ internal fun isGroqGptOssModel(model: String): Boolean = isGptOssModel(model)
 
 private const val MAX_SEARCH_QUERY_COUNT = 2
 private const val OPENAI_FUNCTION_CALL_TYPE = "function_call"
-private const val OPENAI_NATIVE_TOOL_INSTRUCTION =
-    "Use the available tools only when the latest user request needs current web information or source inspection. " +
-        "When calling web_search, rewrite the user's request into a concise search-engine query with the likely entity, topic, timeframe, geography/source scope, and official or primary-source terms when useful; do not merely copy the user's wording. " +
-        "Prefer the user's language for local or regional facts. " +
-        "Do not use web_search for the user's local date, time, timezone, device state, or app settings. " +
-        "Prefer answering directly when the conversation is enough. If you use web sources, cite source URLs in the answer."
+private const val OPENAI_NATIVE_WEB_SEARCH_INSTRUCTION =
+    "Use web_search only when current web information or source inspection is needed. " +
+        "For web_search, write a concise query with useful entity, topic, timeframe, geography, source scope, and primary-source terms. " +
+        "Prefer the user's language for regional facts. Never use web_search for local date, time, timezone, device state, or app settings. " +
+        "Cite source URLs when web sources inform the answer."
 private const val OPENAI_NATIVE_GENERIC_TOOL_INSTRUCTION =
-    "Use the available tools only when the latest user request needs them. " +
-        "Keep tool arguments concise and prefer answering directly when the conversation is enough."
+    "Except for expressive tools whose definitions allow spontaneous use, call tools only when the latest user request needs their capability. " +
+        "Keep arguments concise; answer factual requests directly when the conversation is enough."
 private const val OPENAI_NATIVE_FINAL_TOOL_INSTRUCTION =
     "Do not call more tools. Use the available function_call_output items when relevant and provide the final answer. " +
         "If the user's request is broad or underspecified but the tool results are usable, answer with the most reasonable default scope, state that scope briefly, and avoid asking a clarifying question before giving useful content."
@@ -3200,17 +3199,16 @@ internal fun currentRuntimeContextPrompt(): String {
         "- Use this runtime context for simple date, time, and timezone questions. Do not use external lookup to determine local clock time."
 }
 
-private fun openAINativeToolInstruction(activeToolDefinitions: List<ToolDefinition>): String {
-    val baseInstruction = if (activeToolDefinitions.any { definition -> definition.name == ToolDefinition.WebSearch.name }) {
-        OPENAI_NATIVE_TOOL_INSTRUCTION
-    } else {
-        OPENAI_NATIVE_GENERIC_TOOL_INSTRUCTION
+internal fun openAINativeToolInstruction(activeToolDefinitions: List<ToolDefinition>): String {
+    val webInstruction = OPENAI_NATIVE_WEB_SEARCH_INSTRUCTION.takeIf {
+        activeToolDefinitions.any { definition -> definition.name == ToolDefinition.WebSearch.name }
     }
     val stickerInstruction = stickerToolUsageRules(activeToolDefinitions)
         .joinToString(separator = " ")
         .takeIf(String::isNotBlank)
     return listOfNotNull(
-        baseInstruction,
+        OPENAI_NATIVE_GENERIC_TOOL_INSTRUCTION,
+        webInstruction,
         stickerInstruction
     ).joinToString(separator = "\n\n")
 }

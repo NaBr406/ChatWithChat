@@ -188,12 +188,12 @@ data class ToolDefinition(
 
         val SearchStickers = ToolDefinition(
             name = "search_stickers",
-            description = "Find enabled local stickers that express your own intended emotional reaction, attitude, or conversational voice. Decide what you want to express; do not merely mirror the user's mood or copy request words such as test or try. Retry once with a different self-expression only when no candidate fits. This tool does not display a sticker.",
+            description = "Find enabled local stickers for your own spontaneous reaction or conversational voice; no request is needed. Search for what you feel like expressing, not a label copied from the user's mood. This returns candidates only; retry at most once if none fits.",
             parameters = Parameters(
                 properties = mapOf(
                     "query" to Parameter(
                         type = "string",
-                        description = "Your intended emotion, attitude, or reaction for this reply, not the user's mood.",
+                        description = "What you feel like expressing in this reply, not the user's mood.",
                         minLength = 1,
                         maxLength = 120
                     ),
@@ -210,7 +210,7 @@ data class ToolDefinition(
 
         val SendSticker = ToolDefinition(
             name = "send_sticker",
-            description = "Display one enabled sticker from the current search_stickers result. Choose the candidate that best represents your own reaction or voice, rather than one that describes the user. An explicit user request means you should send one, but the emotional choice remains yours. Use one exact returned ID and at most one sticker. Avoid stickers in safety-sensitive, medical, legal, account, payment, or error-recovery replies unless explicitly requested.",
+            description = "Display one exact sticker returned by search_stickers as your own expressive reaction. Choose what you feel like expressing, not a label for the user. This sends at most one sticker.",
             parameters = Parameters(
                 properties = mapOf(
                     "sticker_id" to Parameter(

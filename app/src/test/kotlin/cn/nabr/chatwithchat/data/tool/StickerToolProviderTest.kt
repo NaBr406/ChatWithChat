@@ -382,10 +382,12 @@ class StickerToolProviderTest {
             """{"type":"tool_calls","tool_calls":[{"id":"call_send","name":"send_sticker","arguments":{"sticker_id":"$candidateId"}}]}""",
             """{"type":"final_answer","content":"I understand."}"""
         )
+        val prompts = mutableListOf<String>()
 
         val result = orchestrator.runLoop(
             tools = listOf(searchProvider.definition, sendProvider.definition)
-        ) {
+        ) { prompt ->
+            prompts += prompt
             Result.success(responses.removeAt(0))
         }
 
@@ -393,6 +395,8 @@ class StickerToolProviderTest {
         val toolResults = (result as ToolLoopResult.ToolResults).results
         assertFalse(toolResults.single { it.name == "search_stickers" }.isError)
         assertFalse(toolResults.single { it.name == "send_sticker" }.isError)
+        assertTrue(prompts[1].contains("call send_sticker now"))
+        assertTrue(prompts[1].contains(candidateId))
         assertEquals(
             listOf("call_send"),
             orchestrator.presentationArtifacts(toolResults).map { artifact -> artifact.instanceId }

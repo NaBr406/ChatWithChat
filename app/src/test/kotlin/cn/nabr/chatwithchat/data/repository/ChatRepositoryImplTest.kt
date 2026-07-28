@@ -1332,9 +1332,9 @@ class ChatRepositoryImplTest {
     }
 
     @Test
-    fun `openai native sticker tools forbid text imitation and require send sticker`() = runBlocking {
+    fun `openai native sticker tools encourage proactive self expression and forbid text imitation`() = runBlocking {
         val openAIAPI = RecordingOpenAIAPI(
-            responsesResponses = mutableListOf(responseTextFlow("No sticker needed", null))
+            responsesResponses = mutableListOf(responseTextFlow("That calls for a celebration.", null))
         )
         val stickerProviders = listOf(
             noOpToolProvider(
@@ -1364,7 +1364,7 @@ class ChatRepositoryImplTest {
         )
 
         repository.completeChat(
-            userMessages = listOf(MessageV2(content = "Send a sticker", platformType = null)),
+            userMessages = listOf(MessageV2(content = "I finally wrapped up that exhausting project.", platformType = null)),
             assistantMessages = emptyList(),
             platform = openAIPlatform()
         ).toList()
@@ -1374,11 +1374,38 @@ class ChatRepositoryImplTest {
             listOf(ToolDefinition.SearchStickers.name, ToolDefinition.SendSticker.name),
             request.tools.orEmpty().map { tool -> tool.name }
         )
-        assertTrue(request.instructions.orEmpty().contains("part of your own response voice"))
-        assertTrue(request.instructions.orEmpty().contains("Do not merely mirror the user's mood"))
-        assertTrue(request.instructions.orEmpty().contains("the emotional choice remains yours"))
+        assertTrue(request.instructions.orEmpty().contains("normal optional reply modality"))
+        assertTrue(request.instructions.orEmpty().contains("usually express it with one sticker"))
+        assertTrue(request.instructions.orEmpty().contains("Never skip only because stickers were not mentioned"))
+        assertTrue(request.instructions.orEmpty().contains("what you feel like expressing"))
+        assertTrue(request.instructions.orEmpty().contains("do not force one into every reply"))
+        assertTrue(request.instructions.orEmpty().contains("An explicit request requires a send"))
+        assertTrue(request.instructions.orEmpty().contains("Except for expressive tools"))
+        assertFalse(request.instructions.orEmpty().contains("Use the available tools only when the latest user request needs them"))
         assertTrue(request.instructions.orEmpty().contains("Only a successful send_sticker sends a sticker"))
         assertTrue(request.instructions.orEmpty().contains("[assistant sent sticker: ...]"))
+    }
+
+    @Test
+    fun `native web guidance does not gate proactive stickers on a web information need`() {
+        val instruction = openAINativeToolInstruction(
+            listOf(
+                ToolDefinition.WebSearch,
+                ToolDefinition.SearchStickers,
+                ToolDefinition.SendSticker
+            )
+        )
+
+        assertTrue(instruction.contains("Use web_search only"))
+        assertFalse(instruction.contains(ToolDefinition.FetchUrl.name))
+        assertTrue(instruction.contains("Except for expressive tools"))
+        assertTrue(instruction.contains("usually express it with one sticker"))
+        assertTrue(instruction.contains("Never skip only because stickers were not mentioned"))
+        assertFalse(instruction.contains("Use the available tools only when the latest user request needs current web information"))
+
+        val noStickerInstruction = openAINativeToolInstruction(listOf(ToolDefinition.CurrentDateTime))
+        assertFalse(noStickerInstruction.contains(ToolDefinition.SearchStickers.name))
+        assertFalse(noStickerInstruction.contains(ToolDefinition.SendSticker.name))
     }
 
     @Test

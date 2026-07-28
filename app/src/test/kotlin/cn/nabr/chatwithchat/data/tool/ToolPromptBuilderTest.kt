@@ -87,11 +87,50 @@ class ToolPromptBuilderTest {
             tools = listOf(ToolDefinition.SearchStickers, ToolDefinition.SendSticker)
         )
 
-        assertTrue(prompt.contains("Stickers express your own response"))
+        assertTrue(prompt.contains("Stickers are a proactive part of your reply voice"))
+        assertTrue(prompt.contains("no request is needed"))
+        assertTrue(prompt.contains("usually express it with one sticker"))
+        assertTrue(prompt.contains("Do not skip only because stickers were not mentioned"))
         assertTrue(prompt.contains("Search first, then send one exact returned ID"))
-        assertTrue(prompt.contains("never mirror the user's mood by default"))
+        assertTrue(prompt.contains("force one into every reply"))
+        assertTrue(prompt.contains("Skip proactive use in safety-sensitive"))
         assertTrue(prompt.contains("Only send_sticker displays one"))
         assertTrue(prompt.contains("Never simulate a send with text"))
+    }
+
+    @Test
+    fun `native sticker guidance encourages proactive self expression without forcing every reply`() {
+        val prompt = stickerToolUsageRules(
+            listOf(ToolDefinition.SearchStickers, ToolDefinition.SendSticker)
+        ).joinToString(separator = " ")
+
+        assertTrue(prompt.contains("normal optional reply modality"))
+        assertTrue(prompt.contains("usually express it with one sticker"))
+        assertTrue(prompt.contains("Never skip only because stickers were not mentioned"))
+        assertTrue(prompt.contains("what you feel like expressing"))
+        assertTrue(prompt.contains("do not force one into every reply"))
+        assertTrue(prompt.contains("Skip proactive use in safety-sensitive"))
+    }
+
+    @Test
+    fun `fallback sticker candidate directs the next round to send sticker`() {
+        val prompt = ToolPromptBuilder().buildJsonFallbackPrompt(
+            tools = listOf(ToolDefinition.SearchStickers, ToolDefinition.SendSticker),
+            scratchpad = listOf(
+                ToolMessage.toolResult(
+                    ToolResult(
+                        callId = "search_1",
+                        name = ToolDefinition.SearchStickers.name,
+                        content = "sticker_id=builtin.reactions.celebrate",
+                        metadata = mapOf("candidate_count" to "1")
+                    )
+                )
+            )
+        )
+
+        assertTrue(prompt.contains("Next sticker action:"))
+        assertTrue(prompt.contains("call send_sticker now"))
+        assertTrue(prompt.contains("sticker_id=builtin.reactions.celebrate"))
     }
 
     @Test
