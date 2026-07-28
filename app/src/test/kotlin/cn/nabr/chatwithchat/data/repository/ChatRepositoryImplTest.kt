@@ -1,6 +1,7 @@
 package cn.nabr.chatwithchat.data.repository
 
 import android.content.ContextWrapper
+import android.net.Uri
 import cn.nabr.chatwithchat.data.context.ContextBuilder
 import cn.nabr.chatwithchat.data.database.entity.MessageSourceMetadata
 import cn.nabr.chatwithchat.data.database.entity.MessageStickerRef
@@ -70,10 +71,21 @@ import cn.nabr.chatwithchat.data.model.ReasoningMode
 import cn.nabr.chatwithchat.data.network.AnthropicAPI
 import cn.nabr.chatwithchat.data.network.GoogleAPI
 import cn.nabr.chatwithchat.data.network.GroqAPI
+import cn.nabr.chatwithchat.data.network.NetworkClient
 import cn.nabr.chatwithchat.data.network.OpenAIAPI
 import cn.nabr.chatwithchat.data.network.UploadedProviderFile
+import cn.nabr.chatwithchat.data.sticker.StickerCatalogItem
+import cn.nabr.chatwithchat.data.sticker.StickerImportBatchResult
+import cn.nabr.chatwithchat.data.sticker.StickerItemMetadata
+import cn.nabr.chatwithchat.data.sticker.StickerPresentationArtifact
+import cn.nabr.chatwithchat.data.sticker.StickerRepository
+import cn.nabr.chatwithchat.data.sticker.StickerResolution
+import cn.nabr.chatwithchat.data.sticker.StickerSearchCandidate
+import cn.nabr.chatwithchat.data.token.TokenUsageEstimator
 import cn.nabr.chatwithchat.data.token.TokenUsageRecord
 import cn.nabr.chatwithchat.data.tool.BuiltInTools
+import cn.nabr.chatwithchat.data.tool.SearchStickersToolProvider
+import cn.nabr.chatwithchat.data.tool.SendStickerToolProvider
 import cn.nabr.chatwithchat.data.tool.ToolCall
 import cn.nabr.chatwithchat.data.tool.ToolCallingMode
 import cn.nabr.chatwithchat.data.tool.ToolDefinition
@@ -97,6 +109,7 @@ import cn.nabr.chatwithchat.data.websearch.WebSearchRepository
 import cn.nabr.chatwithchat.data.websearch.WebSearchResult
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
 import java.lang.reflect.InvocationHandler
 import java.lang.reflect.Proxy
 import java.util.UUID
@@ -109,6 +122,8 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import org.junit.Assert.assertEquals
@@ -1521,6 +1536,112 @@ class ChatRepositoryImplTest {
         val finalRequest = openAIAPI.responsesRequests[2]
         assertTrue(finalRequest.instructions.orEmpty().contains("贴图已进入本地渲染队列"))
         assertTrue(finalRequest.instructions.orEmpty().contains("不要再调用贴图工具"))
+    }
+
+    @Test
+    fun `current sticker request baseline report is deterministic across provider DTOs`() = runBlocking {
+        val rows = listOf(
+            jsonFallbackChatStickerBaseline("custom_json", customPlatform()),
+            jsonFallbackChatStickerBaseline("ollama_json", ollamaPlatform()),
+            groqJsonStickerBaseline(),
+            openAIResponsesStickerBaseline(),
+            openRouterStickerBaseline(),
+            anthropicStickerBaseline(),
+            googleStickerBaseline()
+        )
+
+        println(
+            "sticker-request-baseline|provider|model_requests|tool_executions|" +
+                "request_chars|estimated_input_tokens|system_chars|history_chars|memory_chars|" +
+                "tool_schema_chars|tool_result_chars|advertised_tools|candidate_occurrences|" +
+                "answer_usage|tool_usage|usage_details|sticker_presentations"
+        )
+        rows.forEach { row -> println(row.tableRow()) }
+        assertEquals(EXPECTED_STICKER_BASELINE_ROWS, rows.map(ToolRequestBaselineRow::tableRow))
+
+        rows.filter { row -> row.name.endsWith("_json") }.forEach { row ->
+            assertEquals("${row.name} model request baseline", 4, row.modelRequests)
+            assertEquals("${row.name} local execution baseline", 2, row.toolExecutions)
+            assertTrue(row.advertisedToolCounts.all { count -> count == 0 })
+        }
+        rows.filterNot { row -> row.name.endsWith("_json") }.forEach { row ->
+            assertEquals("${row.name} model request baseline", 3, row.modelRequests)
+            assertEquals("${row.name} local execution baseline", 2, row.toolExecutions)
+            assertTrue("${row.name} currently repeats tools in the final request", row.advertisedToolCounts.last() > 0)
+        }
+        assertTrue(rows.all { row -> !row.usage.isEstimated })
+        assertTrue(rows.all { row -> row.usage.details > 0 })
+        assertTrue(rows.all { row -> row.stickerPresentations == 1 })
+        assertTrue(rows.all { row -> row.serializedChars.all { chars -> chars > 0 } })
+        assertTrue(rows.all { row -> row.estimatedInputTokens.all { tokens -> tokens > 0 } })
+    }
+
+    @Test
+    fun `false auto search decision adds one request and drops its usage baseline`() = runBlocking {
+        val executions = intArrayOf(0)
+        var decisionRequests = 0
+        val decisionUsage = ProviderUsage(promptTokens = 11, completionTokens = 3, totalTokens = 14)
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatCompletionFlow(
+                    baselineJsonToolCall("search_1", ToolDefinition.SearchStickers.name, "{\"query\":\"crying cat\"}"),
+                    baselineProviderUsage(1)
+                ),
+                chatCompletionFlow(
+                    baselineJsonToolCall("send_1", ToolDefinition.SendSticker.name, "{\"sticker_id\":\"$BASELINE_STICKER_ID\"}"),
+                    baselineProviderUsage(2)
+                ),
+                chatCompletionFlow(
+                    "{\"type\":\"final_answer\",\"content\":\"Baseline draft\"}",
+                    baselineProviderUsage(3)
+                ),
+                chatCompletionFlow("Baseline formal final", baselineProviderUsage(4))
+            )
+        )
+        val searchDecisionService = SearchDecisionService(
+            SearchDecisionModelClient { _, _ ->
+                decisionRequests += 1
+                Result.success(
+                    SearchDecisionModelResponse(
+                        content = "{\"shouldSearch\":false,\"queries\":[],\"reason\":\"not needed\"}",
+                        usage = decisionUsage
+                    )
+                )
+            }
+        )
+        val states = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(WebSearchMode.Auto, ToolCallingMode.Auto),
+            toolLoopOrchestrator = baselineStickerToolLoop(executions, includeWebSearch = true),
+            searchDecisionService = searchDecisionService
+        ).completeChat(
+            userMessages = listOf(MessageV2(content = "Send a sticker", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform(),
+            memoryPrompt = BASELINE_MEMORY_PROMPT
+        ).toList()
+
+        val visibleUsage = states.filterIsInstance<ApiState.UsageUpdated>().single().usage
+        println(
+            "web-decision-baseline|decision=false|decision_requests=$decisionRequests|" +
+                "answer_requests=${openAIAPI.chatCompletionRequests.size}|total_requests=${decisionRequests + openAIAPI.chatCompletionRequests.size}|" +
+                "provider_usage=${decisionUsage.promptTokens}/${decisionUsage.completionTokens}/${decisionUsage.totalTokens}|" +
+                "exposed_answer_usage=${visibleUsage.inputTokens}/${visibleUsage.outputTokens}/${visibleUsage.totalTokens}|" +
+                "exposed_tool_usage=${visibleUsage.toolInputTokens}/${visibleUsage.toolOutputTokens}/${visibleUsage.toolTotalTokens}"
+        )
+
+        assertEquals(1, decisionRequests)
+        assertEquals(4, openAIAPI.chatCompletionRequests.size)
+        assertEquals(2, executions.single())
+        assertEquals(1, states.filterIsInstance<ApiState.StickerAdded>().size)
+        assertEquals(40, visibleUsage.inputTokens)
+        assertEquals(4, visibleUsage.outputTokens)
+        assertEquals(44, visibleUsage.totalTokens)
+        assertEquals(100, visibleUsage.toolInputTokens)
+        assertEquals(10, visibleUsage.toolOutputTokens)
+        assertEquals(110, visibleUsage.toolTotalTokens)
+        assertEquals(4, visibleUsage.details.size)
+        assertFalse(visibleUsage.details.any { detail -> detail.label == "\u641c\u7d22\u51b3\u7b56" })
     }
 
     @Test
@@ -3244,6 +3365,58 @@ class ChatRepositoryImplTest {
         val toolTotalTokens: Int
     )
 
+    private data class ToolRequestBaselineRow(
+        val name: String,
+        val modelRequests: Int,
+        val toolExecutions: Int,
+        val serializedChars: List<Int>,
+        val estimatedInputTokens: List<Int>,
+        val breakdowns: List<ToolRequestBreakdown>,
+        val advertisedToolCounts: List<Int>,
+        val candidateOccurrences: Int,
+        val usage: BaselineUsage,
+        val stickerPresentations: Int
+    ) {
+        fun tableRow(): String = listOf(
+            "sticker-request-baseline",
+            name,
+            modelRequests,
+            toolExecutions,
+            serializedChars.joinToString(","),
+            estimatedInputTokens.joinToString(","),
+            breakdowns.joinToString(",") { value -> value.systemChars.toString() },
+            breakdowns.joinToString(",") { value -> value.historyChars.toString() },
+            breakdowns.joinToString(",") { value -> value.memoryChars.toString() },
+            breakdowns.joinToString(",") { value -> value.toolSchemaChars.toString() },
+            breakdowns.joinToString(",") { value -> value.toolResultChars.toString() },
+            advertisedToolCounts.joinToString(","),
+            candidateOccurrences,
+            "${usage.inputTokens}/${usage.outputTokens}/${usage.totalTokens}",
+            "${usage.toolInputTokens}/${usage.toolOutputTokens}/${usage.toolTotalTokens}",
+            usage.details,
+            stickerPresentations
+        ).joinToString("|")
+    }
+
+    private data class BaselineUsage(
+        val inputTokens: Int,
+        val outputTokens: Int,
+        val totalTokens: Int,
+        val toolInputTokens: Int,
+        val toolOutputTokens: Int,
+        val toolTotalTokens: Int,
+        val isEstimated: Boolean,
+        val details: Int
+    )
+
+    private data class ToolRequestBreakdown(
+        val systemChars: Int,
+        val historyChars: Int,
+        val memoryChars: Int,
+        val toolSchemaChars: Int,
+        val toolResultChars: Int
+    )
+
     private fun createRepository(
         groqAPI: GroqAPI = FakeGroqAPI(emptyFlow()),
         openAIAPI: OpenAIAPI = RecordingOpenAIAPI(),
@@ -3391,6 +3564,20 @@ class ChatRepositoryImplTest {
         const val PROVIDER_BASE_SYSTEM_MARKER = "__PROVIDER_BASE_SYSTEM_5CFA__"
         const val PROVIDER_MEMORY_MARKER = "__PROVIDER_MEMORY_EXACTLY_ONCE_7E31__"
         const val PROVIDER_CHAT_ID = 73
+        const val BASELINE_STICKER_ID = "builtin.reactions.crying_cat"
+        const val BASELINE_MEMORY_PROMPT = "Relevant memory: user prefers concise Chinese replies."
+        const val FALLBACK_TOOL_SCHEMA_MARKER = "Enabled tool signatures:"
+        const val FALLBACK_TOOL_SCRATCHPAD_MARKER = "Tool scratchpad:"
+        val BASELINE_RUNTIME_DATE_TIME_REGEX = Regex("\\d{4}-\\d{2}-\\d{2}T[^ ]+ \\([^)]*\\)")
+        val EXPECTED_STICKER_BASELINE_ROWS = listOf(
+            "sticker-request-baseline|custom_json|4|2|1371,1748,1928,1069|614,778,866,513|1155,1517,1686,849|67,67,67,67|54,54,54,54|159,159,159,0|0,247,447,0|0,0,0,0|5|40/4/44|100/10/110|4|1",
+            "sticker-request-baseline|ollama_json|4|2|1367,1744,1924,1065|617,781,869,516|1155,1517,1686,849|67,67,67,67|54,54,54,54|159,159,159,0|0,247,447,0|0,0,0,0|5|40/4/44|100/10/110|4|1",
+            "sticker-request-baseline|groq_json|4|2|1422,1799,1979,1120|631,795,883,530|1155,1517,1686,849|67,67,67,67|54,54,54,54|159,159,159,0|0,247,447,0|0,0,0,0|5|40/4/44|100/10/110|4|1",
+            "sticker-request-baseline|openai_responses|3|2|1529,2208,2513|648,850,949|586,675,644|42,42,42|54,54,54|803,803,803|0,586,920|2,2,2|5|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|openrouter_native|3|2|1672,2403,2740|852,1081,1196|586,674,643|67,67,67|54,54,54|829,829,829|0,616,982|2,2,2|5|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|anthropic_native|3|2|1525,2227,2557|825,1048,1163|586,675,644|67,67,67|54,54,54|742,742,742|0,609,968|2,2,2|5|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|google_native|3|2|1497,2160,2465|814,1027,1138|586,674,643|51,51,51|54,54,54|707,707,707|0,562,896|2,2,2|5|30/3/33|60/6/66|3|1"
+        )
     }
 
     private fun List<ApiState>.withoutUsageUpdates(): List<ApiState> =
@@ -3469,6 +3656,551 @@ class ChatRepositoryImplTest {
         stream = true
     )
 
+    private suspend fun jsonFallbackChatStickerBaseline(
+        name: String,
+        platform: PlatformV2
+    ): ToolRequestBaselineRow {
+        val executions = intArrayOf(0)
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatCompletionFlow(
+                    baselineJsonToolCall("search_1", ToolDefinition.SearchStickers.name, "{\"query\":\"crying cat\"}"),
+                    baselineProviderUsage(1)
+                ),
+                chatCompletionFlow(
+                    baselineJsonToolCall("send_1", ToolDefinition.SendSticker.name, "{\"sticker_id\":\"$BASELINE_STICKER_ID\"}"),
+                    baselineProviderUsage(2)
+                ),
+                chatCompletionFlow(
+                    "{\"type\":\"final_answer\",\"content\":\"Baseline draft\"}",
+                    baselineProviderUsage(3)
+                ),
+                chatCompletionFlow("Baseline formal final", baselineProviderUsage(4))
+            )
+        )
+        val states = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(WebSearchMode.Off, ToolCallingMode.Auto),
+            toolLoopOrchestrator = baselineStickerToolLoop(executions)
+        ).completeChat(
+            userMessages = listOf(MessageV2(content = "Send a sticker", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = platform,
+            memoryPrompt = BASELINE_MEMORY_PROMPT
+        ).toList()
+
+        return toolRequestBaselineRow(
+            name = name,
+            platform = platform,
+            payloads = openAIAPI.chatCompletionRequests.map { request ->
+                NetworkClient.openAIJson.encodeToString(request)
+            },
+            breakdowns = openAIAPI.chatCompletionRequests.map(::chatToolRequestBreakdown),
+            advertisedToolCounts = openAIAPI.chatCompletionRequests.map { request -> request.tools.orEmpty().size },
+            toolExecutions = executions.single(),
+            states = states
+        )
+    }
+
+    private suspend fun groqJsonStickerBaseline(): ToolRequestBaselineRow {
+        val executions = intArrayOf(0)
+        val groqAPI = FakeGroqAPI(
+            responses = mutableListOf(
+                groqCompletionFlow(
+                    baselineJsonToolCall("search_1", ToolDefinition.SearchStickers.name, "{\"query\":\"crying cat\"}"),
+                    baselineProviderUsage(1)
+                ),
+                groqCompletionFlow(
+                    baselineJsonToolCall("send_1", ToolDefinition.SendSticker.name, "{\"sticker_id\":\"$BASELINE_STICKER_ID\"}"),
+                    baselineProviderUsage(2)
+                ),
+                groqCompletionFlow(
+                    "{\"type\":\"final_answer\",\"content\":\"Baseline draft\"}",
+                    baselineProviderUsage(3)
+                ),
+                groqCompletionFlow("Baseline formal final", baselineProviderUsage(4))
+            )
+        )
+        val platform = groqPlatform(reasoning = false, model = "llama-3.3-70b-versatile")
+        val states = createRepository(
+            groqAPI = groqAPI,
+            settingRepository = settingRepository(WebSearchMode.Off, ToolCallingMode.Auto),
+            toolLoopOrchestrator = baselineStickerToolLoop(executions)
+        ).completeChat(
+            userMessages = listOf(MessageV2(content = "Send a sticker", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = platform,
+            memoryPrompt = BASELINE_MEMORY_PROMPT
+        ).toList()
+
+        return toolRequestBaselineRow(
+            name = "groq_json",
+            platform = platform,
+            payloads = groqAPI.requests.map { request -> NetworkClient.json.encodeToString(request) },
+            breakdowns = groqAPI.requests.map { request -> chatToolRequestBreakdown(request.messages) },
+            advertisedToolCounts = List(groqAPI.requests.size) { 0 },
+            toolExecutions = executions.single(),
+            states = states
+        )
+    }
+
+    private suspend fun openAIResponsesStickerBaseline(): ToolRequestBaselineRow {
+        val executions = intArrayOf(0)
+        val openAIAPI = RecordingOpenAIAPI(
+            responsesResponses = mutableListOf(
+                responsesBaselineToolFlow(
+                    itemId = "search",
+                    callId = "search_1",
+                    name = ToolDefinition.SearchStickers.name,
+                    arguments = "{\"query\":\"crying cat\"}",
+                    usage = baselineProviderUsage(1)
+                ),
+                responsesBaselineToolFlow(
+                    itemId = "send",
+                    callId = "send_1",
+                    name = ToolDefinition.SendSticker.name,
+                    arguments = "{\"sticker_id\":\"$BASELINE_STICKER_ID\"}",
+                    usage = baselineProviderUsage(2)
+                ),
+                responseTextFlow("Baseline formal final", baselineProviderUsage(3))
+            )
+        )
+        val platform = openAIPlatform()
+        val states = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(WebSearchMode.Off, ToolCallingMode.Auto),
+            toolLoopOrchestrator = baselineStickerToolLoop(executions)
+        ).completeChat(
+            userMessages = listOf(MessageV2(content = "Send a sticker", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = platform,
+            memoryPrompt = BASELINE_MEMORY_PROMPT
+        ).toList()
+
+        return toolRequestBaselineRow(
+            name = "openai_responses",
+            platform = platform,
+            payloads = openAIAPI.responsesRequests.map { request ->
+                NetworkClient.openAIJson.encodeToString(request)
+            },
+            breakdowns = openAIAPI.responsesRequests.map(::responsesToolRequestBreakdown),
+            advertisedToolCounts = openAIAPI.responsesRequests.map { request -> request.tools.orEmpty().size },
+            toolExecutions = executions.single(),
+            states = states
+        )
+    }
+
+    private suspend fun openRouterStickerBaseline(): ToolRequestBaselineRow {
+        val executions = intArrayOf(0)
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatToolCallFlow(
+                    "search_1",
+                    ToolDefinition.SearchStickers.name,
+                    "{\"query\":\"crying cat\"}",
+                    baselineProviderUsage(1)
+                ),
+                chatToolCallFlow(
+                    "send_1",
+                    ToolDefinition.SendSticker.name,
+                    "{\"sticker_id\":\"$BASELINE_STICKER_ID\"}",
+                    baselineProviderUsage(2)
+                ),
+                chatCompletionFlow("Baseline formal final", baselineProviderUsage(3))
+            )
+        )
+        val platform = openRouterPlatform()
+        val states = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(WebSearchMode.Off, ToolCallingMode.Auto),
+            toolLoopOrchestrator = baselineStickerToolLoop(executions)
+        ).completeChat(
+            userMessages = listOf(MessageV2(content = "Send a sticker", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = platform,
+            memoryPrompt = BASELINE_MEMORY_PROMPT
+        ).toList()
+
+        return toolRequestBaselineRow(
+            name = "openrouter_native",
+            platform = platform,
+            payloads = openAIAPI.chatCompletionRequests.map { request ->
+                NetworkClient.openAIJson.encodeToString(request)
+            },
+            breakdowns = openAIAPI.chatCompletionRequests.map(::chatToolRequestBreakdown),
+            advertisedToolCounts = openAIAPI.chatCompletionRequests.map { request -> request.tools.orEmpty().size },
+            toolExecutions = executions.single(),
+            states = states
+        )
+    }
+
+    private suspend fun anthropicStickerBaseline(): ToolRequestBaselineRow {
+        val executions = intArrayOf(0)
+        val anthropicAPI = RecordingAnthropicAPI(
+            responses = mutableListOf(
+                anthropicBaselineToolFlow(
+                    "search_1",
+                    ToolDefinition.SearchStickers.name,
+                    "{\"query\":\"crying cat\"}",
+                    usageRound = 1
+                ),
+                anthropicBaselineToolFlow(
+                    "send_1",
+                    ToolDefinition.SendSticker.name,
+                    "{\"sticker_id\":\"$BASELINE_STICKER_ID\"}",
+                    usageRound = 2
+                ),
+                anthropicTextFlow(
+                    content = "Baseline formal final",
+                    inputTokens = 30,
+                    cacheCreationInputTokens = 0,
+                    cacheReadInputTokens = 0,
+                    outputTokens = 3,
+                    includeProviderUsage = true
+                )
+            )
+        )
+        val platform = anthropicPlatform()
+        val states = createRepository(
+            anthropicAPI = anthropicAPI,
+            settingRepository = settingRepository(WebSearchMode.Off, ToolCallingMode.Auto),
+            toolLoopOrchestrator = baselineStickerToolLoop(executions)
+        ).completeChat(
+            userMessages = listOf(MessageV2(content = "Send a sticker", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = platform,
+            memoryPrompt = BASELINE_MEMORY_PROMPT
+        ).toList()
+
+        return toolRequestBaselineRow(
+            name = "anthropic_native",
+            platform = platform,
+            payloads = anthropicAPI.requests.map { request -> NetworkClient.json.encodeToString(request) },
+            breakdowns = anthropicAPI.requests.map(::anthropicToolRequestBreakdown),
+            advertisedToolCounts = anthropicAPI.requests.map { request -> request.tools.orEmpty().size },
+            toolExecutions = executions.single(),
+            states = states
+        )
+    }
+
+    private suspend fun googleStickerBaseline(): ToolRequestBaselineRow {
+        val executions = intArrayOf(0)
+        val googleAPI = RecordingGoogleAPI(
+            responses = mutableListOf(
+                googleBaselineToolFlow(
+                    "search_1",
+                    ToolDefinition.SearchStickers.name,
+                    buildJsonObject {
+                        put("query", JsonPrimitive("crying cat"))
+                    },
+                    baselineGoogleUsage(1)
+                ),
+                googleBaselineToolFlow(
+                    "send_1",
+                    ToolDefinition.SendSticker.name,
+                    buildJsonObject {
+                        put("sticker_id", JsonPrimitive(BASELINE_STICKER_ID))
+                    },
+                    baselineGoogleUsage(2)
+                ),
+                googleTextFlow("Baseline formal final", baselineGoogleUsage(3))
+            )
+        )
+        val platform = googlePlatform()
+        val states = createRepository(
+            googleAPI = googleAPI,
+            settingRepository = settingRepository(WebSearchMode.Off, ToolCallingMode.Auto),
+            toolLoopOrchestrator = baselineStickerToolLoop(executions)
+        ).completeChat(
+            userMessages = listOf(MessageV2(content = "Send a sticker", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = platform,
+            memoryPrompt = BASELINE_MEMORY_PROMPT
+        ).toList()
+
+        return toolRequestBaselineRow(
+            name = "google_native",
+            platform = platform,
+            payloads = googleAPI.requests.map { request -> NetworkClient.json.encodeToString(request) },
+            breakdowns = googleAPI.requests.map(::googleToolRequestBreakdown),
+            advertisedToolCounts = googleAPI.requests.map { request ->
+                request.tools.orEmpty().sumOf { tool -> tool.functionDeclarations.size }
+            },
+            toolExecutions = executions.single(),
+            states = states
+        )
+    }
+
+    private fun baselineStickerToolLoop(
+        executions: IntArray,
+        includeWebSearch: Boolean = false
+    ): ToolLoopOrchestrator {
+        val stickerRepository = BaselineStickerRepository()
+        val providers = buildList {
+            add(
+                countingToolProvider(
+                    delegate = SearchStickersToolProvider(stickerRepository),
+                    executions = executions
+                )
+            )
+            add(
+                countingToolProvider(
+                    delegate = SendStickerToolProvider(stickerRepository),
+                    executions = executions
+                )
+            )
+            if (includeWebSearch) {
+                add(noOpToolProvider(definition = ToolDefinition.WebSearch))
+            }
+        }
+        return ToolLoopOrchestrator(
+            ToolExecutor(
+                ToolRegistry(providers)
+            )
+        )
+    }
+
+    private fun baselineJsonToolCall(callId: String, name: String, arguments: String): String =
+        "{\"type\":\"tool_calls\",\"tool_calls\":[{\"id\":\"$callId\",\"name\":\"$name\",\"arguments\":$arguments}]}"
+
+    private fun responsesBaselineToolFlow(
+        itemId: String,
+        callId: String,
+        name: String,
+        arguments: String,
+        usage: ProviderUsage
+    ): Flow<ResponsesStreamEvent> = flowOf(
+        FunctionCallArgumentsDoneEvent(
+            itemId = itemId,
+            outputIndex = 0,
+            callId = callId,
+            name = name,
+            arguments = arguments
+        ),
+        ResponseCompletedEvent(
+            ResponseObject(
+                id = "response_$itemId",
+                status = "completed",
+                usage = usage
+            )
+        )
+    )
+
+    private fun anthropicBaselineToolFlow(
+        callId: String,
+        name: String,
+        arguments: String,
+        usageRound: Int
+    ): Flow<MessageResponseChunk> = flowOf(
+        anthropicMessageStart(
+            inputTokens = usageRound * 10,
+            cacheCreationInputTokens = 0,
+            cacheReadInputTokens = 0
+        ),
+        ContentStartResponseChunk(
+            index = 0,
+            contentBlock = ContentBlock(
+                type = ContentBlockType.TOOL_USE,
+                id = callId,
+                name = name,
+                input = buildJsonObject {}
+            )
+        ),
+        ContentDeltaResponseChunk(
+            index = 0,
+            delta = ContentBlock(type = ContentBlockType.INPUT_JSON_DELTA, partialJson = arguments)
+        ),
+        anthropicMessageDelta(usageRound, StopReason.TOOL_USE)
+    )
+
+    private fun googleBaselineToolFlow(
+        callId: String,
+        name: String,
+        arguments: JsonObject,
+        usage: UsageMetadata
+    ): Flow<GenerateContentResponse> = flowOf(
+        GenerateContentResponse(
+            candidates = listOf(
+                Candidate(
+                    content = Content(
+                        role = GoogleRole.MODEL,
+                        parts = listOf(Part.functionCall(id = callId, name = name, args = arguments))
+                    )
+                )
+            ),
+            usageMetadata = usage
+        )
+    )
+
+    private fun baselineProviderUsage(round: Int): ProviderUsage = ProviderUsage(
+        promptTokens = round * 10,
+        completionTokens = round,
+        totalTokens = round * 11
+    )
+
+    private fun baselineGoogleUsage(round: Int): UsageMetadata = UsageMetadata(
+        promptTokenCount = round * 10,
+        candidatesTokenCount = round,
+        totalTokenCount = round * 11
+    )
+
+    private fun countingToolProvider(
+        delegate: ToolProvider,
+        executions: IntArray
+    ): ToolProvider = object : ToolProvider by delegate {
+        override suspend fun execute(call: ToolCall, config: ToolLoopConfig): ToolResult {
+            executions[0] += 1
+            return delegate.execute(call, config)
+        }
+
+        override suspend fun execute(
+            call: ToolCall,
+            config: ToolLoopConfig,
+            executionContext: cn.nabr.chatwithchat.data.tool.ToolExecutionContext
+        ): ToolResult {
+            executions[0] += 1
+            return delegate.execute(call, config, executionContext)
+        }
+    }
+
+    private fun chatToolRequestBreakdown(request: ChatCompletionRequest): ToolRequestBreakdown =
+        chatToolRequestBreakdown(
+            messages = request.messages,
+            nativeToolSchemaChars = request.tools
+                ?.let { tools -> NetworkClient.openAIJson.encodeToString(tools).length }
+                ?: 0
+        )
+
+    private fun chatToolRequestBreakdown(
+        messages: List<ChatMessage>,
+        nativeToolSchemaChars: Int = 0
+    ): ToolRequestBreakdown {
+        val systemMessages = messages.filter { message -> message.role == OpenAIRole.SYSTEM }
+        val toolMessages = messages.filter { message ->
+            message.toolCalls != null || message.toolCallId != null || message.role == OpenAIRole.TOOL
+        }
+        val historyMessages = messages - systemMessages.toSet() - toolMessages.toSet()
+        val systemText = normalizeBaselinePayload(
+            systemMessages.joinToString("\n") { message ->
+                message.contentText ?: message.content.filterIsInstance<OpenAITextContent>().joinToString("\n") { content -> content.text }
+            }
+        )
+        val fallbackSchemaChars = systemText
+            .substringAfter(FALLBACK_TOOL_SCHEMA_MARKER, missingDelimiterValue = "")
+            .substringBefore(FALLBACK_TOOL_SCRATCHPAD_MARKER)
+            .trim()
+            .length
+        val fallbackToolResultChars = systemText
+            .substringAfter(FALLBACK_TOOL_SCRATCHPAD_MARKER, missingDelimiterValue = "")
+            .trim()
+            .length
+        return ToolRequestBreakdown(
+            systemChars = systemText.length,
+            historyChars = historyMessages.sumOf { message ->
+                NetworkClient.openAIJson.encodeToString(message).length
+            },
+            memoryChars = BASELINE_MEMORY_PROMPT.length.takeIf { systemText.contains(BASELINE_MEMORY_PROMPT) } ?: 0,
+            toolSchemaChars = nativeToolSchemaChars.takeIf { value -> value > 0 } ?: fallbackSchemaChars,
+            toolResultChars = toolMessages.sumOf { message ->
+                NetworkClient.openAIJson.encodeToString(message).length
+            } + fallbackToolResultChars
+        )
+    }
+
+    private fun responsesToolRequestBreakdown(request: ResponsesRequest): ToolRequestBreakdown {
+        val historyItems = request.input.filterIsInstance<ResponseInputMessage>()
+        val toolItems = request.input.filterNot { item -> item is ResponseInputMessage }
+        val systemText = normalizeBaselinePayload(request.instructions.orEmpty())
+        return ToolRequestBreakdown(
+            systemChars = systemText.length,
+            historyChars = historyItems.sumOf { item -> NetworkClient.openAIJson.encodeToString(item).length },
+            memoryChars = BASELINE_MEMORY_PROMPT.length.takeIf { systemText.contains(BASELINE_MEMORY_PROMPT) } ?: 0,
+            toolSchemaChars = request.tools
+                ?.let { tools -> NetworkClient.openAIJson.encodeToString(tools).length }
+                ?: 0,
+            toolResultChars = toolItems.sumOf { item -> NetworkClient.openAIJson.encodeToString(item).length }
+        )
+    }
+
+    private fun anthropicToolRequestBreakdown(request: MessageRequest): ToolRequestBreakdown {
+        val toolMessages = request.messages.filter { message ->
+            message.content.any { content -> content is ToolUseContent || content is ToolResultContent }
+        }
+        val historyMessages = request.messages - toolMessages.toSet()
+        val systemText = normalizeBaselinePayload(request.systemPrompt.orEmpty())
+        return ToolRequestBreakdown(
+            systemChars = systemText.length,
+            historyChars = historyMessages.sumOf { message -> NetworkClient.json.encodeToString(message).length },
+            memoryChars = BASELINE_MEMORY_PROMPT.length.takeIf { systemText.contains(BASELINE_MEMORY_PROMPT) } ?: 0,
+            toolSchemaChars = request.tools?.let { tools -> NetworkClient.json.encodeToString(tools).length } ?: 0,
+            toolResultChars = toolMessages.sumOf { message -> NetworkClient.json.encodeToString(message).length }
+        )
+    }
+
+    private fun googleToolRequestBreakdown(request: GenerateContentRequest): ToolRequestBreakdown {
+        val toolContents = request.contents.filter { content ->
+            content.parts.any { part -> part.functionCall != null || part.functionResponse != null }
+        }
+        val historyContents = request.contents - toolContents.toSet()
+        val systemText = normalizeBaselinePayload(
+            request.systemInstruction
+                ?.parts
+                .orEmpty()
+                .mapNotNull { part -> part.text }
+                .joinToString("\n")
+        )
+        return ToolRequestBreakdown(
+            systemChars = systemText.length,
+            historyChars = historyContents.sumOf { content -> NetworkClient.json.encodeToString(content).length },
+            memoryChars = BASELINE_MEMORY_PROMPT.length.takeIf { systemText.contains(BASELINE_MEMORY_PROMPT) } ?: 0,
+            toolSchemaChars = request.tools?.let { tools -> NetworkClient.json.encodeToString(tools).length } ?: 0,
+            toolResultChars = toolContents.sumOf { content -> NetworkClient.json.encodeToString(content).length }
+        )
+    }
+
+    private fun toolRequestBaselineRow(
+        name: String,
+        platform: PlatformV2,
+        payloads: List<String>,
+        breakdowns: List<ToolRequestBreakdown>,
+        advertisedToolCounts: List<Int>,
+        toolExecutions: Int,
+        states: List<ApiState>
+    ): ToolRequestBaselineRow {
+        val normalizedPayloads = payloads.map(::normalizeBaselinePayload)
+        val usage = states.filterIsInstance<ApiState.UsageUpdated>().single().usage
+        return ToolRequestBaselineRow(
+            name = name,
+            modelRequests = normalizedPayloads.size,
+            toolExecutions = toolExecutions,
+            serializedChars = normalizedPayloads.map(String::length),
+            estimatedInputTokens = normalizedPayloads.map { payload ->
+                TokenUsageEstimator.estimateText(payload, platform.model, platform.compatibleType)
+            },
+            breakdowns = breakdowns,
+            advertisedToolCounts = advertisedToolCounts,
+            candidateOccurrences = normalizedPayloads.sumOf { payload ->
+                payload.windowed(BASELINE_STICKER_ID.length).count { value -> value == BASELINE_STICKER_ID }
+            },
+            usage = BaselineUsage(
+                inputTokens = usage.inputTokens,
+                outputTokens = usage.outputTokens,
+                totalTokens = usage.totalTokens,
+                toolInputTokens = usage.toolInputTokens,
+                toolOutputTokens = usage.toolOutputTokens,
+                toolTotalTokens = usage.toolTotalTokens,
+                isEstimated = usage.isEstimated,
+                details = usage.details.size
+            ),
+            stickerPresentations = states.filterIsInstance<ApiState.StickerAdded>().size
+        )
+    }
+
+    private fun normalizeBaselinePayload(value: String): String = BASELINE_RUNTIME_DATE_TIME_REGEX.replace(
+        value,
+        "2000-01-01T00:00:00+08:00 (Asia/Shanghai)"
+    )
+
     private fun systemText(openAIAPI: RecordingOpenAIAPI): String = openAIAPI.lastChatCompletionRequest
         ?.systemText()
         .orEmpty()
@@ -3517,18 +4249,64 @@ class ChatRepositoryImplTest {
         definition: ToolDefinition,
         content: String = "ok",
         metadata: Map<String, String> = emptyMap(),
-        discovery: ToolDiscoveryMetadata = ToolDiscoveryMetadata()
+        discovery: ToolDiscoveryMetadata = ToolDiscoveryMetadata(),
+        structuredContent: JsonObject? = null,
+        onExecute: () -> Unit = {}
     ): ToolProvider = object : ToolProvider {
         override val definition: ToolDefinition = definition
         override val discoveryMetadata: ToolDiscoveryMetadata = discovery
         override val securityPolicy: ToolSecurityPolicy = ToolSecurityPolicy.ReadOnlyPrivate
 
-        override suspend fun execute(call: ToolCall, config: ToolLoopConfig): ToolResult = ToolResult(
-            callId = call.id,
-            name = call.name,
-            content = content,
-            metadata = metadata
-        )
+        override suspend fun execute(call: ToolCall, config: ToolLoopConfig): ToolResult {
+            onExecute()
+            return ToolResult(
+                callId = call.id,
+                name = call.name,
+                content = content,
+                metadata = metadata,
+                structuredContent = structuredContent
+            )
+        }
+    }
+
+    private class BaselineStickerRepository : StickerRepository {
+        override fun observeCatalog(): Flow<List<StickerCatalogItem>> = flowOf(emptyList())
+
+        override suspend fun ensureInitialized() = Unit
+
+        override suspend fun importStaticImages(uris: List<Uri>): StickerImportBatchResult =
+            StickerImportBatchResult(imported = emptyList(), rejected = emptyList())
+
+        override suspend fun updateCustomItem(stickerId: String, metadata: StickerItemMetadata): Boolean = false
+
+        override suspend fun setCustomItemEnabled(stickerId: String, enabled: Boolean): Boolean = false
+
+        override suspend fun deleteCustomItem(stickerId: String): Boolean = false
+
+        override suspend fun searchEnabledStatic(query: String, limit: Int): List<StickerSearchCandidate> = listOf(
+            StickerSearchCandidate(
+                stickerId = BASELINE_STICKER_ID,
+                title = "Crying cat",
+                altText = "A crying cat reaction",
+                tags = listOf("sad")
+            )
+        ).take(limit)
+
+        override suspend fun resolveEnabledStatic(stickerId: String, instanceId: String): StickerResolution =
+            if (stickerId == BASELINE_STICKER_ID) {
+                StickerResolution.Success(
+                    StickerPresentationArtifact(
+                        instanceId = instanceId,
+                        stickerId = stickerId,
+                        assetKey = "baseline-sticker-asset",
+                        altText = "A crying cat reaction"
+                    )
+                )
+            } else {
+                StickerResolution.Unavailable("sticker_not_found")
+            }
+
+        override suspend fun openAsset(assetKey: String): InputStream? = null
     }
 
     private fun settingRepository(
@@ -3859,6 +4637,7 @@ class ChatRepositoryImplTest {
     ) : GroqAPI {
         var streamCalls = 0
         var lastRequest: GroqChatCompletionRequest? = null
+        val requests = mutableListOf<GroqChatCompletionRequest>()
 
         override fun streamChatCompletion(
             request: GroqChatCompletionRequest,
@@ -3868,6 +4647,7 @@ class ChatRepositoryImplTest {
         ): Flow<GroqChatCompletionChunk> {
             streamCalls += 1
             lastRequest = request
+            requests += request
             return if (responses.isNotEmpty()) {
                 responses.removeAt(0)
             } else {

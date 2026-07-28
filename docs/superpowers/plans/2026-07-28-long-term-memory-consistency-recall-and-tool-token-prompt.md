@@ -379,25 +379,25 @@ Defensive filtering must exist at the source projection and provider assembly bo
 
 **Implementation requirements:**
 
-- [ ] 记录 branch、HEAD、origin divergence、dirty files、当前 Room schema 和可用设备。
-- [ ] 用固定 stub responses 建立 JSON fallback sticker fixture：search -> send -> final draft -> formal final，记录每次模型请求和两次本地工具执行。
-- [ ] 为 OpenAI Responses、OpenAI Chat/OpenRouter、Anthropic、Google 建立对应 native baseline；Groq、Ollama、普通 Custom 归入 JSON fallback，但至少各验证一个真实 DTO shape。
-- [ ] 每轮记录 serialized request chars、估算 input tokens、provider-reported usage（若有）、system/history/memory/tool schema/tool result 各自字符数。
-- [ ] 单独记录 auto web-search decision 是否产生额外模型请求及 decision=false 时的 usage 去向。
-- [ ] 对当前 `MemoryPromptBuilder` 记录 8-entry/900-token request 与最终渲染后真实 token 差异。
-- [ ] 扩展 relevance baseline：问候、无关闲聊、称呼问题、偏好问题、项目事实、中文改写、单中文字符干扰、108-entry corpus。
-- [ ] 检查 `PLAN_DAILY_DISTILLATION` job rows、checkpoint、activity rows 和 startup path；明确“job 未创建”“job 已运行但 activity 不可见”“memory disabled”三种状态。
-- [ ] 记录当前 turn-batch 与 daily-distillation 实际选择的平台/模型、选择顺序，以及 `LlmMemoryIntelligence` 对无效 preferred platform 的二次 fallback。
-- [ ] 用一个成功、一个 invalid JSON、一个 organization failure fixture 证明当前每个 semantic attempt 分别会写多少条 activity rows、各 category/status 和 UI 列表项。
-- [ ] 记录 Memory 页面当前没有模型选择器、DataStore 没有记忆模型 keys、现有 enabled model catalog 中重复 model ID 如何用 platform identity 消歧。
-- [ ] baseline instrumentation 只记录长度、计数、stage 和 opaque IDs；不得把真实用户 prompt/记忆正文写入持久日志。
+- [x] 记录 branch、HEAD、origin divergence、dirty files、当前 Room schema 和可用设备。
+- [x] 用固定 stub responses 建立 JSON fallback sticker fixture：search -> send -> final draft -> formal final，记录每次模型请求和两次本地工具执行。
+- [x] 为 OpenAI Responses、OpenAI Chat/OpenRouter、Anthropic、Google 建立对应 native baseline；Groq、Ollama、普通 Custom 归入 JSON fallback，但至少各验证一个真实 DTO shape。
+- [x] 每轮记录 serialized request chars、估算 input tokens、provider-reported usage（若有）、system/history/memory/tool schema/tool result 各自字符数。
+- [x] 单独记录 auto web-search decision 是否产生额外模型请求及 decision=false 时的 usage 去向。
+- [x] 对当前 `MemoryPromptBuilder` 记录 8-entry/900-token request 与最终渲染后真实 token 差异。
+- [x] 扩展 relevance baseline：问候、无关闲聊、称呼问题、偏好问题、项目事实、中文改写、单中文字符干扰、108-entry corpus。
+- [x] 检查 `PLAN_DAILY_DISTILLATION` job rows、checkpoint、activity rows 和 startup path；明确“job 未创建”“job 已运行但 activity 不可见”“memory disabled”三种状态。
+- [x] 记录当前 turn-batch 与 daily-distillation 实际选择的平台/模型、选择顺序，以及 `LlmMemoryIntelligence` 对无效 preferred platform 的二次 fallback。
+- [x] 用一个成功、一个 invalid JSON、一个 organization failure fixture 证明当前每个 semantic attempt 分别会写多少条 activity rows、各 category/status 和 UI 列表项。
+- [x] 记录 Memory 页面当前没有模型选择器、DataStore 没有记忆模型 keys、现有 enabled model catalog 中重复 model ID 如何用 platform identity 消歧。
+- [x] baseline instrumentation 只记录长度、计数、stage 和 opaque IDs；不得把真实用户 prompt/记忆正文写入持久日志。
 
 **Acceptance criteria:**
 
-- [ ] 一个命令可重复生成同一固定 fixture 的 request-count/token 表。
-- [ ] 报告明确区分 model request、local tool execution、maintenance job 和 activity log。
-- [ ] baseline 明确给出“一次语义记忆 job attempt -> 当前 3 条顶层 activity rows”的可重复证据，以及实际 selected platform/model。
-- [ ] 所有后续性能断言使用该 baseline，而不是凭 UI 感觉或单一总 token 数。
+- [x] 一个命令可重复生成同一固定 fixture 的 request-count/token 表。
+- [x] 报告明确区分 model request、local tool execution、maintenance job 和 activity log。
+- [x] baseline 明确给出“一次语义记忆 job attempt -> 当前 3 条顶层 activity rows”的可重复证据，以及实际 selected platform/model。
+- [x] 所有后续性能断言使用该 baseline，而不是凭 UI 感觉或单一总 token 数。
 
 **Focused verification:**
 
@@ -406,6 +406,70 @@ Defensive filtering must exist at the source projection and provider assembly bo
 adb devices
 git diff --check
 ```
+
+#### Task 0 Implementation Record (2026-07-28)
+
+**Isolation and live state**
+
+- Business-code baseline: `main` / `ff04c1b6d0dde699b35018ebb08f19d0d67da9f6`; implementation branch: `codex/long-term-memory-consistency-recall-tool-token-prompt`. After the plan-only commit `04361d3`, divergence was `1 ahead / 0 behind` from `origin/main`.
+- The existing `codex/chatwithchat-identity-migration` worktree and `stash@{0}` were left untouched. Task 0 introduced only deterministic test fixtures and this record.
+- Source/exported/live Room schema: `18`; exported identity hash `196bf38988a82cad2e137b094552173d`. Live `chat_v2` passed `integrity_check` and had no FK violations.
+- Device: `emulator-5556`, API 35, x86_64, 16 KB page size. Installed `cn.nabr.chatwithchat` was `1.0.0 (22)`, APK SHA-256 `646a03a51fea16cf51a2bfd8d375b206725c10017ff1ec34e5e180bf9150c4d3`. No install, clear-data, or app-data mutation was performed for Task 0.
+- Live DataStore had no `memory_enabled` key, so the repository default was disabled. The DB contained one `sync_vector_index/succeeded` job and zero daily-plan jobs, semantic jobs, distillation checkpoints, or activity rows. This is the explicit **memory disabled -> job not created** case; it is not evidence that a planner ran invisibly.
+
+**Recall baseline**
+
+`MemoryRecallBaselineReportTest` fixes one invocation per case and uses the production token estimator. The existing retriever request is `HYBRID`, `limit=8`, `candidateLimit=24`, `tokenBudget=900`, with all `communication_style` entries forced into the result. This fixed fixture deliberately reports embedding as not provisioned, so the asserted runtime mode is `LEXICAL_FALLBACK`; the repeatable command below separately runs the vector-ready semantic and Hybrid fixtures.
+
+| Case | Selected behavior | Legacy pack estimate | Final prompt chars / estimated tokens |
+|---|---|---:|---:|
+| greeting / unrelated | no lexical candidates, but both style rows forced | 72 | 409 / 179 |
+| preferred address | address plus both style rows | 105 | 552 / 230 |
+| project paraphrase | project plus both style rows | 112 | 580 / 236 |
+| single-CJK weak match | address, education, and both style rows | 148 | 711 / 293 |
+| 108-entry corpus | target events 18 through 11; no distractor in prompt | 464 | 1503 / 677 |
+
+The 8-entry case demonstrates the current accounting gap directly: the production OpenAI heuristic with the legacy fixed per-result overhead estimates 464 tokens during packing, while the same estimator reports 677 tokens for the rendered prompt because metadata and repeated guidance are added afterward. These are deterministic estimates with a blank model identity, not provider-reported usage.
+
+**Sticker request and payload baseline**
+
+The payload fixture normalizes only the volatile local runtime timestamp before measuring. It executes the production `SearchStickersToolProvider` and `SendStickerToolProvider` against a deterministic repository fake, including candidate-session validation and one `StickerPresentationArtifact`; provider DTOs, prompts, history, tool schemas, and tool results therefore retain production shape. Per-round system/history/memory/schema/result character lists are emitted and frozen by exact assertions. Each stub response also supplies deterministic provider usage so aggregation remains observable; estimated input tokens are still measured independently with `TokenUsageEstimator`.
+
+| Transport | Model requests | Local executions | Per-round serialized chars | Per-round estimated input tokens | Final tools | Candidate ID occurrences | Provider usage: answer / tool | Sticker presentations |
+|---|---:|---:|---|---|---:|---:|---|---:|
+| Custom JSON | 4 | 2 | 1371, 1748, 1928, 1069 | 614, 778, 866, 513 | 0 | 5 | 40/4/44 / 100/10/110 | 1 |
+| Ollama JSON | 4 | 2 | 1367, 1744, 1924, 1065 | 617, 781, 869, 516 | 0 | 5 | 40/4/44 / 100/10/110 | 1 |
+| Groq JSON | 4 | 2 | 1422, 1799, 1979, 1120 | 631, 795, 883, 530 | 0 | 5 | 40/4/44 / 100/10/110 | 1 |
+| OpenAI Responses native | 3 | 2 | 1529, 2208, 2513 | 648, 850, 949 | 2 | 5 | 30/3/33 / 60/6/66 | 1 |
+| OpenRouter native | 3 | 2 | 1672, 2403, 2740 | 852, 1081, 1196 | 2 | 5 | 30/3/33 / 60/6/66 | 1 |
+| Anthropic native | 3 | 2 | 1525, 2227, 2557 | 825, 1048, 1163 | 2 | 5 | 30/3/33 / 60/6/66 | 1 |
+| Google native | 3 | 2 | 1497, 2160, 2465 | 814, 1027, 1138 | 2 | 5 | 30/3/33 / 60/6/66 | 1 |
+
+JSON therefore starts at 4 requests and 2771 estimated input tokens for the canonical Custom fixture. OpenAI Responses starts at 3 requests and 2447 estimated input tokens. Native final requests still advertise both `search_stickers` and `send_sticker`; every transport serializes the stable candidate ID five times across the turn. With `decision=false`, the decision adds one request before the four JSON requests (`5` total). Its exact `11/3/14` provider usage is absent from the exposed record, which contains only the answer `40/4/44` and tool `100/10/110` usage from the four provider responses.
+
+**Model routing, activity, and UI baseline**
+
+- Batch and daily services independently choose the first `platform_id ASC` row with `enabled && model.isNotBlank()`. `LlmMemoryIntelligence` then silently retries resolution against the first supported platform if the preferred platform is invalid; credential validation happens later and does not continue to a second candidate.
+- The live code/config-derived winner was the enabled `CUSTOM / deepseek-v4-pro` row with credentials present, routed through Chat Completions. Memory was disabled and no semantic provider request ran, so this is not runtime provider-call proof.
+- DataStore had no memory-model keys and the Memory screen had no model picker. Existing enabled-model identity is the exact `platformUid + modelId` pair; duplicate model IDs are disambiguated by platform in the current chat picker.
+
+The turn-batch fixture now uses the production `RoomMemoryActivityLogger` against an in-memory implementation of the DAO contract. It asserts the persisted entity fields and the exact `observeLatest()` list consumed unchanged by `MemoryViewModel`; this is DAO/UI-source evidence, not a claim that Compose rendered on the device during Task 0.
+
+| Turn-batch fixture | Categories | Statuses | Resolved platform / model | DAO rows / UI-source rows |
+|---|---|---|---|---:|
+| success | model_call, memory_generation, memory_organization | succeeded, succeeded, succeeded | Memory baseline / memory-baseline-model | 3 / 3 |
+| invalid JSON | model_call, memory_generation, memory_organization | succeeded, failed, failed | Memory baseline / memory-baseline-model | 3 / 3 |
+| organization failure | model_call, memory_generation, memory_organization | succeeded, succeeded, failed | Memory baseline / memory-baseline-model | 3 / 3 |
+
+The baseline correction to the planning snapshot is that **daily distillation currently creates only the two LLM rows**, because its service has no organization logger. `PLAN_DAILY_DISTILLATION` creates no activity row at all, and startup optional-step failures can still end with no persisted reason.
+
+**Repeatable command**
+
+```powershell
+./gradlew.bat :app:testDebugUnitTest --tests "*MemoryRecallBaselineReportTest" --tests "*HybridMemoryRetrieverTest.semantic paraphrase retrieves current visible memory with vector provenance" --tests "*HybridMemoryRetrieverTest.hybrid uses deterministic RRF and keeps lexical and vector scores" --tests "*MemoryBatchConsolidationServiceTest.current semantic attempt activity baseline reports three top level rows" --tests "*ChatRepositoryImplTest.current sticker request baseline report is deterministic across provider DTOs" --tests "*ChatRepositoryImplTest.false auto search decision adds one request and drops its usage baseline"
+```
+
+The fixtures print only fixed synthetic text, lengths, counts, bounded stages, and stable synthetic IDs. They do not persist prompt, memory, candidate, or credential content. Task 5 and Task 7 acceptance measurements must reuse these exact fixtures and compare total plus component-level deltas.
 
 ### Task 1: Add Backward-Compatible Canonical Maintenance Metadata
 

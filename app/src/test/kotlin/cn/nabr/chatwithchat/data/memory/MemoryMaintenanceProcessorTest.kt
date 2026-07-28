@@ -609,11 +609,12 @@ private data object FailingRepairWorkEnqueuer : MemoryMaintenanceWorkEnqueuer {
 }
 
 internal class FakeMaintenanceSettingRepository(
-    var memoryEnabled: Boolean
+    var memoryEnabled: Boolean,
+    private val platforms: List<PlatformV2> = emptyList()
 ) : SettingRepository {
     override suspend fun fetchMemoryEnabled(): Boolean = memoryEnabled
     override suspend fun fetchPlatforms(): List<Platform> = emptyList()
-    override suspend fun fetchPlatformV2s(): List<PlatformV2> = emptyList()
+    override suspend fun fetchPlatformV2s(): List<PlatformV2> = platforms
     override suspend fun fetchPlatformModels(): List<PlatformModelV2> = emptyList()
     override suspend fun fetchPlatformModels(platformUid: String): List<PlatformModelV2> = emptyList()
     override suspend fun fetchEnabledChatModels(): List<AvailableChatModel> = emptyList()

@@ -2,15 +2,36 @@ package cn.nabr.chatwithchat.data.memory
 
 import cn.nabr.chatwithchat.data.database.InMemoryMemoryRecoveryDao
 import cn.nabr.chatwithchat.data.database.InMemoryMemoryTurnBatchDao
+import cn.nabr.chatwithchat.data.database.dao.MemoryActivityLogDao
 import cn.nabr.chatwithchat.data.database.entity.ChatRoomV2
+import cn.nabr.chatwithchat.data.database.entity.MemoryActivityLog
 import cn.nabr.chatwithchat.data.database.entity.MemoryMaintenanceJob
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
+import cn.nabr.chatwithchat.data.database.entity.PlatformV2
+import cn.nabr.chatwithchat.data.dto.openai.request.ChatCompletionRequest
+import cn.nabr.chatwithchat.data.dto.openai.request.ResponsesRequest
+import cn.nabr.chatwithchat.data.dto.openai.response.ChatCompletionChunk
+import cn.nabr.chatwithchat.data.dto.openai.response.Choice
+import cn.nabr.chatwithchat.data.dto.openai.response.Delta
+import cn.nabr.chatwithchat.data.dto.openai.response.ResponsesStreamEvent
+import cn.nabr.chatwithchat.data.model.ClientType
+import cn.nabr.chatwithchat.data.network.AnthropicAPI
+import cn.nabr.chatwithchat.data.network.GoogleAPI
+import cn.nabr.chatwithchat.data.network.OpenAIAPI
+import cn.nabr.chatwithchat.data.network.UploadedProviderFile
+import java.io.File
+import java.lang.reflect.InvocationHandler
+import java.lang.reflect.Proxy
 import java.nio.file.Files
 import java.security.MessageDigest
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -18,6 +39,85 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MemoryBatchConsolidationServiceTest {
+    @Test
+    fun `current semantic attempt activity baseline reports three top level rows`() = runBlocking {
+        val scenarios = listOf(
+            ActivityBaselineScenario(
+                name = "success",
+                response = "{\"operations\":[]}",
+                expectedStatuses = listOf(
+                    MemoryActivityStatus.SUCCEEDED,
+                    MemoryActivityStatus.SUCCEEDED,
+                    MemoryActivityStatus.SUCCEEDED
+                )
+            ),
+            ActivityBaselineScenario(
+                name = "invalid_json",
+                response = "{\"operations\":[],\"unexpected\":true}",
+                expectedStatuses = listOf(
+                    MemoryActivityStatus.SUCCEEDED,
+                    MemoryActivityStatus.FAILED,
+                    MemoryActivityStatus.FAILED
+                )
+            ),
+            ActivityBaselineScenario(
+                name = "organization_failure",
+                response =
+                "{\"operations\":[{\"destination\":\"long_term\",\"action\":\"replace\"," +
+                    "\"targetMemoryId\":\"missing-memory\",\"text\":\"Replacement\",\"type\":\"stable_profile\"," +
+                    "\"sensitivity\":\"normal\",\"source\":\"explicit_user_statement\"," +
+                    "\"evidenceTurnKeys\":[\"chat:7:user:1\"],\"reason\":\"baseline\"}]}",
+                expectedStatuses = listOf(
+                    MemoryActivityStatus.SUCCEEDED,
+                    MemoryActivityStatus.SUCCEEDED,
+                    MemoryActivityStatus.FAILED
+                )
+            )
+        )
+
+        println(
+            "memory-activity-baseline|scenario|categories|statuses|platforms|models|" +
+                "dao_rows|ui_source_rows"
+        )
+        scenarios.forEach { scenario ->
+            val fixture = activityBaselineFixture(scenario.response)
+            try {
+                fixture.service.process(fixture.createFiveTurnBatch())
+                val rows = fixture.activityLogDao.rows.toList()
+                val uiSourceRows = fixture.activityLogDao.observeLatest().first()
+
+                println(
+                    listOf(
+                        "memory-activity-baseline",
+                        scenario.name,
+                        rows.joinToString(",") { row -> row.category },
+                        rows.joinToString(",") { row -> row.status },
+                        rows.joinToString(",") { row -> row.platformName.orEmpty() },
+                        rows.joinToString(",") { row -> row.modelName.orEmpty() },
+                        rows.size,
+                        uiSourceRows.size
+                    ).joinToString("|")
+                )
+                assertEquals(
+                    listOf(
+                        MemoryActivityCategory.MODEL_CALL,
+                        MemoryActivityCategory.MEMORY_GENERATION,
+                        MemoryActivityCategory.MEMORY_ORGANIZATION
+                    ),
+                    rows.map(MemoryActivityLog::category)
+                )
+                assertEquals(scenario.expectedStatuses, rows.map(MemoryActivityLog::status))
+                assertTrue(rows.all { row -> row.platformName == "Memory baseline" })
+                assertTrue(rows.all { row -> row.modelName == "memory-baseline-model" })
+                assertEquals(3, rows.size)
+                assertEquals(rows.map(MemoryActivityLog::logId).toSet(), uiSourceRows.map(MemoryActivityLog::logId).toSet())
+                assertEquals(3, uiSourceRows.size)
+            } finally {
+                fixture.close()
+            }
+        }
+    }
+
     @Test
     fun `valid five turn batch calls consolidation once and advances checkpoint`() = runBlocking {
         val proposal = MemoryBatchConsolidationProposal(
@@ -1204,6 +1304,92 @@ class MemoryBatchConsolidationServiceTest {
         assertEquals(1, dailyMarkdown.split("Recovered compaction_flush through batching.").size - 1)
     }
 
+    private fun activityBaselineFixture(response: String): ActivityBaselineFixture {
+        val turnDao = InMemoryMemoryTurnBatchDao()
+        val jobDao = InMemoryMaintenanceJobDao()
+        val enqueuer = RecordingWorkEnqueuer()
+        val platform = PlatformV2(
+            uid = "memory-baseline-platform",
+            name = "Memory baseline",
+            compatibleType = ClientType.CUSTOM,
+            apiUrl = "https://memory-baseline.invalid",
+            token = "token",
+            model = "memory-baseline-model",
+            enabled = true
+        )
+        val settingRepository = FakeMaintenanceSettingRepository(
+            memoryEnabled = true,
+            platforms = listOf(platform)
+        )
+        val maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK)
+        val turnBatchScheduler = MemoryTurnBatchScheduler(
+            turnBatchDao = turnDao,
+            maintenanceJobDao = jobDao,
+            maintenanceScheduler = maintenanceScheduler,
+            workEnqueuer = enqueuer,
+            settingRepository = settingRepository,
+            clock = FIXED_CLOCK
+        )
+        val tempRoot = Files.createTempDirectory("memory-activity-baseline").toFile()
+        val fileStore = MemoryFileStore(MemoryFilePaths(tempRoot), FIXED_CLOCK)
+        fileStore.ensureStore().getOrThrow()
+        val recoveryDao = InMemoryMemoryRecoveryDao()
+        val mutationCoordinator = MemoryMutationCoordinator(
+            recoveryDao = recoveryDao,
+            memoryFileStore = fileStore,
+            maintenanceScheduler = maintenanceScheduler,
+            workEnqueuer = enqueuer,
+            clock = FIXED_CLOCK
+        )
+        val activityLogDao = BaselineMemoryActivityLogDao()
+        val activityLogger = RoomMemoryActivityLogger(activityLogDao, FIXED_CLOCK)
+        val intelligence = LlmMemoryIntelligence(
+            settingRepository = settingRepository,
+            openAIAPI = BaselineMemoryOpenAIAPI(response),
+            anthropicAPI = testProxy<AnthropicAPI>(),
+            googleAPI = testProxy<GoogleAPI>(),
+            activityLogger = activityLogger
+        )
+        val maintenanceCorpusReader = object : MemoryMaintenanceCorpusReader {
+            override suspend fun retrieveWorkingSet(request: MemoryRetrievalRequest): Result<List<MemoryRetrievalResult>> =
+                Result.success(emptyList())
+        }
+        val coordinator = MemoryTurnBatchCoordinator(turnDao, turnBatchScheduler)
+        return ActivityBaselineFixture(
+            turnDao = turnDao,
+            jobDao = jobDao,
+            maintenanceScheduler = maintenanceScheduler,
+            coordinator = coordinator,
+            activityLogDao = activityLogDao,
+            tempRoot = tempRoot,
+            service = MemoryBatchConsolidationService(
+                turnBatchDao = turnDao,
+                maintenanceScheduler = maintenanceScheduler,
+                turnBatchScheduler = turnBatchScheduler,
+                settingRepository = settingRepository,
+                memoryIntelligence = intelligence,
+                memoryFileStore = fileStore,
+                markdownMemoryCodec = MarkdownMemoryCodec(),
+                memoryMaintenanceCorpusReader = maintenanceCorpusReader,
+                memoryMutationCoordinator = mutationCoordinator,
+                activityLogger = activityLogger,
+                clock = FIXED_CLOCK
+            )
+        )
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private inline fun <reified T> testProxy(): T {
+        val handler = InvocationHandler { _, method, _ ->
+            when {
+                method.returnType == Boolean::class.javaPrimitiveType -> false
+                method.returnType == Int::class.javaPrimitiveType -> 0
+                else -> null
+            }
+        }
+        return Proxy.newProxyInstance(T::class.java.classLoader, arrayOf(T::class.java), handler) as T
+    }
+
     private fun fixture(
         proposal: MemoryBatchConsolidationProposal?,
         retrievalResults: List<MemoryRetrievalResult> = emptyList(),
@@ -1342,6 +1528,64 @@ class MemoryBatchConsolidationServiceTest {
         .digest(value.toByteArray(Charsets.UTF_8))
         .joinToString(separator = "") { byte -> "%02x".format(byte) }
 
+    private data class ActivityBaselineScenario(
+        val name: String,
+        val response: String,
+        val expectedStatuses: List<String>
+    )
+
+    private data class ActivityBaselineFixture(
+        val turnDao: InMemoryMemoryTurnBatchDao,
+        val jobDao: InMemoryMaintenanceJobDao,
+        val maintenanceScheduler: MemoryMaintenanceScheduler,
+        val coordinator: MemoryTurnBatchCoordinator,
+        val activityLogDao: BaselineMemoryActivityLogDao,
+        val tempRoot: File,
+        val service: MemoryBatchConsolidationService
+    ) {
+        suspend fun createFiveTurnBatch(): MemoryMaintenanceJob {
+            (1..5).forEach { userMessageId ->
+                coordinator.recordCompletedTurn(
+                    MemoryCompletedTurnInput(
+                        chatRoom = ChatRoomV2(
+                            id = CHAT_ID,
+                            title = "Activity baseline",
+                            enabledPlatform = listOf("memory-baseline-platform")
+                        ),
+                        userMessage = MessageV2(
+                            id = userMessageId,
+                            chatId = CHAT_ID,
+                            content = "Baseline question $userMessageId",
+                            platformType = null,
+                            createdAt = userMessageId.toLong()
+                        ),
+                        assistantMessages = listOf(
+                            MessageV2(
+                                id = userMessageId + 100,
+                                chatId = CHAT_ID,
+                                content = "Baseline answer $userMessageId",
+                                platformType = "memory-baseline-platform"
+                            )
+                        ),
+                        preferredPlatformUid = "memory-baseline-platform",
+                        stablePlatformOrder = listOf("memory-baseline-platform"),
+                        completedAt = userMessageId.toLong() + 10L
+                    )
+                )
+            }
+            return checkNotNull(
+                maintenanceScheduler.claimNextRunnable(
+                    family = jobDao.jobs.single().family,
+                    leaseOwner = "activity-baseline"
+                )
+            )
+        }
+
+        fun close() {
+            tempRoot.deleteRecursively()
+        }
+    }
+
     private data class Fixture(
         val turnDao: InMemoryMemoryTurnBatchDao,
         val jobDao: InMemoryMaintenanceJobDao,
@@ -1446,6 +1690,79 @@ private class RecordingOrganizationActivityLogger : MemoryActivityLogger {
     override suspend fun finish(logId: String, status: String, detail: String?, operationCount: Int?) {
         if (logId == MemoryActivityCategory.MEMORY_ORGANIZATION) lastStatus = status
     }
+}
+
+private class BaselineMemoryActivityLogDao : MemoryActivityLogDao {
+    val rows = mutableListOf<MemoryActivityLog>()
+
+    override fun observeLatest(limit: Int): Flow<List<MemoryActivityLog>> = flowOf(
+        rows.sortedWith(
+            compareByDescending<MemoryActivityLog> { row -> row.startedAt }
+                .thenByDescending { row -> row.logId }
+        ).take(limit)
+    )
+
+    override suspend fun upsert(log: MemoryActivityLog) {
+        val index = rows.indexOfFirst { row -> row.logId == log.logId }
+        if (index >= 0) {
+            rows[index] = log
+        } else {
+            rows += log
+        }
+    }
+
+    override suspend fun finish(
+        logId: String,
+        status: String,
+        detail: String?,
+        operationCount: Int?,
+        completedAt: Long,
+        updatedAt: Long
+    ) {
+        val index = rows.indexOfFirst { row -> row.logId == logId }
+        if (index < 0) return
+        rows[index] = rows[index].copy(
+            status = status,
+            detail = detail,
+            operationCount = operationCount,
+            completedAt = completedAt,
+            updatedAt = updatedAt
+        )
+    }
+
+    override suspend fun deleteOlderThan(before: Long): Int {
+        val previousSize = rows.size
+        rows.removeAll { row -> row.startedAt < before }
+        return previousSize - rows.size
+    }
+}
+
+private class BaselineMemoryOpenAIAPI(
+    private val response: String
+) : OpenAIAPI {
+    override fun setToken(token: String?) = Unit
+
+    override fun setAPIUrl(url: String) = Unit
+
+    override fun streamChatCompletion(
+        request: ChatCompletionRequest,
+        timeoutSeconds: Int
+    ): Flow<ChatCompletionChunk> = flowOf(
+        ChatCompletionChunk(
+            choices = listOf(Choice(index = 0, delta = Delta(content = response)))
+        )
+    )
+
+    override fun streamResponses(request: ResponsesRequest, timeoutSeconds: Int): Flow<ResponsesStreamEvent> =
+        emptyFlow()
+
+    override suspend fun uploadFile(
+        filePath: String,
+        fileName: String,
+        mimeType: String
+    ): UploadedProviderFile = error("Not used")
+
+    override suspend fun isFileAvailable(fileId: String): Boolean = false
 }
 
 private enum class CommitInterruptionPoint {
