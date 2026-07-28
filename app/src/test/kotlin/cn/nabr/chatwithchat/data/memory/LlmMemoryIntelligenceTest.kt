@@ -219,7 +219,7 @@ class LlmMemoryIntelligenceTest {
     @Test
     fun `daily distillation uses one strict provider request`() = runBlocking {
         val response =
-            """{"operations":[{"action":"create","text":"Prefers concise answers.","type":"communication_style","sensitivity":"normal","source":"explicit_user_statement","evidenceKeys":["evidence-1"],"reason":"stable preference"}]}"""
+            """{"operations":[{"action":"create","text":"Prefers concise answers.","type":"communication_style","sensitivity":"normal","source":"explicit_user_statement","evidenceKeys":["evidence-1"],"canonicalKey":"communication.response_style","scope":"general","evidenceAt":2,"recallState":"core","reason":"stable preference"}]}"""
         val openAIAPI = RecordingOpenAIAPI(chatChunks = chatChunks(response))
         val intelligence = intelligence(
             platforms = listOf(platform(ClientType.OPENROUTER, "model")),
@@ -231,6 +231,8 @@ class LlmMemoryIntelligenceTest {
         assertEquals(1, result?.operations?.size)
         assertEquals(MemoryDailyDistillationAction.CREATE, result?.operations?.single()?.action)
         assertEquals(listOf("evidence-1"), result?.operations?.single()?.evidenceKeys)
+        assertEquals("communication.response_style", result?.operations?.single()?.canonicalKey)
+        assertEquals(2L, result?.operations?.single()?.evidenceAt)
         assertEquals(1, openAIAPI.streamChatCompletionCalls)
         assertEquals(120, openAIAPI.lastChatTimeoutSeconds)
         assertEquals(1200, openAIAPI.lastChatRequest?.maxTokens)

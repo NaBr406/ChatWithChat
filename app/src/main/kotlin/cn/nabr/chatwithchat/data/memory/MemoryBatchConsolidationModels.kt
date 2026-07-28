@@ -20,7 +20,15 @@ data class MemoryBatchExistingMemory(
     val type: String,
     val sensitivity: String,
     val source: String,
-    val updatedAt: Long
+    val updatedAt: Long,
+    val createdAt: Long = 0L,
+    val canonicalKey: String? = null,
+    val scope: String = MemoryScope.GENERAL,
+    val lastObservedAt: Long = updatedAt,
+    val validity: String = MemoryValidity.CURRENT,
+    val supersededBy: String? = null,
+    val recallState: String = MemoryRecallState.QUERY,
+    val evidenceRefs: List<String> = emptyList()
 )
 
 @Serializable
@@ -38,6 +46,10 @@ data class MemoryBatchOperation(
     val sensitivity: String = MemorySensitivity.NORMAL,
     val source: String = MemorySource.ASSISTANT_INFERRED,
     val evidenceTurnKeys: List<String> = emptyList(),
+    val canonicalKey: String? = null,
+    val scope: String? = null,
+    val evidenceAt: Long? = null,
+    val recallState: String? = null,
     val reason: String = ""
 )
 

@@ -14,6 +14,11 @@ import java.time.ZoneOffset
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -138,6 +143,51 @@ class MemoryDailyDistillationServiceTest {
         assertEquals(MemoryDistillationCheckpointStatus.COMPLETED, fixture.checkpoint().status)
         val mutation = fixture.mutationCoordinator.findBySemanticJobId(fixture.semanticJob().jobId)
         assertTrue(mutation?.receipts?.isEmpty() == true)
+    }
+
+    @Test
+    fun `legacy frozen input hash remains valid after existing metadata expansion`() = runBlocking {
+        val existing = MarkdownMemoryEntry(
+            id = "mem_legacy_frozen",
+            text = "A pre-upgrade long-term fact.",
+            type = "project_context",
+            sensitivity = MemorySensitivity.NORMAL,
+            source = MemorySource.EXPLICIT_USER_STATEMENT,
+            createdAt = 41L,
+            updatedAt = 42L,
+            section = "Project Context",
+            canonicalKey = "project.legacy.status",
+            scope = "project:legacy",
+            lastObservedAt = 43L,
+            evidenceRefs = listOf("chat:1:user:1")
+        )
+        val fixture = fixture(
+            proposal = createProposal(),
+            existingLongTerm = listOf(existing)
+        )
+        val job = fixture.semanticJob()
+        val payload = STRICT_JSON.parseToJsonElement(job.payloadJson).jsonObject
+        val input = payload.getValue("input").jsonObject
+        val legacyExisting = JsonArray(
+            input.getValue("existingMemories").jsonArray.map { element ->
+                JsonObject(element.jsonObject.filterKeys { key -> key in LEGACY_EXISTING_MEMORY_KEYS })
+            }
+        )
+        val legacyInput = JsonObject(input + ("existingMemories" to legacyExisting))
+        val legacyPayload = JsonObject(
+            payload + mapOf(
+                "input" to legacyInput,
+                "inputHash" to JsonPrimitive(legacyInput.toString().sha256Utf8())
+            )
+        )
+        fixture.jobDao.forceUpdate(job.copy(payloadJson = legacyPayload.toString()))
+
+        val result = fixture.service.process(fixture.claimSemanticJob())
+
+        assertEquals(MemoryDailyDistillationProcessResult.STATUS_SUCCEEDED, result.status)
+        val entries = fixture.codec.parse(fixture.fileStore.readLongTermMemory().getOrThrow()).entries
+        assertEquals(existing, entries.single { entry -> entry.id == existing.id })
+        assertEquals(2, entries.size)
     }
 
     @Test
@@ -321,7 +371,8 @@ class MemoryDailyDistillationServiceTest {
     private suspend fun fixture(
         proposal: MemoryDailyDistillationProposal,
         clock: Clock = FIXED_CLOCK,
-        commitObserver: MemoryDailyDistillationCommitObserver = MemoryDailyDistillationCommitObserver.None
+        commitObserver: MemoryDailyDistillationCommitObserver = MemoryDailyDistillationCommitObserver.None,
+        existingLongTerm: List<MarkdownMemoryEntry> = emptyList()
     ): Fixture {
         val codec = MarkdownMemoryCodec()
         val fileStore = MemoryFileStore(
@@ -329,6 +380,9 @@ class MemoryDailyDistillationServiceTest {
             clock
         )
         fileStore.ensureStore().getOrThrow()
+        if (existingLongTerm.isNotEmpty()) {
+            fileStore.replaceLongTermMemory(codec.renderLongTerm(existingLongTerm)).getOrThrow()
+        }
         fileStore.appendDailyNote(
             codec.renderDailyAppend(
                 listOf(
@@ -420,6 +474,10 @@ class MemoryDailyDistillationServiceTest {
                 sensitivity = MemorySensitivity.NORMAL,
                 source = MemorySource.EXPLICIT_USER_STATEMENT,
                 evidenceKeys = listOf("placeholder"),
+                canonicalKey = "communication.response_style",
+                scope = MemoryScope.GENERAL,
+                evidenceAt = 2L,
+                recallState = MemoryRecallState.CORE,
                 reason = "stable explicit preference"
             )
         )
@@ -565,6 +623,15 @@ class MemoryDailyDistillationServiceTest {
             encodeDefaults = true
             explicitNulls = false
         }
+        val LEGACY_EXISTING_MEMORY_KEYS = setOf(
+            "id",
+            "sourcePath",
+            "text",
+            "type",
+            "sensitivity",
+            "source",
+            "updatedAt"
+        )
     }
 }
 

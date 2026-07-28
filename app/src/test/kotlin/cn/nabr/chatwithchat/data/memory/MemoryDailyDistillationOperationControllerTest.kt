@@ -74,7 +74,9 @@ class MemoryDailyDistillationOperationControllerTest {
                 operation(
                     action = MemoryDailyDistillationAction.REPLACE,
                     targetMemoryId = existing.id,
-                    text = "Updated stable preference."
+                    text = "Updated stable preference.",
+                    canonicalKey = checkNotNull(existing.canonicalKey),
+                    scope = existing.scope
                 )
             )
         )
@@ -137,6 +139,53 @@ class MemoryDailyDistillationOperationControllerTest {
                 controller.render(fixture.input, fixture.baseMarkdown, operations)
             }.isFailure
         )
+    }
+
+    @Test
+    fun `canonical contract derives trust and latest evidence time locally`() {
+        val fixture = fixture()
+        val laterEvidence = fixture.input.dailyEvidence.single().copy(
+            evidenceKey = "evidence-2",
+            source = MemorySource.USER_CONFIRMED,
+            createdAt = 6L,
+            updatedAt = 7L
+        )
+        val input = fixture.input.copy(dailyEvidence = fixture.input.dailyEvidence + laterEvidence)
+
+        val validated = controller.validate(
+            input,
+            listOf(
+                operation(
+                    action = MemoryDailyDistillationAction.CREATE,
+                    text = "Prefers locally validated answers.",
+                    evidenceKeys = listOf("evidence-1", "evidence-2"),
+                    evidenceAt = 7L
+                )
+            )
+        ).single()
+
+        assertEquals(7L, validated.evidenceAt)
+        assertEquals(MemorySource.USER_CONFIRMED, validated.source)
+        assertEquals(listOf("evidence-1", "evidence-2"), validated.evidenceKeys)
+    }
+
+    @Test
+    fun `canonical contract rejects invalid identity evidence time and active state`() {
+        val fixture = fixture()
+        val valid = operation(
+            action = MemoryDailyDistillationAction.CREATE,
+            text = "Prefers locally validated answers."
+        )
+        val invalidOperations = listOf(
+            valid.copy(canonicalKey = "identity"),
+            valid.copy(scope = "project:Not-Safe"),
+            valid.copy(evidenceAt = 3L),
+            valid.copy(recallState = MemoryRecallState.MAINTENANCE_ONLY)
+        )
+
+        invalidOperations.forEach { operation ->
+            assertTrue(runCatching { controller.validate(fixture.input, listOf(operation)) }.isFailure)
+        }
     }
 
     @Test
@@ -381,7 +430,15 @@ class MemoryDailyDistillationOperationControllerTest {
                     type = entry.type,
                     sensitivity = entry.sensitivity,
                     source = entry.source,
-                    updatedAt = entry.updatedAt
+                    updatedAt = entry.updatedAt,
+                    createdAt = entry.createdAt,
+                    canonicalKey = entry.canonicalKey,
+                    scope = entry.scope,
+                    lastObservedAt = entry.lastObservedAt,
+                    validity = entry.validity,
+                    supersededBy = entry.supersededBy,
+                    recallState = entry.recallState,
+                    evidenceRefs = entry.evidenceRefs
                 )
             },
             targetBaseHash = baseMarkdown.toByteArray(Charsets.UTF_8).sha256Hex(),
@@ -396,7 +453,19 @@ class MemoryDailyDistillationOperationControllerTest {
         text: String,
         sensitivity: String = MemorySensitivity.NORMAL,
         source: String = MemorySource.ASSISTANT_INFERRED,
-        evidenceKeys: List<String> = listOf("evidence-1")
+        evidenceKeys: List<String> = listOf("evidence-1"),
+        canonicalKey: String? = if (action in setOf(
+                MemoryDailyDistillationAction.CREATE,
+                MemoryDailyDistillationAction.REPLACE
+            )
+        ) {
+            "communication.response_style"
+        } else {
+            null
+        },
+        scope: String? = canonicalKey?.let { MemoryScope.GENERAL },
+        evidenceAt: Long? = canonicalKey?.let { 2L },
+        recallState: String? = canonicalKey?.let { MemoryRecallState.QUERY }
     ) = MemoryDailyDistillationOperation(
         action = action,
         targetMemoryId = targetMemoryId,
@@ -405,6 +474,10 @@ class MemoryDailyDistillationOperationControllerTest {
         sensitivity = sensitivity,
         source = source,
         evidenceKeys = evidenceKeys,
+        canonicalKey = canonicalKey,
+        scope = scope,
+        evidenceAt = evidenceAt,
+        recallState = recallState,
         reason = "test"
     )
 

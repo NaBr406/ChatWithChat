@@ -63,6 +63,10 @@ data class MemoryDailyDistillationOperation(
     val sensitivity: String = MemorySensitivity.NORMAL,
     val source: String = MemorySource.ASSISTANT_INFERRED,
     val evidenceKeys: List<String> = emptyList(),
+    val canonicalKey: String? = null,
+    val scope: String? = null,
+    val evidenceAt: Long? = null,
+    val recallState: String? = null,
     val reason: String = ""
 )
 

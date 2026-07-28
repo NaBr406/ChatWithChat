@@ -12,8 +12,8 @@ import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 
 class MemoryDailyDistillationService(
     private val recoveryDao: MemoryRecoveryDao,
@@ -214,6 +214,7 @@ class MemoryDailyDistillationService(
     private fun decodePayload(job: MemoryMaintenanceJob): MemoryDailyDistillationJobPayload? = try {
         check(job.type == MemoryMaintenanceJobType.DISTILL_DAILY_NOTES)
         check(job.family == MemoryMaintenanceJobFamily.SEMANTIC)
+        val rawInput = checkNotNull(json.parseToJsonElement(job.payloadJson).jsonObject["input"])
         json.decodeFromString<MemoryDailyDistillationJobPayload>(job.payloadJson).also { payload ->
             check(payload.checkpointId.isNotBlank())
             check(payload.input.batchId.isNotBlank())
@@ -224,7 +225,7 @@ class MemoryDailyDistillationService(
             check(LocalDate.parse(payload.input.dailyDate, DateTimeFormatter.ISO_LOCAL_DATE) < LocalDate.now(clock))
             check(payload.input.dailyEvidence.isNotEmpty())
             check(payload.input.dailyEvidence.map { evidence -> evidence.evidenceKey }.distinct().size == payload.input.dailyEvidence.size)
-            check(payload.inputHash == json.encodeToString(payload.input).sha256Utf8())
+            check(payload.inputHash == rawInput.toString().sha256Utf8())
         }
     } catch (cancellation: CancellationException) {
         throw cancellation

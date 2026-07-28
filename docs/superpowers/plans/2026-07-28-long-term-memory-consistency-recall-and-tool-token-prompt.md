@@ -548,7 +548,7 @@ git diff --check
 
 **Implementation requirements:**
 
-- [ ] 扩展 strict LLM operation contract，使 create/replace candidates 带受控 `canonicalKey`、`scope`、证据时间和目标 recall state。
+- [x] 扩展 strict LLM operation contract，使 create/replace candidates 带受控 `canonicalKey`、`scope`、证据时间和目标 recall state。
 - [ ] 抽出共享 `CanonicalMemoryMergePolicy`（名称可按现有风格调整），供 turn-batch 和 daily-distillation 两条长期写入路径共同使用。
 - [ ] LLM 提议 key/scope/合并文本；本地 policy 重新校验 grammar、type compatibility、trust、evidence、时间和唯一性。
 - [ ] 每次长期 commit 前本地解析完整 `MEMORY.md` 建立 canonical identity index。相关 working-set limit 只用于 LLM 上下文，不能作为最终 collision guard。
@@ -576,6 +576,13 @@ git diff --check
 ./gradlew.bat :app:compileDebugKotlin
 git diff --check
 ```
+
+**Progress 2026-07-28 - strict operation contract**
+
+- Batch and daily create/replace proposals now carry canonical identity, scope, evidence time, and target recall state. Local validation rejects unsafe identity/scope, non-active recall states, invented citations, and model-supplied timestamps that differ from the cited immutable evidence; daily trust is derived only from cited evidence and no longer inherits trust from the replacement target.
+- The bounded existing-memory DTO now exposes canonical lifecycle metadata to the maintenance model. Turn-batch enrichment rereads current managed Markdown by `sourcePath + id`; daily planning freezes the same fields with serialization defaults so older persisted jobs remain decodable.
+- Daily payload integrity is checked against the original persisted `input` JSON subtree rather than a re-encoded expanded DTO. A legacy fixture removes every newly added existing-memory field, retains a nonzero historical `createdAt` in canonical Markdown, recomputes the pre-expansion hash, and completes successfully without rewriting that existing entry.
+- Focused verification passed 86 tests with zero failures/errors/skips across `LlmMemoryIntelligenceTest`, `MemoryBatchConsolidationServiceTest`, `MemoryDailyDistillationOperationControllerTest`, `MemoryDailyDistillationServiceTest`, and `MemoryDailyDistillationSchedulerTest`; ktlint 1.3.1 and `git diff --check` also passed.
 
 ### Task 3: Add Durable Periodic Whole-Corpus Long-Term Consolidation
 

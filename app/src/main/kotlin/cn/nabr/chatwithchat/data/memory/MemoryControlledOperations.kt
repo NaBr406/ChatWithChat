@@ -49,6 +49,7 @@ class MemoryDailyDistillationOperationController(
         require(operations.size <= MemoryControlledOperationPolicy.MAX_OPERATIONS)
 
         val evidenceByKey = input.dailyEvidence.associateBy(MemoryDailyDistillationEvidence::evidenceKey)
+        require(input.dailyEvidence.all { evidence -> evidence.createdAt >= 0L && evidence.updatedAt >= 0L })
         val existingById = input.existingMemories.associateBy(MemoryBatchExistingMemory::id)
         val targetedIds = mutableSetOf<String>()
 
@@ -66,6 +67,10 @@ class MemoryDailyDistillationOperationController(
                 MemoryDailyDistillationAction.IGNORE -> {
                     require(operation.targetMemoryId.isNullOrBlank())
                     require(operation.text.isBlank())
+                    require(operation.canonicalKey == null)
+                    require(operation.scope == null)
+                    require(operation.evidenceAt == null)
+                    require(operation.recallState == null)
                     operation.copy(reason = operation.reason.trim())
                 }
                 MemoryDailyDistillationAction.CREATE,
@@ -83,12 +88,29 @@ class MemoryDailyDistillationOperationController(
                         null
                     }
                     val evidence = operation.evidenceKeys.map(evidenceByKey::getValue)
+                    val canonicalKey = requireNotNull(operation.canonicalKey)
+                    val scope = requireNotNull(operation.scope)
+                    val evidenceAt = evidence.maxOf { item -> maxOf(item.createdAt, item.updatedAt) }
+                    val recallState = requireNotNull(operation.recallState)
+                    require(MarkdownMemoryMetadataPolicy.isCanonicalKey(canonicalKey))
+                    require(MarkdownMemoryMetadataPolicy.isScope(scope))
+                    require(operation.evidenceAt == evidenceAt)
+                    require(recallState in ACTIVE_RECALL_STATES)
+                    target?.let { existing ->
+                        require(existing.type == operation.type)
+                        require(existing.canonicalKey == null || existing.canonicalKey == canonicalKey)
+                        require(existing.canonicalKey == null || existing.scope == scope)
+                    }
                     operation.copy(
                         targetMemoryId = target?.id,
                         text = normalizedText,
                         sensitivity = derivedSensitivity(evidence, target),
-                        source = derivedSource(evidence, target),
+                        source = derivedSource(evidence),
                         evidenceKeys = operation.evidenceKeys.sorted(),
+                        canonicalKey = canonicalKey,
+                        scope = scope,
+                        evidenceAt = evidenceAt,
+                        recallState = recallState,
                         reason = operation.reason.trim()
                     )
                 }
@@ -219,10 +241,8 @@ class MemoryDailyDistillationOperationController(
     ): String = (evidence.map { item -> item.sensitivity } + listOfNotNull(target?.sensitivity))
         .maxBy(::sensitivityRank)
 
-    private fun derivedSource(
-        evidence: List<MemoryDailyDistillationEvidence>,
-        target: MemoryBatchExistingMemory?
-    ): String = (evidence.map { item -> item.source } + listOfNotNull(target?.source))
+    private fun derivedSource(evidence: List<MemoryDailyDistillationEvidence>): String = evidence
+        .map { item -> item.source }
         .maxBy(::sourceRank)
 
     private fun sensitivityRank(value: String): Int = when (value) {
@@ -257,7 +277,12 @@ class MemoryDailyDistillationOperationController(
         chatId = chatId,
         createdAt = createdAt,
         updatedAt = updatedAt,
-        section = section
+        section = section,
+        canonicalKey = requireNotNull(canonicalKey),
+        scope = requireNotNull(scope),
+        lastObservedAt = requireNotNull(evidenceAt),
+        recallState = requireNotNull(recallState),
+        evidenceRefs = evidenceKeys.sorted()
     )
 
     private companion object {
@@ -267,6 +292,7 @@ class MemoryDailyDistillationOperationController(
             MemoryDailyDistillationAction.REPLACE,
             MemoryDailyDistillationAction.IGNORE
         )
+        val ACTIVE_RECALL_STATES = setOf(MemoryRecallState.CORE, MemoryRecallState.QUERY)
         val WHITESPACE_REGEX = Regex("\\s+")
     }
 }

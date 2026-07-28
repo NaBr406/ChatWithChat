@@ -442,7 +442,15 @@ class MemoryDailyDistillationScheduler(
                     type = entry.type,
                     sensitivity = entry.sensitivity,
                     source = entry.source,
-                    updatedAt = entry.updatedAt
+                    updatedAt = entry.updatedAt,
+                    createdAt = entry.createdAt,
+                    canonicalKey = entry.canonicalKey,
+                    scope = entry.scope,
+                    lastObservedAt = entry.lastObservedAt,
+                    validity = entry.validity,
+                    supersededBy = entry.supersededBy,
+                    recallState = entry.recallState,
+                    evidenceRefs = entry.evidenceRefs
                 )
             }
     }

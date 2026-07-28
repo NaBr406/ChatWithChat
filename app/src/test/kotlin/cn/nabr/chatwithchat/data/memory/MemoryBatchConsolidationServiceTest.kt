@@ -805,6 +805,31 @@ class MemoryBatchConsolidationServiceTest {
     }
 
     @Test
+    fun `canonical contract rejects model supplied evidence time`() = runBlocking {
+        val fixture = fixture(
+            MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        text = "Evidence time must come from the cited turn.",
+                        evidenceAt = 12L
+                    )
+                )
+            )
+        )
+        val before = fixture.fileStore.readLongTermMemory().getOrThrow()
+        val job = fixture.createFiveTurnBatch()
+
+        val result = fixture.service.process(job)
+
+        assertEquals(MemoryBatchProcessResult.STATUS_RETRYABLE, result.status)
+        assertTrue(result.reason.orEmpty().startsWith("invalid_consolidation_operations:"))
+        assertEquals(before, fixture.fileStore.readLongTermMemory().getOrThrow())
+        assertEquals(0, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
+        assertEquals(5, fixture.turnDao.getTurnsClaimedByJob(job.jobId).size)
+    }
+
+    @Test
     fun `malformed canonical base writes nothing and keeps claimed checkpoint pending`() = runBlocking {
         val fixture = fixture(
             MemoryBatchConsolidationProposal(
@@ -944,7 +969,9 @@ class MemoryBatchConsolidationServiceTest {
                         action = MemoryBatchAction.REPLACE,
                         targetMemoryId = existingEntry.id,
                         text = "Question project has reached the second milestone.",
-                        type = "project_context"
+                        type = "project_context",
+                        canonicalKey = "project.question.status",
+                        scope = "project:question"
                     )
                 )
             ),
@@ -1350,7 +1377,8 @@ class MemoryBatchConsolidationServiceTest {
                     operation(
                         destination = MemoryBatchDestination.DAILY,
                         text = "Recovered ${job.type} through batching.",
-                        evidenceTurnKeys = listOf(turnKey)
+                        evidenceTurnKeys = listOf(turnKey),
+                        evidenceAt = if (job.type == MemoryMaintenanceJobType.APPEND_DAILY_NOTE) 100L else 101L
                     )
                 )
             )
@@ -1538,8 +1566,16 @@ class MemoryBatchConsolidationServiceTest {
         action: String = MemoryBatchAction.CREATE,
         targetMemoryId: String? = null,
         text: String,
-        type: String = "stable_profile",
-        evidenceTurnKeys: List<String> = listOf("chat:$CHAT_ID:user:1")
+        type: String = "project_context",
+        evidenceTurnKeys: List<String> = listOf("chat:$CHAT_ID:user:1"),
+        canonicalKey: String? = if (action in setOf(MemoryBatchAction.CREATE, MemoryBatchAction.REPLACE)) {
+            "test.${sha256(text).take(16)}"
+        } else {
+            null
+        },
+        scope: String? = canonicalKey?.let { MemoryScope.GENERAL },
+        evidenceAt: Long? = canonicalKey?.let { 11L },
+        recallState: String? = canonicalKey?.let { MemoryRecallState.QUERY }
     ): MemoryBatchOperation = MemoryBatchOperation(
         destination = destination,
         action = action,
@@ -1549,6 +1585,10 @@ class MemoryBatchConsolidationServiceTest {
         sensitivity = MemorySensitivity.NORMAL,
         source = MemorySource.EXPLICIT_USER_STATEMENT,
         evidenceTurnKeys = evidenceTurnKeys,
+        canonicalKey = canonicalKey,
+        scope = scope,
+        evidenceAt = evidenceAt,
+        recallState = recallState,
         reason = "Test operation"
     )
 

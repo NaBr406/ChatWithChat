@@ -6,6 +6,7 @@ import cn.nabr.chatwithchat.data.database.entity.MemoryMaintenanceJob
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.memory.vector.MemoryVectorIndexDefaults
 import cn.nabr.chatwithchat.data.repository.SettingRepository
+import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.time.Clock
 import java.time.LocalDate
@@ -458,6 +459,16 @@ class MemoryBatchConsolidationService(
                 tokenBudget = MAX_EXISTING_MEMORY_TOKEN_BUDGET
             )
         ).getOrDefault(emptyList())
+        val entriesBySourceAndId = memoryFileStore.readCorpusFiles(MemoryCorpus.MAINTENANCE_WORKING_SET)
+            .getOrNull()
+            ?.files
+            .orEmpty()
+            .flatMap { file ->
+                markdownMemoryCodec.parse(String(file.bytes, StandardCharsets.UTF_8)).entries.map { entry ->
+                    (file.sourcePath to entry.id) to entry
+                }
+            }
+            .toMap()
         return results
             .filter { result ->
                 !result.entryId.isNullOrBlank() &&
@@ -469,14 +480,23 @@ class MemoryBatchConsolidationService(
             .filterValues { sameIdResults -> sameIdResults.map { it.sourcePath }.distinct().size == 1 }
             .map { (entryId, sameIdResults) ->
                 val result = sameIdResults.maxBy { it.fusedScore }
+                val entry = entriesBySourceAndId[result.sourcePath to entryId]
                 MemoryBatchExistingMemory(
                     id = entryId,
                     sourcePath = result.sourcePath,
-                    text = result.text,
-                    type = result.type!!,
-                    sensitivity = result.sensitivity!!,
-                    source = result.source!!,
-                    updatedAt = result.updatedAt
+                    text = entry?.text ?: result.text,
+                    type = entry?.type ?: result.type!!,
+                    sensitivity = entry?.sensitivity ?: result.sensitivity!!,
+                    source = entry?.source ?: result.source!!,
+                    updatedAt = entry?.updatedAt ?: result.updatedAt,
+                    createdAt = entry?.createdAt ?: 0L,
+                    canonicalKey = entry?.canonicalKey,
+                    scope = entry?.scope ?: MemoryScope.GENERAL,
+                    lastObservedAt = entry?.lastObservedAt ?: result.updatedAt,
+                    validity = entry?.validity ?: MemoryValidity.CURRENT,
+                    supersededBy = entry?.supersededBy,
+                    recallState = entry?.recallState ?: MemoryRecallState.QUERY,
+                    evidenceRefs = entry?.evidenceRefs.orEmpty()
                 )
             }
             .sortedByDescending { it.updatedAt }
@@ -489,22 +509,30 @@ class MemoryBatchConsolidationService(
     ): List<MemoryBatchOperation> {
         check(operations.size <= MemoryControlledOperationPolicy.MAX_OPERATIONS)
         val existingById = request.existingMemories.associateBy { it.id }
-        val turnKeys = request.turns.map { it.turnKey }.toSet()
+        val turnsByKey = request.turns.associateBy { it.turnKey }
         val targetedIds = mutableSetOf<String>()
         val normalizedWriteTextsByTarget = mutableMapOf<String, MutableSet<String>>()
 
-        operations.forEach { operation ->
+        val validated = operations.map { operation ->
             check(operation.destination in VALID_DESTINATIONS)
             check(operation.action in VALID_ACTIONS)
             check(operation.type in MemoryControlledOperationPolicy.validTypes)
             check(operation.sensitivity in MemoryControlledOperationPolicy.validSensitivities)
             check(operation.source in MemoryControlledOperationPolicy.validSources)
-            check(operation.evidenceTurnKeys.all { it in turnKeys })
+            check(operation.reason.length <= MemoryControlledOperationPolicy.MAX_REASON_CHARS)
+            check(operation.evidenceTurnKeys.size <= MemoryControlledOperationPolicy.MAX_EVIDENCE_KEYS)
+            check(operation.evidenceTurnKeys.distinct().size == operation.evidenceTurnKeys.size)
+            check(operation.evidenceTurnKeys.all(turnsByKey::containsKey))
 
             when (operation.action) {
                 MemoryBatchAction.IGNORE -> {
                     check(operation.targetMemoryId.isNullOrBlank())
                     check(operation.text.isBlank())
+                    check(operation.canonicalKey == null)
+                    check(operation.scope == null)
+                    check(operation.evidenceAt == null)
+                    check(operation.recallState == null)
+                    operation.copy(reason = operation.reason.trim())
                 }
                 MemoryBatchAction.CREATE -> {
                     check(operation.targetMemoryId.isNullOrBlank())
@@ -515,6 +543,7 @@ class MemoryBatchConsolidationService(
                         text = operation.text
                     )
                     check(operation.evidenceTurnKeys.isNotEmpty())
+                    validatedCanonicalWrite(operation, null, turnsByKey)
                 }
                 MemoryBatchAction.REPLACE -> {
                     val targetId = checkNotNull(operation.targetMemoryId?.takeIf { it.isNotBlank() })
@@ -528,6 +557,7 @@ class MemoryBatchConsolidationService(
                         text = operation.text
                     )
                     check(operation.evidenceTurnKeys.isNotEmpty())
+                    validatedCanonicalWrite(operation, existing, turnsByKey).copy(targetMemoryId = targetId)
                 }
                 MemoryBatchAction.REMOVE -> {
                     val targetId = checkNotNull(operation.targetMemoryId?.takeIf { it.isNotBlank() })
@@ -536,11 +566,21 @@ class MemoryBatchConsolidationService(
                     check(operation.destination == destinationFor(existing.sourcePath))
                     check(operation.text.isBlank())
                     check(operation.evidenceTurnKeys.isNotEmpty())
+                    check(operation.canonicalKey == null)
+                    check(operation.scope == null)
+                    check(operation.evidenceAt == null)
+                    check(operation.recallState == null)
+                    operation.copy(
+                        targetMemoryId = targetId,
+                        evidenceTurnKeys = operation.evidenceTurnKeys.sorted(),
+                        reason = operation.reason.trim()
+                    )
                 }
+                else -> error("Unsupported memory batch action")
             }
         }
 
-        operations
+        validated
             .filter { operation -> operation.action in setOf(MemoryBatchAction.CREATE, MemoryBatchAction.REPLACE) }
             .groupBy { operation -> normalizeExactMemoryText(operation.text) }
             .values
@@ -550,7 +590,37 @@ class MemoryBatchConsolidationService(
                 }
             }
 
-        return operations
+        return validated
+    }
+
+    private fun validatedCanonicalWrite(
+        operation: MemoryBatchOperation,
+        target: MemoryBatchExistingMemory?,
+        turnsByKey: Map<String, MemoryCompletedTurnSnapshot>
+    ): MemoryBatchOperation {
+        val canonicalKey = checkNotNull(operation.canonicalKey)
+        val scope = checkNotNull(operation.scope)
+        val recallState = checkNotNull(operation.recallState)
+        val evidenceAt = operation.evidenceTurnKeys.maxOf { key -> turnsByKey.getValue(key).completedAt }
+        check(MarkdownMemoryMetadataPolicy.isCanonicalKey(canonicalKey))
+        check(MarkdownMemoryMetadataPolicy.isScope(scope))
+        check(operation.evidenceAt == evidenceAt)
+        check(evidenceAt >= 0L)
+        check(recallState in ACTIVE_RECALL_STATES)
+        target?.let { existing ->
+            check(existing.type == operation.type)
+            check(existing.canonicalKey == null || existing.canonicalKey == canonicalKey)
+            check(existing.canonicalKey == null || existing.scope == scope)
+        }
+        return operation.copy(
+            text = operation.text.trim(),
+            evidenceTurnKeys = operation.evidenceTurnKeys.sorted(),
+            canonicalKey = canonicalKey,
+            scope = scope,
+            evidenceAt = evidenceAt,
+            recallState = recallState,
+            reason = operation.reason.trim()
+        )
     }
 
     private fun registerExactWrite(
@@ -723,7 +793,12 @@ class MemoryBatchConsolidationService(
         chatId = chatId,
         createdAt = createdAt,
         updatedAt = now(),
-        section = section
+        section = section,
+        canonicalKey = requireNotNull(canonicalKey),
+        scope = requireNotNull(scope),
+        lastObservedAt = requireNotNull(evidenceAt),
+        recallState = requireNotNull(recallState),
+        evidenceRefs = evidenceTurnKeys.sorted()
     )
 
     private fun validateNoNewExactTextDuplicates(
@@ -875,6 +950,7 @@ class MemoryBatchConsolidationService(
             MemoryTurnBatchTriggerReason.MANUAL_RETRY
         )
         private val VALID_DESTINATIONS = setOf(MemoryBatchDestination.DAILY, MemoryBatchDestination.LONG_TERM)
+        private val ACTIVE_RECALL_STATES = setOf(MemoryRecallState.CORE, MemoryRecallState.QUERY)
         private val VALID_ACTIONS = setOf(
             MemoryBatchAction.CREATE,
             MemoryBatchAction.REPLACE,
