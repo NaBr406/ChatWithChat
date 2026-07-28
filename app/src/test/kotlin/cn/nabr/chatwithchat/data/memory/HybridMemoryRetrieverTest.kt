@@ -252,6 +252,57 @@ class HybridMemoryRetrieverTest {
     }
 
     @Test
+    fun `ready vector hybrid and lexical fallback reject daily chunks`() = runBlocking {
+        val daily = chunk("daily", "day_hidden", "Daily-only-vector-marker preference.").copy(
+            sourcePath = "memory/2026-07-29.md"
+        )
+        listOf(MemoryRetrievalStrategy.VECTOR, MemoryRetrievalStrategy.HYBRID).forEach { strategy ->
+            val fixture = fixture(snapshot(chunks = listOf(daily)))
+            fixture.vectorStore.matches = listOf(match(daily, TARGET_VECTOR, 0f))
+
+            val report = fixture.retriever.retrieveWithDiagnostics(
+                request("Daily-only-vector-marker").copy(
+                    strategy = strategy,
+                    alwaysIncludeTypes = setOf("communication_style")
+                )
+            ).getOrThrow()
+
+            assertTrue("$strategy leaked daily vector content", report.results.isEmpty())
+            assertEquals(MemoryRetrievalMode.NONE, report.mode)
+        }
+
+        val fallback = fixture(snapshot(chunks = listOf(daily)))
+        fallback.vectorStore.verification = MemoryVectorSnapshotVerification.Missing
+        val fallbackReport = fallback.retriever.retrieveWithDiagnostics(
+            request("Daily-only-vector-marker").copy(
+                alwaysIncludeTypes = setOf("communication_style")
+            )
+        ).getOrThrow()
+
+        assertTrue(fallbackReport.results.isEmpty())
+        assertEquals(MemoryRetrievalMode.NONE, fallbackReport.mode)
+    }
+
+    @Test
+    fun `chat projection diagnostics fail closed and remain observable`() = runBlocking {
+        val diagnostic = MemoryProjectionDiagnostic(
+            code = "chat_projection_parse_failed",
+            sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+            count = 2
+        )
+        val fixture = fixture(snapshot(chunks = emptyList()).copy(diagnostics = listOf(diagnostic)))
+
+        val report = fixture.retriever.retrieveWithDiagnostics(request("anything")).getOrThrow()
+
+        assertEquals(MemoryRetrievalMode.FAILED, report.mode)
+        assertTrue(report.results.isEmpty())
+        assertEquals(listOf(diagnostic), report.diagnostics)
+        assertEquals("chat_projection_parse_failed:2", report.errorMessage)
+        assertEquals(0, fixture.provider.embedQueryCalls)
+        assertEquals(0, fixture.vectorStore.queryCalls)
+    }
+
+    @Test
     fun `unavailable model returns current Chinese and English lexical results`() = runBlocking {
         val chinese = chunk("zh", "mem_zh", "用户喜欢直接具体的回答方式。")
         val english = chunk("en", "mem_en", "The user prefers concrete implementation steps.")
@@ -479,13 +530,45 @@ class HybridMemoryRetrieverTest {
             generation = 2,
             chunks = listOf(chunk("new", "mem_new", "New current phrase."))
         )
-        val source = SequencedSnapshotSource(listOf(old, current), currentGeneration = 2)
+        val source = SequencedSnapshotSource(listOf(old, current), currentSnapshot = current)
         val fixture = fixture(current, snapshotSource = source, capability = unavailableCapability())
 
         val results = fixture.retriever.retrieve(request("current phrase")).getOrThrow()
 
         assertEquals(2, source.snapshotCalls)
         assertEquals(listOf("mem_new"), results.map { result -> result.entryId })
+    }
+
+    @Test
+    fun `diagnostic state changes retry in both directions when projection hashes match`() = runBlocking {
+        val diagnostic = MemoryProjectionDiagnostic(
+            code = "chat_projection_parse_failed",
+            sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME
+        )
+        val valid = snapshot(
+            sourceHash = "1".repeat(64),
+            recallProjectionHash = "f".repeat(64),
+            generation = 1,
+            chunks = emptyList()
+        )
+        val failed = valid.copy(
+            canonicalSourceHash = "2".repeat(64),
+            generation = 2,
+            diagnostics = listOf(diagnostic)
+        )
+
+        listOf(
+            Triple(valid, failed, MemoryRetrievalMode.FAILED),
+            Triple(failed, valid, MemoryRetrievalMode.NONE)
+        ).forEach { (old, current, expectedMode) ->
+            val source = SequencedSnapshotSource(listOf(old, current), currentSnapshot = current)
+            val fixture = fixture(current, snapshotSource = source, capability = unavailableCapability())
+
+            val report = fixture.retriever.retrieveWithDiagnostics(request("hello")).getOrThrow()
+
+            assertEquals(expectedMode, report.mode)
+            assertEquals(2, source.snapshotCalls)
+        }
     }
 
     @Test
@@ -838,7 +921,7 @@ class HybridMemoryRetrieverTest {
 
     private class SequencedSnapshotSource(
         private val snapshots: List<MemoryCorpusSnapshot>,
-        private val currentGeneration: Long
+        private val currentSnapshot: MemoryCorpusSnapshot
     ) : MemoryCorpusSnapshotSource {
         var snapshotCalls = 0
 
@@ -849,7 +932,15 @@ class HybridMemoryRetrieverTest {
         }
 
         override suspend fun isCurrent(snapshots: List<MemoryCorpusSnapshot>): Result<Boolean> =
-            Result.success(snapshots.single().generation == currentGeneration)
+            Result.success(snapshots.single().generation == currentSnapshot.generation)
+
+        override suspend fun isProjectionCurrent(snapshots: List<MemoryCorpusSnapshot>): Result<Boolean> {
+            val candidate = snapshots.single()
+            return Result.success(
+                candidate.recallProjectionHash == currentSnapshot.recallProjectionHash &&
+                    candidate.diagnostics == currentSnapshot.diagnostics
+            )
+        }
     }
 
     companion object {

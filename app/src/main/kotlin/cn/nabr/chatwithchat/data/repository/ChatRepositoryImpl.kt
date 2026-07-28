@@ -2936,6 +2936,15 @@ private val PROVIDER_MEMORY_PROMPT_INTERNAL_MARKERS = listOf(
         """[\"']?(?:canonical[_-]?key|last[_-]?observed[_-]?at|superseded[_-]?by|recall[_-]?state|evidence[_-]?refs?)[\"']?\s*[:=]""",
         RegexOption.IGNORE_CASE
     ),
+    Regex(
+        """\btype\s*[:=]\s*(?:stable_profile|communication_style|project_context|interest|important_event|important_person|emotional_pattern|boundary|life_context|recurring_theme|light_productivity_preference)\b""",
+        RegexOption.IGNORE_CASE
+    ),
+    Regex("""\bsensitivity\s*[:=]\s*(?:normal|private|sensitive)\b""", RegexOption.IGNORE_CASE),
+    Regex(
+        """\b(?:source|provenance)\s*[:=]\s*(?:explicit_user_statement|assistant_inferred|user_confirmed)\b""",
+        RegexOption.IGNORE_CASE
+    ),
     Regex("""\b(?:scope|observed|validity|recall|evidence|created|updated)\s*=""", RegexOption.IGNORE_CASE),
     Regex(
         """[\"']?(?:embedding[_-]?content|content|projection|recall[_-]?projection|canonical[_-]?source|source|target[_-]?(?:base|source))[_-]?hash[\"']?\s*[:=]""",

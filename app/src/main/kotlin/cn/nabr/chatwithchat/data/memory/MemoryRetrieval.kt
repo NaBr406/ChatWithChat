@@ -39,21 +39,31 @@ data class MemoryRetrievalResult(
     val type: String?,
     val sensitivity: String?,
     val source: String?,
+    val updatedAt: Long,
+    val chatId: Int? = null,
+    val createdAt: Long = 0L,
+    val section: String? = null,
     val canonicalKey: String? = null,
     val scope: String? = null,
     val recallState: String? = null,
+    val validity: String? = null,
+    val lastObservedAt: Long = updatedAt,
+    val supersededBy: String? = null,
+    val evidenceRefs: List<String> = emptyList(),
+    val extraMetadata: Map<String, String> = emptyMap(),
     val embeddingContentHash: String,
     val rankingHash: String = embeddingContentHash,
     val lexicalScore: Float? = null,
     val vectorScore: Float? = null,
-    val fusedScore: Float,
-    val updatedAt: Long
+    val fusedScore: Float
 )
 
 data class MemoryRetrievalReport(
     val results: List<MemoryRetrievalResult>,
     val mode: MemoryRetrievalMode,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val recallProjectionHash: String? = null,
+    val diagnostics: List<MemoryProjectionDiagnostic> = emptyList()
 )
 
 enum class MemoryRetrievalMode {
@@ -132,3 +142,10 @@ internal fun MemoryRetrievalRequest.lexicalQuery(): String = query
 
 private const val MEMORY_RETRIEVAL_RESULT_TOKEN_OVERHEAD = 24
 private const val MAX_MEMORY_RETRIEVAL_QUERY_CHARS = 8_000
+
+internal fun List<MemoryProjectionDiagnostic>.toBoundedErrorMessage(): String? =
+    take(MAX_REPORTED_PROJECTION_DIAGNOSTICS)
+        .joinToString(separator = ",") { diagnostic -> "${diagnostic.code}:${diagnostic.count}" }
+        .takeIf(String::isNotBlank)
+
+private const val MAX_REPORTED_PROJECTION_DIAGNOSTICS = 4

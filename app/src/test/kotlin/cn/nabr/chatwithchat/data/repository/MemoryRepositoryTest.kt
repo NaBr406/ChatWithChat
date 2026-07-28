@@ -13,8 +13,10 @@ import cn.nabr.chatwithchat.data.memory.MemoryCorpus
 import cn.nabr.chatwithchat.data.memory.MemoryCorpusSnapshotter
 import cn.nabr.chatwithchat.data.memory.MemoryFilePaths
 import cn.nabr.chatwithchat.data.memory.MemoryFileStore
+import cn.nabr.chatwithchat.data.memory.MemoryProjectionDiagnostic
 import cn.nabr.chatwithchat.data.memory.MemoryPromptBuilder
 import cn.nabr.chatwithchat.data.memory.MemoryRetrievalMode
+import cn.nabr.chatwithchat.data.memory.MemoryRetrievalReport
 import cn.nabr.chatwithchat.data.memory.MemoryRetrievalRequest
 import cn.nabr.chatwithchat.data.memory.MemoryRetrievalResult
 import cn.nabr.chatwithchat.data.memory.MemoryRetrievalStrategy
@@ -59,7 +61,10 @@ class MemoryRepositoryTest {
         assertEquals(MemoryRetrievalStrategy.HYBRID, retriever.lastRequest?.strategy)
         assertEquals(1, prepared.retrievedMemories.size)
         assertTrue(prepared.prompt!!.contains("implementation before long explanations"))
-        assertTrue(prepared.prompt.contains("path: MEMORY.md"))
+        assertFalse(prepared.prompt.contains("MEMORY.md"))
+        assertFalse(prepared.prompt.contains("type:"))
+        assertFalse(prepared.prompt.contains("sensitivity:"))
+        assertFalse(prepared.prompt.contains("source:"))
     }
 
     @Test
@@ -127,7 +132,7 @@ class MemoryRepositoryTest {
         assertNull(hidden.prompt)
         assertEquals("day_hidden", visible.retrievedMemories.single().entryId)
         assertTrue(visible.prompt!!.contains("violet-compass"))
-        assertTrue(visible.prompt.contains("path: MEMORY.md"))
+        assertFalse(visible.prompt.contains("MEMORY.md"))
     }
 
     @Test
@@ -252,6 +257,49 @@ class MemoryRepositoryTest {
     }
 
     @Test
+    fun `projection diagnostic codes are bound to the current turn`() = runBlocking {
+        val store = PromptTraceStore()
+        val diagnostic = MemoryProjectionDiagnostic(
+            code = "chat_projection_parse_failed",
+            sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+            count = 2
+        )
+        val repository = MemoryRepositoryImpl(
+            memoryPromptBuilder = MemoryPromptBuilder(),
+            memoryRetriever = FakeMemoryRetriever(
+                report = MemoryRetrievalReport(
+                    results = emptyList(),
+                    mode = MemoryRetrievalMode.FAILED,
+                    errorMessage = "chat_projection_parse_failed:2",
+                    diagnostics = listOf(diagnostic)
+                )
+            ),
+            promptTraceStore = store
+        )
+
+        repository.prepareMemoryContext(
+            chatRoom = chatRoom(),
+            userMessages = listOf(MessageV2(id = 33, chatId = 1, content = "Recall this", platformType = null)),
+            assistantMessages = listOf(emptyList())
+        )
+
+        val entry = store.record(
+            chatId = 1,
+            turnNumber = 1,
+            userMessageId = 33,
+            platformUid = "platform",
+            platformName = "Platform",
+            clientType = cn.nabr.chatwithchat.data.model.ClientType.OPENAI,
+            model = "model",
+            stage = cn.nabr.chatwithchat.data.debug.PromptTraceStage.ANSWER,
+            systemPrompt = "system"
+        )
+
+        assertEquals(MemoryRetrievalMode.FAILED, entry.memoryRecall?.mode)
+        assertEquals(listOf("chat_projection_parse_failed"), entry.memoryRecall?.diagnosticCodes)
+    }
+
+    @Test
     fun `markdown observation reads existing canonical content after store recreation`() = runBlocking {
         val paths = MemoryFilePaths(Files.createTempDirectory("memory-repository-observe-restart").toFile())
         val writer = MemoryFileStore(paths)
@@ -368,7 +416,8 @@ class MemoryRepositoryTest {
 
 private class FakeMemoryRetriever(
     private val results: List<MemoryRetrievalResult> = emptyList(),
-    private val failure: Throwable? = null
+    private val failure: Throwable? = null,
+    private val report: MemoryRetrievalReport? = null
 ) : MemoryRetriever {
     var calls = 0
     var lastRequest: MemoryRetrievalRequest? = null
@@ -377,6 +426,13 @@ private class FakeMemoryRetriever(
         calls += 1
         lastRequest = request
         return failure?.let { Result.failure(it) } ?: Result.success(results)
+    }
+
+    override suspend fun retrieveWithDiagnostics(request: MemoryRetrievalRequest): Result<MemoryRetrievalReport> {
+        if (report == null) return super.retrieveWithDiagnostics(request)
+        calls += 1
+        lastRequest = request
+        return Result.success(report)
     }
 }
 

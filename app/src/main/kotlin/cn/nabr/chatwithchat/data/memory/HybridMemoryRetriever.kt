@@ -52,6 +52,18 @@ class HybridMemoryRetriever(
                         current.sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME
                 }
                 ?: return MemoryRetrievalReport(emptyList(), MemoryRetrievalMode.NONE)
+            if (snapshot.diagnostics.isNotEmpty()) {
+                if (snapshotSource.isProjectionCurrent(listOf(snapshot)).getOrThrow()) {
+                    return MemoryRetrievalReport(
+                        results = emptyList(),
+                        mode = MemoryRetrievalMode.FAILED,
+                        errorMessage = snapshot.diagnostics.toBoundedErrorMessage(),
+                        recallProjectionHash = snapshot.recallProjectionHash,
+                        diagnostics = snapshot.diagnostics
+                    )
+                }
+                return@repeat
+            }
             val lexicalCandidates = lexicalRetriever.rankCandidates(
                 request = request.copy(strategy = MemoryRetrievalStrategy.LEXICAL),
                 combinedQuery = lexicalQuery,
@@ -88,7 +100,8 @@ class HybridMemoryRetriever(
             val alwaysIncluded = snapshot.chunks
                 .asSequence()
                 .filter { chunk ->
-                    chunk.type in request.alwaysIncludeTypes &&
+                    chunk.sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME &&
+                        chunk.type in request.alwaysIncludeTypes &&
                         (
                             request.includePrivate ||
                                 chunk.sensitivity == null ||
@@ -106,7 +119,8 @@ class HybridMemoryRetriever(
             if (snapshotSource.isProjectionCurrent(listOf(snapshot)).getOrThrow()) {
                 return MemoryRetrievalReport(
                     results = selected,
-                    mode = mode.takeIf { selected.isNotEmpty() } ?: MemoryRetrievalMode.NONE
+                    mode = mode.takeIf { selected.isNotEmpty() } ?: MemoryRetrievalMode.NONE,
+                    recallProjectionHash = snapshot.recallProjectionHash
                 )
             }
         }
@@ -194,7 +208,10 @@ class HybridMemoryRetriever(
             .asSequence()
             .mapNotNull { match ->
                 val current = currentChunks[match.chunk.chunkId]
-                    ?.takeIf { chunk -> chunk.embeddingContentHash == match.chunk.embeddingContentHash }
+                    ?.takeIf { chunk ->
+                        chunk.sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME &&
+                            chunk.embeddingContentHash == match.chunk.embeddingContentHash
+                    }
                     ?: return@mapNotNull null
                 CurrentVectorMatch(current, match.embedding, match.cosineDistance)
             }
@@ -218,9 +235,17 @@ class HybridMemoryRetriever(
                         type = match.chunk.type,
                         sensitivity = match.chunk.sensitivity,
                         source = match.chunk.source,
+                        chatId = match.chunk.chatId,
+                        createdAt = match.chunk.createdAt,
+                        section = match.chunk.heading,
                         canonicalKey = match.chunk.canonicalKey,
                         scope = match.chunk.scope,
                         recallState = match.chunk.recallState,
+                        validity = match.chunk.validity,
+                        lastObservedAt = match.chunk.lastObservedAt,
+                        supersededBy = match.chunk.supersededBy,
+                        evidenceRefs = match.chunk.evidenceRefs,
+                        extraMetadata = match.chunk.extraMetadata,
                         embeddingContentHash = match.chunk.embeddingContentHash,
                         rankingHash = match.chunk.rankingHash,
                         lexicalScore = null,
@@ -302,9 +327,17 @@ class HybridMemoryRetriever(
             type = chunk.type,
             sensitivity = chunk.sensitivity,
             source = chunk.source,
+            chatId = chunk.chatId,
+            createdAt = chunk.createdAt,
+            section = chunk.heading,
             canonicalKey = chunk.canonicalKey,
             scope = chunk.scope,
             recallState = chunk.recallState,
+            validity = chunk.validity,
+            lastObservedAt = chunk.lastObservedAt,
+            supersededBy = chunk.supersededBy,
+            evidenceRefs = chunk.evidenceRefs,
+            extraMetadata = chunk.extraMetadata,
             embeddingContentHash = chunk.embeddingContentHash,
             rankingHash = chunk.rankingHash,
             lexicalScore = null,

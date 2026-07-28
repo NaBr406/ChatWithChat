@@ -27,13 +27,17 @@ class MemoryPromptBuilderTest {
             )
         )
 
-        assertTrue(prompt!!.contains("可能相关的用户记忆"))
+        assertTrue(prompt!!.contains("用户记忆"))
+        assertTrue(prompt.contains("The user prefers natural Chinese conversation."))
         assertFalse(prompt.contains("MEMORY.md"))
         assertFalse(prompt.contains("mem_1"))
         assertFalse(prompt.contains("fixture_hash"))
-        assertTrue(prompt.contains("谨慎处理"))
-        assertTrue(prompt.contains("默认沟通偏好"))
-        assertTrue(prompt.contains("不要透露私密或敏感上下文"))
+        assertFalse(prompt.contains("type:"))
+        assertFalse(prompt.contains("sensitivity:"))
+        assertFalse(prompt.contains("source:"))
+        assertFalse(prompt.contains(MemorySensitivity.PRIVATE))
+        assertFalse(prompt.contains(MemorySource.USER_CONFIRMED))
+        assertTrue(prompt.contains("不要在非必要时透露私密信息"))
     }
 
     @Test

@@ -6,33 +6,57 @@ class MarkdownLexicalRetriever(
     MemoryMaintenanceCorpusReader {
 
     override suspend fun retrieve(request: MemoryRetrievalRequest): Result<List<MemoryRetrievalResult>> =
-        retrieveForCorpus(request, MemoryCorpus.CHAT_RECALL_LONG_TERM)
+        retrieveReport(request, MemoryCorpus.CHAT_RECALL_LONG_TERM).map(MemoryRetrievalReport::results)
+
+    override suspend fun retrieveWithDiagnostics(request: MemoryRetrievalRequest): Result<MemoryRetrievalReport> =
+        retrieveReport(request, MemoryCorpus.CHAT_RECALL_LONG_TERM)
 
     override suspend fun retrieveWorkingSet(request: MemoryRetrievalRequest): Result<List<MemoryRetrievalResult>> =
-        retrieveForCorpus(request, MemoryCorpus.MAINTENANCE_WORKING_SET)
+        retrieveReport(request, MemoryCorpus.MAINTENANCE_WORKING_SET).map(MemoryRetrievalReport::results)
 
-    private suspend fun retrieveForCorpus(
+    private suspend fun retrieveReport(
         request: MemoryRetrievalRequest,
         requiredCorpus: MemoryCorpus
-    ): Result<List<MemoryRetrievalResult>> = runCatching {
+    ): Result<MemoryRetrievalReport> = runCatching {
         require(request.corpus == requiredCorpus) {
             "Expected corpus $requiredCorpus but received ${request.corpus}"
         }
         check(request.strategy == MemoryRetrievalStrategy.LEXICAL) {
             "Markdown lexical retrieval only supports the lexical strategy"
         }
-        if (request.limit <= 0 || request.tokenBudget <= 0) return@runCatching emptyList()
+        if (request.limit <= 0 || request.tokenBudget <= 0) {
+            return@runCatching MemoryRetrievalReport(emptyList(), MemoryRetrievalMode.NONE)
+        }
         val lexicalQuery = request.lexicalQuery()
-        if (lexicalQuery.isBlank()) return@runCatching emptyList()
+        if (lexicalQuery.isBlank()) {
+            return@runCatching MemoryRetrievalReport(emptyList(), MemoryRetrievalMode.NONE)
+        }
 
         repeat(MAX_SNAPSHOT_ATTEMPTS) {
             val snapshots = snapshotSource.snapshots(request.corpus).getOrThrow()
-            val results = rankCandidates(request, lexicalQuery, snapshots).packFor(request)
+            val diagnostics = snapshots.flatMap(MemoryCorpusSnapshot::diagnostics)
+            val hasChatProjectionFailure = requiredCorpus == MemoryCorpus.CHAT_RECALL_LONG_TERM &&
+                diagnostics.any { diagnostic -> diagnostic.code.startsWith(CHAT_PROJECTION_DIAGNOSTIC_PREFIX) }
+            val results = if (hasChatProjectionFailure) {
+                emptyList()
+            } else {
+                rankCandidates(request, lexicalQuery, snapshots).packFor(request)
+            }
             if (snapshotSource.isProjectionCurrent(snapshots).getOrThrow()) {
-                return@runCatching results
+                return@runCatching MemoryRetrievalReport(
+                    results = results,
+                    mode = when {
+                        hasChatProjectionFailure -> MemoryRetrievalMode.FAILED
+                        results.isNotEmpty() -> MemoryRetrievalMode.LEXICAL
+                        else -> MemoryRetrievalMode.NONE
+                    },
+                    errorMessage = diagnostics.toBoundedErrorMessage().takeIf { hasChatProjectionFailure },
+                    recallProjectionHash = snapshots.singleOrNull()?.recallProjectionHash,
+                    diagnostics = diagnostics
+                )
             }
         }
-        emptyList()
+        MemoryRetrievalReport(emptyList(), MemoryRetrievalMode.NONE)
     }
 
     internal fun rankCandidates(
@@ -134,9 +158,17 @@ class MarkdownLexicalRetriever(
         type = chunk.type,
         sensitivity = chunk.sensitivity,
         source = chunk.source,
+        chatId = chunk.chatId,
+        createdAt = chunk.createdAt,
+        section = chunk.heading,
         canonicalKey = chunk.canonicalKey,
         scope = chunk.scope,
         recallState = chunk.recallState,
+        validity = chunk.validity,
+        lastObservedAt = chunk.lastObservedAt,
+        supersededBy = chunk.supersededBy,
+        evidenceRefs = chunk.evidenceRefs,
+        extraMetadata = chunk.extraMetadata,
         embeddingContentHash = chunk.embeddingContentHash,
         rankingHash = chunk.rankingHash,
         lexicalScore = score,
@@ -171,5 +203,6 @@ class MarkdownLexicalRetriever(
         private const val LONG_TERM_BONUS = 0.25f
         private const val MAX_CANDIDATE_LIMIT = 500
         private const val MAX_SNAPSHOT_ATTEMPTS = 2
+        private const val CHAT_PROJECTION_DIAGNOSTIC_PREFIX = "chat_projection_"
     }
 }

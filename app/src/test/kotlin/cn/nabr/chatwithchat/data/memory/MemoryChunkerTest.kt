@@ -69,7 +69,7 @@ class MemoryChunkerTest {
         assertNotEquals(first.single().embeddingContentHash, changed.single().embeddingContentHash)
         assertEquals(first.single().embeddingContentHash, metadataChanged.single().embeddingContentHash)
         assertEquals(first.single().embeddingContentHash, sourceChanged.single().embeddingContentHash)
-        assertEquals(first.single().rankingHash, metadataChanged.single().rankingHash)
+        assertNotEquals(first.single().rankingHash, metadataChanged.single().rankingHash)
         assertEquals(first.single().rankingHash, sourceChanged.single().rankingHash)
         assertNotEquals(firstResult.projectionHash, metadataChangedResult.projectionHash)
         assertNotEquals(firstResult.projectionHash, sourceChangedResult.projectionHash)

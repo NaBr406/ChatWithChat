@@ -103,7 +103,8 @@ class MemoryRepositoryImpl(
                 },
                 hitCount = retrievedMemories.size,
                 memoryIds = retrievedMemories.map { memory -> memory.entryId ?: memory.chunkId }.distinct(),
-                errorMessage = retrievalReport.errorMessage
+                errorMessage = retrievalReport.errorMessage,
+                diagnosticCodes = retrievalReport.diagnostics.map { diagnostic -> diagnostic.code }.distinct()
             )
         )
         return PreparedMemoryContext(

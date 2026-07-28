@@ -47,6 +47,10 @@ data class MemoryCorpusChunk(
     val scope: String? = null,
     val validity: String? = null,
     val recallState: String? = null,
+    val lastObservedAt: Long = updatedAt,
+    val supersededBy: String? = null,
+    val evidenceRefs: List<String> = emptyList(),
+    val extraMetadata: Map<String, String> = emptyMap(),
     val embeddingText: String = text,
     val embeddingContentHash: String = embeddingText.sha256Utf8(),
     val rankingHash: String = embeddingContentHash

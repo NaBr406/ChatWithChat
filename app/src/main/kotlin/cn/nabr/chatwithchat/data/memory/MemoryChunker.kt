@@ -66,7 +66,11 @@ class MemoryChunker(
                     canonicalKey = entry.canonicalKey,
                     scope = entry.scope,
                     validity = entry.validity,
-                    recallState = entry.recallState
+                    recallState = entry.recallState,
+                    lastObservedAt = entry.lastObservedAt,
+                    supersededBy = entry.supersededBy,
+                    evidenceRefs = entry.evidenceRefs,
+                    extraMetadata = entry.extraMetadata
                 )
             }
         }
@@ -143,7 +147,11 @@ class MemoryChunker(
                     canonicalKey = null,
                     scope = null,
                     validity = null,
-                    recallState = null
+                    recallState = null,
+                    lastObservedAt = 0L,
+                    supersededBy = null,
+                    evidenceRefs = emptyList(),
+                    extraMetadata = emptyMap()
                 )
             }
         }
@@ -165,7 +173,11 @@ class MemoryChunker(
         canonicalKey: String?,
         scope: String?,
         validity: String?,
-        recallState: String?
+        recallState: String?,
+        lastObservedAt: Long,
+        supersededBy: String?,
+        evidenceRefs: List<String>,
+        extraMetadata: Map<String, String>
     ): MemoryCorpusChunk {
         val embeddingText = text.normalizedNaturalLanguage()
         val embeddingContentHash = embeddingText.sha256Utf8()
@@ -177,7 +189,8 @@ class MemoryChunker(
             hashField("canonicalKey", canonicalKey),
             hashField("scope", scope),
             hashField("validity", validity),
-            hashField("recallState", recallState)
+            hashField("recallState", recallState),
+            hashField("updatedAt", updatedAt.toString())
         ).joinToString(separator = "")
             .sha256Utf8()
         return MemoryCorpusChunk(
@@ -197,6 +210,10 @@ class MemoryChunker(
             scope = scope,
             validity = validity,
             recallState = recallState,
+            lastObservedAt = lastObservedAt,
+            supersededBy = supersededBy,
+            evidenceRefs = evidenceRefs,
+            extraMetadata = extraMetadata,
             embeddingText = embeddingText,
             embeddingContentHash = embeddingContentHash,
             rankingHash = rankingHash

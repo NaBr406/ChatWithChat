@@ -737,11 +737,16 @@ git diff --check
 **Provider boundary and compatibility**
 
 - Room Kotlin properties now use `recallProjectionHash` names while physical `source_hash` columns remain unchanged. ObjectBox physical fields and serialized sync payload key `sourceHash` remain backward compatible; publication separately verifies projection identity and the canonical receipt target hash.
-- `MemoryPromptBuilder` no longer renders entry IDs or source paths. `ChatRepositoryImpl.completeChat()` rejects hidden comments, internal memory IDs/paths/metadata keys, and hash markers before any provider DTO or network call; provider-specific tests cover OpenAI Responses, OpenAI Chat/OpenRouter, Anthropic, and Google.
+- `MemoryPromptBuilder` renders natural-language facts plus one global usage/privacy instruction, with no type, sensitivity, provenance, entry ID, or source path labels. `ChatRepositoryImpl.completeChat()` rejects hidden comments, controlled internal metadata labels, memory IDs/paths, and hash markers before any provider DTO or network call; provider-specific tests cover OpenAI Responses, OpenAI Chat/OpenRouter, Anthropic, and Google.
+
+**Final review closure**
+
+- A post-commit static review of `e3dd791` found that snapshot diagnostics stopped before the recall trace, maintenance retrieval did not expose every managed metadata field, and `rankingHash` omitted the `updatedAt` value used by lexical tie-breaking. The follow-up propagates bounded diagnostic codes through `MemoryRetrievalReport` and `PromptTraceStore`, preserves section/chat/time/lifecycle/evidence/extra metadata in maintenance DTOs, and keeps maintenance current checks on exact file bytes. Chat freshness separately compares bounded diagnostic identity, so equal empty projection hashes cannot hide or retain a concurrent parse failure.
+- Hybrid now rejects non-`MEMORY.md` chunks at both the current-vector allowlist and the `alwaysIncludeTypes` path. Direct VECTOR, HYBRID, and missing-vector lexical-fallback fixtures use the production `communication_style` include policy and prove daily chunks remain zero candidates. `updatedAt` participates only in ranking/projection identity; `lastObservedAt`, evidence refs, IDs, paths, and other maintenance-only fields remain excluded from embedding text/hash.
 
 **Verification**
 
-- Focused Task 4 verification passed 189 tests with zero failures/errors across 11 suites: snapshot/chunker/index synchronization, lexical/Hybrid/vector bootstrap/recovery/configuration, mutation CAS, prompt rendering, and all 72 `ChatRepositoryImplTest` provider cases.
+- Final focused Task 4 verification passed 207 tests with zero failures/errors across 12 suites: snapshot/chunker/index synchronization, lexical/Hybrid/vector bootstrap/recovery/configuration, mutation CAS, prompt rendering/repository tracing, and all 72 `ChatRepositoryImplTest` provider cases.
 - `./gradlew.bat :app:compileDebugKotlin`, `./gradlew.bat :app:compileDebugAndroidTestKotlin`, ktlint 1.3.1 over all changed Kotlin files, and `git diff --check` passed. Generated-code, native-access/Unsafe, and CRLF messages were informational only.
 
 ### Task 5: Implement Always-On Tiered Recall With Absolute Relevance Gates

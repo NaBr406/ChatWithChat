@@ -1,7 +1,7 @@
 package cn.nabr.chatwithchat.data.debug
 
-import cn.nabr.chatwithchat.data.model.ClientType
 import cn.nabr.chatwithchat.data.memory.MemoryRetrievalMode
+import cn.nabr.chatwithchat.data.model.ClientType
 import java.util.LinkedHashMap
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
@@ -29,7 +29,8 @@ data class MemoryRecallTrace(
     val mode: MemoryRetrievalMode,
     val hitCount: Int,
     val memoryIds: List<String>,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val diagnosticCodes: List<String> = emptyList()
 )
 
 object PromptTraceStage {

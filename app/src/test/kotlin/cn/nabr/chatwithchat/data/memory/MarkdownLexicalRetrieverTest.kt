@@ -82,6 +82,48 @@ class MarkdownLexicalRetrieverTest {
     }
 
     @Test
+    fun `maintenance retrieval preserves complete managed metadata`() = runBlocking {
+        val fileStore = createFileStore()
+        val active = memoryEntry("mem_active_metadata", "Current response preference.").copy(
+            canonicalKey = "communication.response_style",
+            scope = MemoryScope.WORK
+        )
+        val history = memoryEntry("mem_history_metadata", "Archived-metadata-marker response preference.").copy(
+            chatId = 7,
+            section = "Archived",
+            canonicalKey = active.canonicalKey,
+            scope = active.scope,
+            lastObservedAt = 12L,
+            validity = MemoryValidity.OBSOLETE,
+            supersededBy = active.id,
+            recallState = MemoryRecallState.MAINTENANCE_ONLY,
+            evidenceRefs = listOf("chat:7:user:3"),
+            extraMetadata = mapOf("legacy_flag" to "kept")
+        )
+        fileStore.replaceLongTermMemory(
+            MarkdownMemoryCodec().renderLongTerm(listOf(active, history))
+        ).getOrThrow()
+
+        val result = createRetriever(fileStore).retrieveWorkingSet(
+            request(MemoryCorpus.MAINTENANCE_WORKING_SET, "Archived-metadata-marker")
+        ).getOrThrow().single()
+
+        assertEquals(history.id, result.entryId)
+        assertEquals(history.chatId, result.chatId)
+        assertEquals(history.createdAt, result.createdAt)
+        assertEquals(history.updatedAt, result.updatedAt)
+        assertEquals(history.section, result.section)
+        assertEquals(history.canonicalKey, result.canonicalKey)
+        assertEquals(history.scope, result.scope)
+        assertEquals(history.lastObservedAt, result.lastObservedAt)
+        assertEquals(history.validity, result.validity)
+        assertEquals(history.supersededBy, result.supersededBy)
+        assertEquals(history.recallState, result.recallState)
+        assertEquals(history.evidenceRefs, result.evidenceRefs)
+        assertEquals(history.extraMetadata, result.extraMetadata)
+    }
+
+    @Test
     fun `deleting or replacing memory text changes recall immediately`() = runBlocking {
         val fileStore = createFileStore()
         val retriever = createRetriever(fileStore)

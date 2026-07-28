@@ -2954,6 +2954,7 @@ class ChatRepositoryImplTest {
             "Relevant user memories:\n<!-- memory:type=profile\n- The user prefers concise answers.",
             "Relevant user memories:\nentryId: mem_internal_42\n- The user prefers concise answers.",
             "Relevant user memories:\nsourcePath: memory/2026-07-29.md\n- The user prefers concise answers.",
+            "Relevant user memories:\ntype: communication_style, sensitivity: private, source: user_confirmed\n- The user prefers concise answers.",
             "Relevant user memories:\nembeddingContentHash: ${"a".repeat(64)}\n- The user prefers concise answers."
         )
 
@@ -2985,7 +2986,8 @@ class ChatRepositoryImplTest {
         val memoryPrompt =
             "Relevant user memories:\n" +
                 "- The user prefers concise answers.\n" +
-                "- The user discusses IDs, file paths, hash functions, and SHA-256 in natural language."
+                "- The user discusses IDs, file paths, hash functions, and SHA-256 in natural language.\n" +
+                "- The source: a user interview, stated naturally rather than as an internal provenance label."
 
         providerMemoryGuardScenarios().forEach { scenario ->
             scenario.repository.completeChat(

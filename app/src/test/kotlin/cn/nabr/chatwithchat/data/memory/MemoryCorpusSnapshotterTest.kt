@@ -101,6 +101,7 @@ class MemoryCorpusSnapshotterTest {
         )
         fileStore.replaceLongTermMemory(MarkdownMemoryCodec().renderLongTerm(listOf(entry))).getOrThrow()
         val before = snapshotter.snapshots(MemoryCorpus.CHAT_RECALL_LONG_TERM).getOrThrow().single()
+        val maintenanceBefore = snapshotter.snapshots(MemoryCorpus.MAINTENANCE_WORKING_SET).getOrThrow()
 
         fileStore.replaceLongTermMemory(
             MarkdownMemoryCodec().renderLongTerm(
@@ -117,6 +118,7 @@ class MemoryCorpusSnapshotterTest {
         )
         assertFalse(snapshotter.isCurrent(listOf(before)).getOrThrow())
         assertTrue(snapshotter.isProjectionCurrent(listOf(before)).getOrThrow())
+        assertFalse(snapshotter.isProjectionCurrent(maintenanceBefore).getOrThrow())
     }
 
     @Test
@@ -141,6 +143,29 @@ class MemoryCorpusSnapshotterTest {
         assertNotEquals(initial.recallProjectionHash, textChanged.recallProjectionHash)
         assertNotEquals(textChanged.recallProjectionHash, membershipChanged.recallProjectionHash)
         assertTrue(membershipChanged.chunks.isEmpty())
+    }
+
+    @Test
+    fun `projection freshness distinguishes valid and failed empty snapshots in both directions`() = runBlocking {
+        val fileStore = createFileStore()
+        val snapshotter = MemoryCorpusSnapshotter(fileStore, MemoryChunker())
+        val validMarkdown = "# ChatWithChat Memory\n"
+        val failedMarkdown = "# ChatWithChat Memory\n\nUnstructured memory body."
+        fileStore.replaceLongTermMemory(validMarkdown).getOrThrow()
+        val valid = snapshotter.snapshots(MemoryCorpus.CHAT_RECALL_LONG_TERM).getOrThrow().single()
+
+        fileStore.replaceLongTermMemory(failedMarkdown).getOrThrow()
+        val failed = snapshotter.snapshots(MemoryCorpus.CHAT_RECALL_LONG_TERM).getOrThrow().single()
+
+        assertEquals(valid.recallProjectionHash, failed.recallProjectionHash)
+        assertTrue(valid.diagnostics.isEmpty())
+        assertTrue(failed.diagnostics.isNotEmpty())
+        assertFalse(snapshotter.isProjectionCurrent(listOf(valid)).getOrThrow())
+        assertTrue(snapshotter.isProjectionCurrent(listOf(failed)).getOrThrow())
+
+        fileStore.replaceLongTermMemory(validMarkdown).getOrThrow()
+
+        assertFalse(snapshotter.isProjectionCurrent(listOf(failed)).getOrThrow())
     }
 
     @Test

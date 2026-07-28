@@ -46,9 +46,28 @@ class MemoryCorpusSnapshotter(
         if (snapshots.isEmpty()) return@runCatching false
         val corpus = snapshots.first().corpus
         if (snapshots.any { snapshot -> snapshot.corpus != corpus }) return@runCatching false
+        if (corpus == MemoryCorpus.MAINTENANCE_WORKING_SET) {
+            return@runCatching isCurrent(snapshots).getOrThrow()
+        }
         val current = snapshots(corpus).getOrThrow()
-        val expectedSources = snapshots.associate { snapshot -> snapshot.sourcePath to snapshot.recallProjectionHash }
-        val currentSources = current.associate { snapshot -> snapshot.sourcePath to snapshot.recallProjectionHash }
+        val expectedSources = snapshots.associate { snapshot -> snapshot.sourcePath to snapshot.projectionFreshness() }
+        val currentSources = current.associate { snapshot -> snapshot.sourcePath to snapshot.projectionFreshness() }
         expectedSources == currentSources
     }
 }
+
+private data class ProjectionFreshness(
+    val recallProjectionHash: String,
+    val diagnostics: List<MemoryProjectionDiagnostic>
+)
+
+private fun MemoryCorpusSnapshot.projectionFreshness() = ProjectionFreshness(
+    recallProjectionHash = recallProjectionHash,
+    diagnostics = diagnostics.sortedWith(
+        compareBy(
+            MemoryProjectionDiagnostic::code,
+            MemoryProjectionDiagnostic::sourcePath,
+            MemoryProjectionDiagnostic::count
+        )
+    )
+)
