@@ -146,6 +146,79 @@ class MemoryDailyDistillationServiceTest {
     }
 
     @Test
+    fun `same fact observation commits metadata without corpus or index work`() = runBlocking {
+        val existing = MarkdownMemoryEntry(
+            id = "mem_daily_observed",
+            text = "The user explicitly prefers the silver compass response style.",
+            type = "communication_style",
+            sensitivity = MemorySensitivity.NORMAL,
+            source = MemorySource.EXPLICIT_USER_STATEMENT,
+            createdAt = 1L,
+            updatedAt = 1L,
+            section = "Stable Preferences",
+            canonicalKey = "communication.response_style",
+            scope = MemoryScope.GENERAL,
+            lastObservedAt = 1L,
+            recallState = MemoryRecallState.QUERY,
+            evidenceRefs = listOf("daily:previous")
+        )
+        val proposal = MemoryDailyDistillationProposal(
+            operations = listOf(
+                MemoryDailyDistillationOperation(
+                    action = MemoryDailyDistillationAction.REPLACE,
+                    targetMemoryId = existing.id,
+                    text = existing.text,
+                    type = existing.type,
+                    sensitivity = existing.sensitivity,
+                    source = existing.source,
+                    evidenceKeys = listOf("placeholder"),
+                    canonicalKey = checkNotNull(existing.canonicalKey),
+                    scope = existing.scope,
+                    evidenceAt = 2L,
+                    recallState = existing.recallState,
+                    reason = "same stable fact observed again"
+                )
+            )
+        )
+        val fixture = fixture(proposal = proposal, existingLongTerm = listOf(existing))
+        val semanticJob = fixture.semanticJob()
+        val payload = STRICT_JSON.decodeFromString<MemoryDailyDistillationJobPayload>(semanticJob.payloadJson)
+        val evidenceKey = payload.input.dailyEvidence.single().evidenceKey
+        assertEquals(
+            null,
+            fixture.recoveryDao.getCorpusState(MemoryCorpus.CHAT_RECALL_LONG_TERM.name.lowercase())
+        )
+
+        val result = fixture.service.process(fixture.claimSemanticJob())
+        val observed = fixture.codec
+            .parse(fixture.fileStore.readLongTermMemory().getOrThrow())
+            .entries
+            .single()
+        val mutation = checkNotNull(fixture.mutationCoordinator.findBySemanticJobId(semanticJob.jobId))
+        val receipt = mutation.receipts.single()
+
+        assertEquals(MemoryDailyDistillationProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(1, result.operationCount)
+        assertEquals(MemoryDistillationCheckpointStatus.COMPLETED, fixture.checkpoint().status)
+        assertEquals(existing.id, observed.id)
+        assertEquals(existing.text, observed.text)
+        assertEquals(existing.createdAt, observed.createdAt)
+        assertEquals(existing.updatedAt, observed.updatedAt)
+        assertEquals(existing.source, observed.source)
+        assertEquals(2L, observed.lastObservedAt)
+        assertEquals(listOf("daily:previous", evidenceKey).sorted(), observed.evidenceRefs)
+        assertEquals(null, receipt.targetIndexFingerprint)
+        assertEquals(MemoryMutationState.INDEXED, receipt.state)
+        assertEquals(MemoryMutationState.INDEXED, mutation.group.state)
+        assertEquals(
+            null,
+            fixture.recoveryDao.getCorpusState(MemoryCorpus.CHAT_RECALL_LONG_TERM.name.lowercase())
+        )
+        assertTrue(fixture.jobDao.jobs.none { job -> job.type == MemoryMaintenanceJobType.SYNC_VECTOR_INDEX })
+        assertTrue(fixture.workEnqueuer.works.none { work -> work.family == MemoryMaintenanceJobFamily.INDEX })
+    }
+
+    @Test
     fun `legacy frozen input hash remains valid after existing metadata expansion`() = runBlocking {
         val existing = MarkdownMemoryEntry(
             id = "mem_legacy_frozen",
@@ -459,6 +532,7 @@ class MemoryDailyDistillationServiceTest {
             maintenanceScheduler = maintenanceScheduler,
             dailyScheduler = dailyScheduler,
             mutationCoordinator = mutationCoordinator,
+            workEnqueuer = workEnqueuer,
             intelligence = intelligence,
             operationController = controller,
             service = service
@@ -498,6 +572,7 @@ class MemoryDailyDistillationServiceTest {
         val maintenanceScheduler: MemoryMaintenanceScheduler,
         val dailyScheduler: MemoryDailyDistillationScheduler,
         val mutationCoordinator: MemoryMutationCoordinator,
+        val workEnqueuer: RecordingWorkEnqueuer,
         val intelligence: FakeMemoryIntelligence,
         val operationController: MemoryDailyDistillationOperationController,
         val service: MemoryDailyDistillationService

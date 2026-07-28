@@ -250,7 +250,7 @@ class MarkdownMemoryCodec {
             val update = updatesById[entryId] ?: return@forEach
             val current = checkNotNull(entriesById[entryId])
             val shouldUpdateObserved = update.lastObservedAt > current.lastObservedAt
-            val evidenceRefs = (current.evidenceRefs + update.evidenceRefs).distinct()
+            val evidenceRefs = (current.evidenceRefs + update.evidenceRefs).distinct().sorted()
             MarkdownMemoryMetadataPolicy.encodeEvidenceRefs(evidenceRefs)
             if (!shouldUpdateObserved && evidenceRefs == current.evidenceRefs) return@forEach
 

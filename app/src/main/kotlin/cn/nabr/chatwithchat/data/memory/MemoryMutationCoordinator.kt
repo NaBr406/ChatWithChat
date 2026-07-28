@@ -309,8 +309,11 @@ class MemoryMutationCoordinator(
             }
 
             if (receipt.state == MemoryMutationState.FILE_COMMITTED) {
-                receipt = if (receipt.sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME) {
+                receipt = if (receipt.requiresIndexSync()) {
                     transitionReceipt(receipt, MemoryMutationState.INDEX_PENDING)
+                } else if (receipt.isMetadataOnlyLongTermReceipt()) {
+                    memoryFileStore.cleanupStagedTarget(receipt.stagedTargetPath).getOrThrow()
+                    transitionReceipt(receipt, MemoryMutationState.INDEXED, indexedAt = now())
                 } else {
                     transitionReceipt(receipt, MemoryMutationState.INDEXED, indexedAt = now())
                         .also { indexedReceipt ->
@@ -324,35 +327,34 @@ class MemoryMutationCoordinator(
         val longTermReceipt = current.receipts.singleOrNull { receipt ->
             receipt.sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME
         }
-        if (longTermReceipt != null) {
-            val fingerprint = checkNotNull(longTermReceipt.targetIndexFingerprint) {
-                "Long-term mutation receipt is missing its target index fingerprint"
-            }
+        val indexableLongTermReceipt = longTermReceipt?.takeIf { receipt -> receipt.requiresIndexSync() }
+        if (indexableLongTermReceipt != null) {
+            val fingerprint = checkNotNull(indexableLongTermReceipt.targetIndexFingerprint)
             val corpusAdvance = recoveryDao.advanceCorpusGeneration(
                 MemoryCorpusAdvanceRequest(
                     corpus = CHAT_RECALL_CORPUS_KEY,
-                    sourcePath = longTermReceipt.sourcePath,
-                    sourceHash = longTermReceipt.targetSourceHash,
+                    sourcePath = indexableLongTermReceipt.sourcePath,
+                    sourceHash = indexableLongTermReceipt.targetSourceHash,
                     generation = current.group.generation,
                     targetIndexFingerprint = fingerprint,
                     indexStatus = MemoryCorpusIndexStatus.PENDING,
-                    latestReceiptId = longTermReceipt.receiptId,
+                    latestReceiptId = indexableLongTermReceipt.receiptId,
                     createdAt = current.group.createdAt,
                     updatedAt = now()
                 )
             )
             if (corpusAdvance.outcome == MemoryCorpusAdvanceOutcome.STALE) {
-                return markConflict(current, longTermReceipt, "superseded_corpus_generation")
+                return markConflict(current, indexableLongTermReceipt, "superseded_corpus_generation")
             }
         }
 
         current = completeCanonicalGroup(current)
-        if (longTermReceipt != null) {
-            scheduleIndexSync(current.group, longTermReceipt)
+        if (indexableLongTermReceipt != null) {
+            scheduleIndexSync(current.group, indexableLongTermReceipt)
         }
         return MemoryMutationCommitResult.CanonicalCommitted(
             mutation = current,
-            hasPendingIndex = longTermReceipt != null,
+            hasPendingIndex = indexableLongTermReceipt != null,
             requiresSemanticAcknowledgement = current.group.state == MemoryMutationState.SEMANTIC_ACK_PENDING
         )
     }
@@ -610,7 +612,7 @@ class MemoryMutationCoordinator(
     }
 
     private suspend fun isSupersededLongTermReceipt(receipt: MemoryMutationReceipt): Boolean {
-        if (receipt.sourcePath != MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME) return false
+        if (!receipt.requiresIndexSync()) return false
         return recoveryDao.getCorpusState(CHAT_RECALL_CORPUS_KEY)?.generation?.let { generation ->
             generation > receipt.generation
         } ?: false
@@ -687,6 +689,12 @@ class MemoryMutationCoordinator(
 
     private suspend fun loadMutation(group: MemoryMutationGroup): MemoryPreparedMutation =
         MemoryPreparedMutation(group, recoveryDao.getMutationReceipts(group.groupId))
+
+    private fun MemoryMutationReceipt.requiresIndexSync(): Boolean =
+        sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME && targetIndexFingerprint != null
+
+    private fun MemoryMutationReceipt.isMetadataOnlyLongTermReceipt(): Boolean =
+        sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME && targetIndexFingerprint == null
 
     private fun receiptId(groupId: String, sourcePath: String): String =
         "${groupId}_receipt_${sourcePath.sha256Utf8().take(RECEIPT_PATH_HASH_LENGTH)}"

@@ -35,6 +35,8 @@ class MemoryBatchConsolidationService(
         explicitNulls = false
     }
 ) {
+    private val canonicalMemoryMergePolicy = CanonicalMemoryMergePolicy(markdownMemoryCodec)
+
     suspend fun process(job: MemoryMaintenanceJob): MemoryBatchProcessResult {
         terminalResultOrNull(job)?.let { return it }
         val payload = decodePayload(job) ?: return terminal(job, "invalid_batch_payload")
@@ -537,11 +539,13 @@ class MemoryBatchConsolidationService(
                 MemoryBatchAction.CREATE -> {
                     check(operation.targetMemoryId.isNullOrBlank())
                     validateWriteText(operation.text)
-                    registerExactWrite(
-                        normalizedWriteTextsByTarget = normalizedWriteTextsByTarget,
-                        sourcePath = proposalPathForDestination(operation.destination),
-                        text = operation.text
-                    )
+                    if (operation.destination == MemoryBatchDestination.DAILY) {
+                        registerExactWrite(
+                            normalizedWriteTextsByTarget = normalizedWriteTextsByTarget,
+                            sourcePath = proposalPathForDestination(operation.destination),
+                            text = operation.text
+                        )
+                    }
                     check(operation.evidenceTurnKeys.isNotEmpty())
                     validatedCanonicalWrite(operation, null, turnsByKey)
                 }
@@ -551,11 +555,13 @@ class MemoryBatchConsolidationService(
                     check(targetedIds.add(targetId))
                     check(operation.destination == destinationFor(existing.sourcePath))
                     validateWriteText(operation.text)
-                    registerExactWrite(
-                        normalizedWriteTextsByTarget = normalizedWriteTextsByTarget,
-                        sourcePath = existing.sourcePath,
-                        text = operation.text
-                    )
+                    if (existing.sourcePath != MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME) {
+                        registerExactWrite(
+                            normalizedWriteTextsByTarget = normalizedWriteTextsByTarget,
+                            sourcePath = existing.sourcePath,
+                            text = operation.text
+                        )
+                    }
                     check(operation.evidenceTurnKeys.isNotEmpty())
                     validatedCanonicalWrite(operation, existing, turnsByKey).copy(targetMemoryId = targetId)
                 }
@@ -670,8 +676,10 @@ class MemoryBatchConsolidationService(
             memoryFileStore.readMemoryFile(file).getOrThrow()
         }
         val editedMarkdown = originalMarkdown.toMutableMap()
+        val renderedAt = now()
         var dailyWriteCount = 0
         var longTermWriteCount = 0
+        var longTermRequiresIndexSync = false
 
         val indexedOperationsByPath = operations
             .withIndex()
@@ -684,6 +692,40 @@ class MemoryBatchConsolidationService(
                 }
             }
         indexedOperationsByPath.forEach { (sourcePath, indexedOperations) ->
+            if (sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME) {
+                var currentMarkdown = checkNotNull(originalMarkdown[sourcePath])
+                var removeCount = 0
+                indexedOperations
+                    .filter { indexedOperation -> indexedOperation.value.action == MemoryBatchAction.REMOVE }
+                    .sortedBy(IndexedValue<MemoryBatchOperation>::index)
+                    .forEach { indexedOperation ->
+                        val removal = markdownMemoryCodec.removeEntriesById(
+                            markdown = currentMarkdown,
+                            entryIds = setOf(checkNotNull(indexedOperation.value.targetMemoryId))
+                        )
+                        check(removal.deletedCount == 1)
+                        currentMarkdown = removal.markdown
+                        removeCount += 1
+                    }
+                val mergeResult = canonicalMemoryMergePolicy.merge(
+                    baseMarkdown = currentMarkdown,
+                    candidates = indexedOperations
+                        .filter { indexedOperation ->
+                            indexedOperation.value.action in setOf(MemoryBatchAction.CREATE, MemoryBatchAction.REPLACE)
+                        }
+                        .map { indexedOperation -> indexedOperation.value.toCanonicalCandidate(chatId) },
+                    mutationAt = renderedAt
+                )
+                editedMarkdown[sourcePath] = mergeResult.markdown
+                longTermWriteCount += removeCount + if (mergeResult.markdown == currentMarkdown) {
+                    0
+                } else {
+                    mergeResult.acceptedCandidateCount
+                }
+                longTermRequiresIndexSync = removeCount > 0 || mergeResult.requiresIndexSync
+                return@forEach
+            }
+
             val originalExactTextCounts = exactTextCounts(checkNotNull(originalMarkdown[sourcePath]))
             // Destructive edits run first so CREATE can relocate text removed by the same proposal.
             val orderedOperations = indexedOperations.filter { indexedOperation ->
@@ -710,7 +752,7 @@ class MemoryBatchConsolidationService(
                         val entry = operation.toEntry(
                             id = generatedId,
                             chatId = chatId,
-                            createdAt = now()
+                            createdAt = renderedAt
                         )
                         val append = if (operation.destination == MemoryBatchDestination.LONG_TERM) {
                             markdownMemoryCodec.renderLongTermAppend(listOf(entry))
@@ -730,7 +772,7 @@ class MemoryBatchConsolidationService(
                                     type = operation.type,
                                     sensitivity = operation.sensitivity,
                                     source = operation.source,
-                                    updatedAt = now()
+                                    updatedAt = renderedAt
                                 )
                             )
                         )
@@ -748,11 +790,7 @@ class MemoryBatchConsolidationService(
                     else -> currentMarkdown
                 }
                 editedMarkdown[sourcePath] = updatedMarkdown
-                if (operation.destination == MemoryBatchDestination.LONG_TERM) {
-                    longTermWriteCount += 1
-                } else {
-                    dailyWriteCount += 1
-                }
+                dailyWriteCount += 1
             }
         }
 
@@ -770,7 +808,7 @@ class MemoryBatchConsolidationService(
                     baseContent = checkNotNull(originalMarkdown[sourcePath]),
                     targetContent = markdown,
                     targetIndexFingerprint = targetIndexFingerprint.takeIf {
-                        sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME
+                        sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME && longTermRequiresIndexSync
                     }
                 )
             },
@@ -800,6 +838,21 @@ class MemoryBatchConsolidationService(
         recallState = requireNotNull(recallState),
         evidenceRefs = evidenceTurnKeys.sorted()
     )
+
+    private fun MemoryBatchOperation.toCanonicalCandidate(chatId: Int): CanonicalMemoryCandidate =
+        CanonicalMemoryCandidate(
+            targetMemoryId = targetMemoryId,
+            chatId = chatId,
+            text = text,
+            type = type,
+            sensitivity = sensitivity,
+            source = source,
+            canonicalKey = requireNotNull(canonicalKey),
+            scope = requireNotNull(scope),
+            evidenceAt = requireNotNull(evidenceAt),
+            recallState = requireNotNull(recallState),
+            evidenceRefs = evidenceTurnKeys
+        )
 
     private fun validateNoNewExactTextDuplicates(
         originalMarkdown: String,

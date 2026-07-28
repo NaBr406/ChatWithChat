@@ -37,59 +37,55 @@ class MemoryDailyDistillationOperationControllerTest {
     }
 
     @Test
-    fun `replace keeps stable identity and preserves unrelated Markdown`() {
-        val successor = memoryEntry(
-            id = "mem_successor",
-            text = "Current stable preference.",
-            createdAt = 6,
-            updatedAt = 7,
-            section = "Stable Preferences"
-        ).copy(
-            canonicalKey = "communication.response_style",
-            scope = MemoryScope.WORK,
-            lastObservedAt = 8,
-            recallState = MemoryRecallState.QUERY
-        )
+    fun `same fact replace merges observation without index sync`() {
         val existing = memoryEntry(
             id = "mem_existing",
-            text = "Old stable preference.",
+            text = "Current stable preference.",
             createdAt = 4,
             updatedAt = 5,
             section = "Stable Preferences"
         ).copy(
-            sensitivity = MemorySensitivity.SENSITIVE,
-            canonicalKey = successor.canonicalKey,
-            scope = successor.scope,
-            lastObservedAt = 9,
-            validity = MemoryValidity.OBSOLETE,
-            supersededBy = successor.id,
-            recallState = MemoryRecallState.MAINTENANCE_ONLY,
-            evidenceRefs = listOf("chat:7:user:1"),
+            canonicalKey = "communication.response_style",
+            scope = MemoryScope.WORK,
+            lastObservedAt = 6,
+            evidenceRefs = listOf("turn:existing"),
             extraMetadata = mapOf("future_schema" to "v2")
         )
-        val fixture = fixture(existing = listOf(existing, successor), trailingMarkdown = "\nManual footer stays here.\n")
+        val fixture = fixture(existing = listOf(existing))
+        val evidence = fixture.input.dailyEvidence.single().copy(
+            evidenceKey = "evidence-2",
+            createdAt = 11,
+            updatedAt = 12
+        )
+        val input = fixture.input.copy(dailyEvidence = listOf(evidence))
         val operations = controller.validate(
-            fixture.input,
+            input,
             listOf(
                 operation(
                     action = MemoryDailyDistillationAction.REPLACE,
                     targetMemoryId = existing.id,
-                    text = "Updated stable preference.",
+                    text = "  CURRENT stable\npreference.  ",
+                    evidenceKeys = listOf(evidence.evidenceKey),
                     canonicalKey = checkNotNull(existing.canonicalKey),
-                    scope = existing.scope
+                    scope = existing.scope,
+                    evidenceAt = 12
                 )
             )
         )
 
-        val rendered = controller.render(fixture.input, fixture.baseMarkdown, operations, renderedAt = 20)
-        val target = rendered.targets.single().targetContent
-        val parsed = codec.parse(target)
-        val replaced = parsed.entries.single { entry -> entry.id == existing.id }
+        val rendered = controller.render(input, fixture.baseMarkdown, operations, renderedAt = 20)
+        val target = rendered.targets.single()
+        val observed = codec.parse(target.targetContent).entries.single()
 
-        assertTrue(parsed.skippedEntries.isEmpty())
-        assertEquals(existing.copy(text = "Updated stable preference.", updatedAt = 20), replaced)
-        assertEquals(successor, parsed.entries.single { entry -> entry.id == successor.id })
-        assertTrue(target.contains("Manual footer stays here."))
+        assertEquals(existing.id, observed.id)
+        assertEquals(existing.text, observed.text)
+        assertEquals(existing.createdAt, observed.createdAt)
+        assertEquals(existing.updatedAt, observed.updatedAt)
+        assertEquals(12, observed.lastObservedAt)
+        assertEquals(listOf("evidence-2", "turn:existing"), observed.evidenceRefs)
+        assertEquals("v2", observed.extraMetadata["future_schema"])
+        assertEquals(null, target.targetIndexFingerprint)
+        assertEquals(1, rendered.writeCount)
     }
 
     @Test
@@ -118,7 +114,7 @@ class MemoryDailyDistillationOperationControllerTest {
     }
 
     @Test
-    fun `unknown evidence and existing duplicate create fail closed`() {
+    fun `unknown evidence fails closed and same fact create adopts legacy entry`() {
         val existing = memoryEntry("mem_existing", "Existing stable preference.")
         val fixture = fixture(existing = listOf(existing))
 
@@ -130,15 +126,18 @@ class MemoryDailyDistillationOperationControllerTest {
                 )
             }.isFailure
         )
-        assertTrue(
-            runCatching {
-                val operations = controller.validate(
-                    fixture.input,
-                    listOf(operation(MemoryDailyDistillationAction.CREATE, text = existing.text))
-                )
-                controller.render(fixture.input, fixture.baseMarkdown, operations)
-            }.isFailure
+        val operations = controller.validate(
+            fixture.input,
+            listOf(operation(MemoryDailyDistillationAction.CREATE, text = existing.text))
         )
+        val rendered = controller.render(fixture.input, fixture.baseMarkdown, operations)
+        val entries = codec.parse(rendered.targets.single().targetContent).entries
+
+        assertEquals(1, entries.size)
+        assertEquals(existing.id, entries.single().id)
+        assertEquals("communication.response_style", entries.single().canonicalKey)
+        assertEquals(MemoryScope.GENERAL, entries.single().scope)
+        assertEquals(1, rendered.writeCount)
     }
 
     @Test
@@ -189,77 +188,50 @@ class MemoryDailyDistillationOperationControllerTest {
     }
 
     @Test
-    fun `create and replace cannot expand exact text multiplicity`() {
-        val existing = memoryEntry("mem_existing", "Original stable preference.")
+    fun `identical same fact replay is byte stable and creates no target`() {
+        val existing = memoryEntry("mem_existing", "Current stable preference.").copy(
+            canonicalKey = "communication.response_style",
+            scope = MemoryScope.GENERAL,
+            lastObservedAt = 2,
+            evidenceRefs = listOf("turn:existing")
+        )
         val fixture = fixture(existing = listOf(existing))
-        val operations = controller.validate(
-            fixture.input,
-            listOf(
-                operation(MemoryDailyDistillationAction.CREATE, text = "Updated stable preference."),
-                operation(
-                    action = MemoryDailyDistillationAction.REPLACE,
-                    targetMemoryId = existing.id,
-                    text = "  UPDATED stable\npreference.  "
-                )
-            )
+        val evidence = fixture.input.dailyEvidence.single().copy(
+            evidenceKey = "evidence-2",
+            createdAt = 11,
+            updatedAt = 12
+        )
+        val input = fixture.input.copy(dailyEvidence = listOf(evidence))
+        val proposed = operation(
+            action = MemoryDailyDistillationAction.REPLACE,
+            targetMemoryId = existing.id,
+            text = existing.text,
+            evidenceKeys = listOf(evidence.evidenceKey),
+            canonicalKey = checkNotNull(existing.canonicalKey),
+            scope = existing.scope,
+            evidenceAt = 12
+        )
+        val first = controller.render(
+            input = input,
+            baseMarkdown = fixture.baseMarkdown,
+            validatedOperations = controller.validate(input, listOf(proposed)),
+            renderedAt = 20
+        )
+        val observedMarkdown = first.targets.single().targetContent
+        val replayInput = input.copy(
+            targetBaseHash = observedMarkdown.toByteArray(Charsets.UTF_8).sha256Hex()
         )
 
-        val failure = runCatching {
-            controller.render(fixture.input, fixture.baseMarkdown, operations)
-        }.exceptionOrNull()
-
-        assertEquals("duplicate_exact_memory_text", failure?.message)
-    }
-
-    @Test
-    fun `multiple replacements cannot expand exact text multiplicity`() {
-        val first = memoryEntry("mem_first", "First stable preference.")
-        val second = memoryEntry("mem_second", "Second stable preference.")
-        val fixture = fixture(existing = listOf(first, second))
-        val operations = controller.validate(
-            fixture.input,
-            listOf(
-                operation(
-                    action = MemoryDailyDistillationAction.REPLACE,
-                    targetMemoryId = first.id,
-                    text = "Shared stable preference."
-                ),
-                operation(
-                    action = MemoryDailyDistillationAction.REPLACE,
-                    targetMemoryId = second.id,
-                    text = "\u00a0SHARED stable\u3000preference.  "
-                )
-            )
+        val replay = controller.render(
+            input = replayInput,
+            baseMarkdown = observedMarkdown,
+            validatedOperations = controller.validate(replayInput, listOf(proposed)),
+            renderedAt = 21
         )
 
-        val failure = runCatching {
-            controller.render(fixture.input, fixture.baseMarkdown, operations)
-        }.exceptionOrNull()
-
-        assertEquals("duplicate_exact_memory_text", failure?.message)
-    }
-
-    @Test
-    fun `replace cannot match another canonical entry`() {
-        val target = memoryEntry("mem_target", "Obsolete project context.")
-        val canonical = memoryEntry("mem_canonical", "Current project context.")
-        val fixture = fixture(existing = listOf(target, canonical))
-        val operations = controller.validate(
-            fixture.input,
-            listOf(
-                operation(
-                    action = MemoryDailyDistillationAction.REPLACE,
-                    targetMemoryId = target.id,
-                    text = "  CURRENT project\ncontext.  "
-                )
-            )
-        )
-
-        val failure = runCatching {
-            controller.render(fixture.input, fixture.baseMarkdown, operations)
-        }.exceptionOrNull()
-
-        assertEquals("duplicate_exact_memory_text", failure?.message)
+        assertTrue(replay.targets.isEmpty())
+        assertEquals(1, replay.writeCount)
+        assertEquals(replayInput.targetBaseHash, replay.targetSourceHash)
     }
 
     @Test
@@ -286,80 +258,190 @@ class MemoryDailyDistillationOperationControllerTest {
     }
 
     @Test
-    fun `replace cannot expand historical exact duplicate multiplicity`() {
-        val first = memoryEntry("mem_duplicate_first", "Historical stable preference.")
-        val second = memoryEntry("mem_duplicate_second", "HISTORICAL stable\u3000preference.")
-        val target = memoryEntry("mem_target", "Unique project context.")
-        val fixture = fixture(existing = listOf(first, second, target))
-        val operations = controller.validate(
-            fixture.input,
-            listOf(
-                operation(
-                    action = MemoryDailyDistillationAction.REPLACE,
-                    targetMemoryId = target.id,
-                    text = "  historical stable\npreference.  "
-                )
-            )
+    fun `newer assistant inferred evidence cannot replace user confirmed fact`() {
+        val existing = memoryEntry("mem_confirmed", "The user prefers concise answers.").copy(
+            source = MemorySource.USER_CONFIRMED,
+            canonicalKey = "communication.response_style",
+            scope = MemoryScope.GENERAL,
+            lastObservedAt = 10,
+            evidenceRefs = listOf("turn:confirmed")
         )
-
-        val failure = runCatching {
-            controller.render(fixture.input, fixture.baseMarkdown, operations)
-        }.exceptionOrNull()
-
-        assertEquals("duplicate_exact_memory_text", failure?.message)
-    }
-
-    @Test
-    fun `replacements may swap exact texts without expanding multiplicity`() {
-        val first = memoryEntry("mem_first", "First stable preference.")
-        val second = memoryEntry("mem_second", "Second stable preference.")
-        val fixture = fixture(existing = listOf(first, second))
-        val operations = controller.validate(
-            fixture.input,
-            listOf(
-                operation(
-                    action = MemoryDailyDistillationAction.REPLACE,
-                    targetMemoryId = first.id,
-                    text = second.text
-                ),
-                operation(
-                    action = MemoryDailyDistillationAction.REPLACE,
-                    targetMemoryId = second.id,
-                    text = first.text
-                )
-            )
-        )
-
-        val rendered = controller.render(fixture.input, fixture.baseMarkdown, operations)
-        val entriesById = codec.parse(rendered.targets.single().targetContent).entries.associateBy { entry -> entry.id }
-
-        assertEquals(2, rendered.writeCount)
-        assertEquals(second.text, entriesById.getValue(first.id).text)
-        assertEquals(first.text, entriesById.getValue(second.id).text)
-    }
-
-    @Test
-    fun `create before replacement may move an exact text without expanding multiplicity`() {
-        val existing = memoryEntry("mem_existing", "Stable preference to move.")
         val fixture = fixture(existing = listOf(existing))
-        val operations = controller.validate(
-            fixture.input,
+        val weakEvidence = fixture.input.dailyEvidence.single().copy(
+            source = MemorySource.ASSISTANT_INFERRED,
+            sensitivity = MemorySensitivity.NORMAL,
+            createdAt = 40,
+            updatedAt = 50
+        )
+        val input = fixture.input.copy(dailyEvidence = listOf(weakEvidence))
+        val validated = controller.validate(
+            input,
             listOf(
-                operation(MemoryDailyDistillationAction.CREATE, text = existing.text),
                 operation(
                     action = MemoryDailyDistillationAction.REPLACE,
                     targetMemoryId = existing.id,
-                    text = "Replacement preference."
+                    text = "The user prefers detailed answers.",
+                    source = MemorySource.USER_CONFIRMED,
+                    canonicalKey = checkNotNull(existing.canonicalKey),
+                    scope = existing.scope,
+                    evidenceAt = 50
                 )
             )
         )
 
-        val rendered = controller.render(fixture.input, fixture.baseMarkdown, operations)
-        val entries = codec.parse(rendered.targets.single().targetContent).entries
+        val rendered = controller.render(input, fixture.baseMarkdown, validated, renderedAt = 60)
 
-        assertEquals(2, rendered.writeCount)
-        assertEquals(1, entries.count { entry -> entry.text == existing.text })
-        assertEquals("Replacement preference.", entries.single { entry -> entry.id == existing.id }.text)
+        assertEquals(MemorySource.ASSISTANT_INFERRED, validated.single().source)
+        assertTrue(rendered.targets.isEmpty())
+        assertEquals(0, rendered.writeCount)
+        assertEquals(fixture.input.targetBaseHash, rendered.targetSourceHash)
+    }
+
+    @Test
+    fun `stronger replacement keeps active id and creates deterministic history`() {
+        val existing = memoryEntry(
+            id = "mem_stable_active",
+            text = "The user prefers detailed answers.",
+            createdAt = 11,
+            updatedAt = 20
+        ).copy(
+            source = MemorySource.ASSISTANT_INFERRED,
+            canonicalKey = "communication.response_style",
+            scope = MemoryScope.GENERAL,
+            lastObservedAt = 20,
+            evidenceRefs = listOf("turn:inferred")
+        )
+        val fixture = fixture(existing = listOf(existing))
+        val strongEvidence = fixture.input.dailyEvidence.single().copy(
+            evidenceKey = "evidence-confirmed",
+            source = MemorySource.USER_CONFIRMED,
+            sensitivity = MemorySensitivity.NORMAL,
+            createdAt = 40,
+            updatedAt = 50
+        )
+        val input = fixture.input.copy(dailyEvidence = listOf(strongEvidence))
+        val operation = operation(
+            action = MemoryDailyDistillationAction.REPLACE,
+            targetMemoryId = existing.id,
+            text = "The user prefers concise answers.",
+            evidenceKeys = listOf(strongEvidence.evidenceKey),
+            canonicalKey = checkNotNull(existing.canonicalKey),
+            scope = existing.scope,
+            evidenceAt = 50
+        )
+
+        val rendered = controller.render(
+            input = input,
+            baseMarkdown = fixture.baseMarkdown,
+            validatedOperations = controller.validate(input, listOf(operation)),
+            renderedAt = 80
+        )
+        val entries = codec.parse(rendered.targets.single().targetContent).entries
+        val active = entries.single { entry -> entry.validity == MemoryValidity.CURRENT }
+        val history = entries.single { entry -> entry.validity == MemoryValidity.OBSOLETE }
+
+        assertEquals(existing.id, active.id)
+        assertEquals("The user prefers concise answers.", active.text)
+        assertEquals(existing.createdAt, active.createdAt)
+        assertEquals(80, active.updatedAt)
+        assertEquals(50, active.lastObservedAt)
+        assertEquals(MemorySource.USER_CONFIRMED, active.source)
+        assertTrue(history.id != active.id)
+        assertEquals(existing.text, history.text)
+        assertEquals(MemoryValidity.OBSOLETE, history.validity)
+        assertEquals(MemoryRecallState.MAINTENANCE_ONLY, history.recallState)
+        assertEquals(active.id, history.supersededBy)
+        assertEquals("fingerprint", rendered.targets.single().targetIndexFingerprint)
+        assertEquals(1, rendered.writeCount)
+    }
+
+    @Test
+    fun `stronger replacement replay does not create a second history entry`() {
+        val existing = memoryEntry("mem_stable_active", "The user prefers detailed answers.").copy(
+            source = MemorySource.ASSISTANT_INFERRED,
+            canonicalKey = "communication.response_style",
+            scope = MemoryScope.GENERAL,
+            lastObservedAt = 20,
+            evidenceRefs = listOf("turn:inferred")
+        )
+        val fixture = fixture(existing = listOf(existing))
+        val strongEvidence = fixture.input.dailyEvidence.single().copy(
+            evidenceKey = "evidence-confirmed",
+            source = MemorySource.USER_CONFIRMED,
+            sensitivity = MemorySensitivity.NORMAL,
+            createdAt = 40,
+            updatedAt = 50
+        )
+        val input = fixture.input.copy(dailyEvidence = listOf(strongEvidence))
+        val proposed = operation(
+            action = MemoryDailyDistillationAction.REPLACE,
+            targetMemoryId = existing.id,
+            text = "The user prefers concise answers.",
+            evidenceKeys = listOf(strongEvidence.evidenceKey),
+            canonicalKey = checkNotNull(existing.canonicalKey),
+            scope = existing.scope,
+            evidenceAt = 50
+        )
+        val first = controller.render(
+            input = input,
+            baseMarkdown = fixture.baseMarkdown,
+            validatedOperations = controller.validate(input, listOf(proposed)),
+            renderedAt = 80
+        )
+        val firstMarkdown = first.targets.single().targetContent
+        val firstEntries = codec.parse(firstMarkdown).entries
+        val replayInput = input.copy(
+            existingMemories = firstEntries.map { entry -> entry.toBatchExistingMemory() },
+            targetBaseHash = firstMarkdown.toByteArray(Charsets.UTF_8).sha256Hex()
+        )
+
+        val replay = controller.render(
+            input = replayInput,
+            baseMarkdown = firstMarkdown,
+            validatedOperations = controller.validate(replayInput, listOf(proposed)),
+            renderedAt = 90
+        )
+
+        assertEquals(1, firstEntries.count { entry -> entry.validity == MemoryValidity.OBSOLETE })
+        assertTrue(replay.targets.isEmpty())
+        assertEquals(1, replay.writeCount)
+        assertEquals(replayInput.targetBaseHash, replay.targetSourceHash)
+    }
+
+    @Test
+    fun `material replacement preserves manual footer`() {
+        val existing = memoryEntry("mem_footer_target", "The user prefers detailed answers.").copy(
+            source = MemorySource.ASSISTANT_INFERRED,
+            canonicalKey = "communication.response_style",
+            scope = MemoryScope.GENERAL,
+            lastObservedAt = 2
+        )
+        val footer = "Manual footer stays here.\n\n<!-- manual:keep -->"
+        val fixture = fixture(existing = listOf(existing), trailingMarkdown = "\n$footer\n")
+        val strongEvidence = fixture.input.dailyEvidence.single().copy(
+            source = MemorySource.USER_CONFIRMED,
+            createdAt = 11,
+            updatedAt = 12
+        )
+        val input = fixture.input.copy(dailyEvidence = listOf(strongEvidence))
+        val operations = controller.validate(
+            input,
+            listOf(
+                operation(
+                    action = MemoryDailyDistillationAction.REPLACE,
+                    targetMemoryId = existing.id,
+                    text = "The user prefers concise answers.",
+                    canonicalKey = checkNotNull(existing.canonicalKey),
+                    scope = existing.scope,
+                    evidenceAt = 12
+                )
+            )
+        )
+
+        val rendered = controller.render(input, fixture.baseMarkdown, operations, renderedAt = 20)
+
+        assertTrue(rendered.targets.single().targetContent.contains(footer))
+        assertEquals("fingerprint", rendered.targets.single().targetIndexFingerprint)
     }
 
     @Test
@@ -422,25 +504,7 @@ class MemoryDailyDistillationOperationControllerTest {
                     updatedAt = 2
                 )
             ),
-            existingMemories = existing.map { entry ->
-                MemoryBatchExistingMemory(
-                    id = entry.id,
-                    sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
-                    text = entry.text,
-                    type = entry.type,
-                    sensitivity = entry.sensitivity,
-                    source = entry.source,
-                    updatedAt = entry.updatedAt,
-                    createdAt = entry.createdAt,
-                    canonicalKey = entry.canonicalKey,
-                    scope = entry.scope,
-                    lastObservedAt = entry.lastObservedAt,
-                    validity = entry.validity,
-                    supersededBy = entry.supersededBy,
-                    recallState = entry.recallState,
-                    evidenceRefs = entry.evidenceRefs
-                )
-            },
+            existingMemories = existing.map { entry -> entry.toBatchExistingMemory() },
             targetBaseHash = baseMarkdown.toByteArray(Charsets.UTF_8).sha256Hex(),
             createdAt = 10
         )
@@ -496,6 +560,24 @@ class MemoryDailyDistillationOperationControllerTest {
         createdAt = createdAt,
         updatedAt = updatedAt,
         section = section
+    )
+
+    private fun MarkdownMemoryEntry.toBatchExistingMemory() = MemoryBatchExistingMemory(
+        id = id,
+        sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+        text = text,
+        type = type,
+        sensitivity = sensitivity,
+        source = source,
+        updatedAt = updatedAt,
+        createdAt = createdAt,
+        canonicalKey = canonicalKey,
+        scope = scope,
+        lastObservedAt = lastObservedAt,
+        validity = validity,
+        supersededBy = supersededBy,
+        recallState = recallState,
+        evidenceRefs = evidenceRefs
     )
 
     private data class Fixture(

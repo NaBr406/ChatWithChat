@@ -37,6 +37,8 @@ class MemoryDailyDistillationOperationController(
     private val markdownMemoryCodec: MarkdownMemoryCodec,
     private val targetIndexFingerprint: String = MemoryVectorIndexDefaults.configuration.fingerprint()
 ) {
+    private val canonicalMemoryMergePolicy = CanonicalMemoryMergePolicy(markdownMemoryCodec)
+
     fun validate(
         input: MemoryDailyDistillationFrozenInput,
         operations: List<MemoryDailyDistillationOperation>
@@ -80,9 +82,7 @@ class MemoryDailyDistillationOperationController(
                     val target = if (operation.action == MemoryDailyDistillationAction.REPLACE) {
                         val targetId = requireNotNull(operation.targetMemoryId?.takeIf(String::isNotBlank))
                         require(targetedIds.add(targetId))
-                        requireNotNull(existingById[targetId]).also { existing ->
-                            require(normalizeExactMemoryText(normalizedText) != normalizeExactMemoryText(existing.text))
-                        }
+                        requireNotNull(existingById[targetId])
                     } else {
                         require(operation.targetMemoryId.isNullOrBlank())
                         null
@@ -139,85 +139,50 @@ class MemoryDailyDistillationOperationController(
             require(current.updatedAt == frozen.updatedAt)
         }
 
-        var markdown = baseMarkdown
-        var writeCount = 0
-        validatedOperations.forEachIndexed { index, operation ->
-            when (operation.action) {
-                MemoryDailyDistillationAction.IGNORE -> Unit
-                MemoryDailyDistillationAction.CREATE -> {
-                    val id = generatedEntryId(input.batchId, index)
-                    val currentEntries = parseEntriesOrThrow(markdown).entries
-                    currentEntries.firstOrNull { entry -> entry.id == id }?.let { existing ->
-                        require(existing.text == operation.text)
-                        return@forEachIndexed
-                    }
-                    val append = markdownMemoryCodec.renderLongTermAppend(
-                        listOf(operation.toEntry(id = id, createdAt = renderedAt))
-                    )
-                    markdown = markdown.trimEnd() + "\n\n" + append.trim() + "\n"
-                    writeCount += 1
-                }
-                MemoryDailyDistillationAction.REPLACE -> {
-                    val targetId = requireNotNull(operation.targetMemoryId)
-                    val currentEntries = parseEntriesOrThrow(markdown).entries.associateBy(MarkdownMemoryEntry::id)
-                    val existing = requireNotNull(currentEntries[targetId])
-                    val replacement = markdownMemoryCodec.replaceEntriesById(
-                        markdown,
-                        listOf(
-                            existing.copy(
-                                text = operation.text,
-                                type = operation.type,
-                                sensitivity = operation.sensitivity,
-                                source = operation.source,
-                                updatedAt = renderedAt
-                            )
-                        )
-                    )
-                    require(replacement.replacedCount == 1)
-                    markdown = replacement.markdown
-                    writeCount += 1
-                }
+        val candidates = validatedOperations
+            .filter { operation ->
+                operation.action in setOf(
+                    MemoryDailyDistillationAction.CREATE,
+                    MemoryDailyDistillationAction.REPLACE
+                )
             }
-        }
-        val normalizedTarget = if (writeCount == 0) baseMarkdown else markdown.trimEnd() + "\n"
-        validateNoExpandedExactTextMultiplicity(
-            originalMarkdown = baseMarkdown,
-            renderedMarkdown = normalizedTarget
+            .map { operation ->
+                CanonicalMemoryCandidate(
+                    targetMemoryId = operation.targetMemoryId,
+                    text = operation.text,
+                    type = operation.type,
+                    sensitivity = operation.sensitivity,
+                    source = operation.source,
+                    canonicalKey = requireNotNull(operation.canonicalKey),
+                    scope = requireNotNull(operation.scope),
+                    evidenceAt = requireNotNull(operation.evidenceAt),
+                    recallState = requireNotNull(operation.recallState),
+                    evidenceRefs = operation.evidenceKeys
+                )
+            }
+        val mergeResult = canonicalMemoryMergePolicy.merge(
+            baseMarkdown = baseMarkdown,
+            candidates = candidates,
+            mutationAt = renderedAt
         )
-        val targets = if (normalizedTarget == baseMarkdown) {
+        val targets = if (mergeResult.markdown == baseMarkdown) {
             emptyList()
         } else {
             listOf(
                 MemoryMutationTarget(
                     sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
                     baseContent = baseMarkdown,
-                    targetContent = normalizedTarget,
-                    targetIndexFingerprint = targetIndexFingerprint
+                    targetContent = mergeResult.markdown,
+                    targetIndexFingerprint = targetIndexFingerprint.takeIf { mergeResult.requiresIndexSync }
                 )
             )
         }
         return RenderedMemoryDailyDistillation(
             targets = targets,
-            writeCount = writeCount,
-            targetSourceHash = normalizedTarget.toByteArray(Charsets.UTF_8).sha256Hex()
+            writeCount = mergeResult.acceptedCandidateCount,
+            targetSourceHash = mergeResult.markdown.toByteArray(Charsets.UTF_8).sha256Hex()
         )
     }
-
-    private fun validateNoExpandedExactTextMultiplicity(
-        originalMarkdown: String,
-        renderedMarkdown: String
-    ) {
-        val originalCounts = exactTextCounts(originalMarkdown)
-        exactTextCounts(renderedMarkdown).forEach { (normalizedText, renderedCount) ->
-            val allowedCount = maxOf(originalCounts[normalizedText] ?: 0, 1)
-            require(renderedCount <= allowedCount) { "duplicate_exact_memory_text" }
-        }
-    }
-
-    private fun exactTextCounts(markdown: String): Map<String, Int> = parseEntriesOrThrow(markdown)
-        .entries
-        .groupingBy { entry -> normalizeExactMemoryText(entry.text) }
-        .eachCount()
 
     private fun parseEntriesOrThrow(markdown: String): MarkdownMemoryParseResult = markdownMemoryCodec
         .parse(markdown)
@@ -259,34 +224,7 @@ class MemoryDailyDistillationOperationController(
         else -> error("Unknown memory source")
     }
 
-    private fun generatedEntryId(batchId: String, operationIndex: Int): String =
-        "mem_${"$batchId|$operationIndex|long_term".sha256Utf8().take(ID_HASH_LENGTH)}"
-
-    private fun MemoryDailyDistillationOperation.toEntry(
-        id: String,
-        createdAt: Long,
-        chatId: Int? = null,
-        section: String? = null,
-        updatedAt: Long = createdAt
-    ): MarkdownMemoryEntry = MarkdownMemoryEntry(
-        id = id,
-        text = text,
-        type = type,
-        sensitivity = sensitivity,
-        source = source,
-        chatId = chatId,
-        createdAt = createdAt,
-        updatedAt = updatedAt,
-        section = section,
-        canonicalKey = requireNotNull(canonicalKey),
-        scope = requireNotNull(scope),
-        lastObservedAt = requireNotNull(evidenceAt),
-        recallState = requireNotNull(recallState),
-        evidenceRefs = evidenceKeys.sorted()
-    )
-
     private companion object {
-        const val ID_HASH_LENGTH = 24
         val VALID_ACTIONS = setOf(
             MemoryDailyDistillationAction.CREATE,
             MemoryDailyDistillationAction.REPLACE,

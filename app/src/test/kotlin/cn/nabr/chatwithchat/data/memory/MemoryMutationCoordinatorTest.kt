@@ -134,6 +134,134 @@ class MemoryMutationCoordinatorTest {
     }
 
     @Test
+    fun `metadata only long term receipt commits without advancing or scheduling index`() = runBlocking {
+        val fixture = Fixture()
+        fixture.fileStore.replaceLongTermMemory(metadataOnlyContent(observedAt = 1L)).getOrThrow()
+        val baseContent = fixture.fileStore.readLongTermMemory().getOrThrow()
+        val targetContent = metadataOnlyContent(observedAt = 2L)
+        val prepared = fixture.coordinator.prepare(
+            semanticJobId = "semantic-job-metadata-only",
+            semanticBatchId = "batch-metadata-only",
+            targets = listOf(fixture.metadataOnlyLongTermTarget(baseContent, targetContent))
+        )
+        val preparedReceipt = prepared.receipts.single()
+
+        assertEquals(null, preparedReceipt.targetIndexFingerprint)
+        assertTrue(fixture.root.resolve(preparedReceipt.stagedTargetPath).isFile)
+
+        val result = fixture.coordinator.reconcile(prepared)
+
+        assertTrue(result is MemoryMutationCommitResult.CanonicalCommitted)
+        result as MemoryMutationCommitResult.CanonicalCommitted
+        assertFalse(result.hasPendingIndex)
+        assertTrue(result.requiresSemanticAcknowledgement)
+        assertEquals(targetContent + "\n", fixture.fileStore.readLongTermMemory().getOrThrow())
+        val receipt = checkNotNull(fixture.recoveryDao.getMutationReceipt(preparedReceipt.receiptId))
+        assertEquals(MemoryMutationState.INDEXED, receipt.state)
+        assertNotNull(receipt.fileCommittedAt)
+        assertNotNull(receipt.indexedAt)
+        assertFalse(fixture.root.resolve(receipt.stagedTargetPath).exists())
+        assertEquals(MemoryMutationState.SEMANTIC_ACK_PENDING, result.mutation.group.state)
+        assertEquals(null, fixture.recoveryDao.getCorpusState(CHAT_RECALL_CORPUS_KEY))
+        assertTrue(fixture.jobDao.jobs.isEmpty())
+        assertTrue(fixture.workEnqueuer.works.isEmpty())
+
+        val acknowledged = fixture.coordinator.acknowledgeSemanticCompletion(prepared.group.groupId)
+        val replayed = fixture.coordinator.reconcile(prepared)
+
+        assertEquals(MemoryMutationState.INDEXED, acknowledged.group.state)
+        assertTrue(replayed is MemoryMutationCommitResult.CanonicalCommitted)
+        assertFalse((replayed as MemoryMutationCommitResult.CanonicalCommitted).hasPendingIndex)
+        assertTrue(fixture.jobDao.jobs.isEmpty())
+        assertTrue(fixture.workEnqueuer.works.isEmpty())
+    }
+
+    @Test
+    fun `metadata only receipt recovers after canonical file commit without index work`() = runBlocking {
+        val fixture = Fixture()
+        fixture.fileStore.replaceLongTermMemory(metadataOnlyContent(observedAt = 1L)).getOrThrow()
+        val targetContent = metadataOnlyContent(observedAt = 2L)
+        val prepared = fixture.coordinator.prepare(
+            semanticJobId = "semantic-job-metadata-recovery",
+            semanticBatchId = "batch-metadata-recovery",
+            targets = listOf(
+                fixture.metadataOnlyLongTermTarget(
+                    baseContent = fixture.fileStore.readLongTermMemory().getOrThrow(),
+                    targetContent = targetContent
+                )
+            )
+        )
+        val receipt = prepared.receipts.single()
+        val externalCommit = fixture.fileStore.commitStagedMemoryFile(
+            sourcePath = receipt.sourcePath,
+            stagedTargetPath = receipt.stagedTargetPath,
+            baseSourceHash = receipt.baseSourceHash,
+            targetSourceHash = receipt.targetSourceHash
+        ).getOrThrow()
+        assertTrue(externalCommit is MemoryFileCommitOutcome.Committed)
+        assertEquals(MemoryMutationState.PREPARED, fixture.recoveryDao.getMutationReceipt(receipt.receiptId)?.state)
+
+        val recovery = fixture.newCoordinator(MemoryFileStore(fixture.paths, FIXED_CLOCK)).reconcileIncomplete()
+
+        assertEquals(1, recovery.committedCount)
+        assertEquals(0, recovery.conflictCount)
+        assertEquals(0, recovery.failedCount)
+        assertEquals(
+            setOf(
+                MemoryRecoveredSemanticMutation(
+                    groupId = prepared.group.groupId,
+                    semanticJobId = "semantic-job-metadata-recovery",
+                    generation = prepared.group.generation
+                )
+            ),
+            recovery.recoveredSemanticMutations
+        )
+        val recoveredReceipt = checkNotNull(fixture.recoveryDao.getMutationReceipt(receipt.receiptId))
+        assertEquals(MemoryMutationState.INDEXED, recoveredReceipt.state)
+        assertNotNull(recoveredReceipt.fileCommittedAt)
+        assertNotNull(recoveredReceipt.indexedAt)
+        assertFalse(fixture.root.resolve(recoveredReceipt.stagedTargetPath).exists())
+        assertEquals(targetContent + "\n", fixture.fileStore.readLongTermMemory().getOrThrow())
+        assertEquals(null, fixture.recoveryDao.getCorpusState(CHAT_RECALL_CORPUS_KEY))
+        assertTrue(fixture.jobDao.jobs.isEmpty())
+        assertTrue(fixture.workEnqueuer.works.isEmpty())
+    }
+
+    @Test
+    fun `metadata only receipt uses file cas instead of corpus generation supersession`() = runBlocking {
+        val fixture = Fixture()
+        fixture.fileStore.replaceLongTermMemory(metadataOnlyContent(observedAt = 1L)).getOrThrow()
+        val baseContent = fixture.fileStore.readLongTermMemory().getOrThrow()
+        val metadataTarget = metadataOnlyContent(observedAt = 2L)
+        val metadataPrepared = fixture.coordinator.prepare(
+            semanticJobId = "semantic-job-metadata-before-index",
+            semanticBatchId = "batch-metadata-before-index",
+            targets = listOf(fixture.metadataOnlyLongTermTarget(baseContent, metadataTarget))
+        )
+        val indexPrepared = fixture.coordinator.prepare(
+            semanticJobId = "semantic-job-index-after-metadata",
+            semanticBatchId = "batch-index-after-metadata",
+            targets = listOf(fixture.longTermTarget(baseContent, baseContent))
+        )
+        fixture.coordinator.reconcile(indexPrepared)
+        fixture.coordinator.acknowledgeSemanticCompletion(indexPrepared.group.groupId)
+        val corpusBefore = checkNotNull(fixture.recoveryDao.getCorpusState(CHAT_RECALL_CORPUS_KEY))
+        val jobCountBefore = fixture.jobDao.jobs.size
+        val workCountBefore = fixture.workEnqueuer.works.size
+
+        val result = fixture.coordinator.reconcile(metadataPrepared)
+
+        assertTrue(result is MemoryMutationCommitResult.CanonicalCommitted)
+        result as MemoryMutationCommitResult.CanonicalCommitted
+        assertFalse(result.hasPendingIndex)
+        assertEquals(MemoryMutationState.INDEXED, result.mutation.receipts.single().state)
+        assertEquals(metadataTarget + "\n", fixture.fileStore.readLongTermMemory().getOrThrow())
+        assertEquals(corpusBefore, fixture.recoveryDao.getCorpusState(CHAT_RECALL_CORPUS_KEY))
+        assertEquals(jobCountBefore, fixture.jobDao.jobs.size)
+        assertEquals(workCountBefore, fixture.workEnqueuer.works.size)
+    }
+
+    @Test
     fun `current target fast forwards a prepared receipt after process restart`() = runBlocking {
         val fixture = Fixture()
         val prepared = fixture.coordinator.prepare(
@@ -928,6 +1056,14 @@ class MemoryMutationCoordinatorTest {
                 targetIndexFingerprint = VALID_FINGERPRINT
             )
 
+        fun metadataOnlyLongTermTarget(baseContent: String, targetContent: String): MemoryMutationTarget =
+            MemoryMutationTarget(
+                sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+                baseContent = baseContent,
+                targetContent = targetContent,
+                targetIndexFingerprint = null
+            )
+
         fun newCoordinator(store: MemoryFileStore): MemoryMutationCoordinator =
             MemoryMutationCoordinator(
                 recoveryDao = recoveryDao,
@@ -945,5 +1081,13 @@ class MemoryMutationCoordinatorTest {
         val VALID_FINGERPRINT: String = "a".repeat(64)
 
         fun fixtureLongTermContent(): String = "# ChatWithChat Memory\n\n- Canonical base\n"
+
+        fun metadataOnlyContent(observedAt: Long): String =
+            "# ChatWithChat Memory\n\n" +
+                "<!-- memory:id=mem_style type=communication_style sensitivity=normal " +
+                "source=explicit_user_statement created=1 updated=1 " +
+                "canonical_key=communication.response_style scope=general observed=$observedAt " +
+                "validity=current recall=query -->\n" +
+                "- Prefers concise answers."
     }
 }

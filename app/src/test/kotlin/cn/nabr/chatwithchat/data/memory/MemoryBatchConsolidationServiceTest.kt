@@ -342,34 +342,44 @@ class MemoryBatchConsolidationServiceTest {
     }
 
     @Test
-    fun `replace matching an unscoped canonical entry fails before prepare`() = runBlocking {
+    fun `replace matching an unscoped hidden entry converges to one canonical survivor`() = runBlocking {
         val replacementTarget = longTermEntry("mem_replacement_target", "An obsolete project detail.")
         val canonicalOnlyEntry = longTermEntry("mem_canonical_only", "The canonical project detail.")
+        val replacement = operation(
+            destination = MemoryBatchDestination.LONG_TERM,
+            action = MemoryBatchAction.REPLACE,
+            targetMemoryId = replacementTarget.id,
+            text = "  THE canonical\u3000project detail.  "
+        )
         val fixture = fixture(
             proposal = MemoryBatchConsolidationProposal(
-                operations = listOf(
-                    operation(
-                        destination = MemoryBatchDestination.LONG_TERM,
-                        action = MemoryBatchAction.REPLACE,
-                        targetMemoryId = replacementTarget.id,
-                        text = "  THE canonical\u3000project detail.  "
-                    )
-                )
+                operations = listOf(replacement)
             ),
             retrievalResults = listOf(retrievalResult(replacementTarget))
         )
         fixture.fileStore.replaceLongTermMemory(
             MarkdownMemoryCodec().renderLongTerm(listOf(replacementTarget, canonicalOnlyEntry))
         ).getOrThrow()
-        val before = fixture.fileStore.readLongTermMemory().getOrThrow()
         val job = fixture.createFiveTurnBatch()
 
         val result = fixture.service.process(job)
+        val entries = MarkdownMemoryCodec().parse(fixture.fileStore.readLongTermMemory().getOrThrow()).entries
+        val active = entries.single { entry -> entry.validity == MemoryValidity.CURRENT }
+        val history = entries.single { entry -> entry.id == replacementTarget.id }
 
-        assertEquals(MemoryBatchProcessResult.STATUS_RETRYABLE, result.status)
-        assertEquals(before, fixture.fileStore.readLongTermMemory().getOrThrow())
-        assertEquals(0, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
-        assertEquals(null, fixture.recoveryDao.getMutationGroupBySemanticJobId(job.jobId))
+        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(canonicalOnlyEntry.id, active.id)
+        assertEquals(replacement.canonicalKey, active.canonicalKey)
+        assertEquals(replacement.scope, active.scope)
+        assertEquals(MemoryValidity.OBSOLETE, history.validity)
+        assertEquals(active.id, history.supersededBy)
+        assertEquals(
+            1,
+            entries.count { entry ->
+                normalizeExactMemoryText(entry.text) == normalizeExactMemoryText(canonicalOnlyEntry.text)
+            }
+        )
+        assertEquals(5, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
     }
 
     @Test
@@ -439,43 +449,59 @@ class MemoryBatchConsolidationServiceTest {
     }
 
     @Test
-    fun `replace cannot expand historical canonical duplicate count`() = runBlocking {
+    fun `replace uses the full file to converge hidden historical duplicates`() = runBlocking {
         val firstDuplicate = longTermEntry("mem_duplicate_one", "A historical duplicate remains visible.")
         val secondDuplicate = longTermEntry(
             "mem_duplicate_two",
             "\u00a0A historical\u3000duplicate remains visible.  "
         )
         val replacementTarget = longTermEntry("mem_unique_target", "A unique target before replacement.")
+        val replacement = operation(
+            destination = MemoryBatchDestination.LONG_TERM,
+            action = MemoryBatchAction.REPLACE,
+            targetMemoryId = replacementTarget.id,
+            text = "  A HISTORICAL duplicate\nremains visible.  "
+        )
         val fixture = fixture(
             proposal = MemoryBatchConsolidationProposal(
-                operations = listOf(
-                    operation(
-                        destination = MemoryBatchDestination.LONG_TERM,
-                        action = MemoryBatchAction.REPLACE,
-                        targetMemoryId = replacementTarget.id,
-                        text = "  A HISTORICAL duplicate\nremains visible.  "
-                    )
-                )
+                operations = listOf(replacement)
             ),
             retrievalResults = listOf(retrievalResult(replacementTarget))
         )
         fixture.fileStore.replaceLongTermMemory(
             MarkdownMemoryCodec().renderLongTerm(listOf(firstDuplicate, secondDuplicate, replacementTarget))
         ).getOrThrow()
-        val before = fixture.fileStore.readLongTermMemory().getOrThrow()
         val job = fixture.createFiveTurnBatch()
 
         val result = fixture.service.process(job)
+        val entries = MarkdownMemoryCodec().parse(fixture.fileStore.readLongTermMemory().getOrThrow()).entries
+        val active = entries.single { entry -> entry.validity == MemoryValidity.CURRENT }
+        val replacedTarget = entries.single { entry -> entry.id == replacementTarget.id }
 
-        assertEquals(MemoryBatchProcessResult.STATUS_RETRYABLE, result.status)
-        assertEquals(before, fixture.fileStore.readLongTermMemory().getOrThrow())
-        assertEquals(0, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
-        assertEquals(null, fixture.recoveryDao.getMutationGroupBySemanticJobId(job.jobId))
+        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(1, result.longTermWriteCount)
+        assertEquals(
+            1,
+            entries.count { entry ->
+                normalizeExactMemoryText(entry.text) == normalizeExactMemoryText(firstDuplicate.text)
+            }
+        )
+        assertEquals(replacement.canonicalKey, active.canonicalKey)
+        assertEquals(replacement.scope, active.scope)
+        assertEquals(MemoryValidity.OBSOLETE, replacedTarget.validity)
+        assertEquals(active.id, replacedTarget.supersededBy)
+        assertEquals(5, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
+        assertTrue(fixture.recoveryDao.getMutationGroupBySemanticJobId(job.jobId) != null)
     }
 
     @Test
-    fun `create matching canonical text is a replayable byte identical no-op`() = runBlocking {
+    fun `create matching canonical identity and text is a replayable byte identical no-op`() = runBlocking {
         val codec = MarkdownMemoryCodec()
+        val proposed = operation(
+            destination = MemoryBatchDestination.LONG_TERM,
+            text = "\u00a0THE user prefers\u3000café\nanswers.  ",
+            type = "communication_style"
+        )
         val existingEntry = MarkdownMemoryEntry(
             id = "mem_existing_exact",
             text = "The user prefers CAFÉ answers.",
@@ -485,17 +511,16 @@ class MemoryBatchConsolidationServiceTest {
             chatId = 3,
             createdAt = 20L,
             updatedAt = 30L,
-            section = "Stable Preferences"
+            section = "Stable Preferences",
+            canonicalKey = proposed.canonicalKey,
+            scope = requireNotNull(proposed.scope),
+            lastObservedAt = 30L,
+            recallState = requireNotNull(proposed.recallState),
+            evidenceRefs = proposed.evidenceTurnKeys
         )
         val fixture = fixture(
             MemoryBatchConsolidationProposal(
-                operations = listOf(
-                    operation(
-                        destination = MemoryBatchDestination.LONG_TERM,
-                        text = "\u00a0THE user prefers\u3000café\nanswers.  ",
-                        type = "stable_profile"
-                    )
-                )
+                operations = listOf(proposed)
             )
         )
         fixture.fileStore.replaceLongTermMemory(codec.renderLongTerm(listOf(existingEntry))).getOrThrow()
@@ -524,16 +549,107 @@ class MemoryBatchConsolidationServiceTest {
     }
 
     @Test
-    fun `create before replace relocates canonical text with original operation id`() = runBlocking {
+    fun `same fact observation commits metadata without scheduling index work`() = runBlocking {
+        val codec = MarkdownMemoryCodec()
+        val existing = longTermEntry("mem_observed", "The user prefers concise project updates.").copy(
+            canonicalKey = "communication.project_update_style",
+            scope = MemoryScope.GENERAL,
+            lastObservedAt = 10L,
+            recallState = MemoryRecallState.QUERY,
+            evidenceRefs = listOf("chat:$CHAT_ID:user:0")
+        )
+        val observation = operation(
+            destination = MemoryBatchDestination.LONG_TERM,
+            action = MemoryBatchAction.REPLACE,
+            targetMemoryId = existing.id,
+            text = existing.text,
+            canonicalKey = checkNotNull(existing.canonicalKey),
+            scope = existing.scope,
+            evidenceAt = 11L
+        )
+        val fixture = fixture(
+            proposal = MemoryBatchConsolidationProposal(listOf(observation)),
+            retrievalResults = listOf(retrievalResult(existing))
+        )
+        fixture.fileStore.replaceLongTermMemory(codec.renderLongTerm(listOf(existing))).getOrThrow()
+        val job = fixture.createFiveTurnBatch()
+
+        val result = fixture.service.process(job)
+        val observed = codec.parse(fixture.fileStore.readLongTermMemory().getOrThrow()).entries.single()
+        val group = checkNotNull(fixture.recoveryDao.getMutationGroupBySemanticJobId(job.jobId))
+        val receipt = fixture.recoveryDao.getMutationReceipts(group.groupId).single()
+
+        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(1, result.longTermWriteCount)
+        assertEquals(existing.id, observed.id)
+        assertEquals(existing.text, observed.text)
+        assertEquals(existing.createdAt, observed.createdAt)
+        assertEquals(existing.updatedAt, observed.updatedAt)
+        assertEquals(11L, observed.lastObservedAt)
+        assertEquals(listOf("chat:$CHAT_ID:user:0", "chat:$CHAT_ID:user:1"), observed.evidenceRefs)
+        assertEquals(null, receipt.targetIndexFingerprint)
+        assertEquals(MemoryMutationState.INDEXED, receipt.state)
+        assertEquals(MemoryMutationState.INDEXED, group.state)
+        assertEquals(
+            null,
+            fixture.recoveryDao.getCorpusState(MemoryCorpus.CHAT_RECALL_LONG_TERM.name.lowercase())
+        )
+        assertTrue(fixture.jobDao.jobs.none { queued -> queued.family == MemoryMaintenanceJobFamily.INDEX })
+        val enqueuedWorks = (fixture.workEnqueuer as RecordingWorkEnqueuer).works
+        assertTrue(enqueuedWorks.none { work -> work.family == MemoryMaintenanceJobFamily.INDEX })
+    }
+
+    @Test
+    fun `newer assistant inferred batch candidate cannot replace user confirmed current fact`() = runBlocking {
+        val codec = MarkdownMemoryCodec()
+        val existing = longTermEntry("mem_confirmed", "The user prefers concise project updates.").copy(
+            source = MemorySource.USER_CONFIRMED,
+            canonicalKey = "communication.project_update_style",
+            scope = MemoryScope.GENERAL,
+            lastObservedAt = 10L,
+            recallState = MemoryRecallState.QUERY
+        )
+        val weaker = operation(
+            destination = MemoryBatchDestination.LONG_TERM,
+            action = MemoryBatchAction.REPLACE,
+            targetMemoryId = existing.id,
+            text = "The user prefers detailed project updates.",
+            source = MemorySource.ASSISTANT_INFERRED,
+            evidenceTurnKeys = listOf("chat:$CHAT_ID:user:5"),
+            canonicalKey = checkNotNull(existing.canonicalKey),
+            scope = existing.scope,
+            evidenceAt = 15L
+        )
+        val fixture = fixture(
+            proposal = MemoryBatchConsolidationProposal(listOf(weaker)),
+            retrievalResults = listOf(retrievalResult(existing))
+        )
+        fixture.fileStore.replaceLongTermMemory(codec.renderLongTerm(listOf(existing))).getOrThrow()
+        val before = fixture.fileStore.readLongTermMemory().getOrThrow()
+        val job = fixture.createFiveTurnBatch()
+
+        val result = fixture.service.process(job)
+        val group = checkNotNull(fixture.recoveryDao.getMutationGroupBySemanticJobId(job.jobId))
+
+        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(0, result.longTermWriteCount)
+        assertEquals(before, fixture.fileStore.readLongTermMemory().getOrThrow())
+        assertEquals(0, group.expectedReceiptCount)
+        assertTrue(fixture.recoveryDao.getMutationReceipts(group.groupId).isEmpty())
+    }
+
+    @Test
+    fun `create before replace relocates canonical text with stable canonical id`() = runBlocking {
         val codec = MarkdownMemoryCodec()
         val original = longTermEntry("mem_create_before_replace", "A canonical fact must survive relocation.")
+        val create = operation(
+            destination = MemoryBatchDestination.LONG_TERM,
+            text = "  A CANONICAL fact must survive\nrelocation.  "
+        )
         val fixture = fixture(
             proposal = MemoryBatchConsolidationProposal(
                 operations = listOf(
-                    operation(
-                        destination = MemoryBatchDestination.LONG_TERM,
-                        text = "  A CANONICAL fact must survive\nrelocation.  "
-                    ),
+                    create,
                     operation(
                         destination = MemoryBatchDestination.LONG_TERM,
                         action = MemoryBatchAction.REPLACE,
@@ -546,7 +662,6 @@ class MemoryBatchConsolidationServiceTest {
         )
         fixture.fileStore.replaceLongTermMemory(codec.renderLongTerm(listOf(original))).getOrThrow()
         val job = fixture.createFiveTurnBatch()
-        val expectedCreatedId = "mem_${sha256("${job.idempotencyKey}|0|${MemoryBatchDestination.LONG_TERM}").take(24)}"
 
         val result = fixture.service.process(job)
         val entries = codec.parse(fixture.fileStore.readLongTermMemory().getOrThrow()).entries
@@ -556,7 +671,9 @@ class MemoryBatchConsolidationServiceTest {
 
         assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
         assertEquals(2, result.longTermWriteCount)
-        assertEquals(expectedCreatedId, relocated.id)
+        assertTrue(relocated.id.startsWith("mem_can_"))
+        assertEquals(create.canonicalKey, relocated.canonicalKey)
+        assertEquals(create.scope, relocated.scope)
         assertEquals(
             "The original entry now records a replacement fact.",
             entries.single { entry -> entry.id == original.id }.text
@@ -565,9 +682,13 @@ class MemoryBatchConsolidationServiceTest {
     }
 
     @Test
-    fun `replace before create preserves reverse order operation id`() = runBlocking {
+    fun `replace before create produces the same stable canonical identity`() = runBlocking {
         val codec = MarkdownMemoryCodec()
         val original = longTermEntry("mem_replace_before_create", "A reverse-order fact must survive relocation.")
+        val create = operation(
+            destination = MemoryBatchDestination.LONG_TERM,
+            text = "  A REVERSE-ORDER fact must survive\nrelocation.  "
+        )
         val fixture = fixture(
             proposal = MemoryBatchConsolidationProposal(
                 operations = listOf(
@@ -577,17 +698,13 @@ class MemoryBatchConsolidationServiceTest {
                         targetMemoryId = original.id,
                         text = "The reverse-order target now records a replacement fact."
                     ),
-                    operation(
-                        destination = MemoryBatchDestination.LONG_TERM,
-                        text = "  A REVERSE-ORDER fact must survive\nrelocation.  "
-                    )
+                    create
                 )
             ),
             retrievalResults = listOf(retrievalResult(original))
         )
         fixture.fileStore.replaceLongTermMemory(codec.renderLongTerm(listOf(original))).getOrThrow()
         val job = fixture.createFiveTurnBatch()
-        val expectedCreatedId = "mem_${sha256("${job.idempotencyKey}|1|${MemoryBatchDestination.LONG_TERM}").take(24)}"
 
         val result = fixture.service.process(job)
         val entries = codec.parse(fixture.fileStore.readLongTermMemory().getOrThrow()).entries
@@ -597,7 +714,9 @@ class MemoryBatchConsolidationServiceTest {
 
         assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
         assertEquals(2, result.longTermWriteCount)
-        assertEquals(expectedCreatedId, relocated.id)
+        assertTrue(relocated.id.startsWith("mem_can_"))
+        assertEquals(create.canonicalKey, relocated.canonicalKey)
+        assertEquals(create.scope, relocated.scope)
         assertEquals(
             "The reverse-order target now records a replacement fact.",
             entries.single { entry -> entry.id == original.id }.text
@@ -612,13 +731,14 @@ class MemoryBatchConsolidationServiceTest {
             "mem_historical_relocation_second",
             "\u00a0A HISTORICAL canonical\u3000duplicate.  "
         )
+        val create = operation(
+            destination = MemoryBatchDestination.LONG_TERM,
+            text = "A historical canonical duplicate."
+        )
         val fixture = fixture(
             proposal = MemoryBatchConsolidationProposal(
                 operations = listOf(
-                    operation(
-                        destination = MemoryBatchDestination.LONG_TERM,
-                        text = "A historical canonical duplicate."
-                    ),
+                    create,
                     operation(
                         destination = MemoryBatchDestination.LONG_TERM,
                         action = MemoryBatchAction.REPLACE,
@@ -631,7 +751,6 @@ class MemoryBatchConsolidationServiceTest {
         )
         fixture.fileStore.replaceLongTermMemory(codec.renderLongTerm(listOf(first, second))).getOrThrow()
         val job = fixture.createFiveTurnBatch()
-        val expectedCreatedId = "mem_${sha256("${job.idempotencyKey}|0|${MemoryBatchDestination.LONG_TERM}").take(24)}"
 
         val result = fixture.service.process(job)
         val entries = codec.parse(fixture.fileStore.readLongTermMemory().getOrThrow()).entries
@@ -642,8 +761,12 @@ class MemoryBatchConsolidationServiceTest {
         assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
         assertEquals(2, result.longTermWriteCount)
         assertEquals(2, duplicateEntries.size)
-        assertTrue(duplicateEntries.any { entry -> entry.id == second.id })
-        assertTrue(duplicateEntries.any { entry -> entry.id == expectedCreatedId })
+        val relocatedActive = duplicateEntries.single { entry -> entry.validity == MemoryValidity.CURRENT }
+        val preservedHistory = duplicateEntries.single { entry -> entry.validity == MemoryValidity.OBSOLETE }
+        assertEquals(second.id, relocatedActive.id)
+        assertEquals(create.canonicalKey, relocatedActive.canonicalKey)
+        assertEquals(first.id, preservedHistory.supersededBy)
+        assertEquals(MemoryRecallState.MAINTENANCE_ONLY, preservedHistory.recallState)
         assertEquals(
             "The relocated historical entry now has unique content.",
             entries.single { entry -> entry.id == first.id }.text
@@ -693,13 +816,14 @@ class MemoryBatchConsolidationServiceTest {
     fun `create and remove relocate canonical text instead of deleting it`() = runBlocking {
         val codec = MarkdownMemoryCodec()
         val original = longTermEntry("mem_create_remove", "A removed entry must be recreated by the paired create.")
+        val create = operation(
+            destination = MemoryBatchDestination.LONG_TERM,
+            text = "  A REMOVED entry must be recreated\nby the paired create.  "
+        )
         val fixture = fixture(
             proposal = MemoryBatchConsolidationProposal(
                 operations = listOf(
-                    operation(
-                        destination = MemoryBatchDestination.LONG_TERM,
-                        text = "  A REMOVED entry must be recreated\nby the paired create.  "
-                    ),
+                    create,
                     operation(
                         destination = MemoryBatchDestination.LONG_TERM,
                         action = MemoryBatchAction.REMOVE,
@@ -712,7 +836,6 @@ class MemoryBatchConsolidationServiceTest {
         )
         fixture.fileStore.replaceLongTermMemory(codec.renderLongTerm(listOf(original))).getOrThrow()
         val job = fixture.createFiveTurnBatch()
-        val expectedCreatedId = "mem_${sha256("${job.idempotencyKey}|0|${MemoryBatchDestination.LONG_TERM}").take(24)}"
 
         val result = fixture.service.process(job)
         val entries = codec.parse(fixture.fileStore.readLongTermMemory().getOrThrow()).entries
@@ -720,7 +843,9 @@ class MemoryBatchConsolidationServiceTest {
         assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
         assertEquals(2, result.longTermWriteCount)
         assertEquals(1, entries.size)
-        assertEquals(expectedCreatedId, entries.single().id)
+        assertTrue(entries.single().id.startsWith("mem_can_"))
+        assertEquals(create.canonicalKey, entries.single().canonicalKey)
+        assertEquals(create.scope, entries.single().scope)
         assertEquals(normalizeExactMemoryText(original.text), normalizeExactMemoryText(entries.single().text))
         assertFalse(entries.any { entry -> entry.id == original.id })
     }
@@ -915,7 +1040,7 @@ class MemoryBatchConsolidationServiceTest {
     }
 
     @Test
-    fun `replace updates one supplied id without creating a duplicate`() = runBlocking {
+    fun `replace through obsolete id updates the current survivor and preserves history`() = runBlocking {
         val successorEntry = MarkdownMemoryEntry(
             id = "mem_project_current",
             text = "Question project has a current canonical status.",
@@ -961,19 +1086,20 @@ class MemoryBatchConsolidationServiceTest {
             fusedScore = 10f,
             updatedAt = existingEntry.updatedAt
         )
+        val replacement = operation(
+            destination = MemoryBatchDestination.LONG_TERM,
+            action = MemoryBatchAction.REPLACE,
+            targetMemoryId = existingEntry.id,
+            text = "Question project has reached the second milestone.",
+            type = "project_context",
+            evidenceTurnKeys = listOf("chat:$CHAT_ID:user:2"),
+            canonicalKey = "project.question.status",
+            scope = "project:question",
+            evidenceAt = 12L
+        )
         val fixture = fixture(
             proposal = MemoryBatchConsolidationProposal(
-                operations = listOf(
-                    operation(
-                        destination = MemoryBatchDestination.LONG_TERM,
-                        action = MemoryBatchAction.REPLACE,
-                        targetMemoryId = existingEntry.id,
-                        text = "Question project has reached the second milestone.",
-                        type = "project_context",
-                        canonicalKey = "project.question.status",
-                        scope = "project:question"
-                    )
-                )
+                operations = listOf(replacement)
             ),
             retrievalResults = listOf(retrievalResult)
         )
@@ -985,20 +1111,24 @@ class MemoryBatchConsolidationServiceTest {
         val result = fixture.service.process(job)
         val markdown = fixture.fileStore.readLongTermMemory().getOrThrow()
         val parsed = MarkdownMemoryCodec().parse(markdown)
-        val replaced = parsed.entries.single { entry -> entry.id == existingEntry.id }
+        val active = parsed.entries.single { entry -> entry.validity == MemoryValidity.CURRENT }
+        val preservedHistory = parsed.entries.single { entry -> entry.id == existingEntry.id }
 
         assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
-        assertFalse(markdown.contains("first milestone"))
+        assertEquals(1, markdown.split("first milestone").size - 1)
         assertEquals(1, markdown.split("second milestone").size - 1)
         assertTrue(parsed.skippedEntries.isEmpty())
         assertEquals(
-            existingEntry.copy(
+            successorEntry.copy(
                 text = "Question project has reached the second milestone.",
-                updatedAt = FIXED_CLOCK.instant().epochSecond
+                updatedAt = FIXED_CLOCK.instant().epochSecond,
+                lastObservedAt = 12L,
+                evidenceRefs = listOf("chat:$CHAT_ID:user:2")
             ),
-            replaced
+            active
         )
-        assertEquals(successorEntry, parsed.entries.single { entry -> entry.id == successorEntry.id })
+        assertEquals(existingEntry, preservedHistory)
+        assertEquals(1, parsed.entries.count { entry -> entry.text == successorEntry.text })
     }
 
     @Test
@@ -1538,6 +1668,7 @@ class MemoryBatchConsolidationServiceTest {
             jobDao = jobDao,
             fileStore = fileStore,
             recoveryDao = recoveryDao,
+            workEnqueuer = enqueuer,
             intelligence = intelligence,
             activityLogger = activityLogger,
             maintenanceScheduler = maintenanceScheduler,
@@ -1567,6 +1698,7 @@ class MemoryBatchConsolidationServiceTest {
         targetMemoryId: String? = null,
         text: String,
         type: String = "project_context",
+        source: String = MemorySource.EXPLICIT_USER_STATEMENT,
         evidenceTurnKeys: List<String> = listOf("chat:$CHAT_ID:user:1"),
         canonicalKey: String? = if (action in setOf(MemoryBatchAction.CREATE, MemoryBatchAction.REPLACE)) {
             "test.${sha256(text).take(16)}"
@@ -1583,7 +1715,7 @@ class MemoryBatchConsolidationServiceTest {
         text = text,
         type = type,
         sensitivity = MemorySensitivity.NORMAL,
-        source = MemorySource.EXPLICIT_USER_STATEMENT,
+        source = source,
         evidenceTurnKeys = evidenceTurnKeys,
         canonicalKey = canonicalKey,
         scope = scope,
@@ -1699,6 +1831,7 @@ class MemoryBatchConsolidationServiceTest {
         val jobDao: InMemoryMaintenanceJobDao,
         val fileStore: MemoryFileStore,
         val recoveryDao: InMemoryMemoryRecoveryDao,
+        val workEnqueuer: MemoryMaintenanceWorkEnqueuer,
         val intelligence: FakeMemoryIntelligence,
         val activityLogger: RecordingOrganizationActivityLogger,
         val maintenanceScheduler: MemoryMaintenanceScheduler,

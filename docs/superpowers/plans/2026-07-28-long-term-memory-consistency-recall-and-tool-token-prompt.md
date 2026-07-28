@@ -549,25 +549,26 @@ git diff --check
 **Implementation requirements:**
 
 - [x] 扩展 strict LLM operation contract，使 create/replace candidates 带受控 `canonicalKey`、`scope`、证据时间和目标 recall state。
-- [ ] 抽出共享 `CanonicalMemoryMergePolicy`（名称可按现有风格调整），供 turn-batch 和 daily-distillation 两条长期写入路径共同使用。
-- [ ] LLM 提议 key/scope/合并文本；本地 policy 重新校验 grammar、type compatibility、trust、evidence、时间和唯一性。
-- [ ] 每次长期 commit 前本地解析完整 `MEMORY.md` 建立 canonical identity index。相关 working-set limit 只用于 LLM 上下文，不能作为最终 collision guard。
-- [ ] 同一 identity + 同一事实：stable active ID 不变；只合并 bounded evidence refs 并推进 `lastObservedAt`。这是非 material 的 metadata mutation，不得创建第二条 active fact、推进 material threshold 或触发 embedding rebuild。
-- [ ] 同一 identity + 新事实：先按 trust，再按 evidence time 决胜。不能同时留下两个 current/query 值。
-- [ ] active canonical entry 的 ID 在后续更新中保持稳定。需要保留旧值时，创建 deterministic maintenance-history ID，将旧值标 obsolete/maintenance-only 并令 `supersededBy` 指向 active survivor。
-- [ ] 多个 legacy entries 冲突时，确定性选择 survivor；losers 进入 maintenance history。重复执行结果必须相同。
-- [ ] 不同 scope、不同 canonical key、合法 multi-valued events 必须继续共存。
-- [ ] 现有 exact-text duplicate 防线保留，canonical uniqueness 成为额外而不是替代约束。
-- [ ] process death、mutation replay、LLM 重复返回和 concurrent file revision 均不得产生第二个 active entry。
-- [ ] 较弱 evidence 被拒绝时不得创建“候选 active”旁路；如需保留，只能 contested/maintenance-only。
+- [x] 抽出共享 `CanonicalMemoryMergePolicy`（名称可按现有风格调整），供 turn-batch 和 daily-distillation 两条长期写入路径共同使用。
+- [x] LLM 提议 key/scope/合并文本；本地 policy 重新校验 grammar、type compatibility、trust、evidence、时间和唯一性。
+- [x] 每次长期 commit 前本地解析完整 `MEMORY.md` 建立 canonical identity index。相关 working-set limit 只用于 LLM 上下文，不能作为最终 collision guard。
+- [x] 同一 identity + 同一事实：stable active ID 不变；只合并 bounded evidence refs 并推进 `lastObservedAt`。policy 将其报告为零 material mutation，writer 使用 nullable fingerprint 提交且不 enqueue vector sync。
+- [ ] Task 4 仍须证明 metadata-only observation 前后 embedding text/projection hash 不变，并消除 startup bootstrap 因 full-file hash 变化而重建的可能；在此之前不得把“不会触发 embedding rebuild”记为端到端完成。
+- [x] 同一 identity + 新事实：先按 trust，再按 evidence time 决胜。不能同时留下两个 current/query 值。
+- [x] active canonical entry 的 ID 在后续更新中保持稳定。需要保留旧值时，创建 deterministic maintenance-history ID，将旧值标 obsolete/maintenance-only 并令 `supersededBy` 指向 active survivor。
+- [x] 多个 legacy entries 冲突时，确定性选择 survivor；losers 进入 maintenance history。重复执行结果必须相同。
+- [x] 不同 scope、不同 canonical key、合法 multi-valued events 必须继续共存。
+- [x] 现有 exact-text duplicate 防线保留，canonical uniqueness 成为额外而不是替代约束。
+- [x] process death、mutation replay、LLM 重复返回和 concurrent file revision 均不得产生第二个 active entry。
+- [x] 较弱 evidence 被拒绝时不得创建“候选 active”旁路；如需保留，只能 contested/maintenance-only。
 
 **Acceptance criteria:**
 
-- [ ] 两种措辞表达同一通用称呼时，只存在一个 current/general active fact。
-- [ ] 法定姓名、general nickname、work-context address 可同时存在并各自唯一。
-- [ ] `user_confirmed` 不被更新的 `assistant_inferred` 覆盖。
-- [ ] equal-trust evidence 由时间稳定决胜；相同输入 replay 不改变 bytes。
-- [ ] 两个写入服务对 trust、timestamp、ID 和 lifecycle 的行为一致。
+- [x] 两种措辞表达同一通用称呼时，只存在一个 current/general active fact。
+- [x] 法定姓名、general nickname、work-context address 可同时存在并各自唯一。
+- [x] `user_confirmed` 不被更新的 `assistant_inferred` 覆盖。
+- [x] equal-trust evidence 由时间稳定决胜；相同输入 replay 不改变 bytes。
+- [x] 两个写入服务对 trust、timestamp、ID 和 lifecycle 的行为一致。
 
 **Focused verification:**
 
@@ -583,6 +584,29 @@ git diff --check
 - The bounded existing-memory DTO now exposes canonical lifecycle metadata to the maintenance model. Turn-batch enrichment rereads current managed Markdown by `sourcePath + id`; daily planning freezes the same fields with serialization defaults so older persisted jobs remain decodable.
 - Daily payload integrity is checked against the original persisted `input` JSON subtree rather than a re-encoded expanded DTO. A legacy fixture removes every newly added existing-memory field, retains a nonzero historical `createdAt` in canonical Markdown, recomputes the pre-expansion hash, and completes successfully without rewriting that existing entry.
 - Focused verification passed 86 tests with zero failures/errors/skips across `LlmMemoryIntelligenceTest`, `MemoryBatchConsolidationServiceTest`, `MemoryDailyDistillationOperationControllerTest`, `MemoryDailyDistillationServiceTest`, and `MemoryDailyDistillationSchedulerTest`; ktlint 1.3.1 and `git diff --check` also passed.
+
+#### Task 2 Implementation Record (2026-07-29)
+
+**Deterministic full-file merge**
+
+- Added a shared `CanonicalMemoryMergePolicy` used by both turn-batch and daily-distillation long-term CREATE/REPLACE paths. Every merge parses the complete current `MEMORY.md`, groups by validated `(canonicalKey, scope)`, and keeps working-set limits confined to model context rather than collision safety.
+- Winner selection is deterministic: trust first, evidence time second, then a stable hash tie-break. Same-fact observations keep the active ID, text, creation/update timestamps, provenance, sensitivity and recall state while deterministically merging bounded evidence refs and advancing only `lastObservedAt`.
+- Semantic replacements keep the active survivor ID, create deterministic `mem_hist_*` obsolete/maintenance-only history when needed, retarget dependent history, collapse duplicate current entries, and preserve distinct keys/scopes. New identities use deterministic `mem_can_*` IDs, and replay is byte-identical.
+
+**Writer and recovery integration**
+
+- Batch long-term REMOVE runs before the shared merge; daily and batch CREATE/REPLACE now share the same trust, identity, timestamp and lifecycle behavior. Existing exact-text multiplicity guards remain active for daily files and as a full-document postcondition for canonical memory.
+- Metadata-only long-term targets persist with `targetIndexFingerprint=null`. `MemoryMutationCoordinator` performs the same staged file CAS and recovery, then transitions the receipt/group directly to `INDEXED` without advancing recall-corpus generation, enqueueing `SYNC_VECTOR_INDEX`, or scheduling INDEX work. Material text/membership changes retain the prior index reconciliation path.
+- Service-level tests cover hidden full-file collisions, stable active/history IDs, stronger/weaker evidence, process replay, committed-file recovery, concurrent revision protection, and the metadata-only zero-index-work path.
+
+**Deferred projection proof**
+
+- This task proves zero immediate index work for observation-only commits. Task 4 remains responsible for separating full-file and active recall projection hashes so startup bootstrap also treats metadata-only changes as embedding-identical; that Task 4 requirement remains open.
+
+**Verification**
+
+- Final focused run passed 140 tests with zero failures/errors/skips: `CanonicalMemoryMergePolicyTest` 13, `MemoryBatchConsolidationServiceTest` 40, `MemoryDailyDistillationOperationControllerTest` 14, `MemoryDailyDistillationServiceTest` 15, `MemoryDailyDistillationSchedulerTest` 8, `LlmMemoryIntelligenceTest` 11, `MemoryMutationCoordinatorTest` 22, and `MarkdownMemoryCodecTest` 17.
+- `./gradlew.bat :app:compileDebugKotlin --no-daemon`, ktlint 1.3.1 over all changed Kotlin files, and `git diff --check` passed. Only existing Java native-access/Unsafe, generated-code, and CRLF informational warnings were emitted.
 
 ### Task 3: Add Durable Periodic Whole-Corpus Long-Term Consolidation
 
