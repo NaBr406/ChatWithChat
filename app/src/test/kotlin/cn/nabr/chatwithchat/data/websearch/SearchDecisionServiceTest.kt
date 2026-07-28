@@ -2,6 +2,7 @@ package cn.nabr.chatwithchat.data.websearch
 
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.dto.ProviderUsage
+import cn.nabr.chatwithchat.data.dto.openai.common.TextContent
 import cn.nabr.chatwithchat.data.model.ClientType
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -30,11 +31,13 @@ class SearchDecisionServiceTest {
 
         assertTrue(decision.shouldSearch)
         assertEquals(listOf("latest Android target SDK 2026"), decision.queries)
-        assertTrue(client.lastPrompt.contains("Latest user message"))
+        assertTrue(client.lastPrompt.contains("用户最新消息"))
         assertTrue(client.lastPrompt.contains("We are updating an Android app."))
-        assertTrue(client.lastPrompt.contains("Runtime context"))
+        assertTrue(client.lastPrompt.contains("运行时上下文"))
         assertTrue(client.lastPrompt.contains("2026-07-02"))
-        assertTrue(client.lastPrompt.contains("Rewrite the user's natural-language request into search-engine queries"))
+        assertTrue(client.lastPrompt.contains("将用户的自然语言请求改写为搜索引擎 query"))
+        assertTrue(client.lastPrompt.contains("\"shouldSearch\""))
+        assertTrue(client.lastPrompt.contains("不得翻译 JSON key"))
     }
 
     @Test
@@ -97,9 +100,9 @@ class SearchDecisionServiceTest {
             runtimeContext = "Current local date/time: 2026-07-02T16:00:00+08:00 (Asia/Shanghai)."
         )
 
-        assertTrue(client.lastPrompt.contains("Convert relative dates such as today, yesterday"))
-        assertTrue(client.lastPrompt.contains("For broad or underspecified requests, choose sensible default scopes"))
-        assertTrue(client.lastPrompt.contains("one Chinese query and one English query"))
+        assertTrue(client.lastPrompt.contains("将今天、昨天、本周、最新、当前等相对日期转换成具体日期或年份"))
+        assertTrue(client.lastPrompt.contains("请求宽泛或不够具体时，选择合理的默认范围"))
+        assertTrue(client.lastPrompt.contains("一条中文 query 加一条英文 query"))
     }
 
     @Test
@@ -170,6 +173,10 @@ class SearchDecisionServiceTest {
         assertEquals("disabled", request.thinking?.type)
         assertNull(request.temperature)
         assertNull(request.topP)
+        val systemPrompt = request.messages.first().content.filterIsInstance<TextContent>().single().text
+        assertTrue(systemPrompt.contains("网页搜索规划器"))
+        assertTrue(systemPrompt.contains("搜索 query"))
+        assertTrue(systemPrompt.contains("JSON key"))
     }
 
     @Test

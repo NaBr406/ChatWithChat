@@ -43,8 +43,8 @@ class ProviderToolAdapterTest {
         assertTrue(prompt.contains("Enabled tool signatures:"))
         assertTrue(output is JsonToolModelOutput.ToolCalls)
         assertEquals("web_search", (output as JsonToolModelOutput.ToolCalls).calls.single().name)
-        assertTrue(finalPrompt.contains("Tool results are available"))
-        assertTrue(finalPrompt.contains("answer with the most reasonable default scope"))
+        assertTrue(finalPrompt.contains("已有针对用户最新请求的工具结果"))
+        assertTrue(finalPrompt.contains("按最合理的默认范围直接回答"))
         assertTrue(finalPrompt.contains("Draft answer"))
         assertTrue(finalPrompt.contains("https://example.com/source"))
     }
@@ -77,10 +77,10 @@ class ProviderToolAdapterTest {
             config = config
         ).orEmpty()
 
-        assertTrue(searchOnlyPrompt.contains("No sticker was sent"))
-        assertTrue(searchOnlyPrompt.contains("Do not claim or simulate a send"))
-        assertTrue(sentPrompt.contains("already queued for local rendering"))
-        assertTrue(sentPrompt.contains("without its ID"))
+        assertTrue(searchOnlyPrompt.contains("没有贴图发送成功"))
+        assertTrue(searchOnlyPrompt.contains("不要用文字、Markdown、sticker_id 或内部标记声称或模拟发送"))
+        assertTrue(sentPrompt.contains("贴图已进入本地渲染队列"))
+        assertTrue(sentPrompt.contains("不要提及 sticker_id"))
     }
 
     @Test

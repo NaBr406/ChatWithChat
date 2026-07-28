@@ -180,7 +180,7 @@ class ToolLoopOrchestratorTest {
         assertEquals("web_search", executedCalls.first().name)
         assertEquals(1, toolResults.results.size)
         assertFalse(toolResults.results.first().isError)
-        assertTrue(toolResults.finalAnswerPrompt.orEmpty().contains("Tool results are available"))
+        assertTrue(toolResults.finalAnswerPrompt.orEmpty().contains("已有针对用户最新请求的工具结果"))
         assertTrue(toolResults.finalAnswerPrompt.orEmpty().contains("Result for web_search"))
     }
 
@@ -268,7 +268,7 @@ class ToolLoopOrchestratorTest {
         assertTrue(prompts[1].contains("Result for web_search"))
         assertTrue(prompts[2].contains("Result for fetch_url"))
         assertTrue(toolResults.finalAnswerPrompt.orEmpty().contains("Answer with sources."))
-        assertTrue(toolResults.finalAnswerPrompt.orEmpty().contains("Tool results are available"))
+        assertTrue(toolResults.finalAnswerPrompt.orEmpty().contains("已有针对用户最新请求的工具结果"))
     }
 
     @Test
@@ -287,7 +287,7 @@ class ToolLoopOrchestratorTest {
 
         assertTrue(result is ToolLoopResult.ToolResults)
         assertEquals(2, executedCalls.size)
-        assertTrue((result as ToolLoopResult.ToolResults).finalAnswerPrompt.orEmpty().contains("Tool results are available"))
+        assertTrue((result as ToolLoopResult.ToolResults).finalAnswerPrompt.orEmpty().contains("已有针对用户最新请求的工具结果"))
     }
 
     @Test
@@ -567,7 +567,7 @@ class ToolLoopOrchestratorTest {
 
         assertTrue(result is ToolLoopResult.ToolResults)
         val prompt = (result as ToolLoopResult.ToolResults).finalAnswerPrompt.orEmpty()
-        assertTrue(prompt.contains("cite the source URLs"))
+        assertTrue(prompt.contains("引用来源 URL"))
         assertTrue(prompt.contains("https://example.com/source"))
     }
 

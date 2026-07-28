@@ -313,4 +313,4 @@ private fun decisionChatMessages(prompt: String): List<ChatMessage> = listOf(
 
 private const val DECISION_MAX_OUTPUT_TOKENS = 400
 private const val DECISION_SYSTEM_PROMPT =
-    "You are a web-search planner. Decide if search is needed, then output optimized search queries. Return only the requested JSON object and no markdown."
+    "你是网页搜索规划器。判断是否需要搜索，并输出优化后的搜索 query。只返回要求的 JSON object，不要输出 Markdown，也不要翻译 JSON key。"

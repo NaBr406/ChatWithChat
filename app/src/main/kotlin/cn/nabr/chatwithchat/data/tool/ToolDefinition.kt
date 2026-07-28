@@ -66,12 +66,12 @@ data class ToolDefinition(
     companion object {
         val WebSearch = ToolDefinition(
             name = "web_search",
-            description = "Search the public web for recent news, changing facts, or external source material. Rewrite natural-language requests into concise search-engine queries with likely entity, topic/category, timeframe, geography/source scope, and primary or official source terms when useful. Prefer the user's language for local/regional facts. Do not use this for the user's local date, time, timezone, device state, or app settings.",
+            description = "搜索公开网页中的近期新闻、变化中的事实或外部资料。将自然语言请求改写为简洁的搜索引擎 query；适合时加入实体、主题或类别、时间范围、地区或来源范围，以及官方或一手来源词。查询本地或区域事实时优先使用用户的语言。不要用它查询用户设备的本地日期、时间、时区、设备状态或应用设置。",
             parameters = Parameters(
                 properties = mapOf(
                     "query" to Parameter(
                         type = "string",
-                        description = "A concise, structured public-web search query. Include concrete dates/years, canonical names, geography, category/source terms, and official or primary-source terms when useful. Do not use clock/time-only queries."
+                        description = "简洁、结构化的公开网页搜索 query。适合时加入具体日期或年份、规范名称、地区、类别或来源词，以及官方或一手来源词；不要只查询时钟或时间。"
                     )
                 ),
                 required = listOf("query")
@@ -80,12 +80,12 @@ data class ToolDefinition(
 
         val FetchUrl = ToolDefinition(
             name = "fetch_url",
-            description = "Fetch and extract readable text from one public web page URL.",
+            description = "获取一个公开网页 URL，并提取其中可读的正文。",
             parameters = Parameters(
                 properties = mapOf(
                     "url" to Parameter(
                         type = "string",
-                        description = "The http or https URL to fetch."
+                        description = "要获取的 http 或 https URL。"
                     )
                 ),
                 required = listOf("url")
@@ -94,56 +94,56 @@ data class ToolDefinition(
 
         val CurrentDateTime = ToolDefinition(
             name = "current_datetime",
-            description = "Returns the device's current local date, time, UTC offset, and timezone. Use this for local date or time questions. This tool does not access the network.",
+            description = "返回设备当前的本地日期、时间、UTC 偏移和时区。回答本地日期或时间问题时使用；此工具不会访问网络。",
             parameters = Parameters()
         )
 
         val DeviceLocation = ToolDefinition(
             name = "device_location",
-            description = "Returns the device's current latitude, longitude, accuracy, provider, and timestamp when Android system location permission has been granted. If permission is missing, the tool returns tool_permission_denied so the user can enable the app's location permission. Use only when the latest user request explicitly asks for their current device location or location-based help. This tool does not search the web.",
+            description = "在已授予 Android 系统定位权限时，返回设备当前的纬度、经度、精度、provider 和时间戳。缺少权限时返回 tool_permission_denied，便于用户开启应用定位权限。仅当用户最新请求明确询问当前设备位置或需要基于位置的帮助时使用；此工具不会搜索网页。",
             parameters = Parameters()
         )
 
         val AddSchedule = ToolDefinition(
             name = "add_schedule",
-            description = "Add a calendar event to the device calendar. Use an ISO-8601 start time and optionally an end time or duration. This is a local external write that requires calendar permission; after the system permission is granted, ChatWithChat adds the event directly without another app approval dialog.",
+            description = "向设备日历添加事件。start_time 使用 ISO-8601；可选填 end_time 或 duration_minutes。这是需要日历权限的本地外部写入；系统权限授予后，ChatWithChat 会直接添加事件，不再弹出其他应用的确认界面。",
             parameters = Parameters(
                 properties = mapOf(
                     "title" to Parameter(
                         type = "string",
-                        description = "Calendar event title.",
+                        description = "日历事件标题。",
                         minLength = 1,
                         maxLength = 200
                     ),
                     "start_time" to Parameter(
                         type = "string",
-                        description = "Event start as an ISO-8601 date-time, including timezone offset when possible.",
+                        description = "事件开始时间，使用 ISO-8601 date-time；可以时包含时区偏移。",
                         format = "date-time"
                     ),
                     "end_time" to Parameter(
                         type = "string",
-                        description = "Optional event end as an ISO-8601 date-time.",
+                        description = "可选的事件结束时间，使用 ISO-8601 date-time。",
                         format = "date-time"
                     ),
                     "duration_minutes" to Parameter(
                         type = "integer",
-                        description = "Optional duration in minutes when end_time is omitted.",
+                        description = "省略 end_time 时可选的持续分钟数。",
                         minimum = 1.0,
                         maximum = 1_440.0
                     ),
                     "description" to Parameter(
                         type = "string",
-                        description = "Optional calendar event notes.",
+                        description = "可选的日历事件备注。",
                         maxLength = 2_000
                     ),
                     "location" to Parameter(
                         type = "string",
-                        description = "Optional event location.",
+                        description = "可选的事件地点。",
                         maxLength = 500
                     ),
                     "all_day" to Parameter(
                         type = "boolean",
-                        description = "Whether the event should be marked as an all-day event."
+                        description = "是否将事件标记为全天事件。"
                     )
                 ),
                 required = listOf("title", "start_time")
@@ -152,29 +152,29 @@ data class ToolDefinition(
 
         val SetAlarm = ToolDefinition(
             name = "set_alarm",
-            description = "Set an alarm directly in the device's Clock app. Provide a local hour and minute, an optional message, and optional weekly repeat days. ChatWithChat uses the system alarm capability to create it without opening an editor or showing an additional app approval dialog.",
+            description = "直接在设备的时钟应用中设置闹钟。提供本地 hour 和 minute，可选填 message 和每周重复的 days。ChatWithChat 使用系统闹钟能力直接创建，不打开编辑器，也不显示额外的应用确认界面。",
             parameters = Parameters(
                 properties = mapOf(
                     "hour" to Parameter(
                         type = "integer",
-                        description = "Local alarm hour from 0 through 23.",
+                        description = "本地闹钟小时，范围为 0 到 23。",
                         minimum = 0.0,
                         maximum = 23.0
                     ),
                     "minute" to Parameter(
                         type = "integer",
-                        description = "Alarm minute from 0 through 59.",
+                        description = "闹钟分钟，范围为 0 到 59。",
                         minimum = 0.0,
                         maximum = 59.0
                     ),
                     "message" to Parameter(
                         type = "string",
-                        description = "Optional alarm label.",
+                        description = "可选的闹钟标签。",
                         maxLength = 200
                     ),
                     "days" to Parameter(
                         type = "array",
-                        description = "Optional weekly repeat days using 1=Sunday through 7=Saturday.",
+                        description = "可选的每周重复日期；1=Sunday，依次到 7=Saturday。",
                         items = Parameter(
                             type = "integer",
                             minimum = 1.0,
@@ -188,18 +188,18 @@ data class ToolDefinition(
 
         val SearchStickers = ToolDefinition(
             name = "search_stickers",
-            description = "Find enabled local stickers for your own spontaneous reaction or conversational voice; no request is needed. Search for what you feel like expressing, not a label copied from the user's mood. This returns candidates only; retry at most once if none fits.",
+            description = "搜索已启用的本地贴图，用来表达你此刻自然产生的反应或语气，无需用户明确要求。搜索你自己想表达的感觉，不要照搬用户的情绪标签。只返回候选；没有合适结果时最多换一种描述重试一次。",
             parameters = Parameters(
                 properties = mapOf(
                     "query" to Parameter(
                         type = "string",
-                        description = "What you feel like expressing in this reply, not the user's mood.",
+                        description = "你在这次回复中自己想表达的感觉，而不是用户的情绪。",
                         minLength = 1,
                         maxLength = 120
                     ),
                     "limit" to Parameter(
                         type = "integer",
-                        description = "Optional maximum number of candidates to return.",
+                        description = "可选的最大候选返回数量。",
                         minimum = 1.0,
                         maximum = 6.0
                     )
@@ -210,12 +210,12 @@ data class ToolDefinition(
 
         val SendSticker = ToolDefinition(
             name = "send_sticker",
-            description = "Display one exact sticker returned by search_stickers as your own expressive reaction. Choose what you feel like expressing, not a label for the user. This sends at most one sticker.",
+            description = "发送一张由 search_stickers 返回的贴图，表达你自己的自然反应。选择你想表达的感觉，不要给用户贴情绪标签。一次最多发送一张。",
             parameters = Parameters(
                 properties = mapOf(
                     "sticker_id" to Parameter(
                         type = "string",
-                        description = "Exact sticker_id from the current search_stickers result.",
+                        description = "当前 search_stickers 结果中返回的准确 sticker_id。",
                         minLength = 1,
                         maxLength = 160
                     )
@@ -226,12 +226,12 @@ data class ToolDefinition(
 
         val DiscoverTools = ToolDefinition(
             name = "discover_tools",
-            description = "Find enabled on-demand tools for a capability that is not currently available. Returned tools become available in the next response.",
+            description = "为当前尚不可用的能力查找已启用的按需工具。返回的工具会从下一次响应开始可用。",
             parameters = Parameters(
                 properties = mapOf(
                     "query" to Parameter(
                         type = "string",
-                        description = "The capability needed to answer the latest request.",
+                        description = "回答最新请求所需的能力。",
                         minLength = 1,
                         maxLength = 160
                     )

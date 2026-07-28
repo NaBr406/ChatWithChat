@@ -474,7 +474,15 @@ class ChatRepositoryImplTest {
         assertNull(request.temperature)
         assertNull(request.topP)
         assertEquals(ChatCompletionToolChoice.Auto, request.toolChoice)
-        assertTrue(request.tools.orEmpty().isNotEmpty())
+        assertTrue(request.systemText().contains("运行时上下文"))
+        assertTrue(request.systemText().contains("除非工具定义明确允许用于自主表达"))
+        val discoveryTool = request.tools.orEmpty().single { tool ->
+            tool.function.name == ToolDefinition.DiscoverTools.name
+        }
+        assertTrue(discoveryTool.function.description.contains("按需工具"))
+        assertTrue(discoveryTool.function.parameters.toString().contains("\"query\""))
+        assertTrue(discoveryTool.function.parameters.toString().contains("\"type\":\"string\""))
+        assertFalse(discoveryTool.function.parameters.toString().contains("\"查询\""))
         assertFalse(request.systemText().contains("Enabled tool signatures:"))
     }
 
@@ -501,11 +509,30 @@ class ChatRepositoryImplTest {
                 )
             )
         )
+        val stickerProviders = listOf(
+            noOpToolProvider(
+                definition = ToolDefinition.SearchStickers,
+                discovery = ToolDiscoveryMetadata(
+                    exposure = ToolExposure.Resident,
+                    requiredCompanionToolNames = setOf(ToolDefinition.SendSticker.name)
+                )
+            ),
+            noOpToolProvider(
+                definition = ToolDefinition.SendSticker,
+                discovery = ToolDiscoveryMetadata(
+                    exposure = ToolExposure.Resident,
+                    requiredCompanionToolNames = setOf(ToolDefinition.SearchStickers.name)
+                )
+            )
+        )
         val repository = createRepository(
             openAIAPI = openAIAPI,
             settingRepository = settingRepository(
                 webSearchMode = WebSearchMode.Off,
                 toolCallingMode = ToolCallingMode.Auto
+            ),
+            toolLoopOrchestrator = ToolLoopOrchestrator(
+                ToolExecutor(ToolRegistry(stickerProviders))
             )
         )
 
@@ -532,11 +559,25 @@ class ChatRepositoryImplTest {
         val nativeRequest = openAIAPI.chatCompletionRequests[0]
         val fallbackRequest = openAIAPI.chatCompletionRequests[1]
         assertEquals(ChatCompletionToolChoice.Auto, nativeRequest.toolChoice)
-        assertTrue(nativeRequest.tools.orEmpty().isNotEmpty())
+        assertEquals(
+            listOf(ToolDefinition.SearchStickers.name, ToolDefinition.SendSticker.name),
+            nativeRequest.tools.orEmpty().map { tool -> tool.function.name }
+        )
+        assertTrue(nativeRequest.systemText().contains("正常但可选的回复方式"))
+        val nativeSearchTool = nativeRequest.tools.orEmpty().single { tool ->
+            tool.function.name == ToolDefinition.SearchStickers.name
+        }
+        assertTrue(nativeSearchTool.function.description.contains("你此刻自然产生的反应"))
+        assertTrue(nativeSearchTool.function.parameters.toString().contains("\"query\""))
         assertFalse(nativeRequest.systemText().contains("Enabled tool signatures:"))
         assertNull(fallbackRequest.toolChoice)
         assertNull(fallbackRequest.tools)
         assertTrue(fallbackRequest.systemText().contains("Enabled tool signatures:"))
+        assertTrue(fallbackRequest.systemText().contains("回答前可以调用已启用的工具"))
+        assertTrue(fallbackRequest.systemText().contains("\"type\":\"final_answer\""))
+        assertTrue(fallbackRequest.systemText().contains("search_stickers(query:string!, limit:integer)"))
+        assertTrue(fallbackRequest.systemText().contains("send_sticker(sticker_id:string!)"))
+        assertFalse(fallbackRequest.systemText().contains("\"类型\""))
     }
 
     @Test
@@ -880,7 +921,7 @@ class ChatRepositoryImplTest {
             .orEmpty()
 
         assertTrue(systemText.contains("Base system prompt"))
-        assertTrue(systemText.contains("Earlier conversation summary"))
+        assertTrue(systemText.contains("较早对话摘要"))
         assertTrue(systemText.contains("topic-1"))
     }
 
@@ -962,7 +1003,7 @@ class ChatRepositoryImplTest {
         assertTrue(openAIAPI.chatCompletionRequests[1].systemText().contains("Tool scratchpad:"))
         assertTrue(openAIAPI.chatCompletionRequests[1].systemText().contains("Example Source"))
         assertTrue(openAIAPI.chatCompletionRequests[1].systemText().contains("https://example.com/source"))
-        assertTrue(openAIAPI.chatCompletionRequests[2].systemText().contains("Tool results are available"))
+        assertTrue(openAIAPI.chatCompletionRequests[2].systemText().contains("已有针对用户最新请求的工具结果"))
         assertTrue(openAIAPI.chatCompletionRequests[2].systemText().contains("Draft searched answer"))
     }
 
@@ -1299,6 +1340,10 @@ class ChatRepositoryImplTest {
                 toolCallingMode = ToolCallingMode.Auto
             ),
             webSearchRepository = webSearchRepository,
+            toolLoopOrchestrator = toolLoopOrchestrator(
+                webSearchRepository = webSearchRepository,
+                config = ToolLoopConfig(maxToolRounds = 1)
+            ),
             promptTraceStore = promptTraceStore
         )
 
@@ -1320,9 +1365,12 @@ class ChatRepositoryImplTest {
             openAIAPI.responsesRequests[0].tools.orEmpty().map { tool -> tool.name }
         )
         assertFalse(openAIAPI.responsesRequests[0].instructions.orEmpty().contains("web_search"))
+        assertNull(openAIAPI.responsesRequests[1].tools)
+        assertTrue(openAIAPI.responsesRequests[1].instructions.orEmpty().contains("不要再调用工具"))
+        assertTrue(openAIAPI.responsesRequests[1].instructions.orEmpty().contains("function_call_output"))
         val chronologicalTraces = promptTraceStore.entries.value.asReversed()
         assertEquals(
-            listOf(PromptTraceStage.toolRequest(1), PromptTraceStage.toolRequest(2)),
+            listOf(PromptTraceStage.toolRequest(1), PromptTraceStage.TOOL_FINAL_ANSWER),
             chronologicalTraces.map { trace -> trace.stage }
         )
         assertEquals(
@@ -1374,15 +1422,15 @@ class ChatRepositoryImplTest {
             listOf(ToolDefinition.SearchStickers.name, ToolDefinition.SendSticker.name),
             request.tools.orEmpty().map { tool -> tool.name }
         )
-        assertTrue(request.instructions.orEmpty().contains("normal optional reply modality"))
-        assertTrue(request.instructions.orEmpty().contains("usually express it with one sticker"))
-        assertTrue(request.instructions.orEmpty().contains("Never skip only because stickers were not mentioned"))
-        assertTrue(request.instructions.orEmpty().contains("what you feel like expressing"))
-        assertTrue(request.instructions.orEmpty().contains("do not force one into every reply"))
-        assertTrue(request.instructions.orEmpty().contains("An explicit request requires a send"))
-        assertTrue(request.instructions.orEmpty().contains("Except for expressive tools"))
+        assertTrue(request.instructions.orEmpty().contains("正常但可选的回复方式"))
+        assertTrue(request.instructions.orEmpty().contains("通常就用一张贴图表达"))
+        assertTrue(request.instructions.orEmpty().contains("不要因为用户没提贴图就跳过"))
+        assertTrue(request.instructions.orEmpty().contains("只取决于你自己想表达什么"))
+        assertTrue(request.instructions.orEmpty().contains("不要每次回复都强行发送"))
+        assertTrue(request.instructions.orEmpty().contains("用户明确要求时必须发送"))
+        assertTrue(request.instructions.orEmpty().contains("除非工具定义明确允许用于自主表达"))
         assertFalse(request.instructions.orEmpty().contains("Use the available tools only when the latest user request needs them"))
-        assertTrue(request.instructions.orEmpty().contains("Only a successful send_sticker sends a sticker"))
+        assertTrue(request.instructions.orEmpty().contains("只有成功调用 send_sticker 才算真正发送贴图"))
         assertTrue(request.instructions.orEmpty().contains("[assistant sent sticker: ...]"))
     }
 
@@ -1396,11 +1444,11 @@ class ChatRepositoryImplTest {
             )
         )
 
-        assertTrue(instruction.contains("Use web_search only"))
+        assertTrue(instruction.contains("只有需要当前网页信息或核查来源时才调用 web_search"))
         assertFalse(instruction.contains(ToolDefinition.FetchUrl.name))
-        assertTrue(instruction.contains("Except for expressive tools"))
-        assertTrue(instruction.contains("usually express it with one sticker"))
-        assertTrue(instruction.contains("Never skip only because stickers were not mentioned"))
+        assertTrue(instruction.contains("除非工具定义明确允许用于自主表达"))
+        assertTrue(instruction.contains("通常就用一张贴图表达"))
+        assertTrue(instruction.contains("不要因为用户没提贴图就跳过"))
         assertFalse(instruction.contains("Use the available tools only when the latest user request needs current web information"))
 
         val noStickerInstruction = openAINativeToolInstruction(listOf(ToolDefinition.CurrentDateTime))
@@ -1467,12 +1515,12 @@ class ChatRepositoryImplTest {
         assertTrue(states.contains(ApiState.Success("Final answer without a marker")))
         assertEquals(3, openAIAPI.streamResponsesCalls)
         val sendRequest = openAIAPI.responsesRequests[1]
-        assertTrue(sendRequest.instructions.orEmpty().contains("your own reaction"))
-        assertTrue(sendRequest.instructions.orEmpty().contains("call send_sticker now"))
-        assertTrue(sendRequest.instructions.orEmpty().contains("search once more"))
+        assertTrue(sendRequest.instructions.orEmpty().contains("你自身反应"))
+        assertTrue(sendRequest.instructions.orEmpty().contains("立即调用 send_sticker"))
+        assertTrue(sendRequest.instructions.orEmpty().contains("再调用一次 search_stickers"))
         val finalRequest = openAIAPI.responsesRequests[2]
-        assertTrue(finalRequest.instructions.orEmpty().contains("The sticker is queued"))
-        assertTrue(finalRequest.instructions.orEmpty().contains("Do not call another sticker tool"))
+        assertTrue(finalRequest.instructions.orEmpty().contains("贴图已进入本地渲染队列"))
+        assertTrue(finalRequest.instructions.orEmpty().contains("不要再调用贴图工具"))
     }
 
     @Test
@@ -1522,8 +1570,8 @@ class ChatRepositoryImplTest {
             .flatMap { message -> message.content }
             .filterIsInstance<OpenAITextContent>()
             .joinToString("\n") { content -> content.text }
-        assertTrue(continuationPrompt.contains("call send_sticker now"))
-        assertTrue(continuationPrompt.contains("your own reaction"))
+        assertTrue(continuationPrompt.contains("立即调用 send_sticker"))
+        assertTrue(continuationPrompt.contains("你自身反应"))
     }
 
     @Test
@@ -1589,8 +1637,8 @@ class ChatRepositoryImplTest {
 
         assertEquals(2, anthropicAPI.requests.size)
         val continuationPrompt = anthropicAPI.requests[1].systemPrompt.orEmpty()
-        assertTrue(continuationPrompt.contains("call send_sticker now"))
-        assertTrue(continuationPrompt.contains("your own reaction"))
+        assertTrue(continuationPrompt.contains("立即调用 send_sticker"))
+        assertTrue(continuationPrompt.contains("你自身反应"))
     }
 
     @Test
@@ -1666,8 +1714,8 @@ class ChatRepositoryImplTest {
             .orEmpty()
             .mapNotNull { part -> part.text }
             .joinToString("\n")
-        assertTrue(continuationPrompt.contains("call send_sticker now"))
-        assertTrue(continuationPrompt.contains("your own reaction"))
+        assertTrue(continuationPrompt.contains("立即调用 send_sticker"))
+        assertTrue(continuationPrompt.contains("你自身反应"))
     }
 
     @Test
@@ -1802,8 +1850,8 @@ class ChatRepositoryImplTest {
         val searchDecisionService = SearchDecisionService(
             SearchDecisionModelClient { _, prompt ->
                 assertTrue(prompt.contains("latest Kotlin release"))
-                assertTrue(prompt.contains("Runtime context"))
-                assertTrue(prompt.contains("Current local date/time"))
+                assertTrue(prompt.contains("运行时上下文"))
+                assertTrue(prompt.contains("当前本地日期和时间"))
                 Result.success(
                     SearchDecisionModelResponse(
                         """{"shouldSearch":true,"queries":["latest Kotlin release"],"reason":"latest requested"}"""
@@ -1834,7 +1882,7 @@ class ChatRepositoryImplTest {
         assertEquals(ApiState.Done, states.last())
         assertEquals(listOf("latest Kotlin release"), webSearchRepository.queries)
         assertEquals(1, openAIAPI.streamChatCompletionCalls)
-        assertTrue(openAIAPI.chatCompletionRequests.single().systemText().contains("Tool results are available"))
+        assertTrue(openAIAPI.chatCompletionRequests.single().systemText().contains("已有针对用户最新请求的工具结果"))
         assertTrue(openAIAPI.chatCompletionRequests.single().systemText().contains("https://example.com/source"))
     }
 
@@ -3318,10 +3366,10 @@ class ChatRepositoryImplTest {
             Regex(Regex.escape(PROVIDER_MEMORY_MARKER)).findAll(prompt).count()
         )
         assertTrue("$provider lost base system prompt", prompt.contains(PROVIDER_BASE_SYSTEM_MARKER))
-        assertTrue("$provider lost runtime context", prompt.contains("Runtime context:"))
-        assertTrue("$provider lost context summary", prompt.contains("Earlier conversation summary:"))
+        assertTrue("$provider lost runtime context", prompt.contains("运行时上下文："))
+        assertTrue("$provider lost context summary", prompt.contains("较早对话摘要："))
         assertTrue("$provider lost omitted context", prompt.contains("provider-topic-1"))
-        assertTrue("$provider lost tool result prompt", prompt.contains("Tool results are available"))
+        assertTrue("$provider lost tool result prompt", prompt.contains("已有针对用户最新请求的工具结果"))
         assertTrue("$provider lost search evidence", prompt.contains("https://example.com/source"))
     }
 

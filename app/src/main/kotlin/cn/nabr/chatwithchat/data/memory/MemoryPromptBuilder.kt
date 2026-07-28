@@ -19,7 +19,7 @@ class MemoryPromptBuilder(
             .take(maxMemories)
             .map { memory ->
                 val sensitivityGuidance = when (memory.sensitivity) {
-                    MemorySensitivity.PRIVATE, MemorySensitivity.SENSITIVE -> "Handle carefully and do not reveal unless clearly relevant."
+                    MemorySensitivity.PRIVATE, MemorySensitivity.SENSITIVE -> "谨慎处理；只有明确相关时才可透露。"
                     else -> null
                 }
                 val metadata = listOfNotNull(
@@ -31,9 +31,9 @@ class MemoryPromptBuilder(
                 ).joinToString(", ")
                 val guidance = listOfNotNull(
                     if (memory.type == "communication_style") {
-                        "Apply as a default communication preference when addressing the user; do not force an explicit mention."
+                        "面向用户回复时将其作为默认沟通偏好，不要刻意提及。"
                     } else {
-                        "Use only if genuinely relevant; never force mentioning it."
+                        "仅在确实相关时使用，不要强行提及。"
                     },
                     sensitivityGuidance
                 ).joinToString(" ")
@@ -41,12 +41,12 @@ class MemoryPromptBuilder(
             }
 
         return buildString {
-            appendLine("Potentially relevant user memories:")
+            appendLine("可能相关的用户记忆：")
             lines.forEach(::appendLine)
             appendLine()
-            appendLine("Use only memories that genuinely help answer the current request.")
-            appendLine("Treat them as quiet context and do not mention memory storage or force an explicit reference.")
-            appendLine("Do not reveal private or sensitive context unless the current request clearly requires it.")
+            appendLine("只使用确实有助于回答当前请求的记忆。")
+            appendLine("将其作为不言明的上下文，不要提及记忆存储，也不要强行引用。")
+            appendLine("除非当前请求明确需要，否则不要透露私密或敏感上下文。")
         }.trim().take(maxCharacters)
     }
 }

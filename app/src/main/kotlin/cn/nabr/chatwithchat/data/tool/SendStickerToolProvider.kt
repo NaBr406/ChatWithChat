@@ -91,7 +91,7 @@ private fun StickerPresentationArtifact.toToolResult(call: ToolCall): ToolResult
         ToolResult(
             callId = call.id,
             name = call.name,
-            content = "Sticker queued for local rendering. Reply briefly without its ID, description, or any internal marker.",
+            content = "贴图已进入本地渲染队列。请简短作答，不要提及 sticker_id、贴图描述或内部标记。",
             presentationArtifacts = listOf(this)
         )
     }

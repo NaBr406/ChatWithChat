@@ -2938,16 +2938,16 @@ internal fun isGroqGptOssModel(model: String): Boolean = isGptOssModel(model)
 private const val MAX_SEARCH_QUERY_COUNT = 2
 private const val OPENAI_FUNCTION_CALL_TYPE = "function_call"
 private const val OPENAI_NATIVE_WEB_SEARCH_INSTRUCTION =
-    "Use web_search only when current web information or source inspection is needed. " +
-        "For web_search, write a concise query with useful entity, topic, timeframe, geography, source scope, and primary-source terms. " +
-        "Prefer the user's language for regional facts. Never use web_search for local date, time, timezone, device state, or app settings. " +
-        "Cite source URLs when web sources inform the answer."
+    "只有需要当前网页信息或核查来源时才调用 web_search。" +
+        "query 应简洁，并加入有用的实体、主题、时间范围、地区、来源范围和一手来源词。" +
+        "查询区域事实时优先使用用户的语言；不要用 web_search 查询本地日期、时间、时区、设备状态或应用设置。" +
+        "回答采用网页信息时引用来源 URL。"
 private const val OPENAI_NATIVE_GENERIC_TOOL_INSTRUCTION =
-    "Except for expressive tools whose definitions allow spontaneous use, call tools only when the latest user request needs their capability. " +
-        "Keep arguments concise; answer factual requests directly when the conversation is enough."
+    "除非工具定义明确允许用于自主表达，否则只有最新用户请求确实需要相应能力时才调用工具。" +
+        "参数保持简洁；仅凭对话即可回答的事实问题应直接作答。"
 private const val OPENAI_NATIVE_FINAL_TOOL_INSTRUCTION =
-    "Do not call more tools. Use the available function_call_output items when relevant and provide the final answer. " +
-        "If the user's request is broad or underspecified but the tool results are usable, answer with the most reasonable default scope, state that scope briefly, and avoid asking a clarifying question before giving useful content."
+    "不要再调用工具。相关时使用已有 function_call_output，并给出最终回答。" +
+        "若请求较宽泛或不够具体但工具结果可用，请按最合理的默认范围直接回答，简短说明该范围，不要在给出有用内容前先追问。"
 
 private data class ProviderRequestWithSources<T>(
     val request: T,
@@ -3194,9 +3194,9 @@ internal fun mergeSystemPrompt(basePrompt: String?, memoryPrompt: String?): Stri
 internal fun currentRuntimeContextPrompt(): String {
     val zone = ZoneId.systemDefault()
     val now = ZonedDateTime.now(zone)
-    return "Runtime context:\n" +
-        "- Current local date/time: ${now.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)} (${zone.id}).\n" +
-        "- Use this runtime context for simple date, time, and timezone questions. Do not use external lookup to determine local clock time."
+    return "运行时上下文：\n" +
+        "- 当前本地日期和时间：${now.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)} (${zone.id})。\n" +
+        "- 回答简单的日期、时间和时区问题时使用此上下文；不要通过外部查询确定本地时钟时间。"
 }
 
 internal fun openAINativeToolInstruction(activeToolDefinitions: List<ToolDefinition>): String {
@@ -3217,12 +3217,12 @@ private fun nativeToolScopeInstruction(toolDefinitions: List<ToolDefinition>): S
     val toolNames = toolDefinitions.map(ToolDefinition::name).toSet()
     if (ToolDefinition.DiscoverTools.name in toolNames) {
         add(
-            "Only the functions included in this request are executable. " +
-                "When a needed capability is not listed, call discover_tools first; any returned functions are available only in the next response."
+            "只有本次请求中列出的 functions 可以执行。" +
+                "所需能力未列出时先调用 discover_tools；返回的 functions 只能从下一次响应开始使用。"
         )
     }
     if (ToolDefinition.WebSearch.name in toolNames) {
-        add("For web_search, use a focused query with useful entity, date, place, and source terms.")
+        add("调用 web_search 时，使用聚焦的 query，并加入有用的实体、日期、地点和来源词。")
     }
 }.joinToString(separator = "\n")
     .takeIf(String::isNotBlank)

@@ -34,7 +34,7 @@ class ContextBuilderTest {
         assertEquals("topic-5 user detail " + "extra ".repeat(40), context.turns.last().userMessage.content)
         assertTrue(context.turns.size < 5)
         assertNotNull(context.summary)
-        assertTrue(context.summary!!.contains("Earlier conversation summary"))
+        assertTrue(context.summary!!.contains("较早对话摘要"))
         assertTrue(context.estimatedTokens <= 180)
         assertTrue(context.omittedTurns.isNotEmpty())
         assertTrue(context.omittedTurns.none { it.isCurrentTurn })
@@ -129,7 +129,7 @@ class ContextBuilderTest {
 
         val assistantContext = context.turns.first().assistantMessage?.effectiveContent().orEmpty()
         assertTrue(assistantContext.contains("Answer from search"))
-        assertTrue(assistantContext.contains("Referenced sources from this answer"))
+        assertTrue(assistantContext.contains("此回答引用的来源"))
         assertTrue(assistantContext.contains("Example Source"))
         assertTrue(assistantContext.contains("https://example.com/source"))
         assertTrue(assistantContext.contains("Example search snippet"))

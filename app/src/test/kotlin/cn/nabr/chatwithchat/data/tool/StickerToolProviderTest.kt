@@ -45,7 +45,7 @@ class StickerToolProviderTest {
         assertEquals("reaction", repository.searchQuery)
         assertEquals(6, repository.searchLimit)
         assertEquals(1, repository.ensureInitializedCalls)
-        assertTrue(result.content.startsWith("Sticker candidates:"))
+        assertTrue(result.content.startsWith("贴图候选："))
         assertTrue(result.content.contains("sticker_id=builtin.reactions.1"))
         assertTrue(result.content.contains("sticker_id=builtin.reactions.6"))
         assertFalse(result.content.contains("builtin.reactions.7"))
@@ -165,8 +165,8 @@ class StickerToolProviderTest {
         val serialized = toolProtocolJson.encodeToString(result)
 
         assertFalse(result.isError)
-        assertTrue(result.content.contains("queued for local rendering"))
-        assertTrue(result.content.contains("without its ID"))
+        assertTrue(result.content.contains("贴图已进入本地渲染队列"))
+        assertTrue(result.content.contains("不要提及 sticker_id"))
         assertFalse(result.content.contains("builtin.reactions.crying_cat"))
         assertFalse(result.content.contains("[assistant sent sticker:"))
         assertFalse(result.content.contains(artifact.assetKey))
@@ -395,7 +395,7 @@ class StickerToolProviderTest {
         val toolResults = (result as ToolLoopResult.ToolResults).results
         assertFalse(toolResults.single { it.name == "search_stickers" }.isError)
         assertFalse(toolResults.single { it.name == "send_sticker" }.isError)
-        assertTrue(prompts[1].contains("call send_sticker now"))
+        assertTrue(prompts[1].contains("立即调用 send_sticker"))
         assertTrue(prompts[1].contains(candidateId))
         assertEquals(
             listOf("call_send"),

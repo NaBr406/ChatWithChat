@@ -1,19 +1,18 @@
 package cn.nabr.chatwithchat.data.context
 
-import com.knuddels.jtokkit.Encodings
-import com.knuddels.jtokkit.api.Encoding
-import com.knuddels.jtokkit.api.EncodingType
 import cn.nabr.chatwithchat.data.database.entity.ACTIVE_REVISION_LATEST
 import cn.nabr.chatwithchat.data.database.entity.MessageSourceMetadata
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.database.entity.SafeMessageSourceTarget
-import cn.nabr.chatwithchat.data.database.entity.effectiveContent
 import cn.nabr.chatwithchat.data.database.entity.safeDedupeKey
 import cn.nabr.chatwithchat.data.database.entity.safeNavigationTarget
 import cn.nabr.chatwithchat.data.model.ClientType
 import cn.nabr.chatwithchat.util.isAssistantErrorMessage
 import cn.nabr.chatwithchat.util.stripAssistantErrorNote
+import com.knuddels.jtokkit.Encodings
+import com.knuddels.jtokkit.api.Encoding
+import com.knuddels.jtokkit.api.EncodingType
 import javax.inject.Inject
 
 class ContextBuilder @Inject constructor() {
@@ -228,7 +227,7 @@ class ContextBuilder @Inject constructor() {
         if (sourceLines.isEmpty()) return this
 
         val sourceBlock = buildString {
-            appendLine("Referenced sources from this answer:")
+            appendLine("此回答引用的来源：")
             sourceLines.forEach { line -> appendLine(line) }
         }.trim()
 
@@ -251,7 +250,7 @@ private data class RawConversationTurn(
 )
 
 private object ConversationContextSummarizer {
-    private const val HEADER = "Earlier conversation summary:"
+    private const val HEADER = "较早对话摘要："
     private const val MIN_MESSAGE_TOKENS = 16
 
     fun build(
@@ -266,7 +265,7 @@ private object ConversationContextSummarizer {
         val lines = mutableListOf(HEADER)
         val hiddenTurnCount = turns.size - selectedTurns.size
         if (hiddenTurnCount > 0) {
-            lines += "- $hiddenTurnCount earlier turns are compressed out of this summary."
+            lines += "- 另有 $hiddenTurnCount 轮较早对话已压缩省略。"
         }
 
         selectedTurns.forEachIndexed { index, turn ->
@@ -274,9 +273,9 @@ private object ConversationContextSummarizer {
             val remainingBudget = (maxTokens - tokenCounter.estimateText(lines.joinToString("\n"))).coerceAtLeast(MIN_MESSAGE_TOKENS)
             val messageBudget = (remainingBudget / remainingMessages).coerceAtLeast(MIN_MESSAGE_TOKENS)
 
-            appendMessageLine(lines, "User", turn.userMessage.content, messageBudget, tokenCounter)
+            appendMessageLine(lines, "用户", turn.userMessage.content, messageBudget, tokenCounter)
             turn.assistantMessage?.let { assistantMessage ->
-                appendMessageLine(lines, "Assistant", assistantMessage.semanticAssistantContent(), messageBudget, tokenCounter)
+                appendMessageLine(lines, "助手", assistantMessage.semanticAssistantContent(), messageBudget, tokenCounter)
             }
         }
 

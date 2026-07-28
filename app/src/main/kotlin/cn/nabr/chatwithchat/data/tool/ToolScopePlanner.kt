@@ -138,7 +138,7 @@ class ToolScope internal constructor(
                 callId = call.id,
                 name = call.name,
                 content = selected.joinToString(
-                    prefix = "Enabled tools for the next response:\n",
+                    prefix = "以下工具从下一次响应开始可用：\n",
                     separator = "\n"
                 ) { candidate ->
                     "- ${candidate.definition.name}: ${candidate.summary()}"
@@ -154,7 +154,7 @@ class ToolScope internal constructor(
             else -> ToolResult(
                 callId = call.id,
                 name = call.name,
-                content = "No additional enabled tool matches that capability. Answer directly when possible."
+                content = "没有其他已启用工具符合所需能力；可以直接回答时请直接回答。"
             )
         }
     }
@@ -267,7 +267,7 @@ internal data class ToolScopeCandidate(
     val metadata: ToolDiscoveryMetadata
 ) {
     fun summary(): String = definition.description
-        .substringBefore('.')
+        .substringBeforeSentenceEnd()
         .trim()
         .take(MAX_DISCOVERY_SUMMARY_CHARS)
         .ifBlank { definition.name.replace('_', ' ') }

@@ -6,6 +6,19 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ToolScopePlannerTest {
+    @Test
+    fun `discovery summaries stop at Chinese sentence boundaries`() {
+        val candidate = ToolScopeCandidate(
+            definition = ToolDefinition(
+                name = "localized_tool",
+                description = "第一句摘要。第二句不应出现。",
+                parameters = ToolDefinition.Parameters()
+            ),
+            metadata = ToolDiscoveryMetadata()
+        )
+
+        assertEquals("第一句摘要", candidate.summary())
+    }
 
     @Test
     fun `large enabled catalog starts with only discovery control tool`() {

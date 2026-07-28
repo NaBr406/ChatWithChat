@@ -27,11 +27,11 @@ class MemoryPromptBuilderTest {
             )
         )
 
-        assertTrue(prompt!!.contains("Potentially relevant user memories"))
+        assertTrue(prompt!!.contains("可能相关的用户记忆"))
         assertTrue(prompt.contains("path: MEMORY.md"))
-        assertTrue(prompt.contains("Handle carefully"))
-        assertTrue(prompt.contains("default communication preference"))
-        assertTrue(prompt.contains("Do not reveal private or sensitive context"))
+        assertTrue(prompt.contains("谨慎处理"))
+        assertTrue(prompt.contains("默认沟通偏好"))
+        assertTrue(prompt.contains("不要透露私密或敏感上下文"))
     }
 
     @Test

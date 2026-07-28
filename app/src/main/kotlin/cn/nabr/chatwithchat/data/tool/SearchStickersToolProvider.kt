@@ -126,9 +126,9 @@ private data class StickerSearchRequest(
 )
 
 private fun List<StickerSearchCandidate>.toFallbackContent(): String = when {
-    isEmpty() -> "No sticker candidates found."
+    isEmpty() -> "没有找到贴图候选。"
     else -> buildString {
-        appendLine("Sticker candidates:")
+        appendLine("贴图候选：")
         append(
             joinToString(separator = "\n") { candidate ->
                 buildString {

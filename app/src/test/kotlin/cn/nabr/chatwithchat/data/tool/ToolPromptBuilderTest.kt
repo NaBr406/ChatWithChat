@@ -23,11 +23,11 @@ class ToolPromptBuilderTest {
         assertTrue(prompt.indexOf("Name: web_search") < prompt.indexOf("Name: fetch_url"))
         assertTrue(prompt.indexOf("Name: fetch_url") < prompt.indexOf("Name: current_datetime"))
         assertTrue(prompt.indexOf("Name: current_datetime") < prompt.indexOf("Name: device_location"))
-        assertTrue(prompt.contains("Do not use this for the user's local date"))
-        assertTrue(prompt.contains(""""query":{"type":"string","description":"A concise, structured public-web search query. Include concrete dates/years, canonical names, geography, category/source terms, and official or primary-source terms when useful. Do not use clock/time-only queries."}"""))
+        assertTrue(prompt.contains("不要用它查询用户设备的本地日期"))
+        assertTrue(prompt.contains("\"query\":{\"type\":\"string\",\"description\":\"简洁、结构化的公开网页搜索 query"))
         assertTrue(prompt.contains(""""required":["query"]"""))
-        assertTrue(prompt.contains(""""url":{"type":"string","description":"The http or https URL to fetch."}"""))
-        assertTrue(prompt.contains("Android system location permission"))
+        assertTrue(prompt.contains("\"url\":{\"type\":\"string\",\"description\":\"要获取的 http 或 https URL。\"}"))
+        assertTrue(prompt.contains("Android 系统定位权限"))
     }
 
     @Test
@@ -56,10 +56,27 @@ class ToolPromptBuilderTest {
     }
 
     @Test
+    fun `fallback prompt uses Chinese behavior while preserving the English JSON protocol`() {
+        val prompt = ToolPromptBuilder().buildJsonFallbackPrompt(
+            tools = listOf(ToolDefinition.SearchStickers, ToolDefinition.SendSticker)
+        )
+
+        assertTrue(prompt.contains("回答前可以调用已启用的工具"))
+        assertTrue(prompt.contains("\"type\":\"final_answer\",\"content\":\"answer text\""))
+        assertTrue(prompt.contains("\"type\":\"tool_calls\",\"tool_calls\""))
+        assertTrue(prompt.contains("search_stickers(query:string!, limit:integer)"))
+        assertTrue(prompt.contains("send_sticker(sticker_id:string!)"))
+        assertTrue(prompt.contains("never translate them"))
+        assertFalse(prompt.contains("\"类型\""))
+        assertFalse(prompt.contains("\"工具调用\""))
+        assertFalse(prompt.contains("贴图_id"))
+    }
+
+    @Test
     fun `fallback prompt discourages web search for local device state`() {
         val prompt = ToolPromptBuilder().buildJsonFallbackPrompt(tools = listOf(ToolDefinition.WebSearch))
 
-        assertTrue(prompt.contains("do not use it for device time or state"))
+        assertTrue(prompt.contains("不要查询设备时间或状态"))
     }
 
     @Test
@@ -67,7 +84,7 @@ class ToolPromptBuilderTest {
         val prompt = ToolPromptBuilder().buildJsonFallbackPrompt()
 
         assertTrue(prompt.contains("tool_permission_denied"))
-        assertTrue(prompt.contains("which Android permission is needed"))
+        assertTrue(prompt.contains("说明缺少哪项 Android 权限"))
     }
 
     @Test
@@ -76,9 +93,9 @@ class ToolPromptBuilderTest {
             tools = listOf(ToolDefinition.DiscoverTools)
         )
 
-        assertTrue(prompt.contains("If the needed capability is not listed, call discover_tools first"))
-        assertTrue(prompt.contains("enabled only in the next response"))
-        assertTrue(prompt.contains("never call them in the same response"))
+        assertTrue(prompt.contains("所需能力未列出时，先调用 discover_tools"))
+        assertTrue(prompt.contains("只能从下一次响应开始调用"))
+        assertTrue(prompt.contains("不得在同一次响应中调用"))
     }
 
     @Test
@@ -87,15 +104,16 @@ class ToolPromptBuilderTest {
             tools = listOf(ToolDefinition.SearchStickers, ToolDefinition.SendSticker)
         )
 
-        assertTrue(prompt.contains("Stickers are a proactive part of your reply voice"))
-        assertTrue(prompt.contains("no request is needed"))
-        assertTrue(prompt.contains("usually express it with one sticker"))
-        assertTrue(prompt.contains("Do not skip only because stickers were not mentioned"))
-        assertTrue(prompt.contains("Search first, then send one exact returned ID"))
-        assertTrue(prompt.contains("force one into every reply"))
-        assertTrue(prompt.contains("Skip proactive use in safety-sensitive"))
-        assertTrue(prompt.contains("Only send_sticker displays one"))
-        assertTrue(prompt.contains("Never simulate a send with text"))
+        assertTrue(prompt.contains("贴图表情是你回复语气的一部分"))
+        assertTrue(prompt.contains("无需用户明确要求"))
+        assertTrue(prompt.contains("通常就用一张贴图表达"))
+        assertTrue(prompt.contains("不要因为用户没提贴图就放弃"))
+        assertTrue(prompt.contains("先调用 search_stickers"))
+        assertTrue(prompt.contains("准确 sticker_id 调用 send_sticker"))
+        assertTrue(prompt.contains("不要每次回复都强行发送"))
+        assertTrue(prompt.contains("涉及安全、医疗、法律、财务、账号、支付或错误恢复时不要主动发送"))
+        assertTrue(prompt.contains("只有调用 send_sticker 才会显示贴图"))
+        assertTrue(prompt.contains("不要用文字、Markdown、sticker_id 或标签模拟发送"))
     }
 
     @Test
@@ -104,12 +122,14 @@ class ToolPromptBuilderTest {
             listOf(ToolDefinition.SearchStickers, ToolDefinition.SendSticker)
         ).joinToString(separator = " ")
 
-        assertTrue(prompt.contains("normal optional reply modality"))
-        assertTrue(prompt.contains("usually express it with one sticker"))
-        assertTrue(prompt.contains("Never skip only because stickers were not mentioned"))
-        assertTrue(prompt.contains("what you feel like expressing"))
-        assertTrue(prompt.contains("do not force one into every reply"))
-        assertTrue(prompt.contains("Skip proactive use in safety-sensitive"))
+        assertTrue(prompt.contains("正常但可选的回复方式"))
+        assertTrue(prompt.contains("通常就用一张贴图表达"))
+        assertTrue(prompt.contains("不要因为用户没提贴图就跳过"))
+        assertTrue(prompt.contains("只取决于你自己想表达什么"))
+        assertTrue(prompt.contains("不要每次回复都强行发送"))
+        assertTrue(prompt.contains("涉及安全、医疗、法律、财务、账号、支付或错误恢复时不要主动发送"))
+        assertTrue(prompt.contains("先调用 search_stickers"))
+        assertTrue(prompt.contains("sticker_id 调用 send_sticker"))
     }
 
     @Test
@@ -128,8 +148,8 @@ class ToolPromptBuilderTest {
             )
         )
 
-        assertTrue(prompt.contains("Next sticker action:"))
-        assertTrue(prompt.contains("call send_sticker now"))
+        assertTrue(prompt.contains("贴图下一步："))
+        assertTrue(prompt.contains("立即调用 send_sticker"))
         assertTrue(prompt.contains("sticker_id=builtin.reactions.celebrate"))
     }
 
@@ -159,20 +179,34 @@ class ToolPromptBuilderTest {
         )
         val secondEmpty = firstEmpty + firstEmpty.single().copy(callId = "search_empty_2")
 
-        assertTrue(stickerContinuationInstruction(firstCandidates).orEmpty().contains("your own reaction"))
-        assertTrue(stickerContinuationInstruction(firstCandidates).orEmpty().contains("call send_sticker now"))
-        assertTrue(stickerContinuationInstruction(firstCandidates).orEmpty().contains("search once more"))
-        assertTrue(stickerContinuationInstruction(secondCandidates).orEmpty().contains("Do not search again"))
-        assertTrue(stickerContinuationInstruction(firstEmpty).orEmpty().contains("may search_stickers once more"))
-        assertTrue(stickerContinuationInstruction(secondEmpty).orEmpty().contains("No sticker candidate is available"))
+        assertTrue(stickerContinuationInstruction(firstCandidates).orEmpty().contains("你自身反应"))
+        assertTrue(stickerContinuationInstruction(firstCandidates).orEmpty().contains("立即调用 send_sticker"))
+        assertTrue(stickerContinuationInstruction(firstCandidates).orEmpty().contains("再调用一次 search_stickers"))
+        assertTrue(stickerContinuationInstruction(secondCandidates).orEmpty().contains("不要再次搜索"))
+        assertTrue(stickerContinuationInstruction(firstEmpty).orEmpty().contains("再调用一次 search_stickers"))
+        assertTrue(stickerContinuationInstruction(secondEmpty).orEmpty().contains("没有可用的贴图候选"))
+    }
+
+    @Test
+    fun `fallback summaries stop at Chinese sentence boundaries`() {
+        val tool = ToolDefinition(
+            name = "localized_tool",
+            description = "第一句摘要。第二句不应出现。",
+            parameters = ToolDefinition.Parameters()
+        )
+
+        val prompt = ToolPromptBuilder().buildJsonFallbackPrompt(tools = listOf(tool))
+
+        assertTrue(prompt.contains("localized_tool() - 第一句摘要"))
+        assertFalse(prompt.contains("第二句不应出现"))
     }
 
     @Test
     fun `fallback prompt keeps the web search guidance compact`() {
         val prompt = ToolPromptBuilder().buildJsonFallbackPrompt(tools = listOf(ToolDefinition.WebSearch))
 
-        assertTrue(prompt.contains("make a focused query"))
-        assertTrue(prompt.contains("entity, date, place, and source terms"))
+        assertTrue(prompt.contains("生成聚焦的 query"))
+        assertTrue(prompt.contains("实体、日期、地点和来源词"))
     }
 
     @Test

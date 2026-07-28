@@ -47,16 +47,16 @@ class OpenAICompatibleJsonToolAdapter(
     ): String? {
         val formattedResults = renderToolResults(results, config) ?: return null
         return buildString {
-            appendLine("Tool results are available for the latest user request.")
-            appendLine("Use them only when relevant. If you use web sources, cite the source URLs in the answer.")
-            appendLine("If a tool result reports tool_permission_denied, explain the missing Android permission and ask the user to enable it before retrying.")
-            appendLine("If the user's request is broad or underspecified but the tool results are usable, answer with the most reasonable default scope, state that scope briefly, and avoid asking a clarifying question before giving useful content.")
+            appendLine("已有针对用户最新请求的工具结果。")
+            appendLine("仅在相关时使用；若采用网页来源，请在回答中引用来源 URL。")
+            appendLine("若工具结果为 tool_permission_denied，请说明缺少的 Android 权限，并请用户开启后再重试。")
+            appendLine("若请求较宽泛或不够具体但结果可用，请按最合理的默认范围直接回答，简短说明该范围，不要在给出有用内容前先追问。")
             stickerFinalAnswerInstruction(results)?.let { instruction ->
                 appendLine(instruction)
             }
             draftFinalAnswer?.trim()?.takeIf { it.isNotBlank() }?.let { draft ->
                 appendLine()
-                appendLine("The tool loop drafted this final answer. Use it as guidance, but answer naturally:")
+                appendLine("工具循环生成了以下回答草稿；将其作为参考，并自然作答：")
                 appendLine(draft.clip(config.maxToolResultChars))
             }
             appendLine()
