@@ -805,6 +805,41 @@ class MemoryBatchConsolidationServiceTest {
     }
 
     @Test
+    fun `malformed canonical base writes nothing and keeps claimed checkpoint pending`() = runBlocking {
+        val fixture = fixture(
+            MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        text = "A valid write must not bypass malformed canonical metadata."
+                    )
+                )
+            )
+        )
+        val malformedMarkdown = """
+            # ChatWithChat Memory
+
+            ## Projects
+
+            <!-- memory:id=malformed id=duplicate type=project_context sensitivity=normal source=explicit_user_statement -->
+            - This malformed entry must not be rewritten.
+        """.trimIndent() + "\n"
+        fixture.fileStore.replaceLongTermMemory(malformedMarkdown).getOrThrow()
+        val before = fixture.fileStore.readLongTermMemory().getOrThrow()
+        val job = fixture.createFiveTurnBatch()
+
+        val result = fixture.service.process(job)
+
+        assertEquals(MemoryBatchProcessResult.STATUS_RETRYABLE, result.status)
+        assertEquals("memory_render_failed:unsafe_memory_metadata", result.reason)
+        assertEquals(before, fixture.fileStore.readLongTermMemory().getOrThrow())
+        assertEquals(0, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
+        assertEquals(5, fixture.turnDao.getTurnsClaimedByJob(job.jobId).size)
+        assertEquals(MemoryMaintenanceJobStatus.FAILED_RETRYABLE, fixture.jobDao.jobs.single().status)
+        assertEquals(MemoryActivityStatus.FAILED, fixture.activityLogger.lastStatus)
+    }
+
+    @Test
     fun `invalid json boundary writes nothing and does not advance checkpoint`() = runBlocking {
         val fixture = fixture(proposal = null)
         val beforeLongTerm = fixture.fileStore.readLongTermMemory().getOrThrow()
@@ -856,6 +891,20 @@ class MemoryBatchConsolidationServiceTest {
 
     @Test
     fun `replace updates one supplied id without creating a duplicate`() = runBlocking {
+        val successorEntry = MarkdownMemoryEntry(
+            id = "mem_project_current",
+            text = "Question project has a current canonical status.",
+            type = "project_context",
+            sensitivity = MemorySensitivity.NORMAL,
+            source = MemorySource.EXPLICIT_USER_STATEMENT,
+            createdAt = 11L,
+            updatedAt = 11L,
+            section = "Project Context",
+            canonicalKey = "project.question.status",
+            scope = "project:question",
+            lastObservedAt = 11L,
+            recallState = MemoryRecallState.QUERY
+        )
         val existingEntry = MarkdownMemoryEntry(
             id = "mem_project",
             text = "Question project is at the first milestone.",
@@ -863,7 +912,16 @@ class MemoryBatchConsolidationServiceTest {
             sensitivity = MemorySensitivity.NORMAL,
             source = MemorySource.EXPLICIT_USER_STATEMENT,
             createdAt = 10L,
-            updatedAt = 10L
+            updatedAt = 10L,
+            section = "Project Context",
+            canonicalKey = successorEntry.canonicalKey,
+            scope = successorEntry.scope,
+            lastObservedAt = 12L,
+            validity = MemoryValidity.OBSOLETE,
+            supersededBy = successorEntry.id,
+            recallState = MemoryRecallState.MAINTENANCE_ONLY,
+            evidenceRefs = listOf("chat:7:user:1"),
+            extraMetadata = mapOf("future_schema" to "v2")
         )
         val retrievalResult = MemoryRetrievalResult(
             chunkId = "MEMORY.md#mem_project#0",
@@ -893,17 +951,27 @@ class MemoryBatchConsolidationServiceTest {
             retrievalResults = listOf(retrievalResult)
         )
         fixture.fileStore.replaceLongTermMemory(
-            MarkdownMemoryCodec().renderLongTerm(listOf(existingEntry))
+            MarkdownMemoryCodec().renderLongTerm(listOf(existingEntry, successorEntry))
         ).getOrThrow()
         val job = fixture.createFiveTurnBatch()
 
         val result = fixture.service.process(job)
         val markdown = fixture.fileStore.readLongTermMemory().getOrThrow()
+        val parsed = MarkdownMemoryCodec().parse(markdown)
+        val replaced = parsed.entries.single { entry -> entry.id == existingEntry.id }
 
         assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
         assertFalse(markdown.contains("first milestone"))
         assertEquals(1, markdown.split("second milestone").size - 1)
-        assertEquals(1, MarkdownMemoryCodec().parse(markdown).entries.count { it.id == existingEntry.id })
+        assertTrue(parsed.skippedEntries.isEmpty())
+        assertEquals(
+            existingEntry.copy(
+                text = "Question project has reached the second milestone.",
+                updatedAt = FIXED_CLOCK.instant().epochSecond
+            ),
+            replaced
+        )
+        assertEquals(successorEntry, parsed.entries.single { entry -> entry.id == successorEntry.id })
     }
 
     @Test

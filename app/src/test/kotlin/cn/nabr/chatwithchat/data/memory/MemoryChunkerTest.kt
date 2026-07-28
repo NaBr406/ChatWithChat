@@ -63,6 +63,23 @@ class MemoryChunkerTest {
     }
 
     @Test
+    fun `malformed metadata only document does not fall back to raw markdown chunks`() {
+        val chunks = MemoryChunker().chunksFor(
+            sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+            markdown = """
+                # ChatWithChat Memory
+
+                ## Projects
+
+                <!-- memory:id=mem_malformed type=project_context sensitivity=normal source=assistant_inferred created=not-a-time -->
+                - This malformed entry body must never reach the searchable corpus.
+            """.trimIndent()
+        )
+
+        assertEquals(emptyList<MemoryCorpusChunk>(), chunks)
+    }
+
+    @Test
     fun `hard splitting never separates a surrogate pair`() {
         val chunks = MemoryChunker(maxChunkChars = 4).chunksFor(
             sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,

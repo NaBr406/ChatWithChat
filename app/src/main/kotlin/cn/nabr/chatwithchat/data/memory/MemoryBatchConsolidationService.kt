@@ -625,7 +625,7 @@ class MemoryBatchConsolidationService(
                 val operationIndex = indexedOperation.index
                 val operation = indexedOperation.value
                 val currentMarkdown = checkNotNull(editedMarkdown[sourcePath])
-                val parsedCurrentEntries = markdownMemoryCodec.parse(currentMarkdown).entries
+                val parsedCurrentEntries = parseEntriesOrThrow(currentMarkdown).entries
                 val currentEntries = parsedCurrentEntries.associateBy { it.id }
                 val updatedMarkdown = when (operation.action) {
                     MemoryBatchAction.CREATE -> {
@@ -655,11 +655,12 @@ class MemoryBatchConsolidationService(
                         val replacement = markdownMemoryCodec.replaceEntriesById(
                             currentMarkdown,
                             listOf(
-                                operation.toEntry(
-                                    id = targetId,
-                                    chatId = existingEntry.chatId,
-                                    createdAt = existingEntry.createdAt,
-                                    section = existingEntry.section
+                                existingEntry.copy(
+                                    text = operation.text.trim(),
+                                    type = operation.type,
+                                    sensitivity = operation.sensitivity,
+                                    source = operation.source,
+                                    updatedAt = now()
                                 )
                             )
                         )
@@ -736,11 +737,16 @@ class MemoryBatchConsolidationService(
         }
     }
 
-    private fun exactTextCounts(markdown: String): Map<String, Int> = markdownMemoryCodec
-        .parse(markdown)
+    private fun exactTextCounts(markdown: String): Map<String, Int> = parseEntriesOrThrow(markdown)
         .entries
         .groupingBy { entry -> normalizeExactMemoryText(entry.text) }
         .eachCount()
+
+    private fun parseEntriesOrThrow(markdown: String): MarkdownMemoryParseResult = markdownMemoryCodec
+        .parse(markdown)
+        .also { parsed ->
+            check(parsed.skippedEntries.isEmpty()) { "unsafe_memory_metadata" }
+        }
 
     private fun pathForDestination(destination: String, todayPath: String): String =
         if (destination == MemoryBatchDestination.LONG_TERM) MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME else todayPath

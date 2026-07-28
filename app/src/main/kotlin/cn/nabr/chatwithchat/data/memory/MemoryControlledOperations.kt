@@ -104,7 +104,7 @@ class MemoryDailyDistillationOperationController(
         renderedAt: Long = input.createdAt
     ): RenderedMemoryDailyDistillation {
         require(baseMarkdown.toByteArray(Charsets.UTF_8).sha256Hex() == input.targetBaseHash)
-        val parsed = markdownMemoryCodec.parse(baseMarkdown)
+        val parsed = parseEntriesOrThrow(baseMarkdown)
         require(parsed.entries.map(MarkdownMemoryEntry::id).distinct().size == parsed.entries.size)
         val frozenExistingById = input.existingMemories.associateBy(MemoryBatchExistingMemory::id)
         val baseEntriesById = parsed.entries.associateBy(MarkdownMemoryEntry::id)
@@ -124,7 +124,7 @@ class MemoryDailyDistillationOperationController(
                 MemoryDailyDistillationAction.IGNORE -> Unit
                 MemoryDailyDistillationAction.CREATE -> {
                     val id = generatedEntryId(input.batchId, index)
-                    val currentEntries = markdownMemoryCodec.parse(markdown).entries
+                    val currentEntries = parseEntriesOrThrow(markdown).entries
                     currentEntries.firstOrNull { entry -> entry.id == id }?.let { existing ->
                         require(existing.text == operation.text)
                         return@forEachIndexed
@@ -137,16 +137,16 @@ class MemoryDailyDistillationOperationController(
                 }
                 MemoryDailyDistillationAction.REPLACE -> {
                     val targetId = requireNotNull(operation.targetMemoryId)
-                    val currentEntries = markdownMemoryCodec.parse(markdown).entries.associateBy(MarkdownMemoryEntry::id)
+                    val currentEntries = parseEntriesOrThrow(markdown).entries.associateBy(MarkdownMemoryEntry::id)
                     val existing = requireNotNull(currentEntries[targetId])
                     val replacement = markdownMemoryCodec.replaceEntriesById(
                         markdown,
                         listOf(
-                            operation.toEntry(
-                                id = targetId,
-                                createdAt = existing.createdAt,
-                                chatId = existing.chatId,
-                                section = existing.section,
+                            existing.copy(
+                                text = operation.text,
+                                type = operation.type,
+                                sensitivity = operation.sensitivity,
+                                source = operation.source,
                                 updatedAt = renderedAt
                             )
                         )
@@ -192,11 +192,16 @@ class MemoryDailyDistillationOperationController(
         }
     }
 
-    private fun exactTextCounts(markdown: String): Map<String, Int> = markdownMemoryCodec
-        .parse(markdown)
+    private fun exactTextCounts(markdown: String): Map<String, Int> = parseEntriesOrThrow(markdown)
         .entries
         .groupingBy { entry -> normalizeExactMemoryText(entry.text) }
         .eachCount()
+
+    private fun parseEntriesOrThrow(markdown: String): MarkdownMemoryParseResult = markdownMemoryCodec
+        .parse(markdown)
+        .also { parsed ->
+            require(parsed.skippedEntries.isEmpty()) { "unsafe_memory_metadata" }
+        }
 
     private fun normalizeWriteText(text: String): String {
         val normalized = text.trim().replace(WHITESPACE_REGEX, " ")

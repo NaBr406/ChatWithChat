@@ -487,23 +487,23 @@ The fixtures print only fixed synthetic text, lengths, counts, bounded stages, a
 
 **Implementation requirements:**
 
-- [ ] 为 `MarkdownMemoryEntry` 增加 `canonicalKey`、`scope`、`lastObservedAt`、`validity`、`supersededBy`、`recallState` 和 bounded `evidenceRefs`。
-- [ ] 保留现有 `createdAt` / `updatedAt`；按本文语义实现，不得另造含义重叠的“最后更新时间”。
-- [ ] Markdown metadata keys 使用稳定 snake_case，例如 `canonical_key`、`scope`、`observed`、`validity`、`superseded_by`、`recall`、`evidence`。
-- [ ] key/value 使用受控 ASCII grammar 和长度上限；evidence refs 使用 bounded、可逆、无空格编码，不允许自然语言正文。
-- [ ] legacy defaults：缺少新字段时仍解析；`validity=current`、`recallState=query`，时间按已有值回填，`canonicalKey` 保持 unknown 直到 maintenance backfill。
-- [ ] legacy `communication_style` 过渡期不得再次变成“全部 core”；只允许 bounded fallback，等待 canonical consolidation。
-- [ ] codec render/parse round-trip 保留新字段；针对未知但语法安全的 metadata，targeted replace 不得静默删除未来版本字段。
-- [ ] malformed lifecycle combinations fail closed：例如 obsolete 无有效 supersession target、current 指向 supersededBy、maintenance-only 被标 core。
-- [ ] metadata-only observation update 不改 entry text、createdAt、updatedAt 或 embedding text。
-- [ ] 不在启动时批量重写全部历史 `MEMORY.md`；backfill 通过后续 durable maintenance job 完成。
+- [x] 为 `MarkdownMemoryEntry` 增加 `canonicalKey`、`scope`、`lastObservedAt`、`validity`、`supersededBy`、`recallState` 和 bounded `evidenceRefs`。
+- [x] 保留现有 `createdAt` / `updatedAt`；按本文语义实现，不得另造含义重叠的“最后更新时间”。
+- [x] Markdown metadata keys 使用稳定 snake_case，例如 `canonical_key`、`scope`、`observed`、`validity`、`superseded_by`、`recall`、`evidence`。
+- [x] key/value 使用受控 ASCII grammar 和长度上限；evidence refs 使用 bounded、可逆、无空格编码，不允许自然语言正文。
+- [x] legacy defaults：缺少新字段时仍解析；`validity=current`、`recallState=query`，时间按已有值回填，`canonicalKey` 保持 unknown 直到 maintenance backfill。
+- [x] legacy `communication_style` 过渡期不得再次变成“全部 core”；只允许 bounded fallback，等待 canonical consolidation。
+- [x] codec render/parse round-trip 保留新字段；针对未知但语法安全的 metadata，targeted replace 不得静默删除未来版本字段。
+- [x] malformed lifecycle combinations fail closed：例如 obsolete 无有效 supersession target、current 指向 supersededBy、maintenance-only 被标 core。
+- [x] metadata-only observation update 不改 entry text、createdAt、updatedAt 或 embedding text。
+- [x] 不在启动时批量重写全部历史 `MEMORY.md`；backfill 通过后续 durable maintenance job 完成。
 
 **Acceptance criteria:**
 
-- [ ] 旧 Markdown byte content 可读取，未触发 backfill 时不被自动重写。
-- [ ] 新字段完整 round-trip；多语言正文、手写 section/footer 和 unrelated entries 保持不变。
-- [ ] `lastObservedAt` 更新只改变对应 hidden metadata。
-- [ ] malformed/oversized metadata 被拒绝或降为 maintenance-only，不能进入 chat projection。
+- [x] 旧 Markdown byte content 可读取，未触发 backfill 时不被自动重写。
+- [x] 新字段完整 round-trip；多语言正文、手写 section/footer 和 unrelated entries 保持不变。
+- [x] `lastObservedAt` 更新只改变对应 hidden metadata。
+- [x] malformed/oversized metadata 被拒绝或降为 maintenance-only，不能进入 chat projection。
 
 **Focused verification:**
 
@@ -512,6 +512,25 @@ The fixtures print only fixed synthetic text, lengths, counts, bounded stages, a
 ./gradlew.bat :app:compileDebugKotlin
 git diff --check
 ```
+
+#### Task 1 Implementation Record (2026-07-28)
+
+**Protocol and compatibility**
+
+- Added canonical identity, scope, observation time, lifecycle, recall projection, bounded evidence refs, and syntax-safe unknown metadata to the Markdown entry model. New renders use `canonical_key/scope/observed/validity/superseded_by/recall/evidence`; legacy comments remain readable without rewriting bytes and default to `general/current/query`, with observation time falling back through `updated -> created -> 0`.
+- Metadata parsing is presence-aware and bounded: duplicate/unsafe/oversized/unterminated fields, invalid optional values, duplicate IDs, and invalid supersession graphs are skipped rather than receiving legacy defaults. Full-document render rejects dangling, self, non-current, or identity-mismatched supersession targets before writing.
+- The legacy `communication_style` route remains the existing bounded 8-result/900-estimated-token fallback and entries default to `query`, not `core`; ordinary recall ranking/filtering was intentionally left unchanged until Tasks 4-5.
+
+**Mutation and projection safety**
+
+- Typed observation patches edit only the real entry comment line, preserve CRLF/body/`created`/`updated`/unknown metadata, merge bounded evidence refs, and make equal/older/replayed updates byte-identical no-ops. Metadata-shaped multiline body text is explicitly ignored.
+- Daily and turn-batch replacement now copies the existing entry before changing semantic fields, preserving canonical/lifecycle/future metadata. Both writers reject any skipped canonical entry before preparing a mutation; the batch integration fixture proved retryable status, unchanged file bytes/checkpoint, and retained claimed turns.
+- `MemoryChunker` still indexes handwritten Markdown with no memory comments, but a malformed-only memory document now returns zero chunks instead of leaking its raw bullet through fallback. No Room schema, startup backfill, or bulk `MEMORY.md` rewrite was introduced.
+
+**Verification**
+
+- Final focused run: 72 tests, 0 failures/errors/skips (`MarkdownMemoryCodecTest` 17, `MemoryChunkerTest` 5, `MemoryDailyDistillationOperationControllerTest` 13, `MemoryBatchConsolidationServiceTest` 37).
+- `./gradlew.bat :app:compileDebugKotlin`, ktlint 1.3.1 over all changed Kotlin files, and `git diff --check` passed. Only existing Java native-access/Unsafe, generated-code, and CRLF informational warnings were emitted.
 
 ### Task 2: Enforce Deterministic Write-Time Canonical Merge
 

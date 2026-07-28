@@ -43,6 +43,7 @@ class MemoryChunker(
             }
         }
         if (parsedEntryChunks.isNotEmpty()) return parsedEntryChunks
+        if (parsed.skippedEntries.isNotEmpty()) return emptyList()
 
         return fallbackChunks(sourcePath, markdown)
     }

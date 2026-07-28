@@ -38,8 +38,36 @@ class MemoryDailyDistillationOperationControllerTest {
 
     @Test
     fun `replace keeps stable identity and preserves unrelated Markdown`() {
-        val existing = memoryEntry("mem_existing", "Old stable preference.", createdAt = 4, updatedAt = 5)
-        val fixture = fixture(existing = listOf(existing), trailingMarkdown = "\nManual footer stays here.\n")
+        val successor = memoryEntry(
+            id = "mem_successor",
+            text = "Current stable preference.",
+            createdAt = 6,
+            updatedAt = 7,
+            section = "Stable Preferences"
+        ).copy(
+            canonicalKey = "communication.response_style",
+            scope = MemoryScope.WORK,
+            lastObservedAt = 8,
+            recallState = MemoryRecallState.QUERY
+        )
+        val existing = memoryEntry(
+            id = "mem_existing",
+            text = "Old stable preference.",
+            createdAt = 4,
+            updatedAt = 5,
+            section = "Stable Preferences"
+        ).copy(
+            sensitivity = MemorySensitivity.SENSITIVE,
+            canonicalKey = successor.canonicalKey,
+            scope = successor.scope,
+            lastObservedAt = 9,
+            validity = MemoryValidity.OBSOLETE,
+            supersededBy = successor.id,
+            recallState = MemoryRecallState.MAINTENANCE_ONLY,
+            evidenceRefs = listOf("chat:7:user:1"),
+            extraMetadata = mapOf("future_schema" to "v2")
+        )
+        val fixture = fixture(existing = listOf(existing, successor), trailingMarkdown = "\nManual footer stays here.\n")
         val operations = controller.validate(
             fixture.input,
             listOf(
@@ -53,12 +81,38 @@ class MemoryDailyDistillationOperationControllerTest {
 
         val rendered = controller.render(fixture.input, fixture.baseMarkdown, operations, renderedAt = 20)
         val target = rendered.targets.single().targetContent
-        val replaced = codec.parse(target).entries.single()
+        val parsed = codec.parse(target)
+        val replaced = parsed.entries.single { entry -> entry.id == existing.id }
 
-        assertEquals(existing.id, replaced.id)
-        assertEquals(existing.createdAt, replaced.createdAt)
-        assertEquals(20, replaced.updatedAt)
+        assertTrue(parsed.skippedEntries.isEmpty())
+        assertEquals(existing.copy(text = "Updated stable preference.", updatedAt = 20), replaced)
+        assertEquals(successor, parsed.entries.single { entry -> entry.id == successor.id })
         assertTrue(target.contains("Manual footer stays here."))
+    }
+
+    @Test
+    fun `malformed base fails closed before daily distillation writes`() {
+        val fixture = fixture(
+            trailingMarkdown =
+            "\n\n<!-- memory:id=malformed id=duplicate type=communication_style " +
+                "sensitivity=normal source=explicit_user_statement -->\n" +
+                "- This malformed entry must not be rewritten.\n"
+        )
+        val operations = controller.validate(
+            fixture.input,
+            listOf(
+                operation(
+                    action = MemoryDailyDistillationAction.CREATE,
+                    text = "A valid write must not bypass malformed canonical metadata."
+                )
+            )
+        )
+
+        val failure = runCatching {
+            controller.render(fixture.input, fixture.baseMarkdown, operations)
+        }.exceptionOrNull()
+
+        assertEquals("unsafe_memory_metadata", failure?.message)
     }
 
     @Test
