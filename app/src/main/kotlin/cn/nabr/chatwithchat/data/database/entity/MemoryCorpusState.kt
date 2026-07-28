@@ -21,7 +21,7 @@ data class MemoryCorpusState(
     val sourcePath: String,
 
     @ColumnInfo(name = "source_hash")
-    val sourceHash: String,
+    val recallProjectionHash: String,
 
     @ColumnInfo(name = "generation")
     val generation: Long,
@@ -36,7 +36,7 @@ data class MemoryCorpusState(
     val indexedGeneration: Long?,
 
     @ColumnInfo(name = "indexed_source_hash")
-    val indexedSourceHash: String?,
+    val indexedRecallProjectionHash: String?,
 
     @ColumnInfo(name = "indexed_fingerprint")
     val indexedFingerprint: String?,

@@ -39,6 +39,49 @@ class MarkdownLexicalRetrieverTest {
     }
 
     @Test
+    fun `ordinary recall excludes lifecycle history while maintenance can search it`() = runBlocking {
+        val fileStore = createFileStore()
+        val active = memoryEntry("mem_active", "Visible current response preference.").copy(
+            canonicalKey = "communication.response_style"
+        )
+        val hiddenEntries = listOf(
+            memoryEntry("mem_obsolete", "Obsolete-only-marker response preference.").copy(
+                canonicalKey = active.canonicalKey,
+                validity = MemoryValidity.OBSOLETE,
+                supersededBy = active.id,
+                recallState = MemoryRecallState.MAINTENANCE_ONLY
+            ),
+            memoryEntry("mem_contested", "Contested-only-marker response preference.").copy(
+                canonicalKey = "communication.contested_style",
+                validity = MemoryValidity.CONTESTED,
+                recallState = MemoryRecallState.MAINTENANCE_ONLY
+            ),
+            memoryEntry("mem_maintenance", "Maintenance-only-marker note.").copy(
+                canonicalKey = "communication.maintenance_note",
+                recallState = MemoryRecallState.MAINTENANCE_ONLY
+            )
+        )
+        fileStore.replaceLongTermMemory(
+            MarkdownMemoryCodec().renderLongTerm(listOf(active) + hiddenEntries)
+        ).getOrThrow()
+        val retriever = createRetriever(fileStore)
+
+        hiddenEntries.forEach { hidden ->
+            val lifecycleQuery = hidden.text.substringBefore(' ')
+            val chatResults = retriever.retrieve(
+                request(MemoryCorpus.CHAT_RECALL_LONG_TERM, lifecycleQuery)
+            ).getOrThrow()
+            val maintenanceResults = retriever.retrieveWorkingSet(
+                request(MemoryCorpus.MAINTENANCE_WORKING_SET, lifecycleQuery)
+            ).getOrThrow()
+
+            assertTrue(chatResults.isEmpty())
+            assertEquals(hidden.id, maintenanceResults.single().entryId)
+            assertEquals(MemoryRecallState.MAINTENANCE_ONLY, maintenanceResults.single().recallState)
+        }
+    }
+
+    @Test
     fun `deleting or replacing memory text changes recall immediately`() = runBlocking {
         val fileStore = createFileStore()
         val retriever = createRetriever(fileStore)
@@ -262,7 +305,8 @@ class MarkdownLexicalRetrieverTest {
         MemoryCorpusSnapshot(
             corpus = MemoryCorpus.CHAT_RECALL_LONG_TERM,
             sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
-            sourceHash = "source-$generation",
+            canonicalSourceHash = "source-$generation",
+            recallProjectionHash = "source-$generation",
             generation = generation,
             chunks = chunks
         )
@@ -281,7 +325,7 @@ class MarkdownLexicalRetrieverTest {
             chatId = null,
             createdAt = 1L,
             updatedAt = 2L,
-            contentHash = text.sha256Utf8()
+            embeddingContentHash = text.sha256Utf8()
         )
 }
 

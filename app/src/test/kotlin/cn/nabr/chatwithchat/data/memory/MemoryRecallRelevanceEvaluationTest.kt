@@ -41,44 +41,56 @@ class MemoryRecallRelevanceEvaluationTest {
             )
         }
         val distractorEntries = buildList {
-            addAll((1..30).map { index ->
-                MarkdownMemoryEntry(
-                    id = "distractor_shanghai_$index",
-                    text = "上海出差记录 $index：讨论项目进度、预算和下一次会议安排。 [DISTRACTOR]",
-                    type = "project_context",
-                    sensitivity = MemorySensitivity.NORMAL,
-                    source = MemorySource.EXPLICIT_USER_STATEMENT,
-                    updatedAt = (100 + index).toLong()
-                )
-            })
-            addAll((1..30).map { index ->
-                MarkdownMemoryEntry(
-                    id = "distractor_exhibition_$index",
-                    text = "摄影展资料 $index：整理旧照片和展览目录，但尚未确定城市或线下场地。 [DISTRACTOR]",
-                    type = "important_event",
-                    sensitivity = MemorySensitivity.NORMAL,
-                    source = MemorySource.EXPLICIT_USER_STATEMENT,
-                    updatedAt = (200 + index).toLong()
-                )
-            })
-            addAll((1..30).map { index ->
-                MarkdownMemoryEntry(
-                    id = "distractor_planning_$index",
-                    text = "活动计划 $index：安排宣传、预算和人员排班，等待后续确认。 [DISTRACTOR]",
-                    type = "light_productivity_preference",
-                    sensitivity = MemorySensitivity.NORMAL,
-                    source = MemorySource.EXPLICIT_USER_STATEMENT,
-                    updatedAt = (300 + index).toLong()
-                )
-            })
+            addAll(
+                (1..30).map { index ->
+                    MarkdownMemoryEntry(
+                        id = "distractor_shanghai_$index",
+                        text = "上海出差记录 $index：讨论项目进度、预算和下一次会议安排。 [DISTRACTOR]",
+                        type = "project_context",
+                        sensitivity = MemorySensitivity.NORMAL,
+                        source = MemorySource.EXPLICIT_USER_STATEMENT,
+                        updatedAt = (100 + index).toLong()
+                    )
+                }
+            )
+            addAll(
+                (1..30).map { index ->
+                    MarkdownMemoryEntry(
+                        id = "distractor_exhibition_$index",
+                        text = "摄影展资料 $index：整理旧照片和展览目录，但尚未确定城市或线下场地。 [DISTRACTOR]",
+                        type = "important_event",
+                        sensitivity = MemorySensitivity.NORMAL,
+                        source = MemorySource.EXPLICIT_USER_STATEMENT,
+                        updatedAt = (200 + index).toLong()
+                    )
+                }
+            )
+            addAll(
+                (1..30).map { index ->
+                    MarkdownMemoryEntry(
+                        id = "distractor_planning_$index",
+                        text = "活动计划 $index：安排宣传、预算和人员排班，等待后续确认。 [DISTRACTOR]",
+                        type = "light_productivity_preference",
+                        sensitivity = MemorySensitivity.NORMAL,
+                        source = MemorySource.EXPLICIT_USER_STATEMENT,
+                        updatedAt = (300 + index).toLong()
+                    )
+                }
+            )
         }
         val markdown = MarkdownMemoryCodec().renderLongTerm(targetEntries + distractorEntries)
+        val chunking = MemoryChunker().chunksFor(
+            MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+            markdown,
+            MemoryProjectionPolicy.CHAT_ACTIVE_ONLY
+        )
         val snapshot = MemoryCorpusSnapshot(
             corpus = MemoryCorpus.CHAT_RECALL_LONG_TERM,
             sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
-            sourceHash = markdown.sha256Utf8(),
+            canonicalSourceHash = markdown.sha256Utf8(),
+            recallProjectionHash = chunking.projectionHash,
             generation = 1L,
-            chunks = MemoryChunker().chunksFor(MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME, markdown)
+            chunks = chunking.chunks
         )
         val lexical = MarkdownLexicalRetriever(EvaluationSnapshotSource(snapshot))
         val hybrid = HybridMemoryRetriever(

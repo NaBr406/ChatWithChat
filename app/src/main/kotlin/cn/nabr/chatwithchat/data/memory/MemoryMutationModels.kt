@@ -2,6 +2,7 @@ package cn.nabr.chatwithchat.data.memory
 
 import cn.nabr.chatwithchat.data.database.entity.MemoryMutationGroup
 import cn.nabr.chatwithchat.data.database.entity.MemoryMutationReceipt
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 data class MemoryMutationTarget(
@@ -73,6 +74,7 @@ data class MemoryIndexSyncJobPayload(
     val receiptId: String,
     val generation: Long,
     val sourcePath: String,
-    val sourceHash: String,
+    @SerialName("sourceHash")
+    val recallProjectionHash: String,
     val targetIndexFingerprint: String
 )

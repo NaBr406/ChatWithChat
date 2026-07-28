@@ -11,6 +11,15 @@ import org.junit.Test
 
 class MemoryVectorIndexConfigurationTest {
     @Test
+    fun `production defaults use v2 projection contracts`() {
+        val defaults = MemoryVectorIndexDefaults.configuration
+
+        assertEquals("memory-chunker-v2", defaults.chunkerVersion)
+        assertEquals("chat-active-projection-v2", defaults.projectionVersion)
+        assertEquals("natural-language-only-v2", defaults.embeddingProjectionVersion)
+    }
+
+    @Test
     fun `fingerprint is deterministic and changes with retrieval meaning`() {
         val baseline = configuration()
         val baselineFingerprint = baseline.fingerprint()
@@ -18,6 +27,8 @@ class MemoryVectorIndexConfigurationTest {
             baseline.copy(corpus = MemoryCorpus.MAINTENANCE_WORKING_SET),
             baseline.copy(indexSchemaVersion = 2),
             baseline.copy(chunkerVersion = "chunker-v2"),
+            baseline.copy(projectionVersion = "chat-active-projection-v3"),
+            baseline.copy(embeddingProjectionVersion = "natural-language-only-v3"),
             baseline.copy(maxChunkChars = 800),
             baseline.copy(chunkOverlapChars = 32),
             baseline.copy(markdownCodecVersion = "markdown-v2"),
@@ -47,12 +58,12 @@ class MemoryVectorIndexConfigurationTest {
         val configuration = configuration()
         val first = configuration.identity(
             sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
-            sourceHash = "e".repeat(64),
+            recallProjectionHash = "e".repeat(64),
             corpusGeneration = 4
         )
         val nextGeneration = configuration.identity(
             sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
-            sourceHash = "e".repeat(64),
+            recallProjectionHash = "e".repeat(64),
             corpusGeneration = 5
         )
 

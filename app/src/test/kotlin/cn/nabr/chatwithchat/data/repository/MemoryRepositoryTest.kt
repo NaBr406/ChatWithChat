@@ -4,7 +4,6 @@ import cn.nabr.chatwithchat.data.database.InMemoryMemoryTurnBatchDao
 import cn.nabr.chatwithchat.data.database.entity.ChatRoomV2
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.debug.PromptTraceStore
-import cn.nabr.chatwithchat.data.memory.MemoryRetrievalMode
 import cn.nabr.chatwithchat.data.memory.MarkdownLexicalRetriever
 import cn.nabr.chatwithchat.data.memory.MarkdownMemoryCodec
 import cn.nabr.chatwithchat.data.memory.MarkdownMemoryEntry
@@ -15,6 +14,7 @@ import cn.nabr.chatwithchat.data.memory.MemoryCorpusSnapshotter
 import cn.nabr.chatwithchat.data.memory.MemoryFilePaths
 import cn.nabr.chatwithchat.data.memory.MemoryFileStore
 import cn.nabr.chatwithchat.data.memory.MemoryPromptBuilder
+import cn.nabr.chatwithchat.data.memory.MemoryRetrievalMode
 import cn.nabr.chatwithchat.data.memory.MemoryRetrievalRequest
 import cn.nabr.chatwithchat.data.memory.MemoryRetrievalResult
 import cn.nabr.chatwithchat.data.memory.MemoryRetrievalStrategy
@@ -359,7 +359,7 @@ class MemoryRepositoryTest {
         type = "communication_style",
         sensitivity = MemorySensitivity.NORMAL,
         source = MemorySource.EXPLICIT_USER_STATEMENT,
-        contentHash = "hash",
+        embeddingContentHash = "hash",
         lexicalScore = 1f,
         fusedScore = 1f,
         updatedAt = 20L
@@ -395,7 +395,7 @@ private class FakeVectorMemoryRetriever : MemoryRetriever {
                     type = "project_context",
                     sensitivity = MemorySensitivity.NORMAL,
                     source = MemorySource.USER_CONFIRMED,
-                    contentHash = "vector-hash",
+                    embeddingContentHash = "vector-hash",
                     lexicalScore = null,
                     vectorScore = 0.95f,
                     fusedScore = 0.95f,

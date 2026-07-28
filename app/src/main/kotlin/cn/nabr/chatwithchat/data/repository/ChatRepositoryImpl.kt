@@ -263,6 +263,7 @@ class ChatRepositoryImpl @Inject constructor(
         memoryPrompt: String?,
         reasoningMode: ReasoningMode
     ): Flow<ApiState> {
+        validateProviderMemoryPrompt(memoryPrompt)
         val toolCallingMode = runCatching { settingRepository.fetchToolCallingMode() }
             .getOrNull()
             ?: ToolCallingMode.Off
@@ -2912,6 +2913,37 @@ class ChatRepositoryImpl @Inject constructor(
         chatRoomV2Dao.deleteChatRooms(*chatRooms.toTypedArray())
     }
 }
+
+private fun validateProviderMemoryPrompt(memoryPrompt: String?) {
+    if (memoryPrompt.isNullOrBlank()) return
+
+    require(PROVIDER_MEMORY_PROMPT_INTERNAL_MARKERS.none { marker -> marker.containsMatchIn(memoryPrompt) }) {
+        UNSAFE_PROVIDER_MEMORY_PROMPT_MESSAGE
+    }
+}
+
+private const val UNSAFE_PROVIDER_MEMORY_PROMPT_MESSAGE =
+    "Memory prompt contains internal metadata and cannot be sent to a provider."
+
+private val PROVIDER_MEMORY_PROMPT_INTERNAL_MARKERS = listOf(
+    Regex("""<!--"""),
+    Regex("""[\"']?(?:entry|chunk|memory)[_-]?id[\"']?\s*[:=]""", RegexOption.IGNORE_CASE),
+    Regex("""\b(?:mem|chunk)_[a-z0-9][a-z0-9._-]*\b""", RegexOption.IGNORE_CASE),
+    Regex("""[\"']?source[_-]?path[\"']?\s*[:=]""", RegexOption.IGNORE_CASE),
+    Regex("""\bMEMORY\.md\b""", RegexOption.IGNORE_CASE),
+    Regex("""\bmemory[\\/]\d{4}-\d{2}-\d{2}\.md\b""", RegexOption.IGNORE_CASE),
+    Regex(
+        """[\"']?(?:canonical[_-]?key|last[_-]?observed[_-]?at|superseded[_-]?by|recall[_-]?state|evidence[_-]?refs?)[\"']?\s*[:=]""",
+        RegexOption.IGNORE_CASE
+    ),
+    Regex("""\b(?:scope|observed|validity|recall|evidence|created|updated)\s*=""", RegexOption.IGNORE_CASE),
+    Regex(
+        """[\"']?(?:embedding[_-]?content|content|projection|recall[_-]?projection|canonical[_-]?source|source|target[_-]?(?:base|source))[_-]?hash[\"']?\s*[:=]""",
+        RegexOption.IGNORE_CASE
+    ),
+    Regex("""[\"']?sha[-_]?256[\"']?\s*[:=]\s*[\"']?[a-f0-9]{8,}""", RegexOption.IGNORE_CASE),
+    Regex("""\b[a-f0-9]{64}\b""", RegexOption.IGNORE_CASE)
+)
 
 internal fun createGroqChatCompletionRequest(
     messages: List<ChatMessage>,

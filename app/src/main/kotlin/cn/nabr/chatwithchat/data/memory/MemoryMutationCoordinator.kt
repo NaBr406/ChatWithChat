@@ -22,7 +22,8 @@ class MemoryMutationCoordinator(
     private val workEnqueuer: MemoryMaintenanceWorkEnqueuer,
     private val materialMutationObserver: MemoryMaterialMutationObserver = MemoryMaterialMutationObserver.None,
     private val clock: Clock = Clock.systemDefaultZone(),
-    private val json: Json = Json { encodeDefaults = true }
+    private val json: Json = Json { encodeDefaults = true },
+    private val memoryChunker: MemoryChunker = MemoryChunker()
 ) {
     private val localMutationPrepareMutex = Mutex()
 
@@ -39,11 +40,12 @@ class MemoryMutationCoordinator(
         require(targets.map { target -> target.sourcePath }.distinct().size == targets.size) {
             "A prepared mutation cannot target one source path twice"
         }
+        val projectionAwareTargets = targets.map { target -> target.withProjectionAwareFingerprint() }
         findBySemanticJobId(semanticJobId)?.let { return it }
 
         val groupId = "mutation_${"$semanticJobId|$semanticBatchId".sha256Utf8().take(ID_HASH_LENGTH)}"
         memoryFileStore.cleanupStagedTargets(groupId).getOrThrow()
-        val stagedTargets = targets.sortedBy(MemoryMutationTarget::sourcePath).map { target ->
+        val stagedTargets = projectionAwareTargets.sortedBy(MemoryMutationTarget::sourcePath).map { target ->
             val receiptId = receiptId(groupId, target.sourcePath)
             val expectedBaseHash = target.baseContent.toByteArray(Charsets.UTF_8).sha256Hex()
             val staged = memoryFileStore.stageMemoryFile(
@@ -93,8 +95,9 @@ class MemoryMutationCoordinator(
         require(targets.single().targetIndexFingerprint?.let(SHA_256_REGEX::matches) == true) {
             "A long-term local mutation requires a SHA-256 index fingerprint"
         }
+        val projectionAwareTargets = targets.map { target -> target.withProjectionAwareFingerprint() }
         return localMutationPrepareMutex.withLock {
-            prepareLocalMutationLocked(operationKey, targets)
+            prepareLocalMutationLocked(operationKey, projectionAwareTargets)
         }
     }
 
@@ -174,18 +177,27 @@ class MemoryMutationCoordinator(
 
     suspend fun prepareLocalIndexBootstrap(
         sourceContent: String,
-        sourceHash: String,
+        canonicalSourceHash: String,
+        recallProjectionHash: String,
         targetIndexFingerprint: String,
         observedCorpusGeneration: Long
     ): MemoryPreparedMutation {
-        require(SHA_256_REGEX.matches(sourceHash)) { "Bootstrap source hash must be SHA-256" }
+        require(SHA_256_REGEX.matches(canonicalSourceHash)) { "Bootstrap canonical source hash must be SHA-256" }
+        require(SHA_256_REGEX.matches(recallProjectionHash)) { "Bootstrap recall projection hash must be SHA-256" }
         require(SHA_256_REGEX.matches(targetIndexFingerprint)) { "Bootstrap index fingerprint must be SHA-256" }
         require(observedCorpusGeneration >= 0) { "Observed corpus generation must not be negative" }
-        check(sourceContent.toByteArray(Charsets.UTF_8).sha256Hex() == sourceHash) {
-            "Bootstrap content does not match its source hash"
+        check(sourceContent.toByteArray(Charsets.UTF_8).sha256Hex() == canonicalSourceHash) {
+            "Bootstrap content does not match its canonical source hash"
         }
+        check(
+            memoryChunker.chunksFor(
+                sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+                markdown = sourceContent,
+                projectionPolicy = MemoryProjectionPolicy.CHAT_ACTIVE_ONLY
+            ).projectionHash == recallProjectionHash
+        ) { "Bootstrap content does not match its recall projection hash" }
 
-        val identity = "$sourceHash|$targetIndexFingerprint|after=$observedCorpusGeneration"
+        val identity = "$canonicalSourceHash|$recallProjectionHash|$targetIndexFingerprint|after=$observedCorpusGeneration"
         val groupId = "mutation_bootstrap_${identity.sha256Utf8().take(ID_HASH_LENGTH)}"
         recoveryDao.getMutationGroup(groupId)?.let { group ->
             val existing = loadMutation(group)
@@ -194,8 +206,8 @@ class MemoryMutationCoordinator(
                     group.semanticBatchId == null &&
                     existing.receipts.singleOrNull()?.let { receipt ->
                         receipt.sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME &&
-                            receipt.baseSourceHash == sourceHash &&
-                            receipt.targetSourceHash == sourceHash &&
+                            receipt.baseSourceHash == canonicalSourceHash &&
+                            receipt.targetSourceHash == canonicalSourceHash &&
                             receipt.targetIndexFingerprint == targetIndexFingerprint
                     } == true
             ) { "Existing local bootstrap mutation does not match the requested identity" }
@@ -209,10 +221,10 @@ class MemoryMutationCoordinator(
             content = sourceContent,
             stagingId = receiptId
         ).getOrThrow()
-        check(staged.baseSourceHash == sourceHash) {
+        check(staged.baseSourceHash == canonicalSourceHash) {
             "Memory source changed before its bootstrap receipt was prepared"
         }
-        if (staged.targetSourceHash != sourceHash) {
+        if (staged.targetSourceHash != canonicalSourceHash) {
             memoryFileStore.cleanupStagedTarget(staged.stagedTargetPath).getOrThrow()
             error("Bootstrap receipt must not change canonical memory content")
         }
@@ -307,7 +319,10 @@ class MemoryMutationCoordinator(
                 }
             } else if (receipt.state in COMMITTED_RECEIPT_STATES) {
                 val currentHash = memoryFileStore.currentMemoryFileHash(receipt.sourcePath).getOrThrow()
-                if (currentHash != receipt.targetSourceHash) {
+                if (
+                    currentHash != receipt.targetSourceHash &&
+                    !isProjectionCompatibleCommittedReceipt(receipt)
+                ) {
                     return markConflict(current, receipt, "committed_source_hash_changed")
                 }
             }
@@ -334,11 +349,12 @@ class MemoryMutationCoordinator(
         val indexableLongTermReceipt = longTermReceipt?.takeIf { receipt -> receipt.requiresIndexSync() }
         if (indexableLongTermReceipt != null) {
             val fingerprint = checkNotNull(indexableLongTermReceipt.targetIndexFingerprint)
+            val recallProjectionHash = currentLongTermRecallProjectionHash()
             val corpusAdvance = recoveryDao.advanceCorpusGeneration(
                 MemoryCorpusAdvanceRequest(
                     corpus = CHAT_RECALL_CORPUS_KEY,
                     sourcePath = indexableLongTermReceipt.sourcePath,
-                    sourceHash = indexableLongTermReceipt.targetSourceHash,
+                    recallProjectionHash = recallProjectionHash,
                     generation = current.group.generation,
                     targetIndexFingerprint = fingerprint,
                     indexStatus = MemoryCorpusIndexStatus.PENDING,
@@ -677,6 +693,7 @@ class MemoryMutationCoordinator(
 
     private suspend fun scheduleIndexSync(group: MemoryMutationGroup, receipt: MemoryMutationReceipt) {
         try {
+            val corpus = checkNotNull(recoveryDao.getCorpusState(CHAT_RECALL_CORPUS_KEY))
             maintenanceScheduler.enqueue(
                 type = MemoryMaintenanceJobType.SYNC_VECTOR_INDEX,
                 idempotencyKey = "memory-vector-sync",
@@ -686,7 +703,7 @@ class MemoryMutationCoordinator(
                         receiptId = receipt.receiptId,
                         generation = group.generation,
                         sourcePath = receipt.sourcePath,
-                        sourceHash = receipt.targetSourceHash,
+                        recallProjectionHash = corpus.recallProjectionHash,
                         targetIndexFingerprint = checkNotNull(receipt.targetIndexFingerprint)
                     )
                 ),
@@ -708,6 +725,47 @@ class MemoryMutationCoordinator(
 
     private fun MemoryMutationReceipt.isMetadataOnlyLongTermReceipt(): Boolean =
         sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME && targetIndexFingerprint == null
+
+    private fun MemoryMutationTarget.withProjectionAwareFingerprint(): MemoryMutationTarget {
+        if (sourcePath != MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME) return this
+        val baseProjectionHash = memoryChunker.chunksFor(
+            sourcePath = sourcePath,
+            markdown = baseContent,
+            projectionPolicy = MemoryProjectionPolicy.CHAT_ACTIVE_ONLY
+        ).projectionHash
+        val targetProjectionHash = memoryChunker.chunksFor(
+            sourcePath = sourcePath,
+            markdown = targetContent,
+            projectionPolicy = MemoryProjectionPolicy.CHAT_ACTIVE_ONLY
+        ).projectionHash
+        if (baseProjectionHash == targetProjectionHash) return copy(targetIndexFingerprint = null)
+        require(targetIndexFingerprint?.let(SHA_256_REGEX::matches) == true) {
+            "An active recall projection change requires a SHA-256 index fingerprint"
+        }
+        return this
+    }
+
+    private suspend fun isProjectionCompatibleCommittedReceipt(receipt: MemoryMutationReceipt): Boolean {
+        if (!receipt.requiresIndexSync()) return false
+        val corpus = recoveryDao.getCorpusState(CHAT_RECALL_CORPUS_KEY) ?: return false
+        if (
+            corpus.generation != receipt.generation ||
+            corpus.latestReceiptId != receipt.receiptId ||
+            corpus.targetIndexFingerprint != receipt.targetIndexFingerprint
+        ) {
+            return false
+        }
+        return currentLongTermRecallProjectionHash() == corpus.recallProjectionHash
+    }
+
+    private suspend fun currentLongTermRecallProjectionHash(): String {
+        val markdown = memoryFileStore.readLongTermMemory().getOrThrow()
+        return memoryChunker.chunksFor(
+            sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+            markdown = markdown,
+            projectionPolicy = MemoryProjectionPolicy.CHAT_ACTIVE_ONLY
+        ).projectionHash
+    }
 
     private fun receiptId(groupId: String, sourcePath: String): String =
         "${groupId}_receipt_${sourcePath.sha256Utf8().take(RECEIPT_PATH_HASH_LENGTH)}"

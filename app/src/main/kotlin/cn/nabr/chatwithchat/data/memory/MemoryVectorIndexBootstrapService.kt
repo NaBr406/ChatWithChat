@@ -10,7 +10,8 @@ class MemoryVectorIndexBootstrapService(
     private val recoveryDao: MemoryRecoveryDao,
     private val memoryFileStore: MemoryFileStore,
     private val mutationCoordinator: MemoryMutationCoordinator,
-    private val targetIndexFingerprint: String = MemoryVectorIndexDefaults.configuration.fingerprint()
+    private val targetIndexFingerprint: String = MemoryVectorIndexDefaults.configuration.fingerprint(),
+    private val memoryChunker: MemoryChunker = MemoryChunker()
 ) {
     init {
         require(SHA_256_REGEX.matches(targetIndexFingerprint)) {
@@ -20,16 +21,21 @@ class MemoryVectorIndexBootstrapService(
 
     suspend fun bootstrap(): MemoryVectorIndexBootstrapResult {
         val sourceContent = memoryFileStore.readLongTermMemory().getOrThrow()
-        val sourceHash = sourceContent.toByteArray(Charsets.UTF_8).sha256Hex()
+        val canonicalSourceHash = sourceContent.toByteArray(Charsets.UTF_8).sha256Hex()
+        val recallProjectionHash = memoryChunker.chunksFor(
+            sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+            markdown = sourceContent,
+            projectionPolicy = MemoryProjectionPolicy.CHAT_ACTIVE_ONLY
+        ).projectionHash
         val current = recoveryDao.getCorpusState(CHAT_RECALL_CORPUS_KEY)
 
-        current?.matchingMutation(sourceHash)?.let { mutation ->
+        current?.matchingMutation(canonicalSourceHash, recallProjectionHash)?.let { mutation ->
             if (mutation.needsReconciliation()) {
                 return mutationCoordinator.reconcile(mutation).toBootstrapResult()
             }
             return MemoryVectorIndexBootstrapResult.AlreadyCurrent(
                 generation = current.generation,
-                sourceHash = sourceHash,
+                recallProjectionHash = recallProjectionHash,
                 indexFingerprint = targetIndexFingerprint,
                 indexStatus = current.indexStatus
             )
@@ -37,41 +43,56 @@ class MemoryVectorIndexBootstrapService(
 
         val prepared = mutationCoordinator.prepareLocalIndexBootstrap(
             sourceContent = sourceContent,
-            sourceHash = sourceHash,
+            canonicalSourceHash = canonicalSourceHash,
+            recallProjectionHash = recallProjectionHash,
             targetIndexFingerprint = targetIndexFingerprint,
             observedCorpusGeneration = current?.generation ?: 0L
         )
         return mutationCoordinator.reconcile(prepared).toBootstrapResult()
     }
 
-    private suspend fun MemoryCorpusState.matchingMutation(sourceHash: String): MemoryPreparedMutation? {
+    private suspend fun MemoryCorpusState.matchingMutation(
+        canonicalSourceHash: String,
+        recallProjectionHash: String
+    ): MemoryPreparedMutation? {
         if (
             corpus != CHAT_RECALL_CORPUS_KEY ||
             sourcePath != MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME ||
-            this.sourceHash != sourceHash ||
+            this.recallProjectionHash != recallProjectionHash ||
             targetIndexFingerprint != this@MemoryVectorIndexBootstrapService.targetIndexFingerprint
         ) {
             return null
         }
         val receipt = latestReceiptId?.let { receiptId -> recoveryDao.getMutationReceipt(receiptId) } ?: return null
         val group = recoveryDao.getMutationGroup(receipt.groupId) ?: return null
-        if (!matches(group, receipt)) return null
+        if (!matches(group, receipt, canonicalSourceHash)) return null
         return MemoryPreparedMutation(group, recoveryDao.getMutationReceipts(group.groupId))
     }
 
     private fun MemoryCorpusState.matches(
         group: MemoryMutationGroup,
-        receipt: MemoryMutationReceipt
+        receipt: MemoryMutationReceipt,
+        canonicalSourceHash: String
     ): Boolean =
         group.generation == generation &&
             receipt.groupId == group.groupId &&
             receipt.generation == generation &&
             receipt.receiptId == latestReceiptId &&
             receipt.sourcePath == sourcePath &&
-            receipt.targetSourceHash == sourceHash &&
+            receipt.matchesCurrentCanonicalState(group, canonicalSourceHash) &&
             receipt.targetIndexFingerprint == targetIndexFingerprint &&
             receipt.state in DURABLE_RECEIPT_STATES &&
             group.state in DURABLE_GROUP_STATES
+
+    private fun MemoryMutationReceipt.matchesCurrentCanonicalState(
+        group: MemoryMutationGroup,
+        canonicalSourceHash: String
+    ): Boolean =
+        targetSourceHash == canonicalSourceHash ||
+            (
+                state in PROJECTION_DURABLE_RECEIPT_STATES &&
+                    group.state in PROJECTION_DURABLE_GROUP_STATES
+                )
 
     private fun MemoryPreparedMutation.needsReconciliation(): Boolean =
         group.state in RECONCILABLE_GROUP_STATES ||
@@ -84,7 +105,7 @@ class MemoryVectorIndexBootstrapService(
             }
             MemoryVectorIndexBootstrapResult.Scheduled(
                 generation = mutation.group.generation,
-                sourceHash = corpus.sourceHash,
+                recallProjectionHash = corpus.recallProjectionHash,
                 indexFingerprint = checkNotNull(corpus.targetIndexFingerprint),
                 indexStatus = corpus.indexStatus
             )
@@ -121,6 +142,15 @@ class MemoryVectorIndexBootstrapService(
             MemoryMutationState.FILE_COMMITTED,
             MemoryMutationState.FAILED
         )
+        val PROJECTION_DURABLE_RECEIPT_STATES = setOf(
+            MemoryMutationState.INDEX_PENDING,
+            MemoryMutationState.INDEXED
+        )
+        val PROJECTION_DURABLE_GROUP_STATES = setOf(
+            MemoryMutationState.SEMANTIC_ACK_PENDING,
+            MemoryMutationState.INDEX_PENDING,
+            MemoryMutationState.INDEXED
+        )
         val SHA_256_REGEX = Regex("[0-9a-f]{64}")
     }
 }
@@ -128,14 +158,14 @@ class MemoryVectorIndexBootstrapService(
 sealed interface MemoryVectorIndexBootstrapResult {
     data class AlreadyCurrent(
         val generation: Long,
-        val sourceHash: String,
+        val recallProjectionHash: String,
         val indexFingerprint: String,
         val indexStatus: String
     ) : MemoryVectorIndexBootstrapResult
 
     data class Scheduled(
         val generation: Long,
-        val sourceHash: String,
+        val recallProjectionHash: String,
         val indexFingerprint: String,
         val indexStatus: String
     ) : MemoryVectorIndexBootstrapResult

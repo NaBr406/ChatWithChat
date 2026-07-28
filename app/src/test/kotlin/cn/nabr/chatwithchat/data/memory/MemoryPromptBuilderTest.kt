@@ -19,7 +19,7 @@ class MemoryPromptBuilderTest {
                     type = "communication_style",
                     sensitivity = MemorySensitivity.PRIVATE,
                     source = MemorySource.USER_CONFIRMED,
-                    contentHash = "hash",
+                    embeddingContentHash = "fixture_hash",
                     lexicalScore = 1f,
                     fusedScore = 1f,
                     updatedAt = 100L
@@ -28,7 +28,9 @@ class MemoryPromptBuilderTest {
         )
 
         assertTrue(prompt!!.contains("可能相关的用户记忆"))
-        assertTrue(prompt.contains("path: MEMORY.md"))
+        assertFalse(prompt.contains("MEMORY.md"))
+        assertFalse(prompt.contains("mem_1"))
+        assertFalse(prompt.contains("fixture_hash"))
         assertTrue(prompt.contains("谨慎处理"))
         assertTrue(prompt.contains("默认沟通偏好"))
         assertTrue(prompt.contains("不要透露私密或敏感上下文"))
@@ -85,7 +87,7 @@ class MemoryPromptBuilderTest {
         type = "communication_style",
         sensitivity = MemorySensitivity.NORMAL,
         source = MemorySource.EXPLICIT_USER_STATEMENT,
-        contentHash = "$id-hash",
+        embeddingContentHash = "$id-hash",
         lexicalScore = fusedScore,
         fusedScore = fusedScore,
         updatedAt = fusedScore.toLong()

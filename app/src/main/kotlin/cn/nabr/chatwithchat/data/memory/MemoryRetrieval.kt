@@ -39,7 +39,11 @@ data class MemoryRetrievalResult(
     val type: String?,
     val sensitivity: String?,
     val source: String?,
-    val contentHash: String,
+    val canonicalKey: String? = null,
+    val scope: String? = null,
+    val recallState: String? = null,
+    val embeddingContentHash: String,
+    val rankingHash: String = embeddingContentHash,
     val lexicalScore: Float? = null,
     val vectorScore: Float? = null,
     val fusedScore: Float,
@@ -110,7 +114,7 @@ internal fun List<MemoryRetrievalResult>.packFor(request: MemoryRetrievalRequest
 }
 
 internal fun MemoryRetrievalResult.deduplicationKey(): String =
-    entryId?.let { value -> "entry:$value" } ?: "hash:$contentHash"
+    entryId?.let { value -> "entry:$value" } ?: "embedding:$embeddingContentHash"
 
 internal fun MemoryRetrievalRequest.combinedQuery(): String = listOfNotNull(
     query.trim().takeIf { it.isNotBlank() },

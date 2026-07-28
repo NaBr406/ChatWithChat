@@ -146,8 +146,12 @@ class MemoryMutationProcessDeathInstrumentedTest {
         assertEquals(1, syncJobsAfterFirstRecovery.size)
         assertEquals(checkNotNull(fileCommittedGroup).generation, syncJobsAfterFirstRecovery.single().generation)
         assertEquals(
-            fileCommittedReceipt.targetSourceHash,
-            recoveryDao.getCorpusState(CHAT_RECALL_CORPUS_KEY)?.sourceHash
+            MemoryChunker().chunksFor(
+                sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+                markdown = normalized(LONG_TERM_TARGET_CONTENT),
+                projectionPolicy = MemoryProjectionPolicy.CHAT_ACTIVE_ONLY
+            ).projectionHash,
+            recoveryDao.getCorpusState(CHAT_RECALL_CORPUS_KEY)?.recallProjectionHash
         )
 
         val secondRecovery = fixture.recoveryService.recoverIncomplete(scheduleRetry = false)
@@ -234,7 +238,11 @@ class MemoryMutationProcessDeathInstrumentedTest {
         const val FILE_COMMITTED_BATCH_ID = "process-death-file-committed-batch"
         const val DAILY_BASE_NOTE = "Daily base remains visible until receipt recovery."
         const val DAILY_TARGET_CONTENT = "# 2026-07-12\n\nDaily target committed by recovery."
-        const val LONG_TERM_TARGET_CONTENT = "# ChatWithChat Memory\n\nLong-term target already renamed before recovery."
+        const val LONG_TERM_TARGET_CONTENT =
+            "# ChatWithChat Memory\n\n" +
+                "<!-- memory:id=mem_process_death type=project_context sensitivity=normal " +
+                "source=explicit_user_statement created=1 updated=1 validity=current recall=query -->\n" +
+                "- Long-term target already renamed before recovery."
         const val TARGET_INDEX_FINGERPRINT = "process-death-harness-fingerprint-v1"
         const val PROCESS_DEATH_TIMEOUT_MILLIS = 30_000L
         val FIXED_DATE: LocalDate = LocalDate.parse("2026-07-12")

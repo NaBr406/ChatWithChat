@@ -292,13 +292,25 @@ class ObjectBoxMemoryVectorStoreInstrumentedTest {
             )
         )
         val mismatchedIdentities = listOf(
-            identity.copy(sourceHash = hash('b')),
+            identity.copy(recallProjectionHash = hash('b')),
             configuration(DESCRIPTOR.copy(modelVersion = "test-model-v2"))
-                .identity(MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME, identity.sourceHash, identity.corpusGeneration),
+                .identity(
+                    MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+                    identity.recallProjectionHash,
+                    identity.corpusGeneration
+                ),
             configuration(DESCRIPTOR.copy(tokenizerFingerprint = hash('c')))
-                .identity(MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME, identity.sourceHash, identity.corpusGeneration),
+                .identity(
+                    MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+                    identity.recallProjectionHash,
+                    identity.corpusGeneration
+                ),
             configuration(DESCRIPTOR, chunkerVersion = "memory-chunker-v2")
-                .identity(MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME, identity.sourceHash, identity.corpusGeneration),
+                .identity(
+                    MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+                    identity.recallProjectionHash,
+                    identity.corpusGeneration
+                ),
             identity.copy(indexFingerprint = hash('0'))
         )
 
@@ -551,7 +563,8 @@ class ObjectBoxMemoryVectorStoreInstrumentedTest {
         val corpusSnapshot = MemoryCorpusSnapshot(
             corpus = identity.corpus,
             sourcePath = identity.sourcePath,
-            sourceHash = identity.sourceHash,
+            canonicalSourceHash = identity.recallProjectionHash,
+            recallProjectionHash = identity.recallProjectionHash,
             generation = identity.corpusGeneration,
             chunks = chunks.map(MemoryEmbeddedChunk::chunk)
         )
@@ -606,7 +619,7 @@ class ObjectBoxMemoryVectorStoreInstrumentedTest {
         sourceHash: String
     ): MemoryVectorIndexIdentity = INDEX_CONFIGURATION.identity(
         sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
-        sourceHash = sourceHash,
+        recallProjectionHash = sourceHash,
         corpusGeneration = generation
     )
 
@@ -617,7 +630,7 @@ class ObjectBoxMemoryVectorStoreInstrumentedTest {
         MemoryVectorSnapshotExpectation(
             corpus = identity.corpus,
             sourcePath = identity.sourcePath,
-            sourceHash = identity.sourceHash,
+            recallProjectionHash = identity.recallProjectionHash,
             corpusGeneration = identity.corpusGeneration,
             indexFingerprint = identity.indexFingerprint,
             chunks = chunks
@@ -671,7 +684,7 @@ class ObjectBoxMemoryVectorStoreInstrumentedTest {
             chatId = 7,
             createdAt = 100,
             updatedAt = 200,
-            contentHash = hash(hashCharacter)
+            embeddingContentHash = hash(hashCharacter)
         ),
         embedding = embedding(axis)
     )

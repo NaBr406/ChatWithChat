@@ -225,10 +225,10 @@ internal class InMemoryMemoryRecoveryDao(
     override suspend fun advanceCorpusStateCas(
         corpus: String,
         expectedGeneration: Long,
-        expectedSourceHash: String,
+        expectedRecallProjectionHash: String,
         expectedRowVersion: Long,
         sourcePath: String,
-        sourceHash: String,
+        recallProjectionHash: String,
         generation: Long,
         targetIndexFingerprint: String?,
         indexStatus: String,
@@ -237,13 +237,13 @@ internal class InMemoryMemoryRecoveryDao(
     ): Int {
         val current = corpusStates[corpus] ?: return 0
         val matches = current.generation == expectedGeneration &&
-            current.sourceHash == expectedSourceHash &&
+            current.recallProjectionHash == expectedRecallProjectionHash &&
             current.rowVersion == expectedRowVersion &&
             generation > current.generation
         if (!matches) return 0
         corpusStates[corpus] = current.copy(
             sourcePath = sourcePath,
-            sourceHash = sourceHash,
+            recallProjectionHash = recallProjectionHash,
             generation = generation,
             targetIndexFingerprint = targetIndexFingerprint,
             indexStatus = indexStatus,
@@ -258,7 +258,7 @@ internal class InMemoryMemoryRecoveryDao(
     override suspend fun transitionCorpusIndexStatusCas(
         corpus: String,
         expectedGeneration: Long,
-        expectedSourceHash: String,
+        expectedRecallProjectionHash: String,
         expectedTargetIndexFingerprint: String?,
         expectedIndexStatus: String,
         expectedRowVersion: Long,
@@ -268,7 +268,7 @@ internal class InMemoryMemoryRecoveryDao(
     ): Int {
         val current = corpusStates[corpus] ?: return 0
         val matches = current.generation == expectedGeneration &&
-            current.sourceHash == expectedSourceHash &&
+            current.recallProjectionHash == expectedRecallProjectionHash &&
             current.targetIndexFingerprint == expectedTargetIndexFingerprint &&
             current.indexStatus == expectedIndexStatus &&
             current.rowVersion == expectedRowVersion
@@ -285,7 +285,7 @@ internal class InMemoryMemoryRecoveryDao(
     override suspend fun markCorpusIndexedCas(
         corpus: String,
         expectedGeneration: Long,
-        expectedSourceHash: String,
+        expectedRecallProjectionHash: String,
         expectedTargetIndexFingerprint: String,
         expectedRowVersion: Long,
         indexedStatus: String,
@@ -293,14 +293,14 @@ internal class InMemoryMemoryRecoveryDao(
     ): Int {
         val current = corpusStates[corpus] ?: return 0
         val matches = current.generation == expectedGeneration &&
-            current.sourceHash == expectedSourceHash &&
+            current.recallProjectionHash == expectedRecallProjectionHash &&
             current.targetIndexFingerprint == expectedTargetIndexFingerprint &&
             current.rowVersion == expectedRowVersion
         if (!matches) return 0
         corpusStates[corpus] = current.copy(
             indexStatus = indexedStatus,
             indexedGeneration = expectedGeneration,
-            indexedSourceHash = expectedSourceHash,
+            indexedRecallProjectionHash = expectedRecallProjectionHash,
             indexedFingerprint = expectedTargetIndexFingerprint,
             lastError = null,
             rowVersion = current.rowVersion + 1,

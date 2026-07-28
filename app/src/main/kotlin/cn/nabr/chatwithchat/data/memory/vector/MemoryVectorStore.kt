@@ -25,7 +25,7 @@ interface MemoryVectorStore : AutoCloseable {
 data class MemoryVectorIndexIdentity(
     val corpus: MemoryCorpus,
     val sourcePath: String,
-    val sourceHash: String,
+    val recallProjectionHash: String,
     val corpusGeneration: Long,
     val indexFingerprint: String,
     val embeddingDescriptor: MemoryEmbeddingDescriptor,
@@ -43,7 +43,7 @@ data class MemoryVectorManifest(
 data class MemoryVectorSnapshotExpectation(
     val corpus: MemoryCorpus,
     val sourcePath: String,
-    val sourceHash: String,
+    val recallProjectionHash: String,
     val corpusGeneration: Long,
     val indexFingerprint: String,
     val chunks: List<MemoryCorpusChunk>

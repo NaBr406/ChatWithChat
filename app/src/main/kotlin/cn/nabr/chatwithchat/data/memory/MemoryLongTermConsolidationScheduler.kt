@@ -17,6 +17,7 @@ class MemoryLongTermConsolidationScheduler(
     private val maintenanceScheduler: MemoryMaintenanceScheduler,
     private val settingRepository: SettingRepository,
     private val workEnqueuer: MemoryMaintenanceWorkEnqueuer,
+    private val memoryChunker: MemoryChunker = MemoryChunker(markdownMemoryCodec),
     private val clock: Clock = Clock.systemDefaultZone(),
     private val json: Json = Json {
         ignoreUnknownKeys = false
@@ -197,7 +198,11 @@ class MemoryLongTermConsolidationScheduler(
         return FrozenLongTermSnapshot(
             baseSourceHash = longTerm.bytes.sha256Hex(),
             baseGeneration = baseGeneration,
-            recallProjectionHash = recallProjectionPlaceholderHash(entries),
+            recallProjectionHash = memoryChunker.chunksFor(
+                sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+                markdown = String(longTerm.bytes, StandardCharsets.UTF_8),
+                projectionPolicy = MemoryProjectionPolicy.CHAT_ACTIVE_ONLY
+            ).projectionHash,
             orderedEntryIds = orderedEntryIds,
             orderedEntryIdsJson = orderedEntryIdsJson,
             orderedSnapshotHash = orderedSnapshotHash(orderedEntryIds)
@@ -302,23 +307,6 @@ class MemoryLongTermConsolidationScheduler(
         }
     }.sha256Utf8()
 
-    private fun recallProjectionPlaceholderHash(entries: List<MarkdownMemoryEntry>): String = buildString {
-        appendIdentityField(RECALL_PROJECTION_PLACEHOLDER_VERSION)
-        entries
-            .filter { entry ->
-                entry.validity == MemoryValidity.CURRENT && entry.recallState in ACTIVE_RECALL_STATES
-            }
-            .forEachIndexed { offset, entry ->
-                appendIdentityField(offset.toString())
-                appendIdentityField(entry.id)
-                appendIdentityField(entry.text)
-                appendIdentityField(entry.type)
-                appendIdentityField(entry.sensitivity)
-                appendIdentityField(entry.source)
-                appendIdentityField(entry.chatId?.toString().orEmpty())
-            }
-    }.sha256Utf8()
-
     private fun StringBuilder.appendIdentityField(value: String) {
         append(value.length)
         append(':')
@@ -348,9 +336,7 @@ class MemoryLongTermConsolidationScheduler(
         private const val CHECKPOINT_IDENTITY_VERSION = "whole-corpus-checkpoint:v1"
         private const val JOB_IDENTITY_VERSION = "whole-corpus-job:v1"
         private const val ORDERED_SNAPSHOT_VERSION = "long-term-ordered-entry-offsets:v1"
-        private const val RECALL_PROJECTION_PLACEHOLDER_VERSION = "long-term-recall-projection-placeholder:v1"
         private const val IDENTITY_HASH_LENGTH = 24
-        private val ACTIVE_RECALL_STATES = setOf(MemoryRecallState.CORE, MemoryRecallState.QUERY)
         private val RUNNABLE_JOB_STATUSES = setOf(
             MemoryMaintenanceJobStatus.PENDING,
             MemoryMaintenanceJobStatus.FAILED_RETRYABLE

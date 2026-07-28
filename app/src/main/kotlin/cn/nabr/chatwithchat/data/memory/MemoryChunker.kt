@@ -21,10 +21,34 @@ class MemoryChunker(
 
     fun chunksFor(
         sourcePath: String,
-        markdown: String
-    ): List<MemoryCorpusChunk> {
+        markdown: String,
+        projectionPolicy: MemoryProjectionPolicy
+    ): MemoryChunkingResult {
         val parsed = markdownMemoryCodec.parse(markdown)
-        val parsedEntryChunks = parsed.entries.flatMapIndexed { entryIndex, entry ->
+        if (
+            projectionPolicy == MemoryProjectionPolicy.CHAT_ACTIVE_ONLY &&
+            parsed.skippedEntries.isNotEmpty()
+        ) {
+            return chunkingResult(
+                chunks = emptyList(),
+                diagnostics = listOf(
+                    MemoryProjectionDiagnostic(
+                        code = DIAGNOSTIC_CHAT_PARSE_FAILED,
+                        sourcePath = sourcePath,
+                        count = parsed.skippedEntries.size
+                    )
+                )
+            )
+        }
+
+        val projectedEntries = when (projectionPolicy) {
+            MemoryProjectionPolicy.CHAT_ACTIVE_ONLY -> parsed.entries.filter { entry ->
+                entry.validity == MemoryValidity.CURRENT &&
+                    entry.recallState in setOf(MemoryRecallState.CORE, MemoryRecallState.QUERY)
+            }
+            MemoryProjectionPolicy.MAINTENANCE_FULL -> parsed.entries
+        }
+        val parsedEntryChunks = projectedEntries.flatMapIndexed { entryIndex, entry ->
             splitText(entry.text).mapIndexed { partIndex, chunkText ->
                 corpusChunk(
                     chunkId = chunkId(sourcePath, entry.id, partIndex),
@@ -38,21 +62,69 @@ class MemoryChunker(
                     source = entry.source,
                     chatId = entry.chatId,
                     createdAt = entry.createdAt,
-                    updatedAt = entry.updatedAt
+                    updatedAt = entry.updatedAt,
+                    canonicalKey = entry.canonicalKey,
+                    scope = entry.scope,
+                    validity = entry.validity,
+                    recallState = entry.recallState
                 )
             }
         }
-        if (parsedEntryChunks.isNotEmpty()) return parsedEntryChunks
-        if (parsed.skippedEntries.isNotEmpty()) return emptyList()
+        if (parsedEntryChunks.isNotEmpty() || parsed.entries.isNotEmpty()) {
+            return chunkingResult(
+                chunks = parsedEntryChunks,
+                diagnostics = parsed.skippedEntries.takeIf { it.isNotEmpty() }?.let { skipped ->
+                    listOf(
+                        MemoryProjectionDiagnostic(
+                            code = DIAGNOSTIC_MAINTENANCE_PARSE_SKIPPED,
+                            sourcePath = sourcePath,
+                            count = skipped.size
+                        )
+                    )
+                }.orEmpty()
+            )
+        }
+        if (parsed.skippedEntries.isNotEmpty()) {
+            return chunkingResult(
+                chunks = emptyList(),
+                diagnostics = listOf(
+                    MemoryProjectionDiagnostic(
+                        code = DIAGNOSTIC_MAINTENANCE_PARSE_SKIPPED,
+                        sourcePath = sourcePath,
+                        count = parsed.skippedEntries.size
+                    )
+                )
+            )
+        }
+        if (projectionPolicy == MemoryProjectionPolicy.CHAT_ACTIVE_ONLY) {
+            val hasUnstructuredBody = markdown
+                .replace(HIDDEN_COMMENT_REGEX, "")
+                .lineSequence()
+                .map(String::trim)
+                .any { line -> line.isNotBlank() && !line.startsWith("#") }
+            return chunkingResult(
+                chunks = emptyList(),
+                diagnostics = if (hasUnstructuredBody) {
+                    listOf(
+                        MemoryProjectionDiagnostic(
+                            code = DIAGNOSTIC_CHAT_UNSTRUCTURED,
+                            sourcePath = sourcePath
+                        )
+                    )
+                } else {
+                    emptyList()
+                }
+            )
+        }
 
-        return fallbackChunks(sourcePath, markdown)
+        return chunkingResult(fallbackChunks(sourcePath, markdown))
     }
 
     private fun fallbackChunks(
         sourcePath: String,
         markdown: String
     ): List<MemoryCorpusChunk> {
-        val sections = splitSections(markdown)
+        val sections = splitSections(markdown.replace(HIDDEN_COMMENT_REGEX, ""))
         return sections.flatMapIndexed { sectionIndex, section ->
             splitText(section.text).mapIndexed { partIndex, chunkText ->
                 corpusChunk(
@@ -67,7 +139,11 @@ class MemoryChunker(
                     source = null,
                     chatId = null,
                     createdAt = 0L,
-                    updatedAt = 0L
+                    updatedAt = 0L,
+                    canonicalKey = null,
+                    scope = null,
+                    validity = null,
+                    recallState = null
                 )
             }
         }
@@ -85,20 +161,23 @@ class MemoryChunker(
         source: String?,
         chatId: Int?,
         createdAt: Long,
-        updatedAt: Long
+        updatedAt: Long,
+        canonicalKey: String?,
+        scope: String?,
+        validity: String?,
+        recallState: String?
     ): MemoryCorpusChunk {
-        val contentHash = listOf(
-            hashField("entryId", entryId),
-            hashField("sourcePath", sourcePath),
-            hashField("chunkIndex", chunkIndex.toString()),
+        val embeddingText = text.normalizedNaturalLanguage()
+        val embeddingContentHash = embeddingText.sha256Utf8()
+        val rankingHash = listOf(
+            hashField("embeddingContentHash", embeddingContentHash),
             hashField("heading", heading),
-            hashField("text", text),
             hashField("type", type),
             hashField("sensitivity", sensitivity),
-            hashField("source", source),
-            hashField("chatId", chatId?.toString()),
-            hashField("createdAt", createdAt.toString()),
-            hashField("updatedAt", updatedAt.toString())
+            hashField("canonicalKey", canonicalKey),
+            hashField("scope", scope),
+            hashField("validity", validity),
+            hashField("recallState", recallState)
         ).joinToString(separator = "")
             .sha256Utf8()
         return MemoryCorpusChunk(
@@ -114,7 +193,33 @@ class MemoryChunker(
             chatId = chatId,
             createdAt = createdAt,
             updatedAt = updatedAt,
-            contentHash = contentHash
+            canonicalKey = canonicalKey,
+            scope = scope,
+            validity = validity,
+            recallState = recallState,
+            embeddingText = embeddingText,
+            embeddingContentHash = embeddingContentHash,
+            rankingHash = rankingHash
+        )
+    }
+
+    private fun chunkingResult(
+        chunks: List<MemoryCorpusChunk>,
+        diagnostics: List<MemoryProjectionDiagnostic> = emptyList()
+    ): MemoryChunkingResult {
+        val projectionHash = chunks.mapIndexed { index, chunk ->
+            listOf(
+                hashField("index", index.toString()),
+                hashField("chunkId", chunk.chunkId),
+                hashField("embeddingContentHash", chunk.embeddingContentHash),
+                hashField("rankingHash", chunk.rankingHash)
+            ).joinToString(separator = "")
+        }.joinToString(separator = "")
+            .sha256Utf8()
+        return MemoryChunkingResult(
+            chunks = chunks,
+            projectionHash = projectionHash,
+            diagnostics = diagnostics
         )
     }
 
@@ -123,7 +228,9 @@ class MemoryChunker(
         return "$name:${normalized?.length ?: -1}:${normalized.orEmpty()}"
     }
 
-    private fun String.normalizedHashValue(): String = trim().replace(WHITESPACE_REGEX, " ")
+    private fun String.normalizedHashValue(): String = normalizedNaturalLanguage()
+
+    private fun String.normalizedNaturalLanguage(): String = trim().replace(WHITESPACE_REGEX, " ")
 
     private fun splitSections(markdown: String): List<MarkdownSection> {
         val sections = mutableListOf<MarkdownSection>()
@@ -210,5 +317,9 @@ class MemoryChunker(
         private const val CHUNK_INDEX_STRIDE = 100
         private const val MIN_NATURAL_BREAK_DISTANCE = 240
         private val WHITESPACE_REGEX = Regex("\\s+")
+        private val HIDDEN_COMMENT_REGEX = Regex("<!--.*?-->", setOf(RegexOption.DOT_MATCHES_ALL))
+        private const val DIAGNOSTIC_CHAT_PARSE_FAILED = "chat_projection_parse_failed"
+        private const val DIAGNOSTIC_CHAT_UNSTRUCTURED = "chat_projection_unstructured"
+        private const val DIAGNOSTIC_MAINTENANCE_PARSE_SKIPPED = "maintenance_projection_entries_skipped"
     }
 }

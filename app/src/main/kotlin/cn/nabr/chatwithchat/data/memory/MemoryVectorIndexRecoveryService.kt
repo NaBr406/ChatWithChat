@@ -84,7 +84,7 @@ class MemoryVectorIndexRecoveryService(
             receipt.groupId != payload.mutationGroupId ||
             receipt.generation != payload.generation ||
             receipt.sourcePath != payload.sourcePath ||
-            receipt.targetSourceHash != payload.sourceHash ||
+            !receipt.targetSourceHash.matches(SHA_256_REGEX) ||
             receipt.targetIndexFingerprint != payload.targetIndexFingerprint
         ) {
             return markConflict(state, payload, "vector_index_receipt_identity_conflict")
@@ -106,28 +106,29 @@ class MemoryVectorIndexRecoveryService(
         if (
             snapshot == null ||
             snapshot.sourcePath != state.sourcePath ||
-            snapshot.sourceHash != state.sourceHash
+            snapshot.recallProjectionHash != state.recallProjectionHash
         ) {
-            return markConflict(state, payload, "canonical_memory_does_not_match_room_corpus")
+            return markConflict(state, payload, "recall_projection_does_not_match_room_corpus")
         }
 
         return when (val verification = vectorStore.verifySnapshot(state.toExpectation(snapshot.chunks))) {
             is MemoryVectorSnapshotVerification.Ready -> {
-                if (!snapshotSource.isCurrent(listOf(snapshot)).getOrThrow()) {
-                    return markConflict(state, payload, "canonical_memory_changed_before_room_fast_forward")
+                if (!snapshotSource.isProjectionCurrent(listOf(snapshot)).getOrThrow()) {
+                    return markConflict(state, payload, "recall_projection_changed_before_room_fast_forward")
                 }
                 when (
                     recoveryDao.completeVectorIndexPublication(
-                    MemoryVectorIndexPublicationRequest(
-                        corpus = state.corpus,
-                        mutationGroupId = payload.mutationGroupId,
-                        receiptId = payload.receiptId,
-                        generation = payload.generation,
-                        sourcePath = payload.sourcePath,
-                        sourceHash = payload.sourceHash,
-                        targetIndexFingerprint = payload.targetIndexFingerprint,
-                        completedAt = now()
-                    )
+                        MemoryVectorIndexPublicationRequest(
+                            corpus = state.corpus,
+                            mutationGroupId = payload.mutationGroupId,
+                            receiptId = payload.receiptId,
+                            generation = payload.generation,
+                            sourcePath = payload.sourcePath,
+                            recallProjectionHash = payload.recallProjectionHash,
+                            canonicalSourceHash = receipt.targetSourceHash,
+                            targetIndexFingerprint = payload.targetIndexFingerprint,
+                            completedAt = now()
+                        )
                     )
                 ) {
                     MemoryVectorIndexPublicationOutcome.COMPLETED,
@@ -252,7 +253,7 @@ class MemoryVectorIndexRecoveryService(
             recoveryDao.transitionCorpusIndexStatusCas(
                 corpus = latest.corpus,
                 expectedGeneration = latest.generation,
-                expectedSourceHash = latest.sourceHash,
+                expectedRecallProjectionHash = latest.recallProjectionHash,
                 expectedTargetIndexFingerprint = latest.targetIndexFingerprint,
                 expectedIndexStatus = latest.indexStatus,
                 expectedRowVersion = latest.rowVersion,
@@ -267,7 +268,7 @@ class MemoryVectorIndexRecoveryService(
         corpus == other.corpus &&
             generation == other.generation &&
             sourcePath == other.sourcePath &&
-            sourceHash == other.sourceHash &&
+            recallProjectionHash == other.recallProjectionHash &&
             targetIndexFingerprint == other.targetIndexFingerprint &&
             latestReceiptId == other.latestReceiptId
 
@@ -277,7 +278,7 @@ class MemoryVectorIndexRecoveryService(
         MemoryVectorSnapshotExpectation(
             corpus = MemoryCorpus.CHAT_RECALL_LONG_TERM,
             sourcePath = sourcePath,
-            sourceHash = sourceHash,
+            recallProjectionHash = recallProjectionHash,
             corpusGeneration = generation,
             indexFingerprint = checkNotNull(targetIndexFingerprint),
             chunks = chunks
@@ -289,7 +290,7 @@ class MemoryVectorIndexRecoveryService(
         if (
             state.generation <= 0 ||
             state.sourcePath != MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME ||
-            !state.sourceHash.matches(SHA_256_REGEX)
+            !state.recallProjectionHash.matches(SHA_256_REGEX)
         ) {
             return null
         }
@@ -299,7 +300,7 @@ class MemoryVectorIndexRecoveryService(
             receiptId = receiptId,
             generation = state.generation,
             sourcePath = state.sourcePath,
-            sourceHash = state.sourceHash,
+            recallProjectionHash = state.recallProjectionHash,
             targetIndexFingerprint = fingerprint
         )
     }

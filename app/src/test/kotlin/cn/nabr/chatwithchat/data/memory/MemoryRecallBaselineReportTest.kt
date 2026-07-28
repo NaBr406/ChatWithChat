@@ -64,12 +64,18 @@ class MemoryRecallBaselineReportTest {
         entries: List<MarkdownMemoryEntry>
     ): BaselineRow {
         val markdown = MarkdownMemoryCodec().renderLongTerm(entries)
+        val chunking = MemoryChunker().chunksFor(
+            MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+            markdown,
+            MemoryProjectionPolicy.CHAT_ACTIVE_ONLY
+        )
         val snapshot = MemoryCorpusSnapshot(
             corpus = MemoryCorpus.CHAT_RECALL_LONG_TERM,
             sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
-            sourceHash = markdown.sha256Utf8(),
+            canonicalSourceHash = markdown.sha256Utf8(),
+            recallProjectionHash = chunking.projectionHash,
             generation = 1L,
-            chunks = MemoryChunker().chunksFor(MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME, markdown)
+            chunks = chunking.chunks
         )
         val retriever = BaselineRecordingRetriever(snapshot)
         val repository = MemoryRepositoryImpl(

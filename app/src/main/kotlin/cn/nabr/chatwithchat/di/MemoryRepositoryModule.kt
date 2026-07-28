@@ -258,14 +258,16 @@ object MemoryRepositoryModule {
         memoryLongTermConsolidationDao: MemoryLongTermConsolidationDao,
         memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
         settingRepository: SettingRepository,
-        memoryMaintenanceWorkEnqueuer: MemoryMaintenanceWorkEnqueuer
+        memoryMaintenanceWorkEnqueuer: MemoryMaintenanceWorkEnqueuer,
+        memoryChunker: MemoryChunker
     ): MemoryLongTermConsolidationScheduler = MemoryLongTermConsolidationScheduler(
         memoryFileStore = memoryFileStore,
         markdownMemoryCodec = markdownMemoryCodec,
         checkpointDao = memoryLongTermConsolidationDao,
         maintenanceScheduler = memoryMaintenanceScheduler,
         settingRepository = settingRepository,
-        workEnqueuer = memoryMaintenanceWorkEnqueuer
+        workEnqueuer = memoryMaintenanceWorkEnqueuer,
+        memoryChunker = memoryChunker
     )
 
     @Provides
@@ -275,13 +277,15 @@ object MemoryRepositoryModule {
         memoryFileStore: MemoryFileStore,
         memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
         memoryMaintenanceWorkEnqueuer: MemoryMaintenanceWorkEnqueuer,
-        memoryLongTermConsolidationScheduler: MemoryLongTermConsolidationScheduler
+        memoryLongTermConsolidationScheduler: MemoryLongTermConsolidationScheduler,
+        memoryChunker: MemoryChunker
     ): MemoryMutationCoordinator = MemoryMutationCoordinator(
         recoveryDao = memoryRecoveryDao,
         memoryFileStore = memoryFileStore,
         maintenanceScheduler = memoryMaintenanceScheduler,
         workEnqueuer = memoryMaintenanceWorkEnqueuer,
-        materialMutationObserver = memoryLongTermConsolidationScheduler
+        materialMutationObserver = memoryLongTermConsolidationScheduler,
+        memoryChunker = memoryChunker
     )
 
     @Provides
@@ -289,11 +293,13 @@ object MemoryRepositoryModule {
     fun provideMemoryVectorIndexBootstrapService(
         memoryRecoveryDao: MemoryRecoveryDao,
         memoryFileStore: MemoryFileStore,
-        memoryMutationCoordinator: MemoryMutationCoordinator
+        memoryMutationCoordinator: MemoryMutationCoordinator,
+        memoryChunker: MemoryChunker
     ): MemoryVectorIndexBootstrapService = MemoryVectorIndexBootstrapService(
         recoveryDao = memoryRecoveryDao,
         memoryFileStore = memoryFileStore,
-        mutationCoordinator = memoryMutationCoordinator
+        mutationCoordinator = memoryMutationCoordinator,
+        memoryChunker = memoryChunker
     )
 
     @Provides

@@ -22,6 +22,7 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -39,7 +40,7 @@ class MemoryVectorIndexBootstrapServiceTest {
         assertTrue(result is MemoryVectorIndexBootstrapResult.Scheduled)
         assertEquals(contentBefore, fixture.fileStore.readLongTermMemory().getOrThrow())
         assertEquals(hashBefore, fixture.sourceHash())
-        assertEquals(hashBefore, fixture.corpus().sourceHash)
+        assertEquals(fixture.projectionHash(), fixture.corpus().recallProjectionHash)
         assertEquals(hashBefore, fixture.receipt(fixture.corpus()).targetSourceHash)
     }
 
@@ -59,7 +60,7 @@ class MemoryVectorIndexBootstrapServiceTest {
         val corpus = fixture.corpus()
         val receipt = fixture.receipt(corpus)
         val group = checkNotNull(fixture.recoveryDao.getMutationGroup(receipt.groupId))
-        assertEquals(hashBefore, corpus.sourceHash)
+        assertEquals(fixture.projectionHash(), corpus.recallProjectionHash)
         assertEquals(FINGERPRINT_A, corpus.targetIndexFingerprint)
         assertEquals(hashBefore, receipt.baseSourceHash)
         assertEquals(hashBefore, receipt.targetSourceHash)
@@ -77,7 +78,7 @@ class MemoryVectorIndexBootstrapServiceTest {
         assertEquals(group.groupId, payload.mutationGroupId)
         assertEquals(receipt.receiptId, payload.receiptId)
         assertEquals(corpus.generation, payload.generation)
-        assertEquals(hashBefore, payload.sourceHash)
+        assertEquals(fixture.projectionHash(), payload.recallProjectionHash)
         assertEquals(FINGERPRINT_A, payload.targetIndexFingerprint)
         assertEquals(1, fixture.workEnqueuer.enqueueCalls)
     }
@@ -102,35 +103,68 @@ class MemoryVectorIndexBootstrapServiceTest {
     }
 
     @Test
+    fun `observation only canonical update remains projection current on restart`() = runBlocking {
+        val fixture = Fixture()
+        val first = fixture.service().bootstrap() as MemoryVectorIndexBootstrapResult.Scheduled
+        val exactHashBefore = fixture.sourceHash()
+        val projectionHashBefore = fixture.projectionHash()
+        val receiptBefore = fixture.receipt(fixture.corpus())
+        fixture.fileStore.replaceLongTermMemory(
+            MarkdownMemoryCodec().renderLongTerm(
+                listOf(
+                    INITIAL_ENTRY.copy(
+                        lastObservedAt = 2L,
+                        evidenceRefs = listOf("chat:1:user:1", "chat:2:user:1")
+                    )
+                )
+            )
+        ).getOrThrow()
+
+        val second = fixture.service().bootstrap()
+
+        assertTrue(second is MemoryVectorIndexBootstrapResult.AlreadyCurrent)
+        second as MemoryVectorIndexBootstrapResult.AlreadyCurrent
+        assertEquals(first.generation, second.generation)
+        assertNotEquals(exactHashBefore, fixture.sourceHash())
+        assertEquals(projectionHashBefore, fixture.projectionHash())
+        assertEquals(projectionHashBefore, second.recallProjectionHash)
+        assertEquals(receiptBefore.targetSourceHash, fixture.receipt(fixture.corpus()).targetSourceHash)
+        assertEquals(1, fixture.jobDao.jobs.size)
+        assertEquals(1, fixture.workEnqueuer.enqueueCalls)
+    }
+
+    @Test
     fun `content change advances generation and preserves the new canonical hash`() = runBlocking {
         val fixture = Fixture()
         val first = fixture.service().bootstrap() as MemoryVectorIndexBootstrapResult.Scheduled
         fixture.fileStore.replaceLongTermMemory(UPDATED_MARKDOWN).getOrThrow()
-        val updatedHash = fixture.sourceHash()
 
         val second = fixture.service().bootstrap() as MemoryVectorIndexBootstrapResult.Scheduled
 
         assertTrue(second.generation > first.generation)
-        assertEquals(updatedHash, second.sourceHash)
+        assertEquals(fixture.projectionHash(), second.recallProjectionHash)
         assertEquals(UPDATED_MARKDOWN, fixture.fileStore.readLongTermMemory().getOrThrow())
-        assertEquals(updatedHash, fixture.corpus().sourceHash)
+        assertEquals(fixture.projectionHash(), fixture.corpus().recallProjectionHash)
         assertEquals(2, fixture.jobDao.jobs.size)
     }
 
     @Test
-    fun `fingerprint change advances generation without changing memory content`() = runBlocking {
+    fun `fingerprint change rebuilds once without changing memory content`() = runBlocking {
         val fixture = Fixture()
         val first = fixture.service(FINGERPRINT_A).bootstrap() as MemoryVectorIndexBootstrapResult.Scheduled
         val contentBefore = fixture.fileStore.readLongTermMemory().getOrThrow()
         val hashBefore = fixture.sourceHash()
 
         val second = fixture.service(FINGERPRINT_B).bootstrap() as MemoryVectorIndexBootstrapResult.Scheduled
+        val third = fixture.service(FINGERPRINT_B).bootstrap()
 
         assertTrue(second.generation > first.generation)
         assertEquals(FINGERPRINT_B, second.indexFingerprint)
         assertEquals(contentBefore, fixture.fileStore.readLongTermMemory().getOrThrow())
         assertEquals(hashBefore, fixture.sourceHash())
         assertEquals(FINGERPRINT_B, fixture.corpus().targetIndexFingerprint)
+        assertTrue(third is MemoryVectorIndexBootstrapResult.AlreadyCurrent)
+        assertEquals(2, fixture.jobDao.jobs.size)
     }
 
     @Test
@@ -147,7 +181,7 @@ class MemoryVectorIndexBootstrapServiceTest {
         assertTrue(second.generation > first.generation)
         assertTrue(third.generation > second.generation)
         assertTrue(firstReceiptId != fixture.corpus().latestReceiptId)
-        assertEquals(INITIAL_MARKDOWN.sha256Utf8(), fixture.corpus().sourceHash)
+        assertEquals(fixture.projectionHash(), fixture.corpus().recallProjectionHash)
     }
 
     @Test
@@ -156,7 +190,8 @@ class MemoryVectorIndexBootstrapServiceTest {
         val sourceContent = fixture.fileStore.readLongTermMemory().getOrThrow()
         val prepared = fixture.coordinator.prepareLocalIndexBootstrap(
             sourceContent = sourceContent,
-            sourceHash = fixture.sourceHash(),
+            canonicalSourceHash = fixture.sourceHash(),
+            recallProjectionHash = fixture.projectionHash(),
             targetIndexFingerprint = FINGERPRINT_A,
             observedCorpusGeneration = 0L
         )
@@ -180,12 +215,12 @@ class MemoryVectorIndexBootstrapServiceTest {
             MemoryCorpusState(
                 corpus = CHAT_RECALL_CORPUS_KEY,
                 sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
-                sourceHash = sourceHash,
+                recallProjectionHash = fixture.projectionHash(),
                 generation = 7L,
                 targetIndexFingerprint = FINGERPRINT_A,
                 indexStatus = MemoryCorpusIndexStatus.WAITING_REPAIR,
                 indexedGeneration = null,
-                indexedSourceHash = null,
+                indexedRecallProjectionHash = null,
                 indexedFingerprint = null,
                 latestReceiptId = null,
                 lastError = "room_corpus_is_missing_vector_receipt_identity",
@@ -265,6 +300,12 @@ class MemoryVectorIndexBootstrapServiceTest {
             MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME
         ).getOrThrow()
 
+        suspend fun projectionHash(): String = MemoryChunker().chunksFor(
+            MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+            fileStore.readLongTermMemory().getOrThrow(),
+            MemoryProjectionPolicy.CHAT_ACTIVE_ONLY
+        ).projectionHash
+
         suspend fun corpus() = checkNotNull(recoveryDao.getCorpusState(CHAT_RECALL_CORPUS_KEY))
 
         suspend fun receipt(corpus: MemoryCorpusState) =
@@ -309,8 +350,24 @@ class MemoryVectorIndexBootstrapServiceTest {
     private companion object {
         const val CHAT_RECALL_CORPUS_KEY = "chat_recall_long_term"
         const val FIXED_TIME = 1_784_000_000L
-        const val INITIAL_MARKDOWN = "# ChatWithChat Memory\n\n- Existing user preference\n"
-        const val UPDATED_MARKDOWN = "# ChatWithChat Memory\n\n- Updated user preference\n"
+        val INITIAL_ENTRY = MarkdownMemoryEntry(
+            id = "mem_bootstrap_preference",
+            text = "Existing user preference",
+            type = "communication_style",
+            sensitivity = MemorySensitivity.NORMAL,
+            source = MemorySource.EXPLICIT_USER_STATEMENT,
+            createdAt = 1L,
+            updatedAt = 1L,
+            lastObservedAt = 1L,
+            canonicalKey = "communication.response_style",
+            scope = "general",
+            recallState = MemoryRecallState.QUERY,
+            evidenceRefs = listOf("chat:1:user:1")
+        )
+        val INITIAL_MARKDOWN = MarkdownMemoryCodec().renderLongTerm(listOf(INITIAL_ENTRY))
+        val UPDATED_MARKDOWN = MarkdownMemoryCodec().renderLongTerm(
+            listOf(INITIAL_ENTRY.copy(text = "Updated user preference", updatedAt = 2L, lastObservedAt = 2L))
+        )
         val FINGERPRINT_A = "a".repeat(64)
         val FINGERPRINT_B = "b".repeat(64)
         val FIXED_CLOCK: Clock = Clock.fixed(Instant.ofEpochSecond(FIXED_TIME), ZoneOffset.UTC)

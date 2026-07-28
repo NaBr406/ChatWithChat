@@ -2948,6 +2948,59 @@ class ChatRepositoryImplTest {
     }
 
     @Test
+    fun `unsafe memory prompt fails before every provider request`() {
+        val scenarios = providerMemoryGuardScenarios()
+        val unsafePrompts = listOf(
+            "Relevant user memories:\n<!-- memory:type=profile\n- The user prefers concise answers.",
+            "Relevant user memories:\nentryId: mem_internal_42\n- The user prefers concise answers.",
+            "Relevant user memories:\nsourcePath: memory/2026-07-29.md\n- The user prefers concise answers.",
+            "Relevant user memories:\nembeddingContentHash: ${"a".repeat(64)}\n- The user prefers concise answers."
+        )
+
+        scenarios.forEach { scenario ->
+            unsafePrompts.forEach { memoryPrompt ->
+                val error = assertThrows(IllegalArgumentException::class.java) {
+                    runBlocking {
+                        scenario.repository.completeChat(
+                            userMessages = listOf(MessageV2(content = "Hello", platformType = null)),
+                            assistantMessages = emptyList(),
+                            platform = scenario.platform,
+                            memoryPrompt = memoryPrompt
+                        ).toList()
+                    }
+                }
+                assertEquals(
+                    "${scenario.name} returned an unstable guard error",
+                    "Memory prompt contains internal metadata and cannot be sent to a provider.",
+                    error.message
+                )
+            }
+
+            assertEquals("${scenario.name} reached the network API", 0, scenario.requestCount())
+        }
+    }
+
+    @Test
+    fun `natural language memory prompt reaches every provider`() = runBlocking {
+        val memoryPrompt =
+            "Relevant user memories:\n" +
+                "- The user prefers concise answers.\n" +
+                "- The user discusses IDs, file paths, hash functions, and SHA-256 in natural language."
+
+        providerMemoryGuardScenarios().forEach { scenario ->
+            scenario.repository.completeChat(
+                userMessages = listOf(MessageV2(content = "Hello", platformType = null)),
+                assistantMessages = emptyList(),
+                platform = scenario.platform,
+                memoryPrompt = memoryPrompt
+            ).toList()
+
+            assertEquals("${scenario.name} did not reach the network API", 1, scenario.requestCount())
+            assertTrue("${scenario.name} lost the natural-language memory prompt", scenario.systemPrompt().contains(memoryPrompt))
+        }
+    }
+
+    @Test
     fun `openai responses final request merges memory exactly once with all prompt sections`() = runBlocking {
         val harness = providerPromptHarness()
         val platform = openAIPlatform(systemPrompt = PROVIDER_BASE_SYSTEM_MARKER)
@@ -3490,6 +3543,48 @@ class ChatRepositoryImplTest {
         )
     }
 
+    private fun providerMemoryGuardScenarios(): List<ProviderMemoryGuardScenario> {
+        val openAIResponsesAPI = RecordingOpenAIAPI()
+        val openAIChatAPI = RecordingOpenAIAPI()
+        val anthropicAPI = RecordingAnthropicAPI()
+        val googleAPI = RecordingGoogleAPI()
+        return listOf(
+            ProviderMemoryGuardScenario(
+                name = "OpenAI Responses",
+                repository = createRepository(openAIAPI = openAIResponsesAPI),
+                platform = openAIPlatform(),
+                requestCount = { openAIResponsesAPI.streamResponsesCalls },
+                systemPrompt = { openAIResponsesAPI.responsesRequests.single().instructions.orEmpty() }
+            ),
+            ProviderMemoryGuardScenario(
+                name = "OpenAI Chat Completions",
+                repository = createRepository(openAIAPI = openAIChatAPI),
+                platform = openRouterPlatform(),
+                requestCount = { openAIChatAPI.streamChatCompletionCalls },
+                systemPrompt = { openAIChatAPI.chatCompletionRequests.single().systemText() }
+            ),
+            ProviderMemoryGuardScenario(
+                name = "Anthropic",
+                repository = createRepository(anthropicAPI = anthropicAPI),
+                platform = anthropicPlatform(),
+                requestCount = { anthropicAPI.streamCalls },
+                systemPrompt = { anthropicAPI.requests.single().systemPrompt.orEmpty() }
+            ),
+            ProviderMemoryGuardScenario(
+                name = "Google",
+                repository = createRepository(googleAPI = googleAPI),
+                platform = googlePlatform(),
+                requestCount = { googleAPI.streamCalls },
+                systemPrompt = {
+                    googleAPI.requests.single().systemInstruction
+                        ?.parts
+                        .orEmpty()
+                        .joinToString(separator = "\n") { part -> part.text.orEmpty() }
+                }
+            )
+        )
+    }
+
     private suspend fun ProviderPromptHarness.execute(platform: PlatformV2) {
         val (userMessages, assistantMessages) = promptAssemblyConversation(platform.uid)
         repository.completeChat(
@@ -3558,6 +3653,14 @@ class ChatRepositoryImplTest {
         val anthropicAPI: RecordingAnthropicAPI,
         val googleAPI: RecordingGoogleAPI,
         val promptTraceStore: PromptTraceStore
+    )
+
+    private data class ProviderMemoryGuardScenario(
+        val name: String,
+        val repository: ChatRepositoryImpl,
+        val platform: PlatformV2,
+        val requestCount: () -> Int,
+        val systemPrompt: () -> String
     )
 
     private companion object {

@@ -553,7 +553,7 @@ git diff --check
 - [x] LLM 提议 key/scope/合并文本；本地 policy 重新校验 grammar、type compatibility、trust、evidence、时间和唯一性。
 - [x] 每次长期 commit 前本地解析完整 `MEMORY.md` 建立 canonical identity index。相关 working-set limit 只用于 LLM 上下文，不能作为最终 collision guard。
 - [x] 同一 identity + 同一事实：stable active ID 不变；只合并 bounded evidence refs 并推进 `lastObservedAt`。policy 将其报告为零 material mutation，writer 使用 nullable fingerprint 提交且不 enqueue vector sync。
-- [ ] Task 4 仍须证明 metadata-only observation 前后 embedding text/projection hash 不变，并消除 startup bootstrap 因 full-file hash 变化而重建的可能；在此之前不得把“不会触发 embedding rebuild”记为端到端完成。
+- [x] Task 4 已证明 metadata-only observation 前后 embedding text/projection hash 不变，并消除 startup bootstrap 因 full-file hash 变化而重建的可能；“不会触发 embedding rebuild”的端到端自动化证据已闭合。
 - [x] 同一 identity + 新事实：先按 trust，再按 evidence time 决胜。不能同时留下两个 current/query 值。
 - [x] active canonical entry 的 ID 在后续更新中保持稳定。需要保留旧值时，创建 deterministic maintenance-history ID，将旧值标 obsolete/maintenance-only 并令 `supersededBy` 指向 active survivor。
 - [x] 多个 legacy entries 冲突时，确定性选择 survivor；losers 进入 maintenance history。重复执行结果必须相同。
@@ -599,9 +599,9 @@ git diff --check
 - Metadata-only long-term targets persist with `targetIndexFingerprint=null`. `MemoryMutationCoordinator` performs the same staged file CAS and recovery, then transitions the receipt/group directly to `INDEXED` without advancing recall-corpus generation, enqueueing `SYNC_VECTOR_INDEX`, or scheduling INDEX work. Material text/membership changes retain the prior index reconciliation path.
 - Service-level tests cover hidden full-file collisions, stable active/history IDs, stronger/weaker evidence, process replay, committed-file recovery, concurrent revision protection, and the metadata-only zero-index-work path.
 
-**Deferred projection proof**
+**Projection proof handoff**
 
-- This task proves zero immediate index work for observation-only commits. Task 4 remains responsible for separating full-file and active recall projection hashes so startup bootstrap also treats metadata-only changes as embedding-identical; that Task 4 requirement remains open.
+- This task proves zero immediate index work for observation-only commits. Task 4 subsequently separated full-file and active recall projection hashes; bootstrap now treats metadata-only changes as projection-current and does not create another generation or vector sync job.
 
 **Verification**
 
@@ -699,24 +699,24 @@ git diff --check
 
 **Implementation requirements:**
 
-- [ ] 保留现有两个 corpus enum，但让 snapshot/chunker 明确接收 projection policy。
-- [ ] `MAINTENANCE_WORKING_SET` 输出全部 entries/metadata/history/daily；`CHAT_RECALL_LONG_TERM` 在 split/chunk/vector 之前过滤为 current + core/query active entries。
-- [ ] 不允许 fallback section chunking 把 raw hidden comments 或 obsolete bullets重新带入 chat corpus；chat projection parse 失败时 fail closed，并记录 diagnostics。
-- [ ] 区分 canonical full-file CAS hash 与 active recall projection hash。不得改变 mutation receipt 对真实文件 bytes 的比较语义。
-- [ ] embedding input 与 embedding content hash 只依赖 active natural-language semantic content；不得包含 maintenance timestamps、IDs、key/scope、path 或 lifecycle labels。
-- [ ] `lastObservedAt` / evidence-only 更新不使 embedding snapshot stale；active text/membership 变化必须使 recall projection 和向量身份变化。
-- [ ] `MemoryChunker` 的 ranking/diagnostic hash 与 embedding hash 如需不同，应使用不同命名字段，不能继续让一个 `contentHash` 同时承担冲突语义。
-- [ ] projection/chunker 语义变化必须提升 fingerprint/version，使旧 ObjectBox snapshot 受控 rebuild 一次；不能把旧 index 当兼容数据直接读取。
-- [ ] vector missing/stale/corrupt fallback 仍从同一个 active-only chat projection做 lexical，不得回退到 maintenance corpus。
-- [ ] internal retrieval IDs 只能进入 `PromptTraceStore` 等本地诊断，provider assembly 必须再做 defense-in-depth assertion。
+- [x] 保留现有两个 corpus enum，但让 snapshot/chunker 明确接收 projection policy。
+- [x] `MAINTENANCE_WORKING_SET` 输出全部 entries/metadata/history/daily；`CHAT_RECALL_LONG_TERM` 在 split/chunk/vector 之前过滤为 current + core/query active entries。
+- [x] 不允许 fallback section chunking 把 raw hidden comments 或 obsolete bullets重新带入 chat corpus；chat projection parse 失败时 fail closed，并记录 diagnostics。
+- [x] 区分 canonical full-file CAS hash 与 active recall projection hash。不得改变 mutation receipt 对真实文件 bytes 的比较语义。
+- [x] embedding input 与 embedding content hash 只依赖 active natural-language semantic content；不得包含 maintenance timestamps、IDs、key/scope、path 或 lifecycle labels。
+- [x] `lastObservedAt` / evidence-only 更新不使 embedding snapshot stale；active text/membership 变化必须使 recall projection 和向量身份变化。
+- [x] `MemoryChunker` 的 ranking/diagnostic hash 与 embedding hash 如需不同，应使用不同命名字段，不能继续让一个 `contentHash` 同时承担冲突语义。
+- [x] projection/chunker 语义变化必须提升 fingerprint/version，使旧 ObjectBox snapshot 受控 rebuild 一次；不能把旧 index 当兼容数据直接读取。
+- [x] vector missing/stale/corrupt fallback 仍从同一个 active-only chat projection做 lexical，不得回退到 maintenance corpus。
+- [x] internal retrieval IDs 只能进入 `PromptTraceStore` 等本地诊断，provider assembly 必须再做 defense-in-depth assertion。
 
 **Acceptance criteria:**
 
-- [ ] obsolete、contested、maintenance-only 和 daily entries 在 lexical、vector、Hybrid、fallback 中均为零候选。
-- [ ] metadata-only observation update 前后 embedding texts/hashes 完全相同，且不产生 vector sync job。
-- [ ] active fact 文本或 membership 改变会触发恰好一次 index reconciliation。
-- [ ] maintenance reader 仍能看到完整 metadata 和历史。
-- [ ] canonical file CAS/recovery tests 保持通过。
+- [x] obsolete、contested、maintenance-only 和 daily entries 在 lexical、vector、Hybrid、fallback 中均为零候选。
+- [x] metadata-only observation update 前后 embedding texts/hashes 完全相同，且不产生 vector sync job。
+- [x] active fact 文本或 membership 改变会触发恰好一次 index reconciliation。
+- [x] maintenance reader 仍能看到完整 metadata 和历史。
+- [x] canonical file CAS/recovery tests 保持通过。
 
 **Focused verification:**
 
@@ -725,6 +725,24 @@ git diff --check
 ./gradlew.bat :app:compileDebugKotlin
 git diff --check
 ```
+
+#### Task 4 Implementation Record (2026-07-29)
+
+**Projection and identity boundaries**
+
+- Added explicit `CHAT_ACTIVE_ONLY` and `MAINTENANCE_FULL` projection policies. Chat snapshots filter to current core/query entries before split, chunk, vector publication, Hybrid recall, and lexical fallback; malformed or unstructured chat Markdown fails closed with bounded local diagnostics. Maintenance snapshots retain managed history and daily content, and strip hidden comments before legacy fallback chunking.
+- Canonical file byte hashes remain the mutation CAS/receipt identity. Room and ObjectBox readiness now use a separately named recall projection hash, while embedding text/hash is derived only from normalized natural-language chunk text. Ranking hash and projection identity are separate, and projection identity includes stable chunk membership without leaking IDs or paths into embedding input.
+- The vector fingerprint/chunker/projection contracts moved to v2, forcing one controlled compatibility rebuild. Metadata/evidence-only changes remain canonical byte changes but keep projection and embedding hashes stable, do not advance corpus generation, and do not enqueue vector sync; active text or membership changes schedule exactly one reconciliation.
+
+**Provider boundary and compatibility**
+
+- Room Kotlin properties now use `recallProjectionHash` names while physical `source_hash` columns remain unchanged. ObjectBox physical fields and serialized sync payload key `sourceHash` remain backward compatible; publication separately verifies projection identity and the canonical receipt target hash.
+- `MemoryPromptBuilder` no longer renders entry IDs or source paths. `ChatRepositoryImpl.completeChat()` rejects hidden comments, internal memory IDs/paths/metadata keys, and hash markers before any provider DTO or network call; provider-specific tests cover OpenAI Responses, OpenAI Chat/OpenRouter, Anthropic, and Google.
+
+**Verification**
+
+- Focused Task 4 verification passed 189 tests with zero failures/errors across 11 suites: snapshot/chunker/index synchronization, lexical/Hybrid/vector bootstrap/recovery/configuration, mutation CAS, prompt rendering, and all 72 `ChatRepositoryImplTest` provider cases.
+- `./gradlew.bat :app:compileDebugKotlin`, `./gradlew.bat :app:compileDebugAndroidTestKotlin`, ktlint 1.3.1 over all changed Kotlin files, and `git diff --check` passed. Generated-code, native-access/Unsafe, and CRLF messages were informational only.
 
 ### Task 5: Implement Always-On Tiered Recall With Absolute Relevance Gates
 

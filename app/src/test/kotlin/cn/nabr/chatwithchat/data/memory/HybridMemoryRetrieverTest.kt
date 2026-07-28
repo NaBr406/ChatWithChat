@@ -170,7 +170,7 @@ class HybridMemoryRetrieverTest {
             readyManifest(
                 fixture.configuration.identity(
                     sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
-                    sourceHash = "b".repeat(64),
+                    recallProjectionHash = "b".repeat(64),
                     corpusGeneration = DURABLE_GENERATION
                 ),
                 1
@@ -185,6 +185,70 @@ class HybridMemoryRetrieverTest {
         assertEquals(0, fixture.vectorStore.queryCalls)
         assertEquals(0, fixture.provider.embedQueryCalls)
         assertEquals(1, fixture.repairTrigger.requestCalls)
+    }
+
+    @Test
+    fun `ready hybrid projection rejects obsolete contested and maintenance only vector matches`() = runBlocking {
+        val projected = lifecycleProjection()
+        val fixture = fixture(projected.chatSnapshot)
+        fixture.vectorStore.matches = projected.hiddenChunks.mapIndexed { index, hidden ->
+            match(
+                hidden,
+                listOf(TARGET_VECTOR, DIVERSE_VECTOR, OTHER_VECTOR)[index % 3],
+                index * 0.01f
+            )
+        }
+
+        val report = fixture.retriever.retrieveWithDiagnostics(request("hidden-lifecycle-marker")).getOrThrow()
+
+        assertEquals(listOf("mem_active"), projected.chatSnapshot.chunks.map { chunk -> chunk.entryId })
+        assertEquals(
+            setOf("mem_obsolete", "mem_contested", "mem_maintenance"),
+            projected.hiddenChunks.mapNotNull(MemoryCorpusChunk::entryId).toSet()
+        )
+        assertTrue(report.results.isEmpty())
+        assertEquals(MemoryRetrievalMode.NONE, report.mode)
+        assertEquals(1, fixture.provider.embedQueryCalls)
+        assertEquals(1, fixture.vectorStore.queryCalls)
+        assertEquals(0, fixture.repairTrigger.requestCalls)
+    }
+
+    @Test
+    fun `vector missing stale and corrupt fallbacks keep lifecycle history excluded`() = runBlocking {
+        val projected = lifecycleProjection()
+        val cases = listOf<Pair<String, (Fixture) -> MemoryVectorSnapshotVerification>>(
+            "missing" to { MemoryVectorSnapshotVerification.Missing },
+            "stale" to { fixture ->
+                MemoryVectorSnapshotVerification.Stale(
+                    readyManifest(
+                        fixture.configuration.identity(
+                            sourcePath = projected.chatSnapshot.sourcePath,
+                            recallProjectionHash = "f".repeat(64),
+                            corpusGeneration = DURABLE_GENERATION
+                        ),
+                        projected.hiddenChunks.size
+                    )
+                )
+            },
+            "corrupt" to { MemoryVectorSnapshotVerification.RecoveredCorruption }
+        )
+
+        cases.forEach { (caseName, verification) ->
+            val fixture = fixture(projected.chatSnapshot)
+            fixture.vectorStore.matches = projected.hiddenChunks.map { hidden ->
+                match(hidden, TARGET_VECTOR, 0f)
+            }
+            fixture.vectorStore.verification = verification(fixture)
+
+            val report = fixture.retriever.retrieveWithDiagnostics(request("hidden-lifecycle-marker")).getOrThrow()
+
+            assertTrue("$caseName fallback leaked lifecycle history", report.results.isEmpty())
+            assertEquals("$caseName fallback mode", MemoryRetrievalMode.NONE, report.mode)
+            assertEquals("$caseName verification count", 1, fixture.vectorStore.verifyCalls)
+            assertEquals("$caseName query count", 0, fixture.vectorStore.queryCalls)
+            assertEquals("$caseName embedding count", 0, fixture.provider.embedQueryCalls)
+            assertEquals("$caseName repair count", 1, fixture.repairTrigger.requestCalls)
+        }
     }
 
     @Test
@@ -232,7 +296,10 @@ class HybridMemoryRetrieverTest {
         val merged = results.single { result -> result.entryId == "mem_same" }
         assertTrue(merged.lexicalScore != null)
         assertTrue(merged.vectorScore != null)
-        assertEquals(1, results.count { result -> result.entryId == null && result.contentHash == "c".repeat(64) })
+        assertEquals(
+            1,
+            results.count { result -> result.entryId == null && result.embeddingContentHash == "c".repeat(64) }
+        )
     }
 
     @Test
@@ -430,12 +497,12 @@ class HybridMemoryRetrieverTest {
             MemoryCorpusState(
                 corpus = CHAT_RECALL_CORPUS_KEY,
                 sourcePath = snapshot.sourcePath,
-                sourceHash = snapshot.sourceHash,
+                recallProjectionHash = snapshot.recallProjectionHash,
                 generation = DURABLE_GENERATION,
                 targetIndexFingerprint = configuration.fingerprint(),
                 indexStatus = MemoryCorpusIndexStatus.READY,
                 indexedGeneration = DURABLE_GENERATION,
-                indexedSourceHash = snapshot.sourceHash,
+                indexedRecallProjectionHash = snapshot.recallProjectionHash,
                 indexedFingerprint = configuration.fingerprint(),
                 latestReceiptId = "receipt",
                 lastError = null,
@@ -459,12 +526,12 @@ class HybridMemoryRetrieverTest {
             MemoryCorpusState(
                 corpus = CHAT_RECALL_CORPUS_KEY,
                 sourcePath = snapshot.sourcePath,
-                sourceHash = snapshot.sourceHash,
+                recallProjectionHash = snapshot.recallProjectionHash,
                 generation = DURABLE_GENERATION,
                 targetIndexFingerprint = configuration.fingerprint(),
                 indexStatus = MemoryCorpusIndexStatus.READY,
                 indexedGeneration = DURABLE_GENERATION,
-                indexedSourceHash = snapshot.sourceHash,
+                indexedRecallProjectionHash = snapshot.recallProjectionHash,
                 indexedFingerprint = "f".repeat(64),
                 latestReceiptId = "receipt",
                 lastError = null,
@@ -511,7 +578,7 @@ class HybridMemoryRetrieverTest {
         val resolvedCapability = capability ?: MemoryEmbeddingCapability.Ready(provider, configuration)
         val identity = configuration.identity(
             sourcePath = snapshot.sourcePath,
-            sourceHash = snapshot.sourceHash,
+            recallProjectionHash = snapshot.recallProjectionHash,
             corpusGeneration = DURABLE_GENERATION
         )
         val vectorStore = FakeVectorStore(identity)
@@ -537,14 +604,70 @@ class HybridMemoryRetrieverTest {
         tokenBudget = 300
     )
 
+    private fun lifecycleProjection(): LifecycleProjection {
+        val active = lifecycleEntry("mem_active", "Visible current response preference.").copy(
+            canonicalKey = "communication.response_style"
+        )
+        val hidden = listOf(
+            lifecycleEntry("mem_obsolete", "Obsolete hidden-lifecycle-marker response preference.").copy(
+                canonicalKey = active.canonicalKey,
+                validity = MemoryValidity.OBSOLETE,
+                supersededBy = active.id,
+                recallState = MemoryRecallState.MAINTENANCE_ONLY
+            ),
+            lifecycleEntry("mem_contested", "Contested hidden-lifecycle-marker response preference.").copy(
+                canonicalKey = "communication.contested_style",
+                validity = MemoryValidity.CONTESTED,
+                recallState = MemoryRecallState.MAINTENANCE_ONLY
+            ),
+            lifecycleEntry("mem_maintenance", "Current hidden-lifecycle-marker maintenance note.").copy(
+                canonicalKey = "communication.maintenance_note",
+                recallState = MemoryRecallState.MAINTENANCE_ONLY
+            )
+        )
+        val markdown = MarkdownMemoryCodec().renderLongTerm(listOf(active) + hidden)
+        val chunker = MemoryChunker()
+        val chat = chunker.chunksFor(
+            sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+            markdown = markdown,
+            projectionPolicy = MemoryProjectionPolicy.CHAT_ACTIVE_ONLY
+        )
+        val maintenance = chunker.chunksFor(
+            sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+            markdown = markdown,
+            projectionPolicy = MemoryProjectionPolicy.MAINTENANCE_FULL
+        )
+        val hiddenIds = hidden.map(MarkdownMemoryEntry::id).toSet()
+        return LifecycleProjection(
+            chatSnapshot = snapshot(
+                sourceHash = markdown.sha256Utf8(),
+                recallProjectionHash = chat.projectionHash,
+                chunks = chat.chunks
+            ),
+            hiddenChunks = maintenance.chunks.filter { chunk -> chunk.entryId in hiddenIds }
+        )
+    }
+
+    private fun lifecycleEntry(id: String, text: String) = MarkdownMemoryEntry(
+        id = id,
+        text = text,
+        type = "communication_style",
+        sensitivity = MemorySensitivity.NORMAL,
+        source = MemorySource.EXPLICIT_USER_STATEMENT,
+        createdAt = 1,
+        updatedAt = 2
+    )
+
     private fun snapshot(
         sourceHash: String = "a".repeat(64),
+        recallProjectionHash: String = sourceHash,
         generation: Long = 7,
         chunks: List<MemoryCorpusChunk> = listOf(chunk("default", "mem_default", "Default memory."))
     ) = MemoryCorpusSnapshot(
         corpus = MemoryCorpus.CHAT_RECALL_LONG_TERM,
         sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
-        sourceHash = sourceHash,
+        canonicalSourceHash = sourceHash,
+        recallProjectionHash = recallProjectionHash,
         generation = generation,
         chunks = chunks
     )
@@ -567,7 +690,7 @@ class HybridMemoryRetrieverTest {
         chatId = null,
         createdAt = 1,
         updatedAt = 2,
-        contentHash = contentHash
+        embeddingContentHash = contentHash
     )
 
     private fun match(
@@ -601,6 +724,11 @@ class HybridMemoryRetrieverTest {
         val configuration: MemoryVectorIndexConfiguration
     )
 
+    private data class LifecycleProjection(
+        val chatSnapshot: MemoryCorpusSnapshot,
+        val hiddenChunks: List<MemoryCorpusChunk>
+    )
+
     private class FakeRepairTrigger : MemoryVectorRecallRepairTrigger {
         var requestCalls = 0
 
@@ -617,7 +745,7 @@ class HybridMemoryRetrieverTest {
             configuration: MemoryVectorIndexConfiguration
         ): MemoryVectorIndexIdentity = configuration.identity(
             sourcePath = snapshot.sourcePath,
-            sourceHash = snapshot.sourceHash,
+            recallProjectionHash = snapshot.recallProjectionHash,
             corpusGeneration = generation
         )
     }
@@ -657,7 +785,10 @@ class HybridMemoryRetrieverTest {
         ): MemoryVectorSnapshotVerification {
             verifyCalls += 1
             return verification ?: MemoryVectorSnapshotVerification.Ready(
-                readyManifest(identity.copy(sourceHash = expectation.sourceHash), expectation.chunks.size)
+                readyManifest(
+                    identity.copy(recallProjectionHash = expectation.recallProjectionHash),
+                    expectation.chunks.size
+                )
             )
         }
 

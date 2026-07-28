@@ -8,6 +8,8 @@ data class MemoryVectorIndexConfiguration(
     val corpus: MemoryCorpus,
     val indexSchemaVersion: Int,
     val chunkerVersion: String,
+    val projectionVersion: String = "chat-active-projection-v2",
+    val embeddingProjectionVersion: String = "natural-language-only-v2",
     val maxChunkChars: Int,
     val chunkOverlapChars: Int,
     val markdownCodecVersion: String,
@@ -19,6 +21,8 @@ data class MemoryVectorIndexConfiguration(
     init {
         require(indexSchemaVersion > 0) { "indexSchemaVersion must be positive" }
         require(chunkerVersion.isNotBlank()) { "chunkerVersion must not be blank" }
+        require(projectionVersion.isNotBlank()) { "projectionVersion must not be blank" }
+        require(embeddingProjectionVersion.isNotBlank()) { "embeddingProjectionVersion must not be blank" }
         require(maxChunkChars > 0) { "maxChunkChars must be positive" }
         require(chunkOverlapChars in 0 until maxChunkChars) {
             "chunkOverlapChars must be non-negative and smaller than maxChunkChars"
@@ -33,6 +37,8 @@ data class MemoryVectorIndexConfiguration(
         appendFingerprintField("corpus", corpus.name)
         appendFingerprintField("indexSchemaVersion", indexSchemaVersion.toString())
         appendFingerprintField("chunkerVersion", chunkerVersion)
+        appendFingerprintField("projectionVersion", projectionVersion)
+        appendFingerprintField("embeddingProjectionVersion", embeddingProjectionVersion)
         appendFingerprintField("maxChunkChars", maxChunkChars.toString())
         appendFingerprintField("chunkOverlapChars", chunkOverlapChars.toString())
         appendFingerprintField("markdownCodecVersion", markdownCodecVersion)
@@ -56,12 +62,12 @@ data class MemoryVectorIndexConfiguration(
 
     fun identity(
         sourcePath: String,
-        sourceHash: String,
+        recallProjectionHash: String,
         corpusGeneration: Long
     ): MemoryVectorIndexIdentity = MemoryVectorIndexIdentity(
         corpus = corpus,
         sourcePath = sourcePath,
-        sourceHash = sourceHash,
+        recallProjectionHash = recallProjectionHash,
         corpusGeneration = corpusGeneration,
         indexFingerprint = fingerprint(),
         embeddingDescriptor = embeddingDescriptor,
@@ -79,7 +85,7 @@ data class MemoryVectorIndexConfiguration(
     }
 
     private companion object {
-        const val FINGERPRINT_FORMAT = "memory-vector-index-fingerprint-v1"
+        const val FINGERPRINT_FORMAT = "memory-vector-index-fingerprint-v2"
     }
 }
 

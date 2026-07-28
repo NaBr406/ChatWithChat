@@ -296,7 +296,7 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 assertEquals("group-15", mutationReceipt?.groupId)
                 assertEquals("index_pending", mutationReceipt?.state)
                 val corpusState = recoveryDao.getCorpusState("chat_recall_long_term")
-                assertEquals("target-hash-15", corpusState?.sourceHash)
+                assertEquals("target-hash-15", corpusState?.recallProjectionHash)
                 assertEquals(5L, corpusState?.generation)
                 assertEquals("pending", corpusState?.indexStatus)
                 assertEquals(

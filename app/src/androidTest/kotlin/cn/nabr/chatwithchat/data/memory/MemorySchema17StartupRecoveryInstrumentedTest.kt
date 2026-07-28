@@ -80,6 +80,11 @@ class MemorySchema17StartupRecoveryInstrumentedTest {
             val memoryHashBefore = memoryFileStore.currentMemoryFileHash(
                 MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME
             ).getOrThrow()
+            val recallProjectionHashBefore = MemoryChunker().chunksFor(
+                sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+                markdown = String(memoryBytesBefore, Charsets.UTF_8),
+                projectionPolicy = MemoryProjectionPolicy.CHAT_ACTIVE_ONLY
+            ).projectionHash
             assertTrue(String(memoryBytesBefore, Charsets.UTF_8).contains(SENTINEL_TEXT))
             assertFalse(vectorDirectory.exists())
 
@@ -148,7 +153,7 @@ class MemorySchema17StartupRecoveryInstrumentedTest {
 
             val scheduled = bootstrapResult as MemoryVectorIndexBootstrapResult.Scheduled
             assertEquals(1L, scheduled.generation)
-            assertEquals(memoryHashBefore, scheduled.sourceHash)
+            assertEquals(recallProjectionHashBefore, scheduled.recallProjectionHash)
             assertEquals(configuration.fingerprint(), scheduled.indexFingerprint)
             assertEquals(MemoryCorpusIndexStatus.PENDING, scheduled.indexStatus)
             assertTrue(objectBoxWasAbsentAfterBootstrap)
@@ -189,7 +194,7 @@ class MemorySchema17StartupRecoveryInstrumentedTest {
             val corpus = checkNotNull(recoveryDao.getCorpusState(CHAT_RECALL_CORPUS_KEY))
             assertEquals(MemoryCorpusIndexStatus.READY, corpus.indexStatus)
             assertEquals(scheduled.generation, corpus.indexedGeneration)
-            assertEquals(memoryHashBefore, corpus.indexedSourceHash)
+            assertEquals(recallProjectionHashBefore, corpus.indexedRecallProjectionHash)
             assertEquals(configuration.fingerprint(), corpus.indexedFingerprint)
             assertEquals(
                 MemoryMaintenanceJobStatus.SUCCEEDED,
@@ -207,7 +212,7 @@ class MemorySchema17StartupRecoveryInstrumentedTest {
             val snapshot = snapshotter.snapshots(MemoryCorpus.CHAT_RECALL_LONG_TERM).getOrThrow().single()
             val firstManifest = checkNotNull(activeVectorStore.readManifest())
             assertEquals(MemoryVectorManifestState.READY, firstManifest.state)
-            assertEquals(memoryHashBefore, firstManifest.identity.sourceHash)
+            assertEquals(recallProjectionHashBefore, firstManifest.identity.recallProjectionHash)
             assertEquals(scheduled.generation, firstManifest.identity.corpusGeneration)
             assertEquals(configuration.fingerprint(), firstManifest.identity.indexFingerprint)
             assertEquals(snapshot.chunks.size.toLong(), activeVectorStore.countChunks())

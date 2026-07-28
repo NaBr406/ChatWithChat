@@ -206,7 +206,7 @@ class MemoryRecoveryDaoInstrumentedTest {
 
         val current = checkNotNull(dao.getCorpusState(CORPUS_LONG_TERM))
         assertEquals(3L, current.generation)
-        assertEquals("hash-a", current.sourceHash)
+        assertEquals("hash-a", current.recallProjectionHash)
         assertEquals(third.receipts.single().receiptId, current.latestReceiptId)
         assertEquals(2L, current.rowVersion)
     }
@@ -249,7 +249,7 @@ class MemoryRecoveryDaoInstrumentedTest {
             dao.markCorpusIndexedCas(
                 corpus = CORPUS_LONG_TERM,
                 expectedGeneration = firstCorpus.generation,
-                expectedSourceHash = firstCorpus.sourceHash,
+                expectedRecallProjectionHash = firstCorpus.recallProjectionHash,
                 expectedTargetIndexFingerprint = FINGERPRINT,
                 expectedRowVersion = firstCorpus.rowVersion,
                 indexedStatus = STATE_INDEXED,
@@ -261,7 +261,7 @@ class MemoryRecoveryDaoInstrumentedTest {
             dao.markCorpusIndexedCas(
                 corpus = CORPUS_LONG_TERM,
                 expectedGeneration = secondCorpus.generation,
-                expectedSourceHash = secondCorpus.sourceHash,
+                expectedRecallProjectionHash = secondCorpus.recallProjectionHash,
                 expectedTargetIndexFingerprint = FINGERPRINT,
                 expectedRowVersion = secondCorpus.rowVersion,
                 indexedStatus = STATE_INDEXED,
@@ -271,7 +271,7 @@ class MemoryRecoveryDaoInstrumentedTest {
 
         val indexed = checkNotNull(dao.getCorpusState(CORPUS_LONG_TERM))
         assertEquals(second.group.generation, indexed.indexedGeneration)
-        assertEquals("hash-b", indexed.indexedSourceHash)
+        assertEquals("hash-b", indexed.indexedRecallProjectionHash)
         assertEquals(FINGERPRINT, indexed.indexedFingerprint)
         assertEquals(STATE_INDEXED, indexed.indexStatus)
     }
@@ -288,7 +288,7 @@ class MemoryRecoveryDaoInstrumentedTest {
         val corpus = checkNotNull(dao.getCorpusState(request.corpus))
         assertEquals(STATE_CORPUS_READY, corpus.indexStatus)
         assertEquals(request.generation, corpus.indexedGeneration)
-        assertEquals(request.sourceHash, corpus.indexedSourceHash)
+        assertEquals(request.recallProjectionHash, corpus.indexedRecallProjectionHash)
         assertEquals(request.targetIndexFingerprint, corpus.indexedFingerprint)
 
         val receipt = checkNotNull(dao.getMutationReceipt(request.receiptId))
@@ -368,7 +368,7 @@ class MemoryRecoveryDaoInstrumentedTest {
 
         assertEquals(
             MemoryVectorIndexPublicationOutcome.CONFLICT,
-            dao.completeVectorIndexPublication(request.copy(sourceHash = "conflicting-hash"))
+            dao.completeVectorIndexPublication(request.copy(recallProjectionHash = "conflicting-hash"))
         )
         assertEquals(pendingCorpus, dao.getCorpusState(request.corpus))
         assertEquals(pendingReceipt, dao.getMutationReceipt(request.receiptId))
@@ -429,7 +429,8 @@ class MemoryRecoveryDaoInstrumentedTest {
             receiptId = receipt.receiptId,
             generation = prepared.group.generation,
             sourcePath = receipt.sourcePath,
-            sourceHash = receipt.targetSourceHash,
+            recallProjectionHash = receipt.targetSourceHash,
+            canonicalSourceHash = receipt.targetSourceHash,
             targetIndexFingerprint = checkNotNull(receipt.targetIndexFingerprint),
             completedAt = index.toLong() + 30
         )
@@ -492,7 +493,7 @@ class MemoryRecoveryDaoInstrumentedTest {
     ): MemoryCorpusAdvanceRequest = MemoryCorpusAdvanceRequest(
         corpus = CORPUS_LONG_TERM,
         sourcePath = "MEMORY.md",
-        sourceHash = sourceHash,
+        recallProjectionHash = sourceHash,
         generation = generation,
         targetIndexFingerprint = FINGERPRINT,
         indexStatus = STATE_INDEX_PENDING,

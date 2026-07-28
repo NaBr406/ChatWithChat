@@ -12,7 +12,6 @@ import cn.nabr.chatwithchat.data.memory.embedding.MemoryEmbeddingCapabilitySourc
 import cn.nabr.chatwithchat.data.memory.embedding.MemoryEmbeddingDescriptor
 import cn.nabr.chatwithchat.data.memory.embedding.MemoryEmbeddingPooling
 import cn.nabr.chatwithchat.data.memory.embedding.MemoryEmbeddingProvider
-import cn.nabr.chatwithchat.data.memory.vector.MemoryEmbeddedChunk
 import cn.nabr.chatwithchat.data.memory.vector.MemoryVectorDistanceMetric
 import cn.nabr.chatwithchat.data.memory.vector.MemoryVectorIndexConfiguration
 import cn.nabr.chatwithchat.data.memory.vector.MemoryVectorManifest
@@ -35,7 +34,6 @@ import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MemoryVectorIndexRecoveryServiceTest {
@@ -54,7 +52,7 @@ class MemoryVectorIndexRecoveryServiceTest {
         val corpus = fixture.corpus()
         assertEquals(MemoryCorpusIndexStatus.READY, corpus.indexStatus)
         assertEquals(GENERATION, corpus.indexedGeneration)
-        assertEquals(fixture.sourceHash, corpus.indexedSourceHash)
+        assertEquals(fixture.snapshot.recallProjectionHash, corpus.indexedRecallProjectionHash)
         assertEquals(fixture.configuration.fingerprint(), corpus.indexedFingerprint)
         assertEquals(MemoryMutationState.INDEXED, fixture.receipt().state)
         assertEquals(MemoryMutationState.INDEXED, fixture.group().state)
@@ -108,7 +106,7 @@ class MemoryVectorIndexRecoveryServiceTest {
     fun `same generation conflicting manifest is preserved and fails closed`() = runBlocking {
         val fixture = fixture(jobStatus = MemoryMaintenanceJobStatus.SUCCEEDED)
         val conflictingManifest = fixture.matchingManifest().copy(
-            identity = fixture.matchingManifest().identity.copy(sourceHash = "f".repeat(64))
+            identity = fixture.matchingManifest().identity.copy(recallProjectionHash = "f".repeat(64))
         )
         fixture.vectorStore.install(conflictingManifest, fixture.snapshot.chunks.size.toLong())
 
@@ -190,7 +188,7 @@ class MemoryVectorIndexRecoveryServiceTest {
     }
 
     @Test
-    fun `canonical Markdown hash mismatch waits for repair without fast forward`() = runBlocking {
+    fun `recall projection hash mismatch waits for repair without fast forward`() = runBlocking {
         val fixture = fixture(snapshotHash = "e".repeat(64))
         fixture.vectorStore.install(fixture.matchingManifest(), fixture.snapshot.chunks.size.toLong())
         val markdownBefore = fixture.fileStore.readLongTermMemory().getOrThrow()
@@ -199,7 +197,7 @@ class MemoryVectorIndexRecoveryServiceTest {
 
         assertEquals(MemoryVectorIndexRecoveryResult(conflictCount = 1), result)
         assertEquals(MemoryCorpusIndexStatus.WAITING_REPAIR, fixture.corpus().indexStatus)
-        assertEquals("canonical_memory_does_not_match_room_corpus", fixture.corpus().lastError)
+        assertEquals("recall_projection_does_not_match_room_corpus", fixture.corpus().lastError)
         assertEquals(MemoryMutationState.INDEX_PENDING, fixture.receipt().state)
         assertEquals(MemoryMutationState.INDEX_PENDING, fixture.group().state)
         assertEquals(MemoryMaintenanceJobStatus.FAILED_TERMINAL, fixture.onlyJob().status)
@@ -221,7 +219,7 @@ class MemoryVectorIndexRecoveryServiceTest {
         assertEquals(1, fixture.vectorStore.recoverFromCorruptionCalls)
         assertEquals(MemoryCorpusIndexStatus.BLOCKED_DEPENDENCY, fixture.corpus().indexStatus)
         assertNull(fixture.corpus().indexedGeneration)
-        assertNull(fixture.corpus().indexedSourceHash)
+        assertNull(fixture.corpus().indexedRecallProjectionHash)
         assertNull(fixture.corpus().indexedFingerprint)
         assertEquals(MemoryMutationState.INDEX_PENDING, fixture.receipt().state)
         assertEquals(MemoryMutationState.INDEX_PENDING, fixture.group().state)
@@ -269,7 +267,7 @@ class MemoryVectorIndexRecoveryServiceTest {
                     MemoryCorpusAdvanceRequest(
                         corpus = CHAT_RECALL_CORPUS_KEY,
                         sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
-                        sourceHash = "f".repeat(64),
+                        recallProjectionHash = "f".repeat(64),
                         generation = GENERATION + 1,
                         targetIndexFingerprint = "e".repeat(64),
                         indexStatus = MemoryCorpusIndexStatus.PENDING,
@@ -302,7 +300,8 @@ class MemoryVectorIndexRecoveryServiceTest {
         val snapshot = MemoryCorpusSnapshot(
             corpus = MemoryCorpus.CHAT_RECALL_LONG_TERM,
             sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
-            sourceHash = snapshotHash ?: sourceHash,
+            canonicalSourceHash = sourceHash,
+            recallProjectionHash = snapshotHash ?: sourceHash,
             generation = GENERATION,
             chunks = listOf(
                 chunk("preference", 0, "Prefers concise answers"),
@@ -315,7 +314,7 @@ class MemoryVectorIndexRecoveryServiceTest {
             receiptId = RECEIPT_ID,
             generation = GENERATION,
             sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
-            sourceHash = sourceHash,
+            recallProjectionHash = sourceHash,
             targetIndexFingerprint = configuration.fingerprint()
         )
         recoveryDao.insertMutationGroup(
@@ -359,12 +358,14 @@ class MemoryVectorIndexRecoveryServiceTest {
             MemoryCorpusState(
                 corpus = CHAT_RECALL_CORPUS_KEY,
                 sourcePath = payload.sourcePath,
-                sourceHash = sourceHash,
+                recallProjectionHash = sourceHash,
                 generation = GENERATION,
                 targetIndexFingerprint = payload.targetIndexFingerprint,
                 indexStatus = corpusStatus,
                 indexedGeneration = GENERATION.takeIf { corpusStatus == MemoryCorpusIndexStatus.READY },
-                indexedSourceHash = sourceHash.takeIf { corpusStatus == MemoryCorpusIndexStatus.READY },
+                indexedRecallProjectionHash = sourceHash.takeIf {
+                    corpusStatus == MemoryCorpusIndexStatus.READY
+                },
                 indexedFingerprint = payload.targetIndexFingerprint.takeIf { corpusStatus == MemoryCorpusIndexStatus.READY },
                 latestReceiptId = RECEIPT_ID,
                 lastError = null,
@@ -439,7 +440,7 @@ class MemoryVectorIndexRecoveryServiceTest {
         chatId = null,
         createdAt = 1,
         updatedAt = 1,
-        contentHash = text.sha256Utf8()
+        embeddingContentHash = text.sha256Utf8()
     )
 
     private fun unavailableCapability() = MemoryEmbeddingCapability.Unavailable(
@@ -476,7 +477,7 @@ class MemoryVectorIndexRecoveryServiceTest {
         fun matchingManifest() = MemoryVectorManifest(
             identity = configuration.identity(
                 sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
-                sourceHash = sourceHash,
+                recallProjectionHash = sourceHash,
                 corpusGeneration = GENERATION
             ),
             expectedChunkCount = snapshot.chunks.size.toLong(),
@@ -556,7 +557,7 @@ class MemoryVectorIndexRecoveryServiceTest {
             val identity = manifest.identity
             val matches = identity.corpus == expectation.corpus &&
                 identity.sourcePath == expectation.sourcePath &&
-                identity.sourceHash == expectation.sourceHash &&
+                identity.recallProjectionHash == expectation.recallProjectionHash &&
                 identity.corpusGeneration == expectation.corpusGeneration &&
                 identity.indexFingerprint == expectation.indexFingerprint
             if (!matches) return MemoryVectorSnapshotVerification.Stale(manifest)

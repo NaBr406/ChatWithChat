@@ -29,18 +29,18 @@ class RoomMemoryVectorRecallStateSource(
         val state = recoveryDao.getCorpusState(CHAT_RECALL_CORPUS_KEY) ?: return null
         if (
             state.sourcePath != snapshot.sourcePath ||
-            state.sourceHash != snapshot.sourceHash ||
+            state.recallProjectionHash != snapshot.recallProjectionHash ||
             state.targetIndexFingerprint != fingerprint ||
             state.indexStatus != MemoryCorpusIndexStatus.READY ||
             state.indexedGeneration != state.generation ||
-            state.indexedSourceHash != snapshot.sourceHash ||
+            state.indexedRecallProjectionHash != snapshot.recallProjectionHash ||
             state.indexedFingerprint != fingerprint
         ) {
             return null
         }
         return configuration.identity(
             sourcePath = snapshot.sourcePath,
-            sourceHash = snapshot.sourceHash,
+            recallProjectionHash = snapshot.recallProjectionHash,
             corpusGeneration = state.generation
         )
     }

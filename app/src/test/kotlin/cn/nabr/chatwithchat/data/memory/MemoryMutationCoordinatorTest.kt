@@ -95,7 +95,7 @@ class MemoryMutationCoordinatorTest {
     fun `local mutation is non semantic idempotent and advances after content round trip`() = runBlocking {
         val fixture = Fixture()
         val contentA = fixture.fileStore.readLongTermMemory().getOrThrow()
-        val contentB = "# ChatWithChat Memory\n\n- Local migration target"
+        val contentB = structuredLongTermContent("mem_local_b", "Local migration target")
 
         val firstPrepared = fixture.coordinator.prepareLocalMutation(
             operationKey = "legacy-personal-memory",
@@ -130,7 +130,7 @@ class MemoryMutationCoordinatorTest {
     fun `prepared receipt commits base to target and advances durable state`() = runBlocking {
         val fixture = Fixture()
         val baseContent = fixture.fileStore.readLongTermMemory().getOrThrow()
-        val targetContent = "# ChatWithChat Memory\n\n## Preferences\n- Prefer exact recovery"
+        val targetContent = structuredLongTermContent("mem_exact_recovery", "Prefer exact recovery")
 
         val prepared = fixture.coordinator.prepare(
             semanticJobId = "semantic-job-1",
@@ -158,7 +158,10 @@ class MemoryMutationCoordinatorTest {
         assertNotNull(group?.completedAt)
         val corpus = fixture.recoveryDao.getCorpusState(CHAT_RECALL_CORPUS_KEY)
         assertEquals(prepared.group.generation, corpus?.generation)
-        assertEquals(receipt?.targetSourceHash, corpus?.sourceHash)
+        assertEquals(
+            fixture.recallProjectionHash(targetContent + "\n"),
+            corpus?.recallProjectionHash
+        )
         assertEquals(MemoryCorpusIndexStatus.PENDING, corpus?.indexStatus)
         assertEquals(listOf(prepared.group.generation), fixture.jobDao.jobs.map { it.generation })
         assertEquals(listOf(MemoryMaintenanceJobFamily.INDEX), fixture.workEnqueuer.works.map { it.family })
@@ -177,7 +180,7 @@ class MemoryMutationCoordinatorTest {
         val prepared = fixture.coordinator.prepare(
             semanticJobId = "semantic-job-metadata-only",
             semanticBatchId = "batch-metadata-only",
-            targets = listOf(fixture.metadataOnlyLongTermTarget(baseContent, targetContent))
+            targets = listOf(fixture.longTermTarget(baseContent, targetContent))
         )
         val preparedReceipt = prepared.receipts.single()
 
@@ -209,6 +212,45 @@ class MemoryMutationCoordinatorTest {
         assertFalse((replayed as MemoryMutationCommitResult.CanonicalCommitted).hasPendingIndex)
         assertTrue(fixture.jobDao.jobs.isEmpty())
         assertTrue(fixture.workEnqueuer.works.isEmpty())
+    }
+
+    @Test
+    fun `active recall membership change schedules exactly one index reconciliation`() = runBlocking {
+        val fixture = Fixture()
+        val active = MarkdownMemoryEntry(
+            id = "mem_membership",
+            text = "Uses a compact response style.",
+            type = "communication_style",
+            sensitivity = MemorySensitivity.NORMAL,
+            source = MemorySource.EXPLICIT_USER_STATEMENT,
+            createdAt = 1L,
+            updatedAt = 1L,
+            canonicalKey = "communication.response_style",
+            scope = "general",
+            recallState = MemoryRecallState.QUERY
+        )
+        val baseContent = MarkdownMemoryCodec().renderLongTerm(listOf(active))
+        val targetContent = MarkdownMemoryCodec().renderLongTerm(
+            listOf(active.copy(recallState = MemoryRecallState.MAINTENANCE_ONLY))
+        )
+        fixture.fileStore.replaceLongTermMemory(baseContent).getOrThrow()
+        val prepared = fixture.coordinator.prepare(
+            semanticJobId = "semantic-job-membership",
+            semanticBatchId = "batch-membership",
+            targets = listOf(fixture.longTermTarget(baseContent, targetContent))
+        )
+
+        val first = fixture.coordinator.reconcile(prepared)
+        val replay = fixture.coordinator.reconcile(prepared)
+
+        assertTrue(first is MemoryMutationCommitResult.CanonicalCommitted)
+        assertTrue((first as MemoryMutationCommitResult.CanonicalCommitted).hasPendingIndex)
+        assertTrue(replay is MemoryMutationCommitResult.CanonicalCommitted)
+        assertEquals(1, fixture.jobDao.jobs.size)
+        assertEquals(
+            setOf(MemoryMaintenanceJobFamily.INDEX),
+            fixture.workEnqueuer.works.map { work -> work.family }.toSet()
+        )
     }
 
     @Test
@@ -273,13 +315,14 @@ class MemoryMutationCoordinatorTest {
             semanticBatchId = "batch-metadata-before-index",
             targets = listOf(fixture.metadataOnlyLongTermTarget(baseContent, metadataTarget))
         )
-        val indexPrepared = fixture.coordinator.prepare(
-            semanticJobId = "semantic-job-index-after-metadata",
-            semanticBatchId = "batch-index-after-metadata",
-            targets = listOf(fixture.longTermTarget(baseContent, baseContent))
+        val indexPrepared = fixture.coordinator.prepareLocalIndexBootstrap(
+            sourceContent = baseContent,
+            canonicalSourceHash = baseContent.toByteArray(Charsets.UTF_8).sha256Hex(),
+            recallProjectionHash = fixture.recallProjectionHash(baseContent),
+            targetIndexFingerprint = VALID_FINGERPRINT,
+            observedCorpusGeneration = 0L
         )
         fixture.coordinator.reconcile(indexPrepared)
-        fixture.coordinator.acknowledgeSemanticCompletion(indexPrepared.group.groupId)
         val corpusBefore = checkNotNull(fixture.recoveryDao.getCorpusState(CHAT_RECALL_CORPUS_KEY))
         val jobCountBefore = fixture.jobDao.jobs.size
         val workCountBefore = fixture.workEnqueuer.works.size
@@ -305,7 +348,10 @@ class MemoryMutationCoordinatorTest {
             targets = listOf(
                 fixture.longTermTarget(
                     baseContent = fixture.fileStore.readLongTermMemory().getOrThrow(),
-                    targetContent = "# ChatWithChat Memory\n\n- Canonical target already replaced"
+                    targetContent = structuredLongTermContent(
+                        "mem_fast_forward",
+                        "Canonical target already replaced"
+                    )
                 )
             )
         )
@@ -365,7 +411,7 @@ class MemoryMutationCoordinatorTest {
     fun `partial multi file commit is completed by incomplete receipt recovery`() = runBlocking {
         val fixture = Fixture()
         val dailySourcePath = "${MemoryFilePaths.DAILY_MEMORY_DIRECTORY_NAME}/${FIXED_DATE}.md"
-        val longTermTarget = "# ChatWithChat Memory\n\n- Durable long-term target"
+        val longTermTarget = structuredLongTermContent("mem_durable_target", "Durable long-term target")
         val dailyTarget = "# $FIXED_DATE\n\n- Durable daily target"
         val prepared = fixture.coordinator.prepare(
             semanticJobId = "semantic-job-multi-file",
@@ -426,8 +472,8 @@ class MemoryMutationCoordinatorTest {
     @Test
     fun `A to B to A allocates a distinct persistent generation`() = runBlocking {
         val fixture = Fixture()
-        val contentA = "# ChatWithChat Memory\n\n- Revision A\n"
-        val contentB = "# ChatWithChat Memory\n\n- Revision B\n"
+        val contentA = structuredLongTermContent("mem_revision_a", "Revision A") + "\n"
+        val contentB = structuredLongTermContent("mem_revision_b", "Revision B") + "\n"
         fixture.paths.longTermMemoryFile.writeText(contentA, StandardCharsets.UTF_8)
         val hashA = fixture.fileStore.currentMemoryFileHash(MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME).getOrThrow()
 
@@ -465,8 +511,8 @@ class MemoryMutationCoordinatorTest {
     fun `older index pending generation becomes superseded without conflict`() = runBlocking {
         val fixture = Fixture()
         val contentA = fixture.fileStore.readLongTermMemory().getOrThrow()
-        val contentB = "# ChatWithChat Memory\n\n- Revision B\n"
-        val contentC = "# ChatWithChat Memory\n\n- Revision C\n"
+        val contentB = structuredLongTermContent("mem_revision_b", "Revision B") + "\n"
+        val contentC = structuredLongTermContent("mem_revision_c", "Revision C") + "\n"
         val olderMutation = fixture.coordinator.prepare(
             semanticJobId = "semantic-job-older",
             semanticBatchId = "batch-older",
@@ -512,8 +558,8 @@ class MemoryMutationCoordinatorTest {
     fun `superseded acknowledgement remains recoverable across a second process death`() = runBlocking {
         val fixture = Fixture()
         val contentA = fixture.fileStore.readLongTermMemory().getOrThrow()
-        val contentB = "# ChatWithChat Memory\n\n- Revision B\n"
-        val contentC = "# ChatWithChat Memory\n\n- Revision C\n"
+        val contentB = structuredLongTermContent("mem_revision_b", "Revision B") + "\n"
+        val contentC = structuredLongTermContent("mem_revision_c", "Revision C") + "\n"
         val olderMutation = fixture.coordinator.prepare(
             semanticJobId = "semantic-job-ack-pending-older",
             semanticBatchId = "batch-ack-pending-older",
@@ -941,7 +987,10 @@ class MemoryMutationCoordinatorTest {
         fixture.fileStore.replaceLongTermMemory(longTermBefore).getOrThrow()
         val dailyPath = "${MemoryFilePaths.DAILY_MEMORY_DIRECTORY_NAME}/${FIXED_DATE}.md"
         val dailyBefore = fixture.fileStore.readDailyMemory(FIXED_DATE).getOrThrow()
-        val longTermTarget = "# ChatWithChat Memory\n\n- Canonical partial commit survives"
+        val longTermTarget = structuredLongTermContent(
+            "mem_partial_commit",
+            "Canonical partial commit survives"
+        )
         val prepared = fixture.coordinator.prepare(
             semanticJobId = "semantic-job-partial-conflict",
             semanticBatchId = "batch-partial-conflict",
@@ -1019,7 +1068,12 @@ class MemoryMutationCoordinatorTest {
 
         val bootstrap = fixture.coordinator.prepareLocalIndexBootstrap(
             sourceContent = committedLongTerm,
-            sourceHash = committedLongTerm.toByteArray(Charsets.UTF_8).sha256Hex(),
+            canonicalSourceHash = committedLongTerm.toByteArray(Charsets.UTF_8).sha256Hex(),
+            recallProjectionHash = MemoryChunker().chunksFor(
+                MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+                committedLongTerm,
+                MemoryProjectionPolicy.CHAT_ACTIVE_ONLY
+            ).projectionHash,
             targetIndexFingerprint = VALID_FINGERPRINT,
             observedCorpusGeneration = 0
         )
@@ -1101,6 +1155,12 @@ class MemoryMutationCoordinatorTest {
                 targetIndexFingerprint = null
             )
 
+        fun recallProjectionHash(markdown: String): String = MemoryChunker().chunksFor(
+            sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+            markdown = markdown,
+            projectionPolicy = MemoryProjectionPolicy.CHAT_ACTIVE_ONLY
+        ).projectionHash
+
         fun newCoordinator(store: MemoryFileStore): MemoryMutationCoordinator =
             MemoryMutationCoordinator(
                 recoveryDao = recoveryDao,
@@ -1118,7 +1178,22 @@ class MemoryMutationCoordinatorTest {
         val CHAT_RECALL_CORPUS_KEY: String = MemoryCorpus.CHAT_RECALL_LONG_TERM.name.lowercase()
         val VALID_FINGERPRINT: String = "a".repeat(64)
 
-        fun fixtureLongTermContent(): String = "# ChatWithChat Memory\n\n- Canonical base\n"
+        fun fixtureLongTermContent(): String = structuredLongTermContent("mem_canonical_base", "Canonical base")
+
+        fun structuredLongTermContent(id: String, text: String): String =
+            MarkdownMemoryCodec().renderLongTerm(
+                listOf(
+                    MarkdownMemoryEntry(
+                        id = id,
+                        text = text,
+                        type = "project_context",
+                        sensitivity = MemorySensitivity.NORMAL,
+                        source = MemorySource.EXPLICIT_USER_STATEMENT,
+                        createdAt = 1L,
+                        updatedAt = 1L
+                    )
+                )
+            ).trimEnd()
 
         fun metadataOnlyContent(observedAt: Long): String =
             "# ChatWithChat Memory\n\n" +

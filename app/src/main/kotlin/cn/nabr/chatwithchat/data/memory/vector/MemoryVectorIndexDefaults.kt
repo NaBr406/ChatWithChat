@@ -9,7 +9,9 @@ object MemoryVectorIndexDefaults {
     val configuration = MemoryVectorIndexConfiguration(
         corpus = MemoryCorpus.CHAT_RECALL_LONG_TERM,
         indexSchemaVersion = MEMORY_VECTOR_INDEX_SCHEMA_VERSION,
-        chunkerVersion = "memory-chunker-v1",
+        chunkerVersion = "memory-chunker-v2",
+        projectionVersion = "chat-active-projection-v2",
+        embeddingProjectionVersion = "natural-language-only-v2",
         maxChunkChars = 1_200,
         chunkOverlapChars = 0,
         markdownCodecVersion = "markdown-memory-codec-v1",

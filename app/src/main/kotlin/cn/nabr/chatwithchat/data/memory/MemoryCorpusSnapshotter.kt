@@ -11,15 +11,19 @@ class MemoryCorpusSnapshotter(
         val read = memoryFileStore.readCorpusFiles(corpus).getOrThrow()
         read.files.map { file ->
             val markdown = String(file.bytes, StandardCharsets.UTF_8)
+            val chunking = memoryChunker.chunksFor(
+                sourcePath = file.sourcePath,
+                markdown = markdown,
+                projectionPolicy = corpus.projectionPolicy
+            )
             MemoryCorpusSnapshot(
                 corpus = corpus,
                 sourcePath = file.sourcePath,
-                sourceHash = file.bytes.sha256Hex(),
+                canonicalSourceHash = file.bytes.sha256Hex(),
+                recallProjectionHash = chunking.projectionHash,
                 generation = read.revision,
-                chunks = memoryChunker.chunksFor(
-                    sourcePath = file.sourcePath,
-                    markdown = markdown
-                )
+                chunks = chunking.chunks,
+                diagnostics = chunking.diagnostics
             )
         }
     }
@@ -33,8 +37,18 @@ class MemoryCorpusSnapshotter(
 
         val current = memoryFileStore.readCorpusFiles(corpus).getOrThrow()
         if (current.revision != expectedGeneration) return@runCatching false
-        val expectedSources = snapshots.associate { snapshot -> snapshot.sourcePath to snapshot.sourceHash }
+        val expectedSources = snapshots.associate { snapshot -> snapshot.sourcePath to snapshot.canonicalSourceHash }
         val currentSources = current.files.associate { file -> file.sourcePath to file.bytes.sha256Hex() }
+        expectedSources == currentSources
+    }
+
+    override suspend fun isProjectionCurrent(snapshots: List<MemoryCorpusSnapshot>): Result<Boolean> = runCatching {
+        if (snapshots.isEmpty()) return@runCatching false
+        val corpus = snapshots.first().corpus
+        if (snapshots.any { snapshot -> snapshot.corpus != corpus }) return@runCatching false
+        val current = snapshots(corpus).getOrThrow()
+        val expectedSources = snapshots.associate { snapshot -> snapshot.sourcePath to snapshot.recallProjectionHash }
+        val currentSources = current.associate { snapshot -> snapshot.sourcePath to snapshot.recallProjectionHash }
         expectedSources == currentSources
     }
 }

@@ -64,12 +64,12 @@ class MemoryIndexSynchronizer(
             is CurrentSyncState.Conflict -> return MemoryIndexSyncResult.Terminal(state.reason)
         }
         val snapshot = currentSnapshot(payload)
-            ?: return MemoryIndexSyncResult.Retryable("canonical_memory_does_not_match_vector_job")
+            ?: return MemoryIndexSyncResult.Retryable("recall_projection_does_not_match_vector_job")
 
         when (val verification = vectorStore.verifySnapshot(payload.toExpectation(snapshot.chunks))) {
             is MemoryVectorSnapshotVerification.Ready -> {
-                if (!snapshotSource.isCurrent(listOf(snapshot)).getOrThrow()) {
-                    return latestGenerationResult(payload, "canonical_memory_changed_before_room_fast_forward")
+                if (!snapshotSource.isProjectionCurrent(listOf(snapshot)).getOrThrow()) {
+                    return latestGenerationResult(payload, "recall_projection_changed_before_room_fast_forward")
                 }
                 return completeRoomPublication(payload, initialState.receipt)
             }
@@ -102,8 +102,8 @@ class MemoryIndexSynchronizer(
 
         val embeddings = embedDocuments(snapshot, readyCapability, configuration)
             ?: return markBlockedDependency(payload, "embedding_provider_returned_invalid_vectors")
-        if (!snapshotSource.isCurrent(listOf(snapshot)).getOrThrow()) {
-            return latestGenerationResult(payload, "canonical_memory_changed_during_embedding")
+        if (!snapshotSource.isProjectionCurrent(listOf(snapshot)).getOrThrow()) {
+            return latestGenerationResult(payload, "recall_projection_changed_during_embedding")
         }
         when (val state = loadCurrentState(payload)) {
             is CurrentSyncState.Current -> Unit
@@ -114,7 +114,7 @@ class MemoryIndexSynchronizer(
 
         val identity = configuration.identity(
             sourcePath = payload.sourcePath,
-            sourceHash = payload.sourceHash,
+            recallProjectionHash = payload.recallProjectionHash,
             corpusGeneration = payload.generation
         )
         val vectorSnapshot = MemoryVectorSnapshot(
@@ -156,7 +156,7 @@ class MemoryIndexSynchronizer(
         check(payload.receiptId.isNotBlank())
         check(payload.generation > 0)
         check(payload.sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME)
-        check(payload.sourceHash.matches(SHA_256_REGEX))
+        check(payload.recallProjectionHash.matches(SHA_256_REGEX))
         check(payload.targetIndexFingerprint.matches(SHA_256_REGEX))
         payload
     } catch (_: SerializationException) {
@@ -186,7 +186,6 @@ class MemoryIndexSynchronizer(
             receipt.groupId != payload.mutationGroupId ||
             receipt.generation != payload.generation ||
             receipt.sourcePath != payload.sourcePath ||
-            receipt.targetSourceHash != payload.sourceHash ||
             receipt.targetIndexFingerprint != payload.targetIndexFingerprint ||
             group.generation != payload.generation
         ) {
@@ -205,7 +204,8 @@ class MemoryIndexSynchronizer(
         val snapshots = snapshotSource.snapshots(MemoryCorpus.CHAT_RECALL_LONG_TERM).getOrThrow()
         val snapshot = snapshots.singleOrNull() ?: return null
         return snapshot.takeIf { current ->
-            current.sourcePath == payload.sourcePath && current.sourceHash == payload.sourceHash
+            current.sourcePath == payload.sourcePath &&
+                current.recallProjectionHash == payload.recallProjectionHash
         }
     }
 
@@ -220,7 +220,7 @@ class MemoryIndexSynchronizer(
         if (
             identity.corpus != MemoryCorpus.CHAT_RECALL_LONG_TERM ||
             identity.sourcePath != payload.sourcePath ||
-            identity.sourceHash != payload.sourceHash ||
+            identity.recallProjectionHash != payload.recallProjectionHash ||
             identity.indexFingerprint != payload.targetIndexFingerprint
         ) {
             return ManifestStatus.CONFLICT
@@ -234,7 +234,7 @@ class MemoryIndexSynchronizer(
         MemoryVectorSnapshotExpectation(
             corpus = MemoryCorpus.CHAT_RECALL_LONG_TERM,
             sourcePath = sourcePath,
-            sourceHash = sourceHash,
+            recallProjectionHash = recallProjectionHash,
             corpusGeneration = generation,
             indexFingerprint = targetIndexFingerprint,
             chunks = chunks
@@ -247,14 +247,15 @@ class MemoryIndexSynchronizer(
     ): List<FloatArray>? {
         val embeddings = ArrayList<FloatArray>(snapshot.chunks.size)
         snapshot.chunks.chunked(EMBEDDING_BATCH_SIZE).forEach { chunks ->
-            val batch = capability.provider.embedDocuments(chunks.map(MemoryCorpusChunk::text)).getOrThrow()
+            val batch = capability.provider.embedDocuments(chunks.map(MemoryCorpusChunk::embeddingText)).getOrThrow()
             if (batch.size != chunks.size) return null
             embeddings += batch
         }
         return embeddings.takeIf { vectors ->
-            vectors.size == snapshot.chunks.size && vectors.all { vector ->
-                vector.isValidFor(configuration)
-            }
+            vectors.size == snapshot.chunks.size &&
+                vectors.all { vector ->
+                    vector.isValidFor(configuration)
+                }
         }
     }
 
@@ -270,30 +271,29 @@ class MemoryIndexSynchronizer(
     private suspend fun completeRoomPublication(
         payload: MemoryIndexSyncJobPayload,
         originalReceipt: MemoryMutationReceipt
-    ): MemoryIndexSyncResult {
-        return when (
-            recoveryDao.completeVectorIndexPublication(
-                MemoryVectorIndexPublicationRequest(
-                    corpus = CHAT_RECALL_CORPUS_KEY,
-                    mutationGroupId = payload.mutationGroupId,
-                    receiptId = payload.receiptId,
-                    generation = payload.generation,
-                    sourcePath = payload.sourcePath,
-                    sourceHash = payload.sourceHash,
-                    targetIndexFingerprint = payload.targetIndexFingerprint,
-                    completedAt = clock.instant().epochSecond
-                )
+    ): MemoryIndexSyncResult = when (
+        recoveryDao.completeVectorIndexPublication(
+            MemoryVectorIndexPublicationRequest(
+                corpus = CHAT_RECALL_CORPUS_KEY,
+                mutationGroupId = payload.mutationGroupId,
+                receiptId = payload.receiptId,
+                generation = payload.generation,
+                sourcePath = payload.sourcePath,
+                recallProjectionHash = payload.recallProjectionHash,
+                canonicalSourceHash = originalReceipt.targetSourceHash,
+                targetIndexFingerprint = payload.targetIndexFingerprint,
+                completedAt = clock.instant().epochSecond
             )
-        ) {
-            MemoryVectorIndexPublicationOutcome.COMPLETED,
-            MemoryVectorIndexPublicationOutcome.ALREADY_COMPLETE -> {
-                memoryFileStore.cleanupStagedTarget(originalReceipt.stagedTargetPath).getOrThrow()
-                MemoryIndexSyncResult.Succeeded
-            }
-            MemoryVectorIndexPublicationOutcome.SUPERSEDED -> MemoryIndexSyncResult.Superseded
-            MemoryVectorIndexPublicationOutcome.CONFLICT ->
-                MemoryIndexSyncResult.Terminal("room_vector_publication_conflict")
+        )
+    ) {
+        MemoryVectorIndexPublicationOutcome.COMPLETED,
+        MemoryVectorIndexPublicationOutcome.ALREADY_COMPLETE -> {
+            memoryFileStore.cleanupStagedTarget(originalReceipt.stagedTargetPath).getOrThrow()
+            MemoryIndexSyncResult.Succeeded
         }
+        MemoryVectorIndexPublicationOutcome.SUPERSEDED -> MemoryIndexSyncResult.Superseded
+        MemoryVectorIndexPublicationOutcome.CONFLICT ->
+            MemoryIndexSyncResult.Terminal("room_vector_publication_conflict")
     }
 
     private suspend fun latestGenerationResult(
@@ -330,7 +330,7 @@ class MemoryIndexSynchronizer(
         val changed = recoveryDao.transitionCorpusIndexStatusCas(
             corpus = CHAT_RECALL_CORPUS_KEY,
             expectedGeneration = payload.generation,
-            expectedSourceHash = payload.sourceHash,
+            expectedRecallProjectionHash = payload.recallProjectionHash,
             expectedTargetIndexFingerprint = payload.targetIndexFingerprint,
             expectedIndexStatus = current.indexStatus,
             expectedRowVersion = current.rowVersion,
@@ -347,7 +347,7 @@ class MemoryIndexSynchronizer(
 
     private fun MemoryCorpusState.matches(payload: MemoryIndexSyncJobPayload): Boolean =
         sourcePath == payload.sourcePath &&
-            sourceHash == payload.sourceHash &&
+            recallProjectionHash == payload.recallProjectionHash &&
             targetIndexFingerprint == payload.targetIndexFingerprint &&
             latestReceiptId == payload.receiptId
 

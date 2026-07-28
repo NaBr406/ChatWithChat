@@ -155,7 +155,11 @@ class MemoryProductionHybridShadowInstrumentedTest {
 
         val ordinaryResults = readyRetriever.retrieve(hybridRequest(DAILY_QUERY)).getOrThrow()
         assertFalse(ordinaryResults.any { result -> result.entryId == DAILY_ID })
-        assertFalse(ordinaryResults.any { result -> result.contentHash == dailyChunk.contentHash })
+        assertFalse(
+            ordinaryResults.any { result ->
+                result.embeddingContentHash == dailyChunk.embeddingContentHash
+            }
+        )
         assertTrue(ordinaryResults.all { result -> result.sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME })
         assertFalse(recordingProvider.allInputHashes.contains(DAILY_TEXT.sha256Utf8()))
 
@@ -187,7 +191,7 @@ class MemoryProductionHybridShadowInstrumentedTest {
         Log.i(
             LOG_TAG,
             "phase=A_DIRECT generation=${identityA.corpusGeneration} " +
-                "sourceHash=${identityA.sourceHash} fingerprint=${identityA.indexFingerprint} " +
+                "recallProjectionHash=${identityA.recallProjectionHash} fingerprint=${identityA.indexFingerprint} " +
                 "count=${directOldQuery.matches.size} ids=${directOldQuery.matches.vectorMatchIds()}"
         )
 
@@ -208,7 +212,8 @@ class MemoryProductionHybridShadowInstrumentedTest {
         assertEquals(snapshotA.chunks.size.toLong(), objectBoxStore.countChunks())
         Log.i(
             LOG_TAG,
-            "phase=B_STALE generation=${snapshotB.generation} sourceHash=${snapshotB.sourceHash} " +
+            "phase=B_STALE generation=${snapshotB.generation} " +
+                "recallProjectionHash=${snapshotB.recallProjectionHash} " +
                 "fingerprint=${configuration.fingerprint()} count=${objectBoxStore.countChunks()} " +
                 "ids=${staleResults.retrievalIds()}"
         )
@@ -274,7 +279,8 @@ class MemoryProductionHybridShadowInstrumentedTest {
 
         Log.i(
             LOG_TAG,
-            "$SUCCESS_CHECKPOINT generation=${identityB.corpusGeneration} sourceHash=${identityB.sourceHash} " +
+            "$SUCCESS_CHECKPOINT generation=${identityB.corpusGeneration} " +
+                "recallProjectionHash=${identityB.recallProjectionHash} " +
                 "fingerprint=${identityB.indexFingerprint} count=${objectBoxStore.countChunks()} " +
                 "ids=${hybridFallback.retrievalIds()}"
         )
@@ -288,10 +294,10 @@ class MemoryProductionHybridShadowInstrumentedTest {
     ): MemoryVectorIndexIdentity {
         val identity = configuration.identity(
             sourcePath = snapshot.sourcePath,
-            sourceHash = snapshot.sourceHash,
+            recallProjectionHash = snapshot.recallProjectionHash,
             corpusGeneration = snapshot.generation
         )
-        val embeddings = provider.embedDocuments(snapshot.chunks.map(MemoryCorpusChunk::text)).getOrThrow()
+        val embeddings = provider.embedDocuments(snapshot.chunks.map(MemoryCorpusChunk::embeddingText)).getOrThrow()
         val result = store.replaceSnapshot(
             MemoryVectorSnapshot(
                 manifest = MemoryVectorManifest(
@@ -370,7 +376,8 @@ class MemoryProductionHybridShadowInstrumentedTest {
     ) {
         Log.i(
             LOG_TAG,
-            "phase=$phase generation=${identity.corpusGeneration} sourceHash=${snapshot.sourceHash} " +
+            "phase=$phase generation=${identity.corpusGeneration} " +
+                "recallProjectionHash=${snapshot.recallProjectionHash} " +
                 "fingerprint=${identity.indexFingerprint} count=${snapshot.chunks.size} ids=${snapshot.chunks.chunkIds()}"
         )
     }
@@ -385,7 +392,7 @@ class MemoryProductionHybridShadowInstrumentedTest {
         joinToString(",") { chunk -> chunk.entryId ?: chunk.chunkId }
 
     private fun List<MemoryRetrievalResult>.idAndHashProjection(): List<Pair<String?, String>> =
-        map { result -> result.entryId to result.contentHash }
+        map { result -> result.entryId to result.embeddingContentHash }
 
     private class CurrentSnapshotIdentitySource : MemoryVectorRecallStateSource {
         override suspend fun expectedIdentity(
@@ -393,7 +400,7 @@ class MemoryProductionHybridShadowInstrumentedTest {
             configuration: MemoryVectorIndexConfiguration
         ): MemoryVectorIndexIdentity = configuration.identity(
             sourcePath = snapshot.sourcePath,
-            sourceHash = snapshot.sourceHash,
+            recallProjectionHash = snapshot.recallProjectionHash,
             corpusGeneration = snapshot.generation
         )
     }

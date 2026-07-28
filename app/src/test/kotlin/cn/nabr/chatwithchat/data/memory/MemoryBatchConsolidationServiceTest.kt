@@ -1081,7 +1081,7 @@ class MemoryBatchConsolidationServiceTest {
             type = existingEntry.type,
             sensitivity = existingEntry.sensitivity,
             source = existingEntry.source,
-            contentHash = "hash-MEMORY.md#mem_project#0",
+            embeddingContentHash = "hash-MEMORY.md#mem_project#0",
             lexicalScore = 10f,
             fusedScore = 10f,
             updatedAt = existingEntry.updatedAt
@@ -1743,7 +1743,7 @@ class MemoryBatchConsolidationServiceTest {
         type = entry.type,
         sensitivity = entry.sensitivity,
         source = entry.source,
-        contentHash = "hash-${entry.id}",
+        embeddingContentHash = "hash-${entry.id}",
         lexicalScore = 10f,
         fusedScore = 10f,
         updatedAt = entry.updatedAt

@@ -256,7 +256,7 @@ interface MemoryRecoveryDao {
         """
         UPDATE memory_corpus_state
         SET source_path = :sourcePath,
-            source_hash = :sourceHash,
+            source_hash = :recallProjectionHash,
             generation = :generation,
             target_index_fingerprint = :targetIndexFingerprint,
             index_status = :indexStatus,
@@ -266,7 +266,7 @@ interface MemoryRecoveryDao {
             updated_at = :updatedAt
         WHERE corpus = :corpus
             AND generation = :expectedGeneration
-            AND source_hash = :expectedSourceHash
+            AND source_hash = :expectedRecallProjectionHash
             AND row_version = :expectedRowVersion
             AND :generation > generation
         """
@@ -274,10 +274,10 @@ interface MemoryRecoveryDao {
     suspend fun advanceCorpusStateCas(
         corpus: String,
         expectedGeneration: Long,
-        expectedSourceHash: String,
+        expectedRecallProjectionHash: String,
         expectedRowVersion: Long,
         sourcePath: String,
-        sourceHash: String,
+        recallProjectionHash: String,
         generation: Long,
         targetIndexFingerprint: String?,
         indexStatus: String,
@@ -294,7 +294,7 @@ interface MemoryRecoveryDao {
             updated_at = :updatedAt
         WHERE corpus = :corpus
             AND generation = :expectedGeneration
-            AND source_hash = :expectedSourceHash
+            AND source_hash = :expectedRecallProjectionHash
             AND target_index_fingerprint IS :expectedTargetIndexFingerprint
             AND index_status = :expectedIndexStatus
             AND row_version = :expectedRowVersion
@@ -303,7 +303,7 @@ interface MemoryRecoveryDao {
     suspend fun transitionCorpusIndexStatusCas(
         corpus: String,
         expectedGeneration: Long,
-        expectedSourceHash: String,
+        expectedRecallProjectionHash: String,
         expectedTargetIndexFingerprint: String?,
         expectedIndexStatus: String,
         expectedRowVersion: Long,
@@ -317,14 +317,14 @@ interface MemoryRecoveryDao {
         UPDATE memory_corpus_state
         SET index_status = :indexedStatus,
             indexed_generation = :expectedGeneration,
-            indexed_source_hash = :expectedSourceHash,
+            indexed_source_hash = :expectedRecallProjectionHash,
             indexed_fingerprint = :expectedTargetIndexFingerprint,
             last_error = NULL,
             row_version = row_version + 1,
             updated_at = :updatedAt
         WHERE corpus = :corpus
             AND generation = :expectedGeneration
-            AND source_hash = :expectedSourceHash
+            AND source_hash = :expectedRecallProjectionHash
             AND target_index_fingerprint = :expectedTargetIndexFingerprint
             AND row_version = :expectedRowVersion
         """
@@ -332,7 +332,7 @@ interface MemoryRecoveryDao {
     suspend fun markCorpusIndexedCas(
         corpus: String,
         expectedGeneration: Long,
-        expectedSourceHash: String,
+        expectedRecallProjectionHash: String,
         expectedTargetIndexFingerprint: String,
         expectedRowVersion: Long,
         indexedStatus: String,
@@ -416,10 +416,10 @@ interface MemoryRecoveryDao {
         val advanced = advanceCorpusStateCas(
             corpus = request.corpus,
             expectedGeneration = current.generation,
-            expectedSourceHash = current.sourceHash,
+            expectedRecallProjectionHash = current.recallProjectionHash,
             expectedRowVersion = current.rowVersion,
             sourcePath = request.sourcePath,
-            sourceHash = request.sourceHash,
+            recallProjectionHash = request.recallProjectionHash,
             generation = request.generation,
             targetIndexFingerprint = request.targetIndexFingerprint,
             indexStatus = request.indexStatus,
@@ -476,7 +476,7 @@ interface MemoryRecoveryDao {
                 markCorpusIndexedCas(
                     corpus = request.corpus,
                     expectedGeneration = request.generation,
-                    expectedSourceHash = request.sourceHash,
+                    expectedRecallProjectionHash = request.recallProjectionHash,
                     expectedTargetIndexFingerprint = request.targetIndexFingerprint,
                     expectedRowVersion = corpus.rowVersion,
                     indexedStatus = MemoryCorpusIndexStatus.READY,
@@ -704,7 +704,7 @@ interface MemoryRecoveryDao {
     private fun MemoryCorpusAdvanceRequest.validate() {
         require(corpus.isNotBlank()) { "Corpus must not be blank" }
         require(sourcePath.isNotBlank()) { "Corpus source path must not be blank" }
-        require(sourceHash.isNotBlank()) { "Corpus source hash must not be blank" }
+        require(recallProjectionHash.isNotBlank()) { "Corpus recall projection hash must not be blank" }
         require(generation > 0) { "Corpus generation must be positive" }
         require(indexStatus.isNotBlank()) { "Corpus index status must not be blank" }
         require(updatedAt >= 0) { "Corpus update time must not be negative" }
@@ -715,7 +715,8 @@ interface MemoryRecoveryDao {
         require(mutationGroupId.isNotBlank()) { "Mutation group ID must not be blank" }
         require(receiptId.isNotBlank()) { "Mutation receipt ID must not be blank" }
         require(sourcePath.isNotBlank()) { "Source path must not be blank" }
-        require(sourceHash.isNotBlank()) { "Source hash must not be blank" }
+        require(recallProjectionHash.isNotBlank()) { "Recall projection hash must not be blank" }
+        require(canonicalSourceHash.isNotBlank()) { "Canonical source hash must not be blank" }
         require(generation > 0) { "Corpus generation must be positive" }
         require(targetIndexFingerprint.isNotBlank()) { "Index fingerprint must not be blank" }
         require(completedAt >= 0) { "Index completion time must not be negative" }
@@ -724,7 +725,7 @@ interface MemoryRecoveryDao {
     private fun MemoryCorpusState.matches(request: MemoryVectorIndexPublicationRequest): Boolean =
         generation == request.generation &&
             sourcePath == request.sourcePath &&
-            sourceHash == request.sourceHash &&
+            recallProjectionHash == request.recallProjectionHash &&
             targetIndexFingerprint == request.targetIndexFingerprint &&
             latestReceiptId == request.receiptId
 
@@ -732,7 +733,7 @@ interface MemoryRecoveryDao {
         matches(request) &&
             indexStatus == MemoryCorpusIndexStatus.READY &&
             indexedGeneration == request.generation &&
-            indexedSourceHash == request.sourceHash &&
+            indexedRecallProjectionHash == request.recallProjectionHash &&
             indexedFingerprint == request.targetIndexFingerprint
 
     private fun MemoryMutationReceipt.matches(request: MemoryVectorIndexPublicationRequest): Boolean =
@@ -740,7 +741,7 @@ interface MemoryRecoveryDao {
             groupId == request.mutationGroupId &&
             generation == request.generation &&
             sourcePath == request.sourcePath &&
-            targetSourceHash == request.sourceHash &&
+            targetSourceHash == request.canonicalSourceHash &&
             targetIndexFingerprint == request.targetIndexFingerprint
 
     private fun MemoryMutationGroup.matches(request: MemoryVectorIndexPublicationRequest): Boolean =
@@ -749,12 +750,12 @@ interface MemoryRecoveryDao {
     private fun MemoryCorpusAdvanceRequest.toInitialState(): MemoryCorpusState = MemoryCorpusState(
         corpus = corpus,
         sourcePath = sourcePath,
-        sourceHash = sourceHash,
+        recallProjectionHash = recallProjectionHash,
         generation = generation,
         targetIndexFingerprint = targetIndexFingerprint,
         indexStatus = indexStatus,
         indexedGeneration = null,
-        indexedSourceHash = null,
+        indexedRecallProjectionHash = null,
         indexedFingerprint = null,
         latestReceiptId = latestReceiptId,
         lastError = null,
@@ -772,7 +773,7 @@ interface MemoryRecoveryDao {
         check(
             request.generation == current.generation &&
                 request.sourcePath == current.sourcePath &&
-                request.sourceHash == current.sourceHash &&
+                request.recallProjectionHash == current.recallProjectionHash &&
                 request.targetIndexFingerprint == current.targetIndexFingerprint &&
                 request.latestReceiptId == current.latestReceiptId
         ) { "The same corpus generation cannot identify different content" }
@@ -835,7 +836,7 @@ data class PreparedMemoryMutation(
 data class MemoryCorpusAdvanceRequest(
     val corpus: String,
     val sourcePath: String,
-    val sourceHash: String,
+    val recallProjectionHash: String,
     val generation: Long,
     val targetIndexFingerprint: String?,
     val indexStatus: String,
@@ -861,7 +862,8 @@ data class MemoryVectorIndexPublicationRequest(
     val receiptId: String,
     val generation: Long,
     val sourcePath: String,
-    val sourceHash: String,
+    val recallProjectionHash: String,
+    val canonicalSourceHash: String,
     val targetIndexFingerprint: String,
     val completedAt: Long
 )

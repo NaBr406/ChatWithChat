@@ -225,8 +225,8 @@ internal class ObjectBoxMemoryVectorStore(
             require(chunk.sourcePath == manifest.identity.sourcePath) {
                 "Every chunk must belong to the manifest sourcePath"
             }
-            require(chunk.contentHash.matches(SHA_256_REGEX)) {
-                "contentHash must be a lowercase SHA-256 value"
+            require(chunk.embeddingContentHash.matches(SHA_256_REGEX)) {
+                "embeddingContentHash must be a lowercase SHA-256 value"
             }
             validateEmbedding(embeddedChunk.embedding, "chunk ${chunk.chunkId} embedding")
         }
@@ -326,8 +326,8 @@ internal class ObjectBoxMemoryVectorStore(
         require(expectation.sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME) {
             "The first vector store only accepts MEMORY.md"
         }
-        require(expectation.sourceHash.matches(SHA_256_REGEX)) {
-            "sourceHash must be a lowercase SHA-256 value"
+        require(expectation.recallProjectionHash.matches(SHA_256_REGEX)) {
+            "recallProjectionHash must be a lowercase SHA-256 value"
         }
         require(expectation.corpusGeneration >= 0) { "corpusGeneration must not be negative" }
         require(expectation.indexFingerprint.matches(SHA_256_REGEX)) {
@@ -340,8 +340,8 @@ internal class ObjectBoxMemoryVectorStore(
             require(chunk.sourcePath == expectation.sourcePath) {
                 "Expected chunks must belong to the expected source path"
             }
-            require(chunk.contentHash.matches(SHA_256_REGEX)) {
-                "Expected chunk contentHash must be a lowercase SHA-256 value"
+            require(chunk.embeddingContentHash.matches(SHA_256_REGEX)) {
+                "Expected chunk embeddingContentHash must be a lowercase SHA-256 value"
             }
         }
     }
@@ -349,24 +349,14 @@ internal class ObjectBoxMemoryVectorStore(
     private fun MemoryVectorIndexIdentity.matches(expectation: MemoryVectorSnapshotExpectation): Boolean =
         corpus == expectation.corpus &&
             sourcePath == expectation.sourcePath &&
-            sourceHash == expectation.sourceHash &&
+            recallProjectionHash == expectation.recallProjectionHash &&
             corpusGeneration == expectation.corpusGeneration &&
             indexFingerprint == expectation.indexFingerprint
 
     private fun MemoryVectorChunkEntity.matches(chunk: MemoryCorpusChunk): Boolean =
         chunkId == chunk.chunkId &&
-            entryId == chunk.entryId &&
-            sourcePath == chunk.sourcePath &&
-            chunkIndex == chunk.chunkIndex &&
-            heading == chunk.heading &&
-            text == chunk.text &&
-            type == chunk.type &&
-            sensitivity == chunk.sensitivity &&
-            source == chunk.source &&
-            chatId == chunk.chatId &&
-            createdAt == chunk.createdAt &&
-            updatedAt == chunk.updatedAt &&
-            contentHash == chunk.contentHash
+            text == chunk.embeddingText &&
+            contentHash == chunk.embeddingContentHash
 
     private fun validateIdentity(identity: MemoryVectorIndexIdentity) {
         require(identity.corpus == MemoryCorpus.CHAT_RECALL_LONG_TERM) {
@@ -375,8 +365,8 @@ internal class ObjectBoxMemoryVectorStore(
         require(identity.sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME) {
             "The first vector store only accepts MEMORY.md"
         }
-        require(identity.sourceHash.matches(SHA_256_REGEX)) {
-            "sourceHash must be a lowercase SHA-256 value"
+        require(identity.recallProjectionHash.matches(SHA_256_REGEX)) {
+            "recallProjectionHash must be a lowercase SHA-256 value"
         }
         require(identity.corpusGeneration >= 0) { "corpusGeneration must not be negative" }
         require(identity.indexFingerprint.matches(SHA_256_REGEX)) {
@@ -464,7 +454,7 @@ internal class ObjectBoxMemoryVectorStore(
         identity: MemoryVectorIndexIdentity
     ): QueryCondition<MemoryVectorChunkEntity> =
         MemoryVectorChunkEntity_.sourcePath.equal(identity.sourcePath)
-            .and(MemoryVectorChunkEntity_.sourceHash.equal(identity.sourceHash))
+            .and(MemoryVectorChunkEntity_.sourceHash.equal(identity.recallProjectionHash))
             .and(MemoryVectorChunkEntity_.corpusGeneration.equal(identity.corpusGeneration))
             .and(MemoryVectorChunkEntity_.indexFingerprint.equal(identity.indexFingerprint))
             .and(MemoryVectorChunkEntity_.embeddingModelId.equal(identity.embeddingDescriptor.modelId))
@@ -480,15 +470,15 @@ internal class ObjectBoxMemoryVectorStore(
             sourcePath = chunk.sourcePath,
             chunkIndex = chunk.chunkIndex,
             heading = chunk.heading,
-            text = chunk.text,
+            text = chunk.embeddingText,
             type = chunk.type,
             sensitivity = chunk.sensitivity,
             source = chunk.source,
             chatId = chunk.chatId,
             createdAt = chunk.createdAt,
             updatedAt = chunk.updatedAt,
-            contentHash = chunk.contentHash,
-            sourceHash = identity.sourceHash,
+            contentHash = chunk.embeddingContentHash,
+            sourceHash = identity.recallProjectionHash,
             corpusGeneration = identity.corpusGeneration,
             indexFingerprint = identity.indexFingerprint,
             embeddingModelId = identity.embeddingDescriptor.modelId,
@@ -505,7 +495,7 @@ internal class ObjectBoxMemoryVectorStore(
             state = state.name,
             corpus = identity.corpus.name,
             sourcePath = identity.sourcePath,
-            sourceHash = identity.sourceHash,
+            sourceHash = identity.recallProjectionHash,
             corpusGeneration = identity.corpusGeneration,
             indexFingerprint = identity.indexFingerprint,
             expectedChunkCount = expectedChunkCount,
@@ -533,7 +523,7 @@ internal class ObjectBoxMemoryVectorStore(
             identity = MemoryVectorIndexIdentity(
                 corpus = MemoryCorpus.valueOf(corpus),
                 sourcePath = sourcePath,
-                sourceHash = sourceHash,
+                recallProjectionHash = sourceHash,
                 corpusGeneration = corpusGeneration,
                 indexFingerprint = indexFingerprint,
                 embeddingDescriptor = MemoryEmbeddingDescriptor(
@@ -588,7 +578,13 @@ internal class ObjectBoxMemoryVectorStore(
                 chatId = chatId,
                 createdAt = createdAt,
                 updatedAt = updatedAt,
-                contentHash = contentHash
+                canonicalKey = null,
+                scope = null,
+                validity = null,
+                recallState = null,
+                embeddingText = text,
+                embeddingContentHash = contentHash,
+                rankingHash = contentHash
             ),
             embedding = storedEmbedding.copyOf(),
             cosineDistance = cosineDistance
@@ -598,7 +594,7 @@ internal class ObjectBoxMemoryVectorStore(
     private fun MemoryVectorChunkEntity.validateAgainst(identity: MemoryVectorIndexIdentity) {
         if (
             sourcePath != identity.sourcePath ||
-            sourceHash != identity.sourceHash ||
+            sourceHash != identity.recallProjectionHash ||
             corpusGeneration != identity.corpusGeneration ||
             indexFingerprint != identity.indexFingerprint ||
             embeddingModelId != identity.embeddingDescriptor.modelId ||

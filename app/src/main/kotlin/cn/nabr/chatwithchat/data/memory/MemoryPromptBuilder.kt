@@ -25,9 +25,7 @@ class MemoryPromptBuilder(
                 val metadata = listOfNotNull(
                     memory.type?.let { "type: $it" },
                     memory.sensitivity?.let { "sensitivity: $it" },
-                    memory.source?.let { "source: $it" },
-                    memory.entryId?.let { "id: $it" },
-                    "path: ${memory.sourcePath}"
+                    memory.source?.let { "source: $it" }
                 ).joinToString(", ")
                 val guidance = listOfNotNull(
                     if (memory.type == "communication_style") {

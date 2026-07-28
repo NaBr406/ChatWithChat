@@ -26,7 +26,7 @@ class MemoryCorpusSnapshotterTest {
         val exactBytes = replacement.file.readBytes()
 
         assertEquals(MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME, snapshot.sourcePath)
-        assertEquals(sha256(exactBytes), snapshot.sourceHash)
+        assertEquals(sha256(exactBytes), snapshot.canonicalSourceHash)
         assertTrue(snapshotter.isCurrent(listOf(snapshot)).getOrThrow())
     }
 
@@ -59,7 +59,7 @@ class MemoryCorpusSnapshotterTest {
         fileStore.replaceLongTermMemory("# ChatWithChat Memory\n\nA").getOrThrow()
         val secondA = snapshotter.snapshots(MemoryCorpus.CHAT_RECALL_LONG_TERM).getOrThrow().single()
 
-        assertEquals(firstA.sourceHash, secondA.sourceHash)
+        assertEquals(firstA.canonicalSourceHash, secondA.canonicalSourceHash)
         assertNotEquals(firstA.generation, secondA.generation)
         assertFalse(snapshotter.isCurrent(listOf(firstA)).getOrThrow())
         assertTrue(snapshotter.isCurrent(listOf(secondA)).getOrThrow())
@@ -74,7 +74,7 @@ class MemoryCorpusSnapshotterTest {
 
         val snapshot = snapshotter.snapshots(MemoryCorpus.CHAT_RECALL_LONG_TERM).getOrThrow().single()
 
-        assertEquals(sha256(byteArrayOf()), snapshot.sourceHash)
+        assertEquals(sha256(byteArrayOf()), snapshot.canonicalSourceHash)
         assertTrue(snapshot.chunks.isEmpty())
         assertTrue(snapshotter.isCurrent(listOf(snapshot)).getOrThrow())
     }
@@ -89,6 +89,58 @@ class MemoryCorpusSnapshotterTest {
         Files.write(replacement.file.toPath(), "# ChatWithChat Memory\n\nB\n".toByteArray(Charsets.UTF_8))
 
         assertFalse(snapshotter.isCurrent(listOf(snapshot)).getOrThrow())
+    }
+
+    @Test
+    fun `observation metadata changes exact bytes without invalidating recall projection`() = runBlocking {
+        val fileStore = createFileStore()
+        val snapshotter = MemoryCorpusSnapshotter(fileStore, MemoryChunker())
+        val entry = projectionEntry().copy(
+            lastObservedAt = 10L,
+            evidenceRefs = listOf("chat:1:user:1")
+        )
+        fileStore.replaceLongTermMemory(MarkdownMemoryCodec().renderLongTerm(listOf(entry))).getOrThrow()
+        val before = snapshotter.snapshots(MemoryCorpus.CHAT_RECALL_LONG_TERM).getOrThrow().single()
+
+        fileStore.replaceLongTermMemory(
+            MarkdownMemoryCodec().renderLongTerm(
+                listOf(entry.copy(lastObservedAt = 20L, evidenceRefs = listOf("chat:1:user:1", "chat:2:user:1")))
+            )
+        ).getOrThrow()
+        val after = snapshotter.snapshots(MemoryCorpus.CHAT_RECALL_LONG_TERM).getOrThrow().single()
+
+        assertNotEquals(before.canonicalSourceHash, after.canonicalSourceHash)
+        assertEquals(before.recallProjectionHash, after.recallProjectionHash)
+        assertEquals(
+            before.chunks.map(MemoryCorpusChunk::embeddingContentHash),
+            after.chunks.map(MemoryCorpusChunk::embeddingContentHash)
+        )
+        assertFalse(snapshotter.isCurrent(listOf(before)).getOrThrow())
+        assertTrue(snapshotter.isProjectionCurrent(listOf(before)).getOrThrow())
+    }
+
+    @Test
+    fun `active text and recall membership changes invalidate recall projection`() = runBlocking {
+        val fileStore = createFileStore()
+        val snapshotter = MemoryCorpusSnapshotter(fileStore, MemoryChunker())
+        val entry = projectionEntry()
+        fileStore.replaceLongTermMemory(MarkdownMemoryCodec().renderLongTerm(listOf(entry))).getOrThrow()
+        val initial = snapshotter.snapshots(MemoryCorpus.CHAT_RECALL_LONG_TERM).getOrThrow().single()
+
+        fileStore.replaceLongTermMemory(
+            MarkdownMemoryCodec().renderLongTerm(listOf(entry.copy(text = "Prefers detailed answers.")))
+        ).getOrThrow()
+        val textChanged = snapshotter.snapshots(MemoryCorpus.CHAT_RECALL_LONG_TERM).getOrThrow().single()
+        fileStore.replaceLongTermMemory(
+            MarkdownMemoryCodec().renderLongTerm(
+                listOf(entry.copy(text = "Prefers detailed answers.", recallState = MemoryRecallState.MAINTENANCE_ONLY))
+            )
+        ).getOrThrow()
+        val membershipChanged = snapshotter.snapshots(MemoryCorpus.CHAT_RECALL_LONG_TERM).getOrThrow().single()
+
+        assertNotEquals(initial.recallProjectionHash, textChanged.recallProjectionHash)
+        assertNotEquals(textChanged.recallProjectionHash, membershipChanged.recallProjectionHash)
+        assertTrue(membershipChanged.chunks.isEmpty())
     }
 
     @Test
@@ -129,7 +181,7 @@ class MemoryCorpusSnapshotterTest {
 
         val after = snapshotter.snapshots(MemoryCorpus.CHAT_RECALL_LONG_TERM).getOrThrow().single()
         assertEquals(before.generation, after.generation)
-        assertEquals(before.sourceHash, after.sourceHash)
+        assertEquals(before.canonicalSourceHash, after.canonicalSourceHash)
         assertTrue(snapshotter.isCurrent(listOf(before)).getOrThrow())
         assertFalse(snapshotter.isCurrent(maintenanceBefore).getOrThrow())
     }
@@ -144,7 +196,7 @@ class MemoryCorpusSnapshotterTest {
         Files.delete(longTermFile.toPath())
 
         val after = snapshotter.snapshots(MemoryCorpus.CHAT_RECALL_LONG_TERM).getOrThrow().single()
-        assertEquals(before.sourceHash, after.sourceHash)
+        assertEquals(before.canonicalSourceHash, after.canonicalSourceHash)
         assertNotEquals(before.generation, after.generation)
         assertFalse(snapshotter.isCurrent(listOf(before)).getOrThrow())
     }
@@ -152,6 +204,20 @@ class MemoryCorpusSnapshotterTest {
     private fun createFileStore(): MemoryFileStore = MemoryFileStore(
         paths = MemoryFilePaths(Files.createTempDirectory("memory-corpus-snapshotter").toFile()),
         clock = Clock.fixed(Instant.parse("2026-07-13T08:00:00Z"), ZoneOffset.UTC)
+    )
+
+    private fun projectionEntry() = MarkdownMemoryEntry(
+        id = "mem_response_style",
+        text = "Prefers concise answers.",
+        type = "communication_style",
+        sensitivity = MemorySensitivity.NORMAL,
+        source = MemorySource.EXPLICIT_USER_STATEMENT,
+        createdAt = 1L,
+        updatedAt = 2L,
+        canonicalKey = "communication.response_style",
+        scope = "general",
+        validity = MemoryValidity.CURRENT,
+        recallState = MemoryRecallState.QUERY
     )
 
     private fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256")

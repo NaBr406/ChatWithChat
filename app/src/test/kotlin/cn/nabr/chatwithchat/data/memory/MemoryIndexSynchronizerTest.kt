@@ -124,7 +124,10 @@ class MemoryIndexSynchronizerTest {
 
         assertEquals(MemoryIndexSyncResult.Succeeded, result)
         assertEquals(1, fixture.provider.embedDocumentCalls)
-        assertEquals(listOf(fixture.snapshot.chunks.map(MemoryCorpusChunk::text)), fixture.provider.documentBatches)
+        assertEquals(
+            listOf(fixture.snapshot.chunks.map(MemoryCorpusChunk::embeddingText)),
+            fixture.provider.documentBatches
+        )
         assertEquals(1, fixture.vectorStore.publishCalls)
         assertEquals(fixture.snapshot.chunks.size.toLong(), fixture.vectorStore.countChunks())
         assertEquals(fixture.expectedIdentity(), fixture.vectorStore.readManifest()?.identity)
@@ -218,7 +221,7 @@ class MemoryIndexSynchronizerTest {
         val result = fixture.synchronizer().synchronize(fixture.job)
 
         assertEquals(
-            MemoryIndexSyncResult.Retryable("canonical_memory_changed_during_embedding"),
+            MemoryIndexSyncResult.Retryable("recall_projection_changed_during_embedding"),
             result
         )
         assertEquals(1, fixture.provider.embedDocumentCalls)
@@ -231,7 +234,7 @@ class MemoryIndexSynchronizerTest {
     fun `same generation conflicting manifest fails terminal without embedding or publishing`() = runBlocking {
         val fixture = fixture()
         fixture.vectorStore.installReadySnapshot(
-            fixture.readyVectorSnapshot(sourceHash = "f".repeat(64))
+            fixture.readyVectorSnapshot(recallProjectionHash = "f".repeat(64))
         )
 
         val result = fixture.synchronizer().synchronize(fixture.job)
@@ -256,19 +259,20 @@ class MemoryIndexSynchronizerTest {
         recoveryDao: MemoryRecoveryDao = InMemoryMemoryRecoveryDao()
     ): Fixture {
         val configuration = configuration()
-        val sourceHash = "a".repeat(64)
+        val recallProjectionHash = "a".repeat(64)
         val payload = MemoryIndexSyncJobPayload(
             mutationGroupId = GROUP_ID,
             receiptId = RECEIPT_ID,
             generation = GENERATION,
             sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
-            sourceHash = sourceHash,
+            recallProjectionHash = recallProjectionHash,
             targetIndexFingerprint = configuration.fingerprint()
         )
         val snapshot = MemoryCorpusSnapshot(
             corpus = MemoryCorpus.CHAT_RECALL_LONG_TERM,
             sourcePath = payload.sourcePath,
-            sourceHash = payload.sourceHash,
+            canonicalSourceHash = payload.recallProjectionHash,
+            recallProjectionHash = payload.recallProjectionHash,
             generation = 7,
             chunks = listOf(
                 chunk(chunkId = "preference", chunkIndex = 0, text = "Prefers concise answers"),
@@ -332,14 +336,14 @@ class MemoryIndexSynchronizerTest {
         chatId = null,
         createdAt = 1,
         updatedAt = 1,
-        contentHash = text.sha256Utf8()
+        embeddingContentHash = text.sha256Utf8()
     )
 
     private suspend fun assertRoomPublicationCompleted(fixture: Fixture) {
         val corpus = fixture.recoveryDao.getCorpusState(CHAT_RECALL_CORPUS_KEY)
         assertEquals(MemoryCorpusIndexStatus.READY, corpus?.indexStatus)
         assertEquals(GENERATION, corpus?.indexedGeneration)
-        assertEquals(fixture.payload.sourceHash, corpus?.indexedSourceHash)
+        assertEquals(fixture.payload.recallProjectionHash, corpus?.indexedRecallProjectionHash)
         assertEquals(fixture.payload.targetIndexFingerprint, corpus?.indexedFingerprint)
         assertEquals(MemoryMutationState.INDEXED, fixture.recoveryDao.getMutationReceipt(RECEIPT_ID)?.state)
         assertEquals(MemoryMutationState.INDEXED, fixture.recoveryDao.getMutationGroup(GROUP_ID)?.state)
@@ -349,7 +353,7 @@ class MemoryIndexSynchronizerTest {
         val corpus = fixture.recoveryDao.getCorpusState(CHAT_RECALL_CORPUS_KEY)
         assertEquals(MemoryCorpusIndexStatus.PENDING, corpus?.indexStatus)
         assertNull(corpus?.indexedGeneration)
-        assertNull(corpus?.indexedSourceHash)
+        assertNull(corpus?.indexedRecallProjectionHash)
         assertNull(corpus?.indexedFingerprint)
         assertEquals(MemoryMutationState.INDEX_PENDING, fixture.recoveryDao.getMutationReceipt(RECEIPT_ID)?.state)
         assertEquals(MemoryMutationState.INDEX_PENDING, fixture.recoveryDao.getMutationGroup(GROUP_ID)?.state)
@@ -363,7 +367,7 @@ class MemoryIndexSynchronizerTest {
         assertEquals(MemoryCorpusIndexStatus.BLOCKED_DEPENDENCY, corpus?.indexStatus)
         assertEquals(reason, corpus?.lastError)
         assertNull(corpus?.indexedGeneration)
-        assertNull(corpus?.indexedSourceHash)
+        assertNull(corpus?.indexedRecallProjectionHash)
         assertNull(corpus?.indexedFingerprint)
         assertEquals(MemoryMutationState.INDEX_PENDING, fixture.recoveryDao.getMutationReceipt(RECEIPT_ID)?.state)
         assertEquals(MemoryMutationState.INDEX_PENDING, fixture.recoveryDao.getMutationGroup(GROUP_ID)?.state)
@@ -419,7 +423,7 @@ class MemoryIndexSynchronizerTest {
                         generation = payload.generation,
                         sourcePath = payload.sourcePath,
                         baseSourceHash = "b".repeat(64),
-                        targetSourceHash = payload.sourceHash,
+                        targetSourceHash = payload.recallProjectionHash,
                         stagedTargetPath = ".staging/group-1_receipt-1.target",
                         state = MemoryMutationState.INDEX_PENDING,
                         idempotencyKey = "receipt-idempotency",
@@ -437,12 +441,12 @@ class MemoryIndexSynchronizerTest {
                 MemoryCorpusState(
                     corpus = CHAT_RECALL_CORPUS_KEY,
                     sourcePath = payload.sourcePath,
-                    sourceHash = payload.sourceHash,
+                    recallProjectionHash = payload.recallProjectionHash,
                     generation = roomGeneration,
                     targetIndexFingerprint = payload.targetIndexFingerprint,
                     indexStatus = MemoryCorpusIndexStatus.PENDING,
                     indexedGeneration = null,
-                    indexedSourceHash = null,
+                    indexedRecallProjectionHash = null,
                     indexedFingerprint = null,
                     latestReceiptId = payload.receiptId,
                     lastError = null,
@@ -463,15 +467,17 @@ class MemoryIndexSynchronizerTest {
             clock = FIXED_CLOCK
         )
 
-        fun expectedIdentity(sourceHash: String = payload.sourceHash) = configuration.identity(
+        fun expectedIdentity(recallProjectionHash: String = payload.recallProjectionHash) = configuration.identity(
             sourcePath = payload.sourcePath,
-            sourceHash = sourceHash,
+            recallProjectionHash = recallProjectionHash,
             corpusGeneration = payload.generation
         )
 
-        fun readyVectorSnapshot(sourceHash: String = payload.sourceHash): MemoryVectorSnapshot = MemoryVectorSnapshot(
+        fun readyVectorSnapshot(
+            recallProjectionHash: String = payload.recallProjectionHash
+        ): MemoryVectorSnapshot = MemoryVectorSnapshot(
             manifest = MemoryVectorManifest(
-                identity = expectedIdentity(sourceHash),
+                identity = expectedIdentity(recallProjectionHash),
                 expectedChunkCount = snapshot.chunks.size.toLong(),
                 completedAt = FIXED_TIME,
                 state = MemoryVectorManifestState.READY
@@ -537,7 +543,7 @@ class MemoryIndexSynchronizerTest {
             val identity = current.identity
             val matches = identity.corpus == expectation.corpus &&
                 identity.sourcePath == expectation.sourcePath &&
-                identity.sourceHash == expectation.sourceHash &&
+                identity.recallProjectionHash == expectation.recallProjectionHash &&
                 identity.corpusGeneration == expectation.corpusGeneration &&
                 identity.indexFingerprint == expectation.indexFingerprint
             if (!matches) return MemoryVectorSnapshotVerification.Stale(current)

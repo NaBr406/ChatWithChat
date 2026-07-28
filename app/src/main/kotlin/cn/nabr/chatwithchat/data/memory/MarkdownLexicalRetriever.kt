@@ -28,7 +28,7 @@ class MarkdownLexicalRetriever(
         repeat(MAX_SNAPSHOT_ATTEMPTS) {
             val snapshots = snapshotSource.snapshots(request.corpus).getOrThrow()
             val results = rankCandidates(request, lexicalQuery, snapshots).packFor(request)
-            if (snapshotSource.isCurrent(snapshots).getOrThrow()) {
+            if (snapshotSource.isProjectionCurrent(snapshots).getOrThrow()) {
                 return@runCatching results
             }
         }
@@ -134,7 +134,11 @@ class MarkdownLexicalRetriever(
         type = chunk.type,
         sensitivity = chunk.sensitivity,
         source = chunk.source,
-        contentHash = chunk.contentHash,
+        canonicalKey = chunk.canonicalKey,
+        scope = chunk.scope,
+        recallState = chunk.recallState,
+        embeddingContentHash = chunk.embeddingContentHash,
+        rankingHash = chunk.rankingHash,
         lexicalScore = score,
         vectorScore = null,
         fusedScore = score,

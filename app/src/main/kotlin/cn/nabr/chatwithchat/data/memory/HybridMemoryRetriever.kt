@@ -89,9 +89,11 @@ class HybridMemoryRetriever(
                 .asSequence()
                 .filter { chunk ->
                     chunk.type in request.alwaysIncludeTypes &&
-                        (request.includePrivate ||
-                            chunk.sensitivity == null ||
-                            chunk.sensitivity !in setOf(MemorySensitivity.PRIVATE, MemorySensitivity.SENSITIVE))
+                        (
+                            request.includePrivate ||
+                                chunk.sensitivity == null ||
+                                chunk.sensitivity !in setOf(MemorySensitivity.PRIVATE, MemorySensitivity.SENSITIVE)
+                            )
                 }
                 .map(::toUnrankedRetrievalResult)
                 .toList()
@@ -101,7 +103,7 @@ class HybridMemoryRetriever(
                 (packed.filterNot { result -> result.type in request.alwaysIncludeTypes } + alwaysIncluded)
                     .packFor(request)
             }
-            if (snapshotSource.isCurrent(listOf(snapshot)).getOrThrow()) {
+            if (snapshotSource.isProjectionCurrent(listOf(snapshot)).getOrThrow()) {
                 return MemoryRetrievalReport(
                     results = selected,
                     mode = mode.takeIf { selected.isNotEmpty() } ?: MemoryRetrievalMode.NONE
@@ -192,7 +194,7 @@ class HybridMemoryRetriever(
             .asSequence()
             .mapNotNull { match ->
                 val current = currentChunks[match.chunk.chunkId]
-                    ?.takeIf { chunk -> chunk.contentHash == match.chunk.contentHash }
+                    ?.takeIf { chunk -> chunk.embeddingContentHash == match.chunk.embeddingContentHash }
                     ?: return@mapNotNull null
                 CurrentVectorMatch(current, match.embedding, match.cosineDistance)
             }
@@ -216,7 +218,11 @@ class HybridMemoryRetriever(
                         type = match.chunk.type,
                         sensitivity = match.chunk.sensitivity,
                         source = match.chunk.source,
-                        contentHash = match.chunk.contentHash,
+                        canonicalKey = match.chunk.canonicalKey,
+                        scope = match.chunk.scope,
+                        recallState = match.chunk.recallState,
+                        embeddingContentHash = match.chunk.embeddingContentHash,
+                        rankingHash = match.chunk.rankingHash,
                         lexicalScore = null,
                         vectorScore = (1f - match.cosineDistance).coerceIn(-1f, 1f),
                         fusedScore = 0f,
@@ -261,9 +267,11 @@ class HybridMemoryRetriever(
                 maxVectorScore != null &&
                 (
                     !vectorPassesRelevanceFloor(vector.result.vectorScore, maxVectorScore) ||
-                        (lexicalCandidates.isNotEmpty() &&
-                            vectorRanks.getValue(key) > MAX_VECTOR_ONLY_RANK_WITH_LEXICAL_MATCH)
-                )
+                        (
+                            lexicalCandidates.isNotEmpty() &&
+                                vectorRanks.getValue(key) > MAX_VECTOR_ONLY_RANK_WITH_LEXICAL_MATCH
+                            )
+                    )
             ) {
                 return@mapNotNull null
             }
@@ -294,7 +302,11 @@ class HybridMemoryRetriever(
             type = chunk.type,
             sensitivity = chunk.sensitivity,
             source = chunk.source,
-            contentHash = chunk.contentHash,
+            canonicalKey = chunk.canonicalKey,
+            scope = chunk.scope,
+            recallState = chunk.recallState,
+            embeddingContentHash = chunk.embeddingContentHash,
+            rankingHash = chunk.rankingHash,
             lexicalScore = null,
             vectorScore = null,
             fusedScore = 0f,
@@ -378,7 +390,7 @@ class HybridMemoryRetriever(
     ): MemoryVectorSnapshotExpectation = MemoryVectorSnapshotExpectation(
         corpus = corpus,
         sourcePath = sourcePath,
-        sourceHash = sourceHash,
+        recallProjectionHash = recallProjectionHash,
         corpusGeneration = corpusGeneration,
         indexFingerprint = indexFingerprint,
         chunks = chunks
