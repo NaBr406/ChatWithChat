@@ -160,7 +160,7 @@ class LlmMemoryIntelligenceTest {
     }
 
     @Test
-    fun `batch consolidation rejects non strict json with one provider call`() = runBlocking {
+    fun `batch invalid json finishes the same activity run at generation`() = runBlocking {
         val resolvedPlatform = platform(ClientType.OPENROUTER, "model")
         val openAIAPI = RecordingOpenAIAPI(
             chatChunks = chatChunks("""{"operations":[],"unexpected":true}""")
@@ -171,27 +171,56 @@ class LlmMemoryIntelligenceTest {
             activityLogger = activityLogger
         )
 
-        val result = intelligence.consolidateMemoryBatch(batchRequest(), resolvedPlatform)
-
-        assertNull(result)
-        assertEquals(1, openAIAPI.streamChatCompletionCalls)
-        assertEquals(MemoryActivityStatus.SUCCEEDED, activityLogger.finishedStatus(MemoryActivityCategory.MODEL_CALL))
-        assertEquals(MemoryActivityStatus.FAILED, activityLogger.finishedStatus(MemoryActivityCategory.MEMORY_GENERATION))
-    }
-
-    @Test
-    fun `unavailable resolved platform records model call and generation failures`() = runBlocking {
-        val activityLogger = RecordingMemoryActivityLogger()
-        val intelligence = intelligence(activityLogger = activityLogger)
-
+        val activityRunId = activityLogger.startSemanticAttempt()
         val result = intelligence.consolidateMemoryBatch(
             batchRequest(),
-            platform(ClientType.OPENROUTER, "model").copy(enabled = false)
+            resolvedPlatform,
+            activityRunId
         )
 
         assertNull(result)
-        assertEquals(MemoryActivityStatus.FAILED, activityLogger.finishedStatus(MemoryActivityCategory.MODEL_CALL))
-        assertEquals(MemoryActivityStatus.FAILED, activityLogger.finishedStatus(MemoryActivityCategory.MEMORY_GENERATION))
+        assertEquals(1, openAIAPI.streamChatCompletionCalls)
+        assertEquals(1, activityLogger.runs.size)
+        val activityRun = activityLogger.run(activityRunId)
+        assertEquals(
+            listOf(
+                MemoryActivityPhase.MODEL_RESOLUTION,
+                MemoryActivityPhase.MODEL_CALL,
+                MemoryActivityPhase.GENERATION
+            ),
+            activityRun.phases
+        )
+        assertEquals(MemoryActivityPhase.GENERATION, activityRun.phase)
+        assertEquals(MemoryActivityStatus.FAILED, activityRun.status)
+        assertEquals("invalid_model_json", activityRun.data.errorCode)
+        assertEquals(MemoryActivityCategory.TURN_BATCH_CONSOLIDATION, activityRun.category)
+        assertEquals(resolvedPlatform.uid, activityRun.data.platformUid)
+        assertEquals(resolvedPlatform.model, activityRun.data.modelId)
+    }
+
+    @Test
+    fun `unavailable resolved platform finishes the same activity run at model call`() = runBlocking {
+        val activityLogger = RecordingMemoryActivityLogger()
+        val intelligence = intelligence(activityLogger = activityLogger)
+
+        val activityRunId = activityLogger.startSemanticAttempt()
+        val result = intelligence.consolidateMemoryBatch(
+            batchRequest(),
+            platform(ClientType.OPENROUTER, "model").copy(enabled = false),
+            activityRunId
+        )
+
+        assertNull(result)
+        assertEquals(1, activityLogger.runs.size)
+        val activityRun = activityLogger.run(activityRunId)
+        assertEquals(
+            listOf(MemoryActivityPhase.MODEL_RESOLUTION, MemoryActivityPhase.MODEL_CALL),
+            activityRun.phases
+        )
+        assertEquals(MemoryActivityPhase.MODEL_CALL, activityRun.phase)
+        assertEquals(MemoryActivityStatus.FAILED, activityRun.status)
+        assertEquals("model_call_failed", activityRun.data.errorCode)
+        assertEquals(MemoryActivityCategory.TURN_BATCH_CONSOLIDATION, activityRun.category)
     }
 
     @Test
@@ -492,8 +521,64 @@ private class RecordingGoogleAPI(
 }
 
 private class RecordingMemoryActivityLogger : MemoryActivityLogger {
-    private val categoriesById = mutableMapOf<String, String>()
-    private val statusesByCategory = mutableMapOf<String, String>()
+    val runs = linkedMapOf<String, RecordedMemoryActivityRun>()
+
+    suspend fun startSemanticAttempt(): String = startRun(
+        MemoryActivityRunStart(
+            key = MemoryActivityRunKey(
+                jobId = "llm-memory-intelligence-test",
+                retryCycle = 0,
+                attempt = 1
+            ),
+            category = MemoryActivityCategory.TURN_BATCH_CONSOLIDATION,
+            jobType = MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH,
+            initialPhase = MemoryActivityPhase.MODEL_RESOLUTION,
+            data = MemoryActivityRunData(inputCount = 1)
+        )
+    )
+
+    override suspend fun startRun(start: MemoryActivityRunStart): String {
+        val activityRunId = start.key.activityRunId
+        runs.putIfAbsent(
+            activityRunId,
+            RecordedMemoryActivityRun(
+                category = start.category,
+                phase = start.initialPhase,
+                status = start.initialStatus,
+                phases = mutableListOf(start.initialPhase),
+                data = start.data
+            )
+        )
+        return activityRunId
+    }
+
+    override suspend fun advancePhase(
+        activityRunId: String,
+        expectedPhase: String,
+        nextPhase: String,
+        data: MemoryActivityRunData
+    ): Boolean {
+        val run = runs[activityRunId] ?: return false
+        if (run.status in MemoryActivityStatus.TERMINAL || run.phase != expectedPhase) return false
+        run.phase = nextPhase
+        run.status = MemoryActivityStatus.RUNNING
+        run.phases += nextPhase
+        run.data = run.data.merge(data)
+        return true
+    }
+
+    override suspend fun finishRun(
+        activityRunId: String,
+        expectedPhase: String,
+        status: String,
+        data: MemoryActivityRunData
+    ): Boolean {
+        val run = runs[activityRunId] ?: return false
+        if (run.status in MemoryActivityStatus.TERMINAL || run.phase != expectedPhase) return false
+        run.status = status
+        run.data = run.data.merge(data)
+        return true
+    }
 
     override suspend fun start(
         batchId: String,
@@ -502,11 +587,30 @@ private class RecordingMemoryActivityLogger : MemoryActivityLogger {
         modelName: String?,
         attempt: Int?,
         turnCount: Int?
-    ): String = "log-${categoriesById.size}".also { logId -> categoriesById[logId] = category }
+    ): String = error("Legacy activity rows are not expected")
 
-    override suspend fun finish(logId: String, status: String, detail: String?, operationCount: Int?) {
-        categoriesById[logId]?.let { category -> statusesByCategory[category] = status }
-    }
+    override suspend fun finish(logId: String, status: String, detail: String?, operationCount: Int?) =
+        error("Legacy activity rows are not expected")
 
-    fun finishedStatus(category: String): String? = statusesByCategory[category]
+    fun run(activityRunId: String): RecordedMemoryActivityRun = checkNotNull(runs[activityRunId])
 }
+
+private data class RecordedMemoryActivityRun(
+    val category: String,
+    var phase: String,
+    var status: String,
+    val phases: MutableList<String>,
+    var data: MemoryActivityRunData
+)
+
+private fun MemoryActivityRunData.merge(update: MemoryActivityRunData): MemoryActivityRunData = copy(
+    platformUid = update.platformUid ?: platformUid,
+    modelId = update.modelId ?: modelId,
+    platformName = update.platformName ?: platformName,
+    modelName = update.modelName ?: modelName,
+    inputCount = update.inputCount ?: inputCount,
+    operationCount = update.operationCount ?: operationCount,
+    cursor = update.cursor ?: cursor,
+    hashPrefix = update.hashPrefix ?: hashPrefix,
+    errorCode = update.errorCode ?: errorCode
+)

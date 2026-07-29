@@ -92,8 +92,25 @@ data class MemoryDailyDistillationPlanResult(
     val scheduledJobId: String? = null,
     val scheduledCheckpointId: String? = null,
     val completedBatchCount: Int = 0,
-    val nextDailyPlanAt: Long? = null
+    val nextDailyPlanAt: Long? = null,
+    val disposition: String = MemoryDailyDistillationPlanDisposition.NO_ELIGIBLE_INPUT,
+    val reason: String = MemoryDailyDistillationPlanReason.NO_ELIGIBLE_DAILY_FILE
 )
+
+object MemoryDailyDistillationPlanDisposition {
+    const val WORK_SCHEDULED = "work_scheduled"
+    const val NO_ELIGIBLE_INPUT = "no_eligible_input"
+    const val SKIPPED = "skipped"
+}
+
+object MemoryDailyDistillationPlanReason {
+    const val PLANNER_JOB_SCHEDULED = "planner_job_scheduled"
+    const val SEMANTIC_JOB_SCHEDULED = "semantic_job_scheduled"
+    const val NO_ELIGIBLE_DAILY_FILE = "no_eligible_daily_file"
+    const val MEMORY_DISABLED = "memory_disabled"
+    const val ALREADY_ACTIVE = "already_active"
+    const val PLAN_SUPERSEDED = "plan_superseded"
+}
 
 data class MemoryDailyDistillationProcessResult(
     val status: String,

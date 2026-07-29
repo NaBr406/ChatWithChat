@@ -10,15 +10,33 @@ interface MemoryIntelligence {
         resolvedPlatform: PlatformV2
     ): MemoryBatchConsolidationProposal?
 
+    suspend fun consolidateMemoryBatch(
+        request: MemoryBatchConsolidationRequest,
+        resolvedPlatform: PlatformV2,
+        activityRunId: String
+    ): MemoryBatchConsolidationProposal? = consolidateMemoryBatch(request, resolvedPlatform)
+
     suspend fun distillDailyMemory(
         request: MemoryDailyDistillationFrozenInput,
         resolvedPlatform: PlatformV2
     ): MemoryDailyDistillationProposal?
 
+    suspend fun distillDailyMemory(
+        request: MemoryDailyDistillationFrozenInput,
+        resolvedPlatform: PlatformV2,
+        activityRunId: String
+    ): MemoryDailyDistillationProposal? = distillDailyMemory(request, resolvedPlatform)
+
     suspend fun consolidateLongTermMemory(
         request: MemoryLongTermConsolidationPartitionRequest,
         resolvedPlatform: PlatformV2
     ): MemoryLongTermConsolidationProposal?
+
+    suspend fun consolidateLongTermMemory(
+        request: MemoryLongTermConsolidationPartitionRequest,
+        resolvedPlatform: PlatformV2,
+        activityRunId: String
+    ): MemoryLongTermConsolidationProposal? = consolidateLongTermMemory(request, resolvedPlatform)
 }
 
 internal sealed interface ClaimedMemoryModelBinding {

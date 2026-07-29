@@ -6,6 +6,8 @@ import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.debug.MemoryRecallTrace
 import cn.nabr.chatwithchat.data.debug.PromptTraceStore
+import cn.nabr.chatwithchat.data.memory.MemoryActivityLogger
+import cn.nabr.chatwithchat.data.memory.MemoryActivityStatus
 import cn.nabr.chatwithchat.data.memory.MemoryCompletedTurnInput
 import cn.nabr.chatwithchat.data.memory.MemoryCorpus
 import cn.nabr.chatwithchat.data.memory.MemoryDailyDistillationScheduler
@@ -28,7 +30,9 @@ import cn.nabr.chatwithchat.data.memory.TurnRecallSnapshot
 import cn.nabr.chatwithchat.data.memory.buildMemoryMessages
 import cn.nabr.chatwithchat.data.memory.deduplicationKey
 import cn.nabr.chatwithchat.data.memory.normalizeExactMemoryText
+import cn.nabr.chatwithchat.data.memory.recordStandalonePlanningResult
 import cn.nabr.chatwithchat.data.memory.toModelVisibleMemoryFactOrNull
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOf
@@ -42,14 +46,46 @@ class MemoryRepositoryImpl(
     private val memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null,
     private val memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler? = null,
     private val memoryLongTermConsolidationScheduler: MemoryLongTermConsolidationScheduler? = null,
-    private val promptTraceStore: PromptTraceStore? = null
+    private val promptTraceStore: PromptTraceStore? = null,
+    private val activityLogger: MemoryActivityLogger = MemoryActivityLogger.None
 ) : MemoryRepository {
 
     override suspend fun onMemoryEnabledChanged(enabled: Boolean) {
-        memoryTurnBatchScheduler?.onMemoryEnabledChanged(enabled)
+        runMemoryTransitionStep("memory_toggle_turn_batch_failed") {
+            memoryTurnBatchScheduler?.onMemoryEnabledChanged(enabled)
+        }
         if (enabled) {
-            memoryDailyDistillationScheduler?.ensurePlanningJobs()
-            memoryLongTermConsolidationScheduler?.ensureScheduled()
+            runMemoryTransitionStep("memory_toggle_daily_planning_failed") {
+                memoryDailyDistillationScheduler?.ensurePlanningJobs()
+            }
+            runMemoryTransitionStep("memory_toggle_long_term_planning_failed") {
+                memoryLongTermConsolidationScheduler?.ensureScheduled()
+            }
+        } else {
+            activityLogger.recordStandalonePlanningResult(
+                jobType = null,
+                triggerReason = "memory_toggle",
+                status = MemoryActivityStatus.SKIPPED,
+                outcomeCode = "memory_disabled"
+            )
+        }
+    }
+
+    private suspend fun runMemoryTransitionStep(
+        errorCode: String,
+        block: suspend () -> Unit
+    ) {
+        try {
+            block()
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Throwable) {
+            activityLogger.recordStandalonePlanningResult(
+                jobType = null,
+                triggerReason = "memory_toggle",
+                status = MemoryActivityStatus.FAILED,
+                outcomeCode = errorCode
+            )
         }
     }
 

@@ -35,6 +35,10 @@ class MemoryDailyDistillationSchedulerTest {
         assertTrue(payload.batchKey!!.startsWith("batch_0000_"))
         assertEquals(listOf(EnqueuedMemoryWork(MemoryMaintenanceJobFamily.REPAIR, 0)), fixture.workEnqueuer.works)
         assertEquals(1, fixture.jobDao.jobs.count { job -> job.nextRunAt != null })
+        val plannerActivity = fixture.activityDao.rows.single { row -> row.jobId == plan.jobId }
+        assertEquals(MemoryActivityCategory.MAINTENANCE_PLANNING, plannerActivity.category)
+        assertEquals(MemoryActivityStatus.SCHEDULED, plannerActivity.status)
+        assertEquals("daily_batch_discovered", plannerActivity.triggerReason)
     }
 
     @Test
@@ -56,6 +60,10 @@ class MemoryDailyDistillationSchedulerTest {
         assertEquals(MemoryDistillationCheckpointStatus.PENDING, checkpoint?.status)
         assertEquals(payload.checkpointId, checkpoint?.checkpointId)
         assertEquals(payload.input.targetBaseHash, checkpoint?.targetBaseHash)
+        val semanticActivity = fixture.activityDao.rows.single { row -> row.jobId == semanticJob.jobId }
+        assertEquals(MemoryActivityCategory.DAILY_DISTILLATION, semanticActivity.category)
+        assertEquals(MemoryActivityStatus.SCHEDULED, semanticActivity.status)
+        assertEquals(24, semanticActivity.inputCount)
     }
 
     @Test
@@ -135,6 +143,8 @@ class MemoryDailyDistillationSchedulerTest {
         assertNull(result.scheduledJobId)
         assertTrue(fixture.jobDao.jobs.isEmpty())
         assertTrue(fixture.workEnqueuer.works.isEmpty())
+        assertEquals(MemoryActivityStatus.SKIPPED, fixture.activityDao.rows.single().status)
+        assertEquals(MemoryDailyDistillationPlanReason.MEMORY_DISABLED, fixture.activityDao.rows.single().errorCode)
     }
 
     @Test
@@ -180,6 +190,7 @@ class MemoryDailyDistillationSchedulerTest {
         val recoveryDao = InMemoryMemoryRecoveryDao()
         val jobDao = InMemoryMaintenanceJobDao()
         val workEnqueuer = RecordingWorkEnqueuer()
+        val activityDao = InMemoryActivityLogDao()
         val settings = FakeMaintenanceSettingRepository(memoryEnabled)
         val maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, clock)
         val scheduler = MemoryDailyDistillationScheduler(
@@ -189,9 +200,19 @@ class MemoryDailyDistillationSchedulerTest {
             maintenanceScheduler = maintenanceScheduler,
             settingRepository = settings,
             workEnqueuer = workEnqueuer,
+            activityLogger = RoomMemoryActivityLogger(activityDao, clock),
             clock = clock
         )
-        return Fixture(fileStore, recoveryDao, jobDao, workEnqueuer, settings, maintenanceScheduler, scheduler)
+        return Fixture(
+            fileStore,
+            recoveryDao,
+            jobDao,
+            workEnqueuer,
+            activityDao,
+            settings,
+            maintenanceScheduler,
+            scheduler
+        )
     }
 
     private fun entry(id: String, text: String) = MarkdownMemoryEntry(
@@ -209,6 +230,7 @@ class MemoryDailyDistillationSchedulerTest {
         val recoveryDao: InMemoryMemoryRecoveryDao,
         val jobDao: InMemoryMaintenanceJobDao,
         val workEnqueuer: RecordingWorkEnqueuer,
+        val activityDao: InMemoryActivityLogDao,
         val settings: FakeMaintenanceSettingRepository,
         val maintenanceScheduler: MemoryMaintenanceScheduler,
         val scheduler: MemoryDailyDistillationScheduler

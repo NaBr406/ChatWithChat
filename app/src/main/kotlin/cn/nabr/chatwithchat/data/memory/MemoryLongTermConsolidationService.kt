@@ -23,6 +23,7 @@ class MemoryLongTermConsolidationService(
     private val operationController: MemoryLongTermConsolidationOperationController,
     private val memoryMutationCoordinator: MemoryMutationCoordinator,
     private val longTermScheduler: MemoryLongTermConsolidationScheduler,
+    private val activityLogger: MemoryActivityLogger = MemoryActivityLogger.None,
     private val commitObserver: MemoryLongTermConsolidationCommitObserver = MemoryLongTermConsolidationCommitObserver.None,
     private val clock: Clock = Clock.systemDefaultZone(),
     private val maxPartitionsPerInvocation: Int = DEFAULT_MAX_PARTITIONS_PER_INVOCATION,
@@ -43,15 +44,45 @@ class MemoryLongTermConsolidationService(
 
     suspend fun process(job: MemoryMaintenanceJob): MemoryLongTermProcessResult {
         terminalResultOrNull(job)?.let { return it }
-        val payload = decodePayload(job) ?: return terminal(job, "invalid_long_term_consolidation_payload")
+        val payload = decodePayload(job) ?: run {
+            val activityRunId = activityLogger.startSemanticRun(job, MemoryActivityCategory.LONG_TERM_CONSOLIDATION)
+            activityLogger.finishRunSafely(
+                activityRunId,
+                MemoryActivityStatus.FAILED,
+                MemoryActivityRunData(errorCode = "invalid_long_term_payload"),
+                expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
+            )
+            return terminal(job, "invalid_long_term_consolidation_payload")
+        }
         var checkpoint = checkpointFor(job, payload)
-            ?: return terminal(job, "long_term_consolidation_checkpoint_missing")
+            ?: run {
+                val activityRunId = activityLogger.startSemanticRun(job, MemoryActivityCategory.LONG_TERM_CONSOLIDATION)
+                activityLogger.finishRunSafely(
+                    activityRunId,
+                    MemoryActivityStatus.FAILED,
+                    MemoryActivityRunData(errorCode = "long_term_checkpoint_missing"),
+                    expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
+                )
+                return terminal(job, "long_term_consolidation_checkpoint_missing")
+            }
+        val activityRunId = activityLogger.startSemanticRun(
+            job = job,
+            category = MemoryActivityCategory.LONG_TERM_CONSOLIDATION,
+            triggerReason = checkpoint.triggerReason,
+            inputCount = checkpoint.entryCount
+        )
         if (checkpoint.status == MemoryLongTermCheckpointStatus.COMPLETED) {
             if (job.status == MemoryMaintenanceJobStatus.RUNNING) maintenanceScheduler.markSucceeded(job)
             memoryMutationCoordinator.findBySemanticJobId(job.jobId)?.let { mutation ->
                 memoryMutationCoordinator.acknowledgeSemanticCompletion(mutation.group.groupId)
             }
             scheduleNextPass(checkpoint.continuationRequired, checkpoint.checkpointId)
+            activityLogger.finishRunSafely(
+                activityRunId,
+                MemoryActivityStatus.NO_OP,
+                MemoryActivityRunData(inputCount = checkpoint.entryCount),
+                expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
+            )
             return MemoryLongTermProcessResult(
                 status = MemoryLongTermProcessResult.STATUS_DUPLICATE,
                 jobId = job.jobId
@@ -63,6 +94,12 @@ class MemoryLongTermConsolidationService(
         if (!settingRepository.fetchMemoryEnabled()) {
             recordCheckpointError(checkpoint, REASON_MEMORY_DISABLED)
             maintenanceScheduler.markDismissed(job, REASON_MEMORY_DISABLED)
+            activityLogger.finishRunSafely(
+                activityRunId,
+                MemoryActivityStatus.SKIPPED,
+                MemoryActivityRunData(inputCount = checkpoint.entryCount, errorCode = REASON_MEMORY_DISABLED),
+                expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
+            )
             return MemoryLongTermProcessResult(
                 status = MemoryLongTermProcessResult.STATUS_TERMINAL,
                 jobId = job.jobId,
@@ -71,22 +108,59 @@ class MemoryLongTermConsolidationService(
         }
 
         memoryMutationCoordinator.findBySemanticJobId(job.jobId)?.let { mutation ->
+            activityLogger.advanceRunSafely(
+                activityRunId,
+                MemoryActivityPhase.MODEL_RESOLUTION,
+                MemoryActivityPhase.ORGANIZATION,
+                MemoryActivityRunData(inputCount = checkpoint.entryCount, cursor = checkpoint.partitionCursor)
+            )
             checkpoint = alignCheckpointWithMutation(checkpoint, mutation)
             return commitPreparedMutation(
                 job = job,
                 checkpoint = checkpoint,
                 mutation = mutation,
-                operationCount = 0
+                operationCount = 0,
+                activityRunId = activityRunId
             )
         }
         if (checkpoint.status != MemoryLongTermCheckpointStatus.PENDING) {
             recordCheckpointError(checkpoint, "long_term_checkpoint_missing_prepared_mutation")
+            activityLogger.finishRunSafely(
+                activityRunId,
+                MemoryActivityStatus.FAILED,
+                MemoryActivityRunData(
+                    inputCount = checkpoint.entryCount,
+                    errorCode = "long_term_checkpoint_state_invalid"
+                ),
+                expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
+            )
             return terminal(job, "long_term_checkpoint_missing_prepared_mutation")
         }
 
-        val snapshot = readFrozenSnapshot(checkpoint)
-            ?: return staleSource(job, checkpoint, REASON_STALE_SOURCE)
+        val snapshot = readFrozenSnapshot(checkpoint) ?: run {
+            activityLogger.finishRunSafely(
+                activityRunId,
+                MemoryActivityStatus.SKIPPED,
+                MemoryActivityRunData(
+                    inputCount = checkpoint.entryCount,
+                    cursor = checkpoint.partitionCursor,
+                    errorCode = REASON_STALE_SOURCE
+                ),
+                expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
+            )
+            return staleSource(job, checkpoint, REASON_STALE_SOURCE)
+        }
         if (snapshot.structuralRepairCount > 0) {
+            activityLogger.advanceRunSafely(
+                activityRunId,
+                MemoryActivityPhase.MODEL_RESOLUTION,
+                MemoryActivityPhase.ORGANIZATION,
+                MemoryActivityRunData(
+                    inputCount = checkpoint.entryCount,
+                    operationCount = snapshot.structuralRepairCount,
+                    cursor = checkpoint.partitionCursor
+                )
+            )
             checkpoint = persistContinuationIntent(checkpoint, continuationRequired = true)
             val repair = operationController.renderStructuralRepair(
                 baseMarkdown = snapshot.sourceMarkdown,
@@ -96,17 +170,29 @@ class MemoryLongTermConsolidationService(
             return prepareAndCommitRendered(
                 job = job,
                 checkpoint = checkpoint,
-                rendered = repair
+                rendered = repair,
+                activityRunId = activityRunId
             )
         }
         var currentJob = job
         var persistedProposal = decodePersistedProposal(checkpoint)
             ?: run {
                 recordCheckpointError(checkpoint, "invalid_persisted_long_term_proposal")
+                activityLogger.finishRunSafely(
+                    activityRunId,
+                    MemoryActivityStatus.FAILED,
+                    MemoryActivityRunData(
+                        inputCount = checkpoint.entryCount,
+                        cursor = checkpoint.partitionCursor,
+                        errorCode = "invalid_long_term_proposal"
+                    ),
+                    expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
+                )
                 return terminal(job, "invalid_persisted_long_term_proposal")
             }
         var processedPartitions = 0
         var llmCalls = 0
+        var activityPlatform: PlatformV2? = null
 
         while (
             checkpoint.partitionCursor < checkpoint.entryCount &&
@@ -135,6 +221,16 @@ class MemoryLongTermConsolidationService(
                 when (val binding = resolveModelBinding(currentJob, checkpoint)) {
                     is ModelBindingResult.Unavailable -> {
                         recordCheckpointError(checkpoint, binding.reason)
+                        activityLogger.finishRunSafely(
+                            activityRunId,
+                            MemoryActivityStatus.BLOCKED,
+                            MemoryActivityRunData(
+                                inputCount = checkpoint.entryCount,
+                                cursor = checkpoint.partitionCursor,
+                                errorCode = binding.reason
+                            ),
+                            expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
+                        )
                         maintenanceScheduler.markBlockedDependency(currentJob, binding.reason)
                         return MemoryLongTermProcessResult(
                             status = MemoryLongTermProcessResult.STATUS_BLOCKED,
@@ -145,15 +241,29 @@ class MemoryLongTermConsolidationService(
                     is ModelBindingResult.Resolved -> {
                         currentJob = binding.job
                         checkpoint = binding.checkpoint
+                        activityPlatform = binding.platform
                         llmCalls += 1
                         val proposal = memoryIntelligence.consolidateLongTermMemory(
                             request = request,
-                            resolvedPlatform = binding.platform
-                        ) ?: return retryable(
-                            currentJob,
-                            checkpoint,
-                            "long_term_consolidation_unavailable_or_invalid"
-                        )
+                            resolvedPlatform = binding.platform,
+                            activityRunId = activityRunId
+                        ) ?: run {
+                            activityLogger.finishRunSafely(
+                                activityRunId,
+                                MemoryActivityStatus.FAILED,
+                                binding.platform.toMemoryActivityData(
+                                    inputCount = checkpoint.entryCount,
+                                    cursor = checkpoint.partitionCursor,
+                                    errorCode = "long_term_model_output_invalid"
+                                ),
+                                expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
+                            )
+                            return retryable(
+                                currentJob,
+                                checkpoint,
+                                "long_term_consolidation_unavailable_or_invalid"
+                            )
+                        }
                         nextProposal = runCatching {
                             policy.validateAndMergeProposal(
                                 existing = persistedProposal,
@@ -162,6 +272,16 @@ class MemoryLongTermConsolidationService(
                             )
                         }.getOrElse { throwable ->
                             rethrowInterruption(throwable)
+                            activityLogger.finishRunSafely(
+                                activityRunId,
+                                MemoryActivityStatus.FAILED,
+                                binding.platform.toMemoryActivityData(
+                                    inputCount = checkpoint.entryCount,
+                                    cursor = checkpoint.partitionCursor,
+                                    errorCode = "invalid_long_term_proposal"
+                                ),
+                                expectedPhase = MemoryActivityPhase.GENERATION
+                            )
                             return retryable(
                                 currentJob,
                                 checkpoint,
@@ -188,7 +308,39 @@ class MemoryLongTermConsolidationService(
         val currentHash = memoryFileStore.currentMemoryFileHash(MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME)
             .getOrNull()
         if (currentHash != checkpoint.baseSourceHash) {
+            activityLogger.finishRunSafely(
+                activityRunId,
+                MemoryActivityStatus.SKIPPED,
+                activityPlatform.activityData(
+                    inputCount = checkpoint.entryCount,
+                    cursor = checkpoint.partitionCursor,
+                    errorCode = REASON_STALE_SOURCE
+                ),
+                expectedPhase = if (llmCalls > 0) {
+                    MemoryActivityPhase.GENERATION
+                } else {
+                    MemoryActivityPhase.MODEL_RESOLUTION
+                }
+            )
             return staleSource(currentJob, checkpoint, REASON_STALE_SOURCE)
+        }
+        if (llmCalls > 0) {
+            activityLogger.advanceRunSafely(
+                activityRunId,
+                MemoryActivityPhase.GENERATION,
+                MemoryActivityPhase.ORGANIZATION,
+                activityPlatform.activityData(
+                    inputCount = checkpoint.entryCount,
+                    cursor = checkpoint.partitionCursor
+                )
+            )
+        } else {
+            activityLogger.advanceRunSafely(
+                activityRunId,
+                MemoryActivityPhase.MODEL_RESOLUTION,
+                MemoryActivityPhase.ORGANIZATION,
+                MemoryActivityRunData(inputCount = checkpoint.entryCount, cursor = checkpoint.partitionCursor)
+            )
         }
         val rendered = runCatching {
             operationController.render(
@@ -199,6 +351,16 @@ class MemoryLongTermConsolidationService(
             )
         }.getOrElse { throwable ->
             rethrowInterruption(throwable)
+            activityLogger.finishRunSafely(
+                activityRunId,
+                MemoryActivityStatus.FAILED,
+                activityPlatform.activityData(
+                    inputCount = checkpoint.entryCount,
+                    cursor = checkpoint.partitionCursor,
+                    errorCode = "long_term_render_failed"
+                ),
+                expectedPhase = MemoryActivityPhase.ORGANIZATION
+            )
             return retryable(
                 currentJob,
                 checkpoint,
@@ -218,6 +380,16 @@ class MemoryLongTermConsolidationService(
             commitObserver.afterCheckpointCompletion(checkpoint)
             maintenanceScheduler.markSucceeded(currentJob)
             scheduleNextPass(continuationRequired, checkpoint.checkpointId)
+            activityLogger.finishRunSafely(
+                activityRunId,
+                MemoryActivityStatus.NO_OP,
+                activityPlatform.activityData(
+                    inputCount = checkpoint.entryCount,
+                    operationCount = 0,
+                    cursor = checkpoint.partitionCursor
+                ),
+                expectedPhase = MemoryActivityPhase.ORGANIZATION
+            )
             return MemoryLongTermProcessResult(
                 status = MemoryLongTermProcessResult.STATUS_SUCCEEDED,
                 jobId = job.jobId,
@@ -229,7 +401,8 @@ class MemoryLongTermConsolidationService(
         return prepareAndCommitRendered(
             job = currentJob,
             checkpoint = checkpoint,
-            rendered = rendered
+            rendered = rendered,
+            activityRunId = activityRunId
         )
     }
 
@@ -283,7 +456,8 @@ class MemoryLongTermConsolidationService(
     private suspend fun prepareAndCommitRendered(
         job: MemoryMaintenanceJob,
         checkpoint: MemoryLongTermConsolidationCheckpoint,
-        rendered: RenderedMemoryLongTermConsolidation
+        rendered: RenderedMemoryLongTermConsolidation,
+        activityRunId: String
     ): MemoryLongTermProcessResult {
         val mutation = runCatching {
             maintenanceScheduler.renewClaimedLease(job)
@@ -294,6 +468,15 @@ class MemoryLongTermConsolidationService(
             )
         }.getOrElse { throwable ->
             rethrowInterruption(throwable)
+            activityLogger.finishRunSafely(
+                activityRunId,
+                MemoryActivityStatus.FAILED,
+                checkpoint.activityData(
+                    operationCount = rendered.operationCount,
+                    errorCode = "long_term_prepare_failed"
+                ),
+                expectedPhase = MemoryActivityPhase.ORGANIZATION
+            )
             return retryable(
                 job,
                 checkpoint,
@@ -315,7 +498,8 @@ class MemoryLongTermConsolidationService(
             job = job,
             checkpoint = preparedCheckpoint,
             mutation = mutation,
-            operationCount = rendered.operationCount
+            operationCount = rendered.operationCount,
+            activityRunId = activityRunId
         )
     }
 
@@ -323,13 +507,23 @@ class MemoryLongTermConsolidationService(
         job: MemoryMaintenanceJob,
         checkpoint: MemoryLongTermConsolidationCheckpoint,
         mutation: MemoryPreparedMutation,
-        operationCount: Int
+        operationCount: Int,
+        activityRunId: String
     ): MemoryLongTermProcessResult {
         val commitResult = runCatching {
             maintenanceScheduler.renewClaimedLease(job)
             memoryMutationCoordinator.reconcile(mutation)
         }.getOrElse { throwable ->
             rethrowInterruption(throwable)
+            activityLogger.finishRunSafely(
+                activityRunId,
+                MemoryActivityStatus.FAILED,
+                checkpoint.activityData(
+                    operationCount = operationCount,
+                    errorCode = "long_term_commit_failed"
+                ),
+                expectedPhase = MemoryActivityPhase.ORGANIZATION
+            )
             return retryable(
                 job,
                 checkpoint,
@@ -349,6 +543,15 @@ class MemoryLongTermConsolidationService(
             )
             maintenanceScheduler.markFailedTerminal(job, commitResult.reason)
             scheduleReplan()
+            activityLogger.finishRunSafely(
+                activityRunId,
+                MemoryActivityStatus.FAILED,
+                checkpoint.activityData(
+                    operationCount = operationCount,
+                    errorCode = "long_term_commit_conflict"
+                ),
+                expectedPhase = MemoryActivityPhase.ORGANIZATION
+            )
             return MemoryLongTermProcessResult(
                 status = MemoryLongTermProcessResult.STATUS_TERMINAL,
                 jobId = job.jobId,
@@ -374,6 +577,12 @@ class MemoryLongTermConsolidationService(
         maintenanceScheduler.markSucceeded(job)
         memoryMutationCoordinator.acknowledgeSemanticCompletion(committed.mutation.group.groupId)
         scheduleNextPass(completed.continuationRequired, completed.checkpointId)
+        activityLogger.finishRunSafely(
+            activityRunId,
+            MemoryActivityStatus.SUCCEEDED,
+            completed.activityData(operationCount = operationCount),
+            expectedPhase = MemoryActivityPhase.ORGANIZATION
+        )
         return MemoryLongTermProcessResult(
             status = MemoryLongTermProcessResult.STATUS_SUCCEEDED,
             jobId = job.jobId,
@@ -813,6 +1022,36 @@ class MemoryLongTermConsolidationService(
         if (throwable is CancellationException) throw throwable
         if (throwable is InterruptedException) throw throwable
     }
+
+    private fun PlatformV2?.activityData(
+        inputCount: Int? = null,
+        operationCount: Int? = null,
+        cursor: Int? = null,
+        errorCode: String? = null
+    ): MemoryActivityRunData = this?.toMemoryActivityData(
+        inputCount = inputCount,
+        operationCount = operationCount,
+        cursor = cursor,
+        errorCode = errorCode
+    ) ?: MemoryActivityRunData(
+        inputCount = inputCount,
+        operationCount = operationCount,
+        cursor = cursor,
+        errorCode = errorCode
+    )
+
+    private fun MemoryLongTermConsolidationCheckpoint.activityData(
+        operationCount: Int? = null,
+        errorCode: String? = null
+    ): MemoryActivityRunData = MemoryActivityRunData(
+        platformUid = resolvedPlatformUid,
+        modelId = resolvedModelId,
+        modelName = resolvedModelId,
+        inputCount = entryCount,
+        operationCount = operationCount,
+        cursor = partitionCursor,
+        errorCode = errorCode
+    )
 
     private fun now(): Long = clock.instant().epochSecond
 

@@ -21,7 +21,8 @@ class MemoryMaintenanceProcessor @Inject constructor(
     private val memoryIndexSyncService: MemoryIndexSyncService? = null,
     private val memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler? = null,
     private val memoryDailyDistillationService: MemoryDailyDistillationService? = null,
-    private val memoryLongTermConsolidationService: MemoryLongTermConsolidationService? = null
+    private val memoryLongTermConsolidationService: MemoryLongTermConsolidationService? = null,
+    private val activityLogger: MemoryActivityLogger = MemoryActivityLogger.None
 ) {
     suspend fun processRunnableJobs(
         family: String,
@@ -100,6 +101,11 @@ class MemoryMaintenanceProcessor @Inject constructor(
     private suspend fun processSemanticJob(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome {
         if (!settingRepository.fetchMemoryEnabled()) {
             maintenanceScheduler.markDismissed(job, "memory_disabled")
+            finishUnavailableSemanticRun(
+                job = job,
+                status = MemoryActivityStatus.SKIPPED,
+                outcomeCode = "memory_disabled"
+            )
             memoryTurnBatchScheduler?.onMemoryEnabledChanged(false)
             return MemoryMaintenanceOutcome.TERMINAL
         }
@@ -162,25 +168,87 @@ class MemoryMaintenanceProcessor @Inject constructor(
     }
 
     private suspend fun planDailyDistillation(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome {
-        if (!settingRepository.fetchMemoryEnabled()) {
-            maintenanceScheduler.markDismissed(job, "memory_disabled")
-            return MemoryMaintenanceOutcome.TERMINAL
-        }
-        val scheduler = memoryDailyDistillationScheduler ?: run {
-            maintenanceScheduler.markBlockedDependency(job, "daily_distillation_scheduler_not_available")
-            return MemoryMaintenanceOutcome.BLOCKED
-        }
+        val activityRunId = activityLogger.startPlannerRun(job, triggerReason = "job_claimed")
         return try {
+            if (!settingRepository.fetchMemoryEnabled()) {
+                maintenanceScheduler.markDismissed(job, "memory_disabled")
+                activityLogger.finishRunSafely(
+                    activityRunId = activityRunId,
+                    status = MemoryActivityStatus.SKIPPED,
+                    data = MemoryActivityRunData(errorCode = "memory_disabled"),
+                    expectedPhase = MemoryActivityPhase.PLANNING
+                )
+                return MemoryMaintenanceOutcome.TERMINAL
+            }
+            val scheduler = memoryDailyDistillationScheduler ?: run {
+                maintenanceScheduler.markBlockedDependency(job, "daily_distillation_scheduler_not_available")
+                activityLogger.finishRunSafely(
+                    activityRunId = activityRunId,
+                    status = MemoryActivityStatus.BLOCKED,
+                    data = MemoryActivityRunData(errorCode = "daily_distillation_scheduler_not_available"),
+                    expectedPhase = MemoryActivityPhase.PLANNING
+                )
+                return MemoryMaintenanceOutcome.BLOCKED
+            }
             maintenanceScheduler.renewClaimedLease(job)
-            scheduler.processPlan(job)
+            val result = scheduler.processPlan(job)
             maintenanceScheduler.renewClaimedLease(job)
-            maintenanceScheduler.markSucceeded(job)
-            MemoryMaintenanceOutcome.SUCCEEDED
+            finishDailyPlanner(job, activityRunId, result)
         } catch (cancellation: CancellationException) {
             throw cancellation
-        } catch (throwable: Throwable) {
-            persistUnexpectedFailure(job, throwable)
+        } catch (_: Throwable) {
+            val outcome = persistFixedFailure(job, "daily_planning_failed")
+            activityLogger.finishRunSafely(
+                activityRunId = activityRunId,
+                status = MemoryActivityStatus.FAILED,
+                data = MemoryActivityRunData(errorCode = "daily_planning_failed"),
+                expectedPhase = MemoryActivityPhase.PLANNING
+            )
+            outcome
         }
+    }
+
+    private suspend fun finishDailyPlanner(
+        job: MemoryMaintenanceJob,
+        activityRunId: String,
+        result: MemoryDailyDistillationPlanResult
+    ): MemoryMaintenanceOutcome {
+        val (activityStatus, outcome) = when (result.disposition) {
+            MemoryDailyDistillationPlanDisposition.WORK_SCHEDULED -> {
+                maintenanceScheduler.markSucceeded(job)
+                MemoryActivityStatus.SUCCEEDED to MemoryMaintenanceOutcome.SUCCEEDED
+            }
+            MemoryDailyDistillationPlanDisposition.NO_ELIGIBLE_INPUT -> {
+                maintenanceScheduler.markSucceeded(job)
+                MemoryActivityStatus.NO_OP to MemoryMaintenanceOutcome.SUCCEEDED
+            }
+            MemoryDailyDistillationPlanDisposition.SKIPPED -> {
+                if (result.reason == MemoryDailyDistillationPlanReason.MEMORY_DISABLED) {
+                    maintenanceScheduler.markDismissed(job, result.reason)
+                    MemoryActivityStatus.SKIPPED to MemoryMaintenanceOutcome.TERMINAL
+                } else {
+                    maintenanceScheduler.markSucceeded(job)
+                    MemoryActivityStatus.SKIPPED to MemoryMaintenanceOutcome.SUCCEEDED
+                }
+            }
+            else -> {
+                val outcome = persistFixedFailure(job, "invalid_daily_planning_disposition")
+                activityLogger.finishRunSafely(
+                    activityRunId = activityRunId,
+                    status = MemoryActivityStatus.FAILED,
+                    data = MemoryActivityRunData(errorCode = "invalid_daily_planning_disposition"),
+                    expectedPhase = MemoryActivityPhase.PLANNING
+                )
+                return outcome
+            }
+        }
+        activityLogger.finishRunSafely(
+            activityRunId = activityRunId,
+            status = activityStatus,
+            data = MemoryActivityRunData(errorCode = result.reason),
+            expectedPhase = MemoryActivityPhase.PLANNING
+        )
+        return outcome
     }
 
     private suspend fun reconcileMemoryMutations(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome {
@@ -213,17 +281,42 @@ class MemoryMaintenanceProcessor @Inject constructor(
 
     private suspend fun unavailableConsolidation(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome {
         val failedJob = maintenanceScheduler.markFailedRetryable(job, "batch_consolidation_pending")
+        finishUnavailableSemanticRun(job, MemoryActivityStatus.FAILED, "batch_consolidation_pending")
         return failedJob.toFailureOutcome()
     }
 
     private suspend fun unavailableDistillation(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome {
         val failedJob = maintenanceScheduler.markFailedRetryable(job, "daily_distillation_not_available")
+        finishUnavailableSemanticRun(job, MemoryActivityStatus.FAILED, "daily_distillation_not_available")
         return failedJob.toFailureOutcome()
     }
 
     private suspend fun unavailableLongTermConsolidation(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome {
         val failedJob = maintenanceScheduler.markFailedRetryable(job, "long_term_consolidation_not_available")
+        finishUnavailableSemanticRun(job, MemoryActivityStatus.FAILED, "long_term_consolidation_not_available")
         return failedJob.toFailureOutcome()
+    }
+
+    private suspend fun finishUnavailableSemanticRun(
+        job: MemoryMaintenanceJob,
+        status: String,
+        outcomeCode: String
+    ) {
+        val category = when (job.type) {
+            MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH,
+            MemoryMaintenanceJobType.APPEND_DAILY_NOTE,
+            MemoryMaintenanceJobType.COMPACTION_FLUSH -> MemoryActivityCategory.TURN_BATCH_CONSOLIDATION
+            MemoryMaintenanceJobType.DISTILL_DAILY_NOTES -> MemoryActivityCategory.DAILY_DISTILLATION
+            MemoryMaintenanceJobType.CONSOLIDATE_LONG_TERM_MEMORY -> MemoryActivityCategory.LONG_TERM_CONSOLIDATION
+            else -> return
+        }
+        val activityRunId = activityLogger.startSemanticRun(job, category, triggerReason = "job_claimed")
+        activityLogger.finishRunSafely(
+            activityRunId = activityRunId,
+            status = status,
+            data = MemoryActivityRunData(errorCode = outcomeCode),
+            expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
+        )
     }
 
     private suspend fun unavailableMutationRecovery(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome {
@@ -242,6 +335,18 @@ class MemoryMaintenanceProcessor @Inject constructor(
             job = current,
             error = throwable.message ?: throwable.javaClass.simpleName
         ).toFailureOutcome()
+    } catch (_: MemoryMaintenanceLeaseLostException) {
+        MemoryMaintenanceOutcome.SKIPPED
+    }
+
+    private suspend fun persistFixedFailure(
+        job: MemoryMaintenanceJob,
+        errorCode: String
+    ): MemoryMaintenanceOutcome = try {
+        val leaseOwner = job.leaseOwner ?: throw MemoryMaintenanceLeaseLostException(job.jobId)
+        val current = maintenanceScheduler.getLatestClaimedJob(job.jobId, leaseOwner)
+            ?: throw MemoryMaintenanceLeaseLostException(job.jobId)
+        maintenanceScheduler.markFailedRetryable(current, errorCode).toFailureOutcome()
     } catch (_: MemoryMaintenanceLeaseLostException) {
         MemoryMaintenanceOutcome.SKIPPED
     }

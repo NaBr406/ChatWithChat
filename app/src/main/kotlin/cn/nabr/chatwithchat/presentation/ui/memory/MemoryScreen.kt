@@ -36,10 +36,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
@@ -52,6 +57,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.database.entity.MemoryActivityLog
 import cn.nabr.chatwithchat.data.memory.MemoryActivityCategory
+import cn.nabr.chatwithchat.data.memory.MemoryActivityPhase
+import cn.nabr.chatwithchat.data.memory.MemoryActivityPhaseHistory
+import cn.nabr.chatwithchat.data.memory.MemoryActivityPhaseSummary
 import cn.nabr.chatwithchat.data.memory.MemoryActivityStatus
 import cn.nabr.chatwithchat.data.memory.MemoryModelPreference
 import cn.nabr.chatwithchat.presentation.common.AppleBlue
@@ -444,38 +452,69 @@ private fun MemoryActivityLogList(logs: List<MemoryActivityLog>) {
 }
 
 @Composable
-private fun MemoryActivityLogItem(log: MemoryActivityLog) {
+internal fun MemoryActivityLogItem(log: MemoryActivityLog) {
     val category = when (log.category) {
+        MemoryActivityCategory.MAINTENANCE_PLANNING -> stringResource(R.string.memory_log_category_maintenance_planning)
+        MemoryActivityCategory.TURN_BATCH_CONSOLIDATION -> stringResource(R.string.memory_log_category_turn_batch)
+        MemoryActivityCategory.DAILY_DISTILLATION -> stringResource(R.string.memory_log_category_daily_distillation)
+        MemoryActivityCategory.LONG_TERM_CONSOLIDATION -> stringResource(R.string.memory_log_category_long_term)
         MemoryActivityCategory.MODEL_CALL -> stringResource(R.string.memory_log_category_model_call)
         MemoryActivityCategory.MEMORY_GENERATION -> stringResource(R.string.memory_log_category_generation)
         MemoryActivityCategory.MEMORY_ORGANIZATION -> stringResource(R.string.memory_log_category_organization)
-        else -> log.category
+        else -> log.jobType ?: log.category
     }
-    val status = when (log.status) {
-        MemoryActivityStatus.RUNNING -> stringResource(R.string.memory_log_status_running)
-        MemoryActivityStatus.SUCCEEDED -> stringResource(R.string.memory_log_status_succeeded)
-        MemoryActivityStatus.FAILED -> stringResource(R.string.memory_log_status_failed)
-        else -> log.status
-    }
+    val status = memoryActivityStatusLabel(log.status)
     val statusColor = when (log.status) {
         MemoryActivityStatus.SUCCEEDED -> MaterialTheme.colorScheme.primary
-        MemoryActivityStatus.FAILED -> MaterialTheme.colorScheme.error
+        MemoryActivityStatus.FAILED,
+        MemoryActivityStatus.BLOCKED -> MaterialTheme.colorScheme.error
+        MemoryActivityStatus.NO_OP,
+        MemoryActivityStatus.SKIPPED -> MaterialTheme.colorScheme.onSurfaceVariant
         else -> MaterialTheme.colorScheme.tertiary
     }
-    val model = listOfNotNull(log.platformName, log.modelName).joinToString(" / ")
+    val model = listOfNotNull(
+        log.platformName ?: log.platformUid,
+        log.modelName ?: log.modelId
+    ).joinToString(" / ")
+    val phaseHistory = remember(log.phaseSummaryJson) {
+        log.phaseSummaryJson?.let { encoded ->
+            runCatching { MemoryActivityPhaseHistory.decode(encoded) }.getOrNull()
+        }
+    }
+    var isExpanded by rememberSaveable(log.logId) { mutableStateOf(false) }
     val metadata = buildList {
         add(formatLogTime(log.startedAt))
         if (model.isNotBlank()) add(model)
-        log.turnCount?.let { add(stringResource(R.string.memory_log_turn_count, it)) }
+        log.inputCount?.let { add(stringResource(R.string.memory_log_input_count, it)) }
+            ?: log.turnCount?.let { add(stringResource(R.string.memory_log_turn_count, it)) }
         log.operationCount?.let { add(stringResource(R.string.memory_log_operation_count, it)) }
         log.attempt?.let { add(stringResource(R.string.memory_log_attempt, it)) }
+        if (log.retryCycle > 0) add(stringResource(R.string.memory_log_retry_cycle, log.retryCycle))
+        log.triggerReason?.takeIf(String::isNotBlank)?.let(::add)
+        add(memoryActivityDurationLabel(log.startedAt, log.completedAt ?: log.updatedAt))
     }.joinToString(" · ")
 
     ListItem(
         headlineContent = { Text(category) },
         supportingContent = {
             Column {
-                Text(metadata)
+                Text(metadata, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                log.phase?.let { phase ->
+                    Text(
+                        text = stringResource(R.string.memory_log_phase, memoryActivityPhaseLabel(phase)),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                log.errorCode?.takeIf(String::isNotBlank)?.let { errorCode ->
+                    Text(
+                        text = stringResource(R.string.memory_log_error_code, errorCode),
+                        color = if (log.status in setOf(MemoryActivityStatus.FAILED, MemoryActivityStatus.BLOCKED)) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                    )
+                }
                 log.detail?.takeIf(String::isNotBlank)?.let { detail ->
                     Text(
                         text = detail,
@@ -486,17 +525,103 @@ private fun MemoryActivityLogItem(log: MemoryActivityLog) {
                         }
                     )
                 }
+                if (isExpanded) {
+                    phaseHistory?.phases.orEmpty().forEach { phase ->
+                        MemoryActivityPhaseLine(phase)
+                    }
+                }
                 Text(
-                    text = stringResource(R.string.memory_log_batch, log.batchId),
+                    text = if (log.jobId != null) {
+                        stringResource(R.string.memory_log_job, log.jobId)
+                    } else {
+                        stringResource(R.string.memory_log_batch, log.batchId)
+                    },
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         },
-        trailingContent = { Text(text = status, color = statusColor) },
+        trailingContent = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(text = status, color = statusColor)
+                if (!phaseHistory?.phases.isNullOrEmpty()) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .size(20.dp)
+                            .rotate(if (isExpanded) 90f else 0f)
+                    )
+                }
+            }
+        },
+        modifier = if (!phaseHistory?.phases.isNullOrEmpty()) {
+            Modifier
+                .testTag(MEMORY_ACTIVITY_ROW_TEST_TAG)
+                .clickable(role = Role.Button) { isExpanded = !isExpanded }
+        } else {
+            Modifier.testTag(MEMORY_ACTIVITY_ROW_TEST_TAG)
+        },
         colors = ListItemDefaults.colors(containerColor = Color.Transparent)
     )
+}
+
+@Composable
+private fun MemoryActivityPhaseLine(phase: MemoryActivityPhaseSummary) {
+    val metadata = buildList {
+        add(memoryActivityPhaseLabel(phase.phase))
+        add(memoryActivityStatusLabel(phase.status))
+        phase.completedAt?.let { completedAt ->
+            add(memoryActivityDurationLabel(phase.startedAt, completedAt))
+        }
+        phase.inputCount?.let { inputCount -> add(stringResource(R.string.memory_log_input_count, inputCount)) }
+        phase.operationCount?.let { count -> add(stringResource(R.string.memory_log_operation_count, count)) }
+        phase.errorCode?.let { errorCode -> add(stringResource(R.string.memory_log_error_code, errorCode)) }
+    }.joinToString(" · ")
+    Text(
+        text = metadata,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier
+            .testTag(MEMORY_ACTIVITY_PHASE_TEST_TAG)
+            .padding(top = 2.dp)
+    )
+}
+
+@Composable
+private fun memoryActivityStatusLabel(status: String): String = when (status) {
+    MemoryActivityStatus.SCHEDULED -> stringResource(R.string.memory_log_status_scheduled)
+    MemoryActivityStatus.RUNNING -> stringResource(R.string.memory_log_status_running)
+    MemoryActivityStatus.SUCCEEDED -> stringResource(R.string.memory_log_status_succeeded)
+    MemoryActivityStatus.NO_OP -> stringResource(R.string.memory_log_status_no_op)
+    MemoryActivityStatus.SKIPPED -> stringResource(R.string.memory_log_status_skipped)
+    MemoryActivityStatus.BLOCKED -> stringResource(R.string.memory_log_status_blocked)
+    MemoryActivityStatus.FAILED -> stringResource(R.string.memory_log_status_failed)
+    else -> status
+}
+
+@Composable
+private fun memoryActivityPhaseLabel(phase: String): String = when (phase) {
+    MemoryActivityPhase.SCHEDULED -> stringResource(R.string.memory_log_phase_scheduled)
+    MemoryActivityPhase.PLANNING -> stringResource(R.string.memory_log_phase_planning)
+    MemoryActivityPhase.MODEL_RESOLUTION -> stringResource(R.string.memory_log_phase_model_resolution)
+    MemoryActivityPhase.MODEL_CALL -> stringResource(R.string.memory_log_phase_model_call)
+    MemoryActivityPhase.GENERATION -> stringResource(R.string.memory_log_phase_generation)
+    MemoryActivityPhase.ORGANIZATION -> stringResource(R.string.memory_log_phase_organization)
+    else -> phase
+}
+
+@Composable
+private fun memoryActivityDurationLabel(startedAt: Long, completedAt: Long): String {
+    val durationSeconds = (completedAt - startedAt).coerceAtLeast(0)
+    val minutes = durationSeconds / 60
+    val seconds = durationSeconds % 60
+    return if (minutes == 0L) {
+        stringResource(R.string.memory_log_duration_seconds, seconds)
+    } else {
+        stringResource(R.string.memory_log_duration_minutes_seconds, minutes, seconds)
+    }
 }
 
 private fun formatLogTime(epochSeconds: Long): String = LOG_TIME_FORMATTER.format(Instant.ofEpochSecond(epochSeconds))
@@ -512,5 +637,7 @@ private fun MemoryDisabledNotice() {
 
 private const val MEMORY_TAB = 0
 private const val LOG_TAB = 1
+internal const val MEMORY_ACTIVITY_ROW_TEST_TAG = "memory_activity_row"
+internal const val MEMORY_ACTIVITY_PHASE_TEST_TAG = "memory_activity_phase"
 private val LOG_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
     .withZone(ZoneId.systemDefault())

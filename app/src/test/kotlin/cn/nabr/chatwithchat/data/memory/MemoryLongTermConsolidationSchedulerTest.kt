@@ -103,6 +103,12 @@ class MemoryLongTermConsolidationSchedulerTest {
         assertNotEquals(checkpoint.baseSourceHash, checkpoint.recallProjectionHash)
         assertNotEquals(checkpoint.baseSourceHash, checkpoint.orderedSnapshotHash)
 
+        val semanticActivity = fixture.activityDao.rows.single { row -> row.jobId == first.jobId }
+        assertEquals(MemoryActivityCategory.LONG_TERM_CONSOLIDATION, semanticActivity.category)
+        assertEquals(MemoryActivityStatus.SCHEDULED, semanticActivity.status)
+        assertEquals(MemoryLongTermTriggerReason.WEEKLY_DUE, semanticActivity.triggerReason)
+        assertEquals(30, semanticActivity.inputCount)
+
         val job = fixture.jobDao.jobs.single()
         val payload = STRICT_JSON.decodeFromString<MemoryLongTermConsolidationJobPayload>(job.payloadJson)
         assertEquals(MemoryMaintenanceJobType.CONSOLIDATE_LONG_TERM_MEMORY, job.type)
@@ -149,6 +155,10 @@ class MemoryLongTermConsolidationSchedulerTest {
         assertEquals(MemoryLongTermConsolidationScheduler.REASON_NOT_DUE, result.reason)
         assertEquals(4L, fixture.checkpointDao.lastAfterGeneration)
         assertTrue(fixture.jobDao.jobs.isEmpty())
+        val planningActivity = fixture.activityDao.rows.single()
+        assertEquals(MemoryActivityCategory.MAINTENANCE_PLANNING, planningActivity.category)
+        assertEquals(MemoryActivityStatus.SKIPPED, planningActivity.status)
+        assertEquals(MemoryLongTermConsolidationScheduler.REASON_NOT_DUE, planningActivity.errorCode)
         assertEquals(
             listOf(
                 EnqueuedMemoryWork(
@@ -314,6 +324,11 @@ class MemoryLongTermConsolidationSchedulerTest {
         assertEquals(MemoryLongTermConsolidationScheduler.REASON_INVALID_CANONICAL_SNAPSHOT, result.reason)
         assertTrue(fixture.checkpointDao.checkpoints.isEmpty())
         assertTrue(fixture.jobDao.jobs.isEmpty())
+        assertEquals(MemoryActivityStatus.BLOCKED, fixture.activityDao.rows.single().status)
+        assertEquals(
+            MemoryLongTermConsolidationScheduler.REASON_INVALID_CANONICAL_SNAPSHOT,
+            fixture.activityDao.rows.single().errorCode
+        )
     }
 
     @Test
@@ -356,6 +371,8 @@ class MemoryLongTermConsolidationSchedulerTest {
         assertTrue(fixture.checkpointDao.checkpoints.isEmpty())
         assertTrue(fixture.jobDao.jobs.isEmpty())
         assertTrue(fixture.workEnqueuer.works.isEmpty())
+        assertEquals(MemoryActivityStatus.SKIPPED, fixture.activityDao.rows.single().status)
+        assertEquals(MemoryLongTermConsolidationScheduler.REASON_MEMORY_DISABLED, fixture.activityDao.rows.single().errorCode)
     }
 
     private suspend fun fixture(
@@ -372,6 +389,7 @@ class MemoryLongTermConsolidationSchedulerTest {
         val checkpointDao = InMemoryLongTermConsolidationDao()
         val jobDao = InMemoryMaintenanceJobDao()
         val workEnqueuer = RecordingWorkEnqueuer()
+        val activityDao = InMemoryActivityLogDao()
         val settings = FakeMaintenanceSettingRepository(memoryEnabled)
         val maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, clock)
         val scheduler = MemoryLongTermConsolidationScheduler(
@@ -381,6 +399,7 @@ class MemoryLongTermConsolidationSchedulerTest {
             maintenanceScheduler = maintenanceScheduler,
             settingRepository = settings,
             workEnqueuer = workEnqueuer,
+            activityLogger = RoomMemoryActivityLogger(activityDao, clock),
             clock = clock
         )
         return Fixture(
@@ -388,6 +407,7 @@ class MemoryLongTermConsolidationSchedulerTest {
             checkpointDao = checkpointDao,
             jobDao = jobDao,
             workEnqueuer = workEnqueuer,
+            activityDao = activityDao,
             settings = settings,
             scheduler = scheduler
         )
@@ -410,6 +430,7 @@ class MemoryLongTermConsolidationSchedulerTest {
         val checkpointDao: InMemoryLongTermConsolidationDao,
         val jobDao: InMemoryMaintenanceJobDao,
         val workEnqueuer: RecordingWorkEnqueuer,
+        val activityDao: InMemoryActivityLogDao,
         val settings: FakeMaintenanceSettingRepository,
         val scheduler: MemoryLongTermConsolidationScheduler
     ) {

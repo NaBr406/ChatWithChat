@@ -322,6 +322,46 @@ class MemoryViewModelInstrumentedTest {
 
         override suspend fun upsert(log: MemoryActivityLog) = Unit
 
+        override suspend fun insertRun(log: MemoryActivityLog): Long = -1
+
+        override suspend fun getById(activityRunId: String): MemoryActivityLog? = null
+
+        override suspend fun getActiveJobRuns(limit: Int): List<MemoryActivityLog> = emptyList()
+
+        override suspend fun getRun(jobId: String, retryCycle: Int, attempt: Int): MemoryActivityLog? = null
+
+        override suspend fun advanceRun(
+            activityRunId: String,
+            expectedRowVersion: Long,
+            expectedPhase: String,
+            nextPhase: String,
+            platformUid: String?,
+            modelId: String?,
+            platformName: String?,
+            modelName: String?,
+            inputCount: Int?,
+            operationCount: Int?,
+            phaseSummaryJson: String,
+            updatedAt: Long
+        ): Int = 0
+
+        override suspend fun finishRun(
+            activityRunId: String,
+            expectedRowVersion: Long,
+            expectedPhase: String,
+            status: String,
+            platformUid: String?,
+            modelId: String?,
+            platformName: String?,
+            modelName: String?,
+            inputCount: Int?,
+            operationCount: Int?,
+            errorCode: String?,
+            phaseSummaryJson: String,
+            completedAt: Long,
+            updatedAt: Long
+        ): Int = 0
+
         override suspend fun finish(
             logId: String,
             status: String,

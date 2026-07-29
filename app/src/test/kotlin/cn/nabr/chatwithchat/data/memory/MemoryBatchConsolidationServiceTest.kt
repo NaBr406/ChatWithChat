@@ -40,25 +40,31 @@ import org.junit.Test
 
 class MemoryBatchConsolidationServiceTest {
     @Test
-    fun `current semantic attempt activity baseline reports three top level rows`() = runBlocking {
+    fun `semantic attempt activity baseline reports one unified run at its real terminal phase`() = runBlocking {
         val scenarios = listOf(
+            ActivityBaselineScenario(
+                name = "model_failure",
+                response = null,
+                expectedStatus = MemoryActivityStatus.FAILED,
+                expectedPhase = MemoryActivityPhase.MODEL_CALL,
+                expectedErrorCode = "model_call_failed",
+                expectedOperationCount = null
+            ),
             ActivityBaselineScenario(
                 name = "success",
                 response = "{\"operations\":[]}",
-                expectedStatuses = listOf(
-                    MemoryActivityStatus.SUCCEEDED,
-                    MemoryActivityStatus.SUCCEEDED,
-                    MemoryActivityStatus.SUCCEEDED
-                )
+                expectedStatus = MemoryActivityStatus.NO_OP,
+                expectedPhase = MemoryActivityPhase.ORGANIZATION,
+                expectedErrorCode = null,
+                expectedOperationCount = 0
             ),
             ActivityBaselineScenario(
                 name = "invalid_json",
                 response = "{\"operations\":[],\"unexpected\":true}",
-                expectedStatuses = listOf(
-                    MemoryActivityStatus.SUCCEEDED,
-                    MemoryActivityStatus.FAILED,
-                    MemoryActivityStatus.FAILED
-                )
+                expectedStatus = MemoryActivityStatus.FAILED,
+                expectedPhase = MemoryActivityPhase.GENERATION,
+                expectedErrorCode = "invalid_model_json",
+                expectedOperationCount = null
             ),
             ActivityBaselineScenario(
                 name = "organization_failure",
@@ -67,11 +73,10 @@ class MemoryBatchConsolidationServiceTest {
                     "\"targetMemoryId\":\"missing-memory\",\"text\":\"Replacement\",\"type\":\"stable_profile\"," +
                     "\"sensitivity\":\"normal\",\"source\":\"explicit_user_statement\"," +
                     "\"evidenceTurnKeys\":[\"chat:7:user:1\"],\"reason\":\"baseline\"}]}",
-                expectedStatuses = listOf(
-                    MemoryActivityStatus.SUCCEEDED,
-                    MemoryActivityStatus.SUCCEEDED,
-                    MemoryActivityStatus.FAILED
-                )
+                expectedStatus = MemoryActivityStatus.FAILED,
+                expectedPhase = MemoryActivityPhase.ORGANIZATION,
+                expectedErrorCode = "invalid_consolidation_operations",
+                expectedOperationCount = 1
             )
         )
 
@@ -82,7 +87,8 @@ class MemoryBatchConsolidationServiceTest {
         scenarios.forEach { scenario ->
             val fixture = activityBaselineFixture(scenario.response)
             try {
-                fixture.service.process(fixture.createFiveTurnBatch())
+                val job = fixture.createFiveTurnBatch()
+                fixture.service.process(job)
                 val rows = fixture.activityLogDao.rows.toList()
                 val uiSourceRows = fixture.activityLogDao.observeLatest().first()
 
@@ -98,20 +104,66 @@ class MemoryBatchConsolidationServiceTest {
                         uiSourceRows.size
                     ).joinToString("|")
                 )
+                val row = rows.single()
+                val providerRequest = checkNotNull(fixture.openAIAPI.lastChatCompletionRequest).toString()
+                assertTrue("Baseline question 1" in providerRequest)
+                assertTrue("Baseline answer 1" in providerRequest)
+                assertTrue("Consolidate one immutable batch" in providerRequest)
+                assertEquals("activity-baseline-secret-token", fixture.openAIAPI.configuredToken)
+                assertEquals(MemoryActivityCategory.TURN_BATCH_CONSOLIDATION, row.category)
+                assertEquals(job.jobId, row.jobId)
+                assertEquals(job.type, row.jobType)
                 assertEquals(
-                    listOf(
-                        MemoryActivityCategory.MODEL_CALL,
-                        MemoryActivityCategory.MEMORY_GENERATION,
-                        MemoryActivityCategory.MEMORY_ORGANIZATION
-                    ),
-                    rows.map(MemoryActivityLog::category)
+                    MemoryActivityRunKey(job.jobId, job.retryCycle, job.attempts).activityRunId,
+                    row.logId
                 )
-                assertEquals(scenario.expectedStatuses, rows.map(MemoryActivityLog::status))
-                assertTrue(rows.all { row -> row.platformName == "Memory baseline" })
-                assertTrue(rows.all { row -> row.modelName == "memory-baseline-model" })
-                assertEquals(3, rows.size)
+                assertEquals(scenario.expectedStatus, row.status)
+                assertEquals(scenario.expectedPhase, row.phase)
+                assertEquals(scenario.expectedErrorCode, row.errorCode)
+                assertEquals("memory-baseline-platform", row.platformUid)
+                assertEquals("memory-baseline-model", row.modelId)
+                assertEquals("Memory baseline", row.platformName)
+                assertEquals("memory-baseline-model", row.modelName)
+                assertEquals(5, row.inputCount)
+                assertEquals(scenario.expectedOperationCount, row.operationCount)
+                assertEquals(job.attempts, row.attempt)
+                assertEquals(job.retryCycle, row.retryCycle)
+                val phaseHistory = MemoryActivityPhaseHistory.decode(checkNotNull(row.phaseSummaryJson))
+                assertEquals(
+                    when (scenario.expectedPhase) {
+                        MemoryActivityPhase.MODEL_CALL -> listOf(
+                            MemoryActivityPhase.MODEL_RESOLUTION,
+                            MemoryActivityPhase.MODEL_CALL
+                        )
+                        MemoryActivityPhase.GENERATION -> listOf(
+                            MemoryActivityPhase.MODEL_RESOLUTION,
+                            MemoryActivityPhase.MODEL_CALL,
+                            MemoryActivityPhase.GENERATION
+                        )
+                        else -> listOf(
+                            MemoryActivityPhase.MODEL_RESOLUTION,
+                            MemoryActivityPhase.MODEL_CALL,
+                            MemoryActivityPhase.GENERATION,
+                            MemoryActivityPhase.ORGANIZATION
+                        )
+                    },
+                    phaseHistory.phases.map { phase -> phase.phase }
+                )
+                assertEquals(scenario.expectedStatus, phaseHistory.phases.last().status)
+                assertEquals(scenario.expectedErrorCode, phaseHistory.phases.last().errorCode)
+                assertEquals(1, rows.size)
                 assertEquals(rows.map(MemoryActivityLog::logId).toSet(), uiSourceRows.map(MemoryActivityLog::logId).toSet())
-                assertEquals(3, uiSourceRows.size)
+                assertEquals(1, uiSourceRows.size)
+                val persistedRow = row.toString()
+                listOfNotNull(
+                    "Baseline question 1",
+                    "Baseline answer 1",
+                    "Consolidate one immutable batch",
+                    "activity-baseline-secret-token",
+                    scenario.response
+                ).forEach { sensitiveBody ->
+                    assertFalse("Activity row leaked fixture content: $sensitiveBody", sensitiveBody in persistedRow)
+                }
             } finally {
                 fixture.close()
             }
@@ -1530,7 +1582,7 @@ class MemoryBatchConsolidationServiceTest {
         assertEquals(1, dailyMarkdown.split("Recovered compaction_flush through batching.").size - 1)
     }
 
-    private fun activityBaselineFixture(response: String): ActivityBaselineFixture {
+    private fun activityBaselineFixture(response: String?): ActivityBaselineFixture {
         val turnDao = InMemoryMemoryTurnBatchDao()
         val jobDao = InMemoryMaintenanceJobDao()
         val enqueuer = RecordingWorkEnqueuer()
@@ -1539,7 +1591,7 @@ class MemoryBatchConsolidationServiceTest {
             name = "Memory baseline",
             compatibleType = ClientType.CUSTOM,
             apiUrl = "https://memory-baseline.invalid",
-            token = "token",
+            token = "activity-baseline-secret-token",
             model = "memory-baseline-model",
             enabled = true
         )
@@ -1569,8 +1621,9 @@ class MemoryBatchConsolidationServiceTest {
         )
         val activityLogDao = BaselineMemoryActivityLogDao()
         val activityLogger = RoomMemoryActivityLogger(activityLogDao, FIXED_CLOCK)
+        val openAIAPI = BaselineMemoryOpenAIAPI(response)
         val intelligence = LlmMemoryIntelligence(
-            openAIAPI = BaselineMemoryOpenAIAPI(response),
+            openAIAPI = openAIAPI,
             anthropicAPI = testProxy<AnthropicAPI>(),
             googleAPI = testProxy<GoogleAPI>(),
             activityLogger = activityLogger
@@ -1586,6 +1639,7 @@ class MemoryBatchConsolidationServiceTest {
             maintenanceScheduler = maintenanceScheduler,
             coordinator = coordinator,
             activityLogDao = activityLogDao,
+            openAIAPI = openAIAPI,
             tempRoot = tempRoot,
             service = MemoryBatchConsolidationService(
                 turnBatchDao = turnDao,
@@ -1783,8 +1837,11 @@ class MemoryBatchConsolidationServiceTest {
 
     private data class ActivityBaselineScenario(
         val name: String,
-        val response: String,
-        val expectedStatuses: List<String>
+        val response: String?,
+        val expectedStatus: String,
+        val expectedPhase: String,
+        val expectedErrorCode: String?,
+        val expectedOperationCount: Int?
     )
 
     private data class ActivityBaselineFixture(
@@ -1793,6 +1850,7 @@ class MemoryBatchConsolidationServiceTest {
         val maintenanceScheduler: MemoryMaintenanceScheduler,
         val coordinator: MemoryTurnBatchCoordinator,
         val activityLogDao: BaselineMemoryActivityLogDao,
+        val openAIAPI: BaselineMemoryOpenAIAPI,
         val tempRoot: File,
         val service: MemoryBatchConsolidationService
     ) {
@@ -1931,6 +1989,38 @@ private class MutableBatchConsolidationClock(epochSecond: Long) : Clock() {
 
 private class RecordingOrganizationActivityLogger : MemoryActivityLogger {
     var lastStatus: String? = null
+    private val phasesByRunId = mutableMapOf<String, String>()
+
+    override suspend fun startRun(start: MemoryActivityRunStart): String = start.key.activityRunId.also { activityRunId ->
+        phasesByRunId.putIfAbsent(activityRunId, start.initialPhase)
+    }
+
+    override suspend fun advancePhase(
+        activityRunId: String,
+        expectedPhase: String,
+        nextPhase: String,
+        data: MemoryActivityRunData
+    ): Boolean {
+        val recordedPhase = phasesByRunId[activityRunId]
+        val fakeIntelligenceSkippedModelPhases =
+            recordedPhase == MemoryActivityPhase.MODEL_RESOLUTION &&
+                expectedPhase == MemoryActivityPhase.GENERATION &&
+                nextPhase == MemoryActivityPhase.ORGANIZATION
+        if (recordedPhase != expectedPhase && !fakeIntelligenceSkippedModelPhases) return false
+        phasesByRunId[activityRunId] = nextPhase
+        return true
+    }
+
+    override suspend fun finishRun(
+        activityRunId: String,
+        expectedPhase: String,
+        status: String,
+        data: MemoryActivityRunData
+    ): Boolean {
+        if (phasesByRunId[activityRunId] != expectedPhase) return false
+        lastStatus = status
+        return true
+    }
 
     override suspend fun start(
         batchId: String,
@@ -1939,11 +2029,10 @@ private class RecordingOrganizationActivityLogger : MemoryActivityLogger {
         modelName: String?,
         attempt: Int?,
         turnCount: Int?
-    ): String = category
+    ): String = error("Legacy activity rows are not expected")
 
-    override suspend fun finish(logId: String, status: String, detail: String?, operationCount: Int?) {
-        if (logId == MemoryActivityCategory.MEMORY_ORGANIZATION) lastStatus = status
-    }
+    override suspend fun finish(logId: String, status: String, detail: String?, operationCount: Int?) =
+        error("Legacy activity rows are not expected")
 }
 
 private class BaselineMemoryActivityLogDao : MemoryActivityLogDao {
@@ -1963,6 +2052,123 @@ private class BaselineMemoryActivityLogDao : MemoryActivityLogDao {
         } else {
             rows += log
         }
+    }
+
+    override suspend fun insertRun(log: MemoryActivityLog): Long {
+        val conflicts = rows.any { row ->
+            row.logId == log.logId ||
+                (
+                    log.jobId != null &&
+                        log.attempt != null &&
+                        row.jobId == log.jobId &&
+                        row.retryCycle == log.retryCycle &&
+                        row.attempt == log.attempt
+                    )
+        }
+        if (conflicts) return -1
+        rows += log
+        return rows.size.toLong()
+    }
+
+    override suspend fun getById(activityRunId: String): MemoryActivityLog? =
+        rows.firstOrNull { row -> row.logId == activityRunId }
+
+    override suspend fun getActiveJobRuns(limit: Int): List<MemoryActivityLog> = rows
+        .filter { row ->
+            row.jobId != null &&
+                row.phase != null &&
+                row.status in setOf(MemoryActivityStatus.SCHEDULED, MemoryActivityStatus.RUNNING)
+        }
+        .sortedWith(compareBy<MemoryActivityLog> { row -> row.startedAt }.thenBy { row -> row.logId })
+        .take(limit)
+
+    override suspend fun getRun(jobId: String, retryCycle: Int, attempt: Int): MemoryActivityLog? =
+        rows.firstOrNull { row ->
+            row.jobId == jobId && row.retryCycle == retryCycle && row.attempt == attempt
+        }
+
+    override suspend fun advanceRun(
+        activityRunId: String,
+        expectedRowVersion: Long,
+        expectedPhase: String,
+        nextPhase: String,
+        platformUid: String?,
+        modelId: String?,
+        platformName: String?,
+        modelName: String?,
+        inputCount: Int?,
+        operationCount: Int?,
+        phaseSummaryJson: String,
+        updatedAt: Long
+    ): Int {
+        val index = rows.indexOfFirst { row ->
+            row.logId == activityRunId &&
+                row.rowVersion == expectedRowVersion &&
+                row.phase == expectedPhase &&
+                row.status in setOf(
+                    MemoryActivityStatus.SCHEDULED,
+                    MemoryActivityStatus.RUNNING
+                )
+        }
+        if (index < 0) return 0
+        rows[index] = rows[index].copy(
+            status = MemoryActivityStatus.RUNNING,
+            phase = nextPhase,
+            platformUid = platformUid,
+            modelId = modelId,
+            platformName = platformName,
+            modelName = modelName,
+            inputCount = inputCount,
+            operationCount = operationCount,
+            errorCode = null,
+            phaseSummaryJson = phaseSummaryJson,
+            updatedAt = updatedAt,
+            rowVersion = rows[index].rowVersion + 1
+        )
+        return 1
+    }
+
+    override suspend fun finishRun(
+        activityRunId: String,
+        expectedRowVersion: Long,
+        expectedPhase: String,
+        status: String,
+        platformUid: String?,
+        modelId: String?,
+        platformName: String?,
+        modelName: String?,
+        inputCount: Int?,
+        operationCount: Int?,
+        errorCode: String?,
+        phaseSummaryJson: String,
+        completedAt: Long,
+        updatedAt: Long
+    ): Int {
+        val index = rows.indexOfFirst { row ->
+            row.logId == activityRunId &&
+                row.rowVersion == expectedRowVersion &&
+                row.phase == expectedPhase &&
+                row.status in setOf(
+                    MemoryActivityStatus.SCHEDULED,
+                    MemoryActivityStatus.RUNNING
+                )
+        }
+        if (index < 0) return 0
+        rows[index] = rows[index].copy(
+            status = status,
+            platformUid = platformUid,
+            modelId = modelId,
+            platformName = platformName,
+            modelName = modelName,
+            inputCount = inputCount,
+            operationCount = operationCount,
+            errorCode = errorCode,
+            phaseSummaryJson = phaseSummaryJson,
+            completedAt = completedAt,
+            updatedAt = updatedAt,
+            rowVersion = rows[index].rowVersion + 1
+        )
+        return 1
     }
 
     override suspend fun finish(
@@ -1992,20 +2198,31 @@ private class BaselineMemoryActivityLogDao : MemoryActivityLogDao {
 }
 
 private class BaselineMemoryOpenAIAPI(
-    private val response: String
+    private val response: String?
 ) : OpenAIAPI {
-    override fun setToken(token: String?) = Unit
+    var configuredToken: String? = null
+        private set
+    var lastChatCompletionRequest: ChatCompletionRequest? = null
+        private set
+
+    override fun setToken(token: String?) {
+        configuredToken = token
+    }
 
     override fun setAPIUrl(url: String) = Unit
 
     override fun streamChatCompletion(
         request: ChatCompletionRequest,
         timeoutSeconds: Int
-    ): Flow<ChatCompletionChunk> = flowOf(
-        ChatCompletionChunk(
-            choices = listOf(Choice(index = 0, delta = Delta(content = response)))
+    ): Flow<ChatCompletionChunk> {
+        lastChatCompletionRequest = request
+        val content = response ?: return emptyFlow()
+        return flowOf(
+            ChatCompletionChunk(
+                choices = listOf(Choice(index = 0, delta = Delta(content = content)))
+            )
         )
-    )
+    }
 
     override fun streamResponses(request: ResponsesRequest, timeoutSeconds: Int): Flow<ResponsesStreamEvent> =
         emptyFlow()

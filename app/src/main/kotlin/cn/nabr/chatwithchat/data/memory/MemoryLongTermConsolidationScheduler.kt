@@ -18,6 +18,7 @@ class MemoryLongTermConsolidationScheduler(
     private val settingRepository: SettingRepository,
     private val workEnqueuer: MemoryMaintenanceWorkEnqueuer,
     private val memoryChunker: MemoryChunker = MemoryChunker(markdownMemoryCodec),
+    private val activityLogger: MemoryActivityLogger = MemoryActivityLogger.None,
     private val clock: Clock = Clock.systemDefaultZone(),
     private val json: Json = Json {
         ignoreUnknownKeys = false
@@ -32,11 +33,13 @@ class MemoryLongTermConsolidationScheduler(
 
     suspend fun ensureScheduled(completedCheckpointId: String? = null): MemoryLongTermPlanResult {
         if (!settingRepository.fetchMemoryEnabled()) {
-            return MemoryLongTermPlanResult(scheduled = false, reason = REASON_MEMORY_DISABLED)
+            return recordPlanningResult(
+                MemoryLongTermPlanResult(scheduled = false, reason = REASON_MEMORY_DISABLED)
+            )
         }
 
         activeCheckpoint()?.let { checkpoint ->
-            return ensureSemanticJob(checkpoint, REASON_ACTIVE_CHECKPOINT)
+            return recordPlanningResult(ensureSemanticJob(checkpoint, REASON_ACTIVE_CHECKPOINT))
         }
 
         val latestCompleted = if (completedCheckpointId == null) {
@@ -64,7 +67,10 @@ class MemoryLongTermConsolidationScheduler(
                     checkpointId = latestCompleted.checkpointId,
                     jobId = latestCompleted.jobId,
                     reason = REASON_COMPLETED_JOB_ACTIVE
-                )
+                ).also { result ->
+                    recordScheduledSemanticRun(result, latestCompleted.entryCount)
+                    recordPlanningResult(result)
+                }
             }
             return createAndSchedule(
                 triggerReason = MemoryLongTermTriggerReason.CONTINUATION,
@@ -79,7 +85,9 @@ class MemoryLongTermConsolidationScheduler(
         )
         if (!decision.shouldSchedule) {
             scheduleNextEvaluation(checkNotNull(decision.nextDueAt))
-            return MemoryLongTermPlanResult(scheduled = false, reason = REASON_NOT_DUE)
+            return recordPlanningResult(
+                MemoryLongTermPlanResult(scheduled = false, reason = REASON_NOT_DUE)
+            )
         }
         return createAndSchedule(
             triggerReason = checkNotNull(decision.triggerReason),
@@ -127,12 +135,14 @@ class MemoryLongTermConsolidationScheduler(
     ): MemoryLongTermPlanResult {
         val snapshot = frozenSnapshot() ?: run {
             activeCheckpoint()?.let { checkpoint ->
-                return ensureSemanticJob(checkpoint, REASON_ACTIVE_CHECKPOINT)
+                return recordPlanningResult(ensureSemanticJob(checkpoint, REASON_ACTIVE_CHECKPOINT))
             }
-            return MemoryLongTermPlanResult(scheduled = false, reason = REASON_INVALID_CANONICAL_SNAPSHOT)
+            return recordPlanningResult(
+                MemoryLongTermPlanResult(scheduled = false, reason = REASON_INVALID_CANONICAL_SNAPSHOT)
+            )
         }
         activeCheckpoint()?.let { checkpoint ->
-            return ensureSemanticJob(checkpoint, REASON_ACTIVE_CHECKPOINT)
+            return recordPlanningResult(ensureSemanticJob(checkpoint, REASON_ACTIVE_CHECKPOINT))
         }
 
         val checkpointId = checkpointId(snapshot, cycleAnchor)
@@ -170,7 +180,7 @@ class MemoryLongTermConsolidationScheduler(
                 checkpointId = persisted.checkpointId,
                 jobId = persisted.jobId,
                 reason = REASON_ALREADY_PLANNED
-            )
+            ).also { result -> recordPlanningResult(result) }
         }
         val reason = if (persisted.checkpointId == checkpointId) {
             triggerReason
@@ -241,11 +251,49 @@ class MemoryLongTermConsolidationScheduler(
         if (job.status in RUNNABLE_JOB_STATUSES) {
             workEnqueuer.enqueueWork(MemoryMaintenanceJobFamily.SEMANTIC)
         }
-        return MemoryLongTermPlanResult(
+        val result = MemoryLongTermPlanResult(
             scheduled = job.status in ACTIVE_JOB_STATUSES,
             checkpointId = checkpoint.checkpointId,
             jobId = job.jobId,
             reason = reason
+        )
+        recordScheduledSemanticRun(result, checkpoint.entryCount, job)
+        return result
+    }
+
+    private suspend fun recordPlanningResult(result: MemoryLongTermPlanResult): MemoryLongTermPlanResult {
+        val status = when (result.reason) {
+            REASON_INVALID_CANONICAL_SNAPSHOT -> MemoryActivityStatus.BLOCKED
+            REASON_MEMORY_DISABLED,
+            REASON_NOT_DUE,
+            REASON_ACTIVE_CHECKPOINT,
+            REASON_COMPLETED_JOB_ACTIVE,
+            REASON_ALREADY_PLANNED -> MemoryActivityStatus.SKIPPED
+            else -> return result
+        }
+        activityLogger.recordStandalonePlanningResult(
+            jobType = MemoryMaintenanceJobType.CONSOLIDATE_LONG_TERM_MEMORY,
+            triggerReason = "long_term_planning_check",
+            status = status,
+            outcomeCode = result.reason
+        )
+        return result
+    }
+
+    private suspend fun recordScheduledSemanticRun(
+        result: MemoryLongTermPlanResult,
+        inputCount: Int,
+        knownJob: MemoryMaintenanceJob? = null
+    ) {
+        if (!result.scheduled) return
+        val jobId = result.jobId ?: return
+        val job = knownJob ?: maintenanceScheduler.getJob(jobId) ?: return
+        if (job.status !in ACTIVE_JOB_STATUSES) return
+        activityLogger.startScheduledRun(
+            job = job,
+            category = MemoryActivityCategory.LONG_TERM_CONSOLIDATION,
+            triggerReason = result.reason,
+            inputCount = inputCount
         )
     }
 

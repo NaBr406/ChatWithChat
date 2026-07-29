@@ -2,6 +2,7 @@ package cn.nabr.chatwithchat.data.memory
 
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
@@ -117,6 +118,54 @@ class MemoryMaintenanceStartupCoordinatorTest {
         )
 
         assertEquals(listOf("enqueue", "provision", "recovery", "bootstrap", "repair"), order)
+    }
+
+    @Test
+    fun `optional failures and incomplete receipts record only fixed bounded codes`() = runBlocking {
+        val secret = "prompt-body C:/private/memory.md credential=secret-token"
+        val failures = mutableListOf<Pair<String, String>>()
+
+        runMemoryStartupTasks(
+            enqueueRepair = { error(secret) },
+            provision = { error(secret) },
+            recoverReceipts = { INCOMPLETE_RECOVERY },
+            bootstrap = { error("must not run") },
+            repair = {},
+            recordFailure = { errorCode, status -> failures += errorCode to status }
+        )
+
+        assertEquals(
+            listOf(
+                "startup_repair_enqueue_failed" to MemoryActivityStatus.FAILED,
+                "startup_embedding_provision_failed" to MemoryActivityStatus.FAILED,
+                "startup_receipt_recovery_incomplete" to MemoryActivityStatus.BLOCKED
+            ),
+            failures
+        )
+        assertFalse(failures.joinToString().contains(secret))
+    }
+
+    @Test
+    fun `final repair failure is recorded before the original failure propagates`() {
+        val failures = mutableListOf<Pair<String, String>>()
+
+        assertThrows(IllegalStateException::class.java) {
+            runBlocking {
+                runMemoryStartupTasks(
+                    enqueueRepair = {},
+                    provision = {},
+                    recoverReceipts = { COMPLETE_RECOVERY },
+                    bootstrap = {},
+                    repair = { error("secret repair details") },
+                    recordFailure = { errorCode, status -> failures += errorCode to status }
+                )
+            }
+        }
+
+        assertEquals(
+            listOf("startup_final_repair_failed" to MemoryActivityStatus.FAILED),
+            failures
+        )
     }
 
     private companion object {

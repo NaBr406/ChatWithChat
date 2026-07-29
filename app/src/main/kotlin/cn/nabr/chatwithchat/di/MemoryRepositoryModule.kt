@@ -75,8 +75,13 @@ object MemoryRepositoryModule {
 
     @Provides
     @Singleton
-    fun provideMemoryActivityLogger(memoryActivityLogDao: MemoryActivityLogDao): MemoryActivityLogger =
-        RoomMemoryActivityLogger(memoryActivityLogDao)
+    fun provideMemoryActivityLogger(
+        memoryActivityLogDao: MemoryActivityLogDao,
+        memoryMaintenanceJobDao: MemoryMaintenanceJobDao
+    ): MemoryActivityLogger = RoomMemoryActivityLogger(
+        logDao = memoryActivityLogDao,
+        jobDao = memoryMaintenanceJobDao
+    )
 
     @Provides
     @Singleton
@@ -259,7 +264,8 @@ object MemoryRepositoryModule {
         memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
         settingRepository: SettingRepository,
         memoryMaintenanceWorkEnqueuer: MemoryMaintenanceWorkEnqueuer,
-        memoryChunker: MemoryChunker
+        memoryChunker: MemoryChunker,
+        memoryActivityLogger: MemoryActivityLogger
     ): MemoryLongTermConsolidationScheduler = MemoryLongTermConsolidationScheduler(
         memoryFileStore = memoryFileStore,
         markdownMemoryCodec = markdownMemoryCodec,
@@ -267,7 +273,8 @@ object MemoryRepositoryModule {
         maintenanceScheduler = memoryMaintenanceScheduler,
         settingRepository = settingRepository,
         workEnqueuer = memoryMaintenanceWorkEnqueuer,
-        memoryChunker = memoryChunker
+        memoryChunker = memoryChunker,
+        activityLogger = memoryActivityLogger
     )
 
     @Provides
@@ -358,14 +365,16 @@ object MemoryRepositoryModule {
         memoryRecoveryDao: MemoryRecoveryDao,
         memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
         settingRepository: SettingRepository,
-        memoryMaintenanceWorkEnqueuer: MemoryMaintenanceWorkEnqueuer
+        memoryMaintenanceWorkEnqueuer: MemoryMaintenanceWorkEnqueuer,
+        memoryActivityLogger: MemoryActivityLogger
     ): MemoryDailyDistillationScheduler = MemoryDailyDistillationScheduler(
         memoryFileStore = memoryFileStore,
         markdownMemoryCodec = markdownMemoryCodec,
         recoveryDao = memoryRecoveryDao,
         maintenanceScheduler = memoryMaintenanceScheduler,
         settingRepository = settingRepository,
-        workEnqueuer = memoryMaintenanceWorkEnqueuer
+        workEnqueuer = memoryMaintenanceWorkEnqueuer,
+        activityLogger = memoryActivityLogger
     )
 
     @Provides
@@ -386,7 +395,8 @@ object MemoryRepositoryModule {
         memoryFileStore: MemoryFileStore,
         memoryDailyDistillationOperationController: MemoryDailyDistillationOperationController,
         memoryMutationCoordinator: MemoryMutationCoordinator,
-        memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler
+        memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler,
+        memoryActivityLogger: MemoryActivityLogger
     ): MemoryDailyDistillationService = MemoryDailyDistillationService(
         recoveryDao = memoryRecoveryDao,
         maintenanceScheduler = memoryMaintenanceScheduler,
@@ -396,7 +406,8 @@ object MemoryRepositoryModule {
         memoryFileStore = memoryFileStore,
         operationController = memoryDailyDistillationOperationController,
         memoryMutationCoordinator = memoryMutationCoordinator,
-        dailyDistillationScheduler = memoryDailyDistillationScheduler
+        dailyDistillationScheduler = memoryDailyDistillationScheduler,
+        activityLogger = memoryActivityLogger
     )
 
     @Provides
@@ -430,7 +441,8 @@ object MemoryRepositoryModule {
         markdownMemoryCodec: MarkdownMemoryCodec,
         operationController: MemoryLongTermConsolidationOperationController,
         memoryMutationCoordinator: MemoryMutationCoordinator,
-        memoryLongTermConsolidationScheduler: MemoryLongTermConsolidationScheduler
+        memoryLongTermConsolidationScheduler: MemoryLongTermConsolidationScheduler,
+        memoryActivityLogger: MemoryActivityLogger
     ): MemoryLongTermConsolidationService = MemoryLongTermConsolidationService(
         checkpointDao = memoryLongTermConsolidationDao,
         maintenanceScheduler = memoryMaintenanceScheduler,
@@ -441,7 +453,8 @@ object MemoryRepositoryModule {
         markdownMemoryCodec = markdownMemoryCodec,
         operationController = operationController,
         memoryMutationCoordinator = memoryMutationCoordinator,
-        longTermScheduler = memoryLongTermConsolidationScheduler
+        longTermScheduler = memoryLongTermConsolidationScheduler,
+        activityLogger = memoryActivityLogger
     )
 
     @Provides
@@ -497,7 +510,8 @@ object MemoryRepositoryModule {
         memoryTurnBatchScheduler: MemoryTurnBatchScheduler,
         memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler,
         memoryLongTermConsolidationScheduler: MemoryLongTermConsolidationScheduler,
-        promptTraceStore: PromptTraceStore
+        promptTraceStore: PromptTraceStore,
+        memoryActivityLogger: MemoryActivityLogger
     ): MemoryRepository = MemoryRepositoryImpl(
         memoryPromptBuilder = memoryPromptBuilder,
         memoryRetriever = memoryRetriever,
@@ -506,6 +520,7 @@ object MemoryRepositoryModule {
         memoryTurnBatchScheduler = memoryTurnBatchScheduler,
         memoryDailyDistillationScheduler = memoryDailyDistillationScheduler,
         memoryLongTermConsolidationScheduler = memoryLongTermConsolidationScheduler,
-        promptTraceStore = promptTraceStore
+        promptTraceStore = promptTraceStore,
+        activityLogger = memoryActivityLogger
     )
 }

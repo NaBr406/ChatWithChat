@@ -850,29 +850,29 @@ git diff --check
 - [x] turn-batch、daily distillation、whole-corpus consolidation 全部只使用该 resolver。移除 service 内重复的 `preferredMemoryPlatform()` 和 `LlmMemoryIntelligence.resolveMemoryPlatform()` 静默 fallback；intelligence 只接受已解析的 model snapshot。
 - [x] semantic job 在首次 claim 后、provider request 前，通过 expected-row-version/CAS 持久化 `resolvedPlatformUid/resolvedModelId`；retry 读取 frozen pair，未解析的未来 job 才读取新 preference。resolution failure 使用现有 `BLOCKED_DEPENDENCY`，不消耗无意义 provider call 或形成自动 retry storm。
 - [x] preference/platform/model 状态变化后，只重新评估未解析且因记忆模型依赖被 blocked 的 job；已有 durable proposal 或 frozen in-flight attempt 不得被悄悄 rebind。manual retry 如允许清除 binding，必须是显式动作并有测试。
-- [ ] 将现有 `logId` 作为新 `activityRunId`，或引入等价稳定列；每个 `jobId + attempt` 通过 deterministic identity/unique index 只 upsert 一个 top-level run。enqueue 如需先显示 scheduled，使用确定的 next-attempt identity，claim 必须更新同一 run 而不是另建一行。activity record 增加 nullable `jobId`、`jobType`、`phase`、`triggerReason`、`platformUid`、`modelId` 及通用 input count；使用 Task 3 的同一个 18 -> 19 migration。
-- [ ] logger API 改为 `startRun/advancePhase/finishRun` 或等价状态机。semantic service 在 model resolution 前创建 run；resolver 写入/结束 `model_resolution` phase，`LlmMemoryIntelligence` 只能推进同一 run 的 `model_call -> generation`，organization path 再推进到 `organization`，任何阶段都不得 `start()` 新行。
-- [ ] phase transition 使用 expected phase/status 或 row version，必须单调、幂等且 terminal 不可被晚到更新覆盖。retry 是新的 attempt run；同一 attempt 的 process replay 仍更新同一 row。
-- [ ] logical categories 至少区分 `maintenance_planning`、`turn_batch_consolidation`、`daily_distillation` 与 `long_term_consolidation`；status 覆盖 `scheduled/running/succeeded/no_op/skipped/blocked/failed`。`model_call`、`generation`、`organization` 只作为 phase，不再作为新 category rows 写入。
-- [ ] `PLAN_DAILY_DISTILLATION` 从 enqueue、claim、process 到 terminal disposition 都可见，但它是独立 planner run，`platformUid/modelId/platformName/modelName=null`，不能和后续 `DISTILL_DAILY_NOTES` run 合并。
-- [ ] startup `ensurePlanningJobs()`、repair optional steps 和 memory-enabled transition 捕获异常时持久化 bounded reason，不再 silent `runCatching`。
-- [ ] activity detail 只允许 job/checkpoint opaque ID、model identity/display snapshot、counts、cursor、hash prefix、duration、status/error code；禁止 credential、memory text、prompt、evidence text、完整 model response 和 sticker candidate data。
-- [ ] memory disabled、no eligible daily file、not-due whole corpus、already-active、clean no-op 均有可区分状态。
-- [ ] UI 保持现有 Memory activity tab，不做独立 diagnostics app；每个 run 一行摘要，紧凑显示任务、最终状态、平台/模型、输入数、操作数和总耗时。可展开的阶段详情属于该行内部，不能再次成为三条列表项。
-- [ ] 若 UI 展开显示阶段结果，使用同一 activity row 中的 bounded structured phase summary（固定字段或 strict/versioned JSON）；不得为可展开详情重新创建可被顶层 DAO 查询到的 stage rows。
-- [ ] 18 -> 19 migration 保留旧 activity rows 和 category 值；UI 对旧 category 提供 legacy fallback，不删除历史，也不按模糊时间窗口猜测并改写旧 run。
+- [x] 将现有 `logId` 作为新 `activityRunId`，或引入等价稳定列；每个 `jobId + attempt` 通过 deterministic identity/unique index 只 upsert 一个 top-level run。enqueue 如需先显示 scheduled，使用确定的 next-attempt identity，claim 必须更新同一 run 而不是另建一行。activity record 增加 nullable `jobId`、`jobType`、`phase`、`triggerReason`、`platformUid`、`modelId` 及通用 input count；使用 Task 3 的同一个 18 -> 19 migration。
+- [x] logger API 改为 `startRun/advancePhase/finishRun` 或等价状态机。semantic service 在 model resolution 前创建 run；resolver 写入/结束 `model_resolution` phase，`LlmMemoryIntelligence` 只能推进同一 run 的 `model_call -> generation`，organization path 再推进到 `organization`，任何阶段都不得 `start()` 新行。
+- [x] phase transition 使用 expected phase/status 或 row version，必须单调、幂等且 terminal 不可被晚到更新覆盖。retry 是新的 attempt run；同一 attempt 的 process replay 仍更新同一 row。
+- [x] logical categories 至少区分 `maintenance_planning`、`turn_batch_consolidation`、`daily_distillation` 与 `long_term_consolidation`；status 覆盖 `scheduled/running/succeeded/no_op/skipped/blocked/failed`。`model_call`、`generation`、`organization` 只作为 phase，不再作为新 category rows 写入。
+- [x] `PLAN_DAILY_DISTILLATION` 从 enqueue、claim、process 到 terminal disposition 都可见，但它是独立 planner run，`platformUid/modelId/platformName/modelName=null`，不能和后续 `DISTILL_DAILY_NOTES` run 合并。
+- [x] startup `ensurePlanningJobs()`、repair optional steps 和 memory-enabled transition 捕获异常时持久化 bounded reason，不再 silent `runCatching`。
+- [x] activity detail 只允许 job/checkpoint opaque ID、model identity/display snapshot、counts、cursor、hash prefix、duration、status/error code；禁止 credential、memory text、prompt、evidence text、完整 model response 和 sticker candidate data。
+- [x] memory disabled、no eligible daily file、not-due whole corpus、already-active、clean no-op 均有可区分状态。
+- [x] UI 保持现有 Memory activity tab，不做独立 diagnostics app；每个 run 一行摘要，紧凑显示任务、最终状态、平台/模型、输入数、操作数和总耗时。可展开的阶段详情属于该行内部，不能再次成为三条列表项。
+- [x] 若 UI 展开显示阶段结果，使用同一 activity row 中的 bounded structured phase summary（固定字段或 strict/versioned JSON）；不得为可展开详情重新创建可被顶层 DAO 查询到的 stage rows。
+- [x] 18 -> 19 migration 保留旧 activity rows 和 category 值；UI 对旧 category 提供 legacy fallback，不删除历史，也不按模糊时间窗口猜测并改写旧 run。
 
 **Acceptance criteria:**
 
-- [ ] 新安装与 18 -> 19 升级用户默认 `Auto`，实际选择顺序与当前 baseline 一致且不随最近聊天模型变化。
-- [ ] fixed pair 在重启后保持；turn batch、daily distillation、whole corpus 都使用 exact selected model，重复 model ID 不串 provider。
-- [ ] fixed model 缺失/禁用/缺凭据时产生一条可读 blocked run、零 provider requests，且 UI 仍显示原选择不可用而不是静默 Auto。
-- [ ] 首次 claim 后修改 preference，当前 job 的 retry 仍使用 frozen pair；尚未解析的下一 job 使用新 pair。
-- [ ] activity log 中可以看到一个 `PLAN_DAILY_DISTILLATION` 的完整本地生命周期，即使它没有触发 LLM。
-- [ ] startup planning failure 不再出现“零 job 且零原因”。
-- [ ] successful、model failure、invalid JSON 和 organization failure fixture 均为每个 attempt 恰好一条 DB activity run 与一条 UI row，phase/status 指向真实停止位置。
-- [ ] duplicate startup/process replay 对同一 attempt 只更新一条逻辑记录；retry 可以新增一条 attempt row，但不能重新膨胀成三条 stage rows。
-- [ ] 日志数据库中搜索不到 fixture 的 memory body 和 prompt body。
+- [x] 新安装与 18 -> 19 升级用户默认 `Auto`，实际选择顺序与当前 baseline 一致且不随最近聊天模型变化。
+- [x] fixed pair 在重启后保持；turn batch、daily distillation、whole corpus 都使用 exact selected model，重复 model ID 不串 provider。
+- [x] fixed model 缺失/禁用/缺凭据时产生一条可读 blocked run、零 provider requests，且 UI 仍显示原选择不可用而不是静默 Auto。
+- [x] 首次 claim 后修改 preference，当前 job 的 retry 仍使用 frozen pair；尚未解析的下一 job 使用新 pair。
+- [x] activity log 中可以看到一个 `PLAN_DAILY_DISTILLATION` 的完整本地生命周期，即使它没有触发 LLM。
+- [x] startup planning failure 不再出现“零 job 且零原因”。
+- [x] successful、model failure、invalid JSON 和 organization failure fixture 均为每个 attempt 恰好一条 DB activity run 与一条 UI row，phase/status 指向真实停止位置。
+- [x] duplicate startup/process replay 对同一 attempt 只更新一条逻辑记录；retry 可以新增一条 attempt row，但不能重新膨胀成三条 stage rows。
+- [x] 日志数据库中搜索不到 fixture 的 memory body 和 prompt body。
 
 **Focused verification:**
 
@@ -894,7 +894,7 @@ git diff --check
 
 - Activity identity now reserves `retry_cycle` and enforces the unique key `(job_id, retry_cycle, attempt)`. This preserves one row for same-attempt replay while allowing an explicit manual retry cycle to restart its attempt counter without colliding with an earlier run.
 - The change remains inside the existing unreleased 18 -> 19 migration. Populated legacy activity rows retain their values and receive `retry_cycle = 0`; the exported schema, migration SQL test, populated migration assertions, main compilation, and AndroidTest compilation were updated together.
-- Unified logger transitions and semantic/planner consumers are not yet complete, so the corresponding implementation and acceptance checkboxes remain open.
+- Unified logger transitions and semantic/planner consumers were completed in the activity-run slice recorded below.
 
 #### Task 6 Model Routing Backend Slice Record (2026-07-29)
 
@@ -903,6 +903,15 @@ git diff --check
 - Model dependency failures use `BLOCKED_DEPENDENCY`. Preference and provider/model mutations reopen only unbound semantic jobs with known memory-model reasons, increment `retryCycle`, reset attempts, and enqueue semantic work; jobs with a frozen pair or durable semantic mutation are not rebound.
 - Focused backend verification executed 134 tests across resolver, notifier, scheduler, processor, intelligence, batch, daily, and whole-corpus suites: 130 passed. The only four failures are the Task 5 projection/relocation baseline failures already reproduced at `7bcd77c`; the new whole-corpus frozen-model retry passed after changed targets were given a projection-aware index fingerprint.
 - `:app:compileDebugKotlin`, `:app:compileDebugAndroidTestKotlin`, ktlint 1.3.1 over the slice, staged `git diff --check`, and targeted notifier/resolver/scheduler/processor tests passed.
+
+#### Task 6 Unified Activity Run Slice Record (2026-07-29)
+
+- Added deterministic `(jobId, retryCycle, attempt)` activity IDs and a CAS-backed `startRun -> advancePhase -> finishRun` state machine. Scheduled rows advance in place, terminal transitions are idempotent, late updates cannot overwrite them, and repair reconciles abandoned active rows against durable job state without letting newer terminal rows hide them from the scan.
+- Turn-batch, daily distillation, whole-corpus consolidation, daily planning, startup, repair, and memory-toggle paths now write bounded structured diagnostics into one logical row per attempt. Semantic phases reuse the same row, planner rows never carry model fields, standalone condition diagnostics use deterministic identities, and persisted input counts cannot be replaced by a later partition count.
+- The Memory activity UI renders one compact top-level row with optional inline phase history. Legacy rows retain their category, detail, batch ID, and turn-count label; success/no-op/skipped outcome codes use normal text color while failed/blocked codes use the error color.
+- The focused Task 6 JVM gate passed 76 tests with zero failures, and the DAO baseline passed all four terminal fixtures: success, model-call failure, invalid JSON, and organization failure. Full-row privacy scanning proved the fixture prompt, user/assistant bodies, provider response, and credential token were absent from persisted activity data.
+- `:app:compileDebugKotlin`, `:app:compileDebugAndroidTestKotlin`, ktlint 1.3.1 over every changed Kotlin file, and `git diff --check` passed. On `emulator-5556`, both `MemoryActivityLogItemInstrumentedTest` cases passed without clearing app data, proving four inline phases still produce one top-level row and legacy turn counts keep their original label.
+- An additional 69-test turn-batch/daily/whole-corpus service gate completed with 65 passes and the same four pre-existing projection/recovery baseline failures already tracked by the earlier Task 5 verification; no new Task 6 failure appeared.
 
 ### Task 7: Reduce Sticker Tool-Loop Requests And Repeated Payloads
 

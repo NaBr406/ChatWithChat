@@ -4,6 +4,7 @@ import cn.nabr.chatwithchat.BuildConfig
 import cn.nabr.chatwithchat.data.database.dao.MemoryRecoveryDao
 import cn.nabr.chatwithchat.data.database.entity.MemoryDistillationCheckpoint
 import cn.nabr.chatwithchat.data.database.entity.MemoryMaintenanceJob
+import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.repository.SettingRepository
 import java.time.Clock
 import java.time.LocalDate
@@ -24,6 +25,7 @@ class MemoryDailyDistillationService(
     private val operationController: MemoryDailyDistillationOperationController,
     private val memoryMutationCoordinator: MemoryMutationCoordinator,
     private val dailyDistillationScheduler: MemoryDailyDistillationScheduler,
+    private val activityLogger: MemoryActivityLogger = MemoryActivityLogger.None,
     private val commitObserver: MemoryDailyDistillationCommitObserver = MemoryDailyDistillationCommitObserver.None,
     private val clock: Clock = Clock.systemDefaultZone(),
     private val json: Json = Json {
@@ -35,8 +37,32 @@ class MemoryDailyDistillationService(
 ) : MemoryDailyDistillationRecoveryFinalizer {
     suspend fun process(job: MemoryMaintenanceJob): MemoryDailyDistillationProcessResult {
         terminalResultOrNull(job)?.let { return it }
-        val payload = decodePayload(job) ?: return terminal(job, "invalid_daily_distillation_payload")
-        var checkpoint = checkpointFor(job, payload) ?: return terminal(job, "daily_distillation_checkpoint_missing")
+        val payload = decodePayload(job) ?: run {
+            val activityRunId = activityLogger.startSemanticRun(job, MemoryActivityCategory.DAILY_DISTILLATION)
+            activityLogger.finishRunSafely(
+                activityRunId,
+                MemoryActivityStatus.FAILED,
+                MemoryActivityRunData(errorCode = "invalid_daily_distillation_payload"),
+                expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
+            )
+            return terminal(job, "invalid_daily_distillation_payload")
+        }
+        val inputCount = payload.input.dailyEvidence.size
+        val activityRunId = activityLogger.startSemanticRun(
+            job = job,
+            category = MemoryActivityCategory.DAILY_DISTILLATION,
+            triggerReason = "daily_batch",
+            inputCount = inputCount
+        )
+        var checkpoint = checkpointFor(job, payload) ?: run {
+            activityLogger.finishRunSafely(
+                activityRunId,
+                MemoryActivityStatus.FAILED,
+                MemoryActivityRunData(inputCount = inputCount, errorCode = "daily_checkpoint_missing"),
+                expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
+            )
+            return terminal(job, "daily_distillation_checkpoint_missing")
+        }
         if (checkpoint.status == MemoryDistillationCheckpointStatus.COMPLETED) {
             maintenanceScheduler.markSucceeded(job)
             val mutation = checkNotNull(memoryMutationCoordinator.findBySemanticJobId(job.jobId)) {
@@ -47,6 +73,12 @@ class MemoryDailyDistillationService(
             }
             memoryMutationCoordinator.acknowledgeSemanticCompletion(mutation.group.groupId)
             dailyDistillationScheduler.ensurePlanningJobs()
+            activityLogger.finishRunSafely(
+                activityRunId,
+                MemoryActivityStatus.NO_OP,
+                MemoryActivityRunData(inputCount = inputCount),
+                expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
+            )
             return MemoryDailyDistillationProcessResult(
                 status = MemoryDailyDistillationProcessResult.STATUS_DUPLICATE,
                 jobId = job.jobId
@@ -54,6 +86,12 @@ class MemoryDailyDistillationService(
         }
         if (!settingRepository.fetchMemoryEnabled()) {
             maintenanceScheduler.markDismissed(job, "memory_disabled")
+            activityLogger.finishRunSafely(
+                activityRunId,
+                MemoryActivityStatus.SKIPPED,
+                MemoryActivityRunData(inputCount = inputCount, errorCode = "memory_disabled"),
+                expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
+            )
             return MemoryDailyDistillationProcessResult(
                 status = MemoryDailyDistillationProcessResult.STATUS_TERMINAL,
                 jobId = job.jobId,
@@ -65,7 +103,9 @@ class MemoryDailyDistillationService(
 
         var runningJob = job
         var mutation = memoryMutationCoordinator.findBySemanticJobId(job.jobId)
+        val resumedMutation = mutation != null
         var operationCount = 0
+        var activityPlatform: PlatformV2? = null
         if (mutation == null) {
             val sourceState = validateFrozenSources(payload.input)
             if (sourceState != null) {
@@ -78,6 +118,12 @@ class MemoryDailyDistillationService(
                 )
                 maintenanceScheduler.markDismissed(job, sourceState)
                 dailyDistillationScheduler.ensurePlanningJobs()
+                activityLogger.finishRunSafely(
+                    activityRunId,
+                    MemoryActivityStatus.SKIPPED,
+                    MemoryActivityRunData(inputCount = inputCount, errorCode = "daily_source_stale"),
+                    expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
+                )
                 return MemoryDailyDistillationProcessResult(
                     status = MemoryDailyDistillationProcessResult.STATUS_TERMINAL,
                     jobId = job.jobId,
@@ -95,6 +141,12 @@ class MemoryDailyDistillationService(
             val resolvedPlatform = when (binding) {
                 is ClaimedMemoryModelBinding.Unavailable -> {
                     val reason = binding.reason.code
+                    activityLogger.finishRunSafely(
+                        activityRunId,
+                        MemoryActivityStatus.BLOCKED,
+                        MemoryActivityRunData(inputCount = inputCount, errorCode = reason),
+                        expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
+                    )
                     maintenanceScheduler.markBlockedDependency(runningJob, reason)
                     dailyDistillationScheduler.ensurePlanningJobs()
                     return MemoryDailyDistillationProcessResult(
@@ -108,12 +160,43 @@ class MemoryDailyDistillationService(
                     binding.platform
                 }
             }
-            val proposal = memoryIntelligence.distillDailyMemory(payload.input, resolvedPlatform)
-                ?: return retryable(runningJob, "daily_distillation_unavailable_or_invalid")
+            activityPlatform = resolvedPlatform
+            val proposal = memoryIntelligence.distillDailyMemory(payload.input, resolvedPlatform, activityRunId)
+                ?: run {
+                    activityLogger.finishRunSafely(
+                        activityRunId,
+                        MemoryActivityStatus.FAILED,
+                        resolvedPlatform.toMemoryActivityData(
+                            inputCount = inputCount,
+                            errorCode = "daily_distillation_unavailable_or_invalid"
+                        ),
+                        expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
+                    )
+                    return retryable(runningJob, "daily_distillation_unavailable_or_invalid")
+                }
             runningJob = maintenanceScheduler.renewClaimedLease(runningJob)
+            activityLogger.advanceRunSafely(
+                activityRunId = activityRunId,
+                expectedPhase = MemoryActivityPhase.GENERATION,
+                nextPhase = MemoryActivityPhase.ORGANIZATION,
+                data = resolvedPlatform.toMemoryActivityData(
+                    inputCount = inputCount,
+                    operationCount = proposal.operations.size
+                )
+            )
             val validatedOperations = runCatching {
                 operationController.validate(payload.input, proposal.operations)
             }.getOrElse { throwable ->
+                activityLogger.finishRunSafely(
+                    activityRunId,
+                    MemoryActivityStatus.FAILED,
+                    resolvedPlatform.toMemoryActivityData(
+                        inputCount = inputCount,
+                        operationCount = proposal.operations.size,
+                        errorCode = "invalid_daily_operations"
+                    ),
+                    expectedPhase = MemoryActivityPhase.ORGANIZATION
+                )
                 return retryable(runningJob, "invalid_daily_distillation_operations:${throwable.message}")
             }
             val baseMarkdown = memoryFileStore.readLongTermMemory().getOrThrow()
@@ -138,12 +221,32 @@ class MemoryDailyDistillationService(
                     )
                     maintenanceScheduler.markDismissed(runningJob, MemoryDistillationCheckpointStatus.STALE_TARGET_BASE)
                     dailyDistillationScheduler.ensurePlanningJobs()
+                    activityLogger.finishRunSafely(
+                        activityRunId,
+                        MemoryActivityStatus.SKIPPED,
+                        resolvedPlatform.toMemoryActivityData(
+                            inputCount = inputCount,
+                            operationCount = proposal.operations.size,
+                            errorCode = "daily_target_stale"
+                        ),
+                        expectedPhase = MemoryActivityPhase.ORGANIZATION
+                    )
                     return MemoryDailyDistillationProcessResult(
                         status = MemoryDailyDistillationProcessResult.STATUS_TERMINAL,
                         jobId = job.jobId,
                         reason = MemoryDistillationCheckpointStatus.STALE_TARGET_BASE
                     )
                 }
+                activityLogger.finishRunSafely(
+                    activityRunId,
+                    MemoryActivityStatus.FAILED,
+                    resolvedPlatform.toMemoryActivityData(
+                        inputCount = inputCount,
+                        operationCount = proposal.operations.size,
+                        errorCode = "daily_render_failed"
+                    ),
+                    expectedPhase = MemoryActivityPhase.ORGANIZATION
+                )
                 return retryable(runningJob, "daily_distillation_render_failed:${throwable.message}")
             }
             operationCount = proposal.operations.size
@@ -156,6 +259,16 @@ class MemoryDailyDistillationService(
                 )
             }.getOrElse { throwable ->
                 rethrowInterruption(throwable)
+                activityLogger.finishRunSafely(
+                    activityRunId,
+                    MemoryActivityStatus.FAILED,
+                    resolvedPlatform.toMemoryActivityData(
+                        inputCount = inputCount,
+                        operationCount = proposal.operations.size,
+                        errorCode = "daily_prepare_failed"
+                    ),
+                    expectedPhase = MemoryActivityPhase.ORGANIZATION
+                )
                 return retryable(runningJob, "daily_distillation_prepare_failed:${throwable.message}")
             }
             if (BuildConfig.DEBUG) commitObserver.afterPrepared(mutation)
@@ -167,6 +280,12 @@ class MemoryDailyDistillationService(
                 processedAt = null
             )
         } else {
+            activityLogger.advanceRunSafely(
+                activityRunId = activityRunId,
+                expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION,
+                nextPhase = MemoryActivityPhase.ORGANIZATION,
+                data = MemoryActivityRunData(inputCount = inputCount)
+            )
             checkpoint = alignCheckpointWithMutation(checkpoint, mutation)
         }
 
@@ -175,6 +294,16 @@ class MemoryDailyDistillationService(
             memoryMutationCoordinator.reconcile(mutation)
         }.getOrElse { throwable ->
             rethrowInterruption(throwable)
+            activityLogger.finishRunSafely(
+                activityRunId,
+                MemoryActivityStatus.FAILED,
+                activityPlatform.activityData(
+                    inputCount = inputCount,
+                    operationCount = operationCount.takeIf { it > 0 },
+                    errorCode = "daily_commit_failed"
+                ),
+                expectedPhase = MemoryActivityPhase.ORGANIZATION
+            )
             return retryable(runningJob, "daily_distillation_commit_failed:${throwable.message}")
         }
         if (commitResult is MemoryMutationCommitResult.Conflict) {
@@ -188,6 +317,16 @@ class MemoryDailyDistillationService(
             maintenanceScheduler.markFailedTerminal(
                 runningJob,
                 commitResult.reason
+            )
+            activityLogger.finishRunSafely(
+                activityRunId,
+                MemoryActivityStatus.FAILED,
+                activityPlatform.activityData(
+                    inputCount = inputCount,
+                    operationCount = operationCount,
+                    errorCode = "daily_commit_conflict"
+                ),
+                expectedPhase = MemoryActivityPhase.ORGANIZATION
             )
             dailyDistillationScheduler.ensurePlanningJobs()
             return MemoryDailyDistillationProcessResult(
@@ -205,6 +344,16 @@ class MemoryDailyDistillationService(
         maintenanceScheduler.markSucceeded(runningJob)
         memoryMutationCoordinator.acknowledgeSemanticCompletion(committed.mutation.group.groupId)
         dailyDistillationScheduler.ensurePlanningJobs()
+        activityLogger.finishRunSafely(
+            activityRunId,
+            if (operationCount == 0 && !resumedMutation) {
+                MemoryActivityStatus.NO_OP
+            } else {
+                MemoryActivityStatus.SUCCEEDED
+            },
+            activityPlatform.activityData(inputCount = inputCount, operationCount = operationCount),
+            expectedPhase = MemoryActivityPhase.ORGANIZATION
+        )
         return MemoryDailyDistillationProcessResult(
             status = MemoryDailyDistillationProcessResult.STATUS_SUCCEEDED,
             jobId = runningJob.jobId,
@@ -418,6 +567,20 @@ class MemoryDailyDistillationService(
     private fun rethrowInterruption(throwable: Throwable) {
         if (throwable is CancellationException || throwable is MemoryMaintenanceLeaseLostException) throw throwable
     }
+
+    private fun PlatformV2?.activityData(
+        inputCount: Int? = null,
+        operationCount: Int? = null,
+        errorCode: String? = null
+    ): MemoryActivityRunData = this?.toMemoryActivityData(
+        inputCount = inputCount,
+        operationCount = operationCount,
+        errorCode = errorCode
+    ) ?: MemoryActivityRunData(
+        inputCount = inputCount,
+        operationCount = operationCount,
+        errorCode = errorCode
+    )
 
     private fun now(): Long = clock.instant().epochSecond
 

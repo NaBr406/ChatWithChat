@@ -144,6 +144,8 @@ class MemoryMaintenanceScheduler(
 
     suspend fun jobType(jobId: String): String? = jobDao.getById(jobId)?.type
 
+    internal suspend fun getJob(jobId: String): MemoryMaintenanceJob? = jobDao.getById(jobId)
+
     internal suspend fun jobStatus(jobId: String): String? = jobDao.getById(jobId)?.status
 
     internal suspend fun isRecoveredSourceJobActive(jobId: String): Boolean {

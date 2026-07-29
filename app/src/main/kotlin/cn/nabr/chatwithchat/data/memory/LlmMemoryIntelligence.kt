@@ -55,19 +55,19 @@ class LlmMemoryIntelligence @Inject constructor(
     override suspend fun consolidateMemoryBatch(
         request: MemoryBatchConsolidationRequest,
         resolvedPlatform: PlatformV2
+    ): MemoryBatchConsolidationProposal? = consolidateMemoryBatch(request, resolvedPlatform, activityRunId = "")
+
+    override suspend fun consolidateMemoryBatch(
+        request: MemoryBatchConsolidationRequest,
+        resolvedPlatform: PlatformV2,
+        activityRunId: String
     ): MemoryBatchConsolidationProposal? {
         val platform = resolvedPlatform
-        val modelCallLogId = startActivity(
-            batchId = request.batchId,
-            itemCount = request.turns.size,
-            category = MemoryActivityCategory.MODEL_CALL,
-            platform = platform
-        )
-        val generationLogId = startActivity(
-            batchId = request.batchId,
-            itemCount = request.turns.size,
-            category = MemoryActivityCategory.MEMORY_GENERATION,
-            platform = platform
+        activityLogger.advanceRunSafely(
+            activityRunId = activityRunId,
+            expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION,
+            nextPhase = MemoryActivityPhase.MODEL_CALL,
+            data = platform.toMemoryActivityData(inputCount = request.turns.size)
         )
         val response = requestJson(
             operation = OPERATION_CONSOLIDATE_BATCH,
@@ -76,26 +76,32 @@ class LlmMemoryIntelligence @Inject constructor(
             resolvedPlatform = platform
         )
         if (response == null) {
-            finishActivity(modelCallLogId, MemoryActivityStatus.FAILED, "模型未返回可用响应")
-            finishActivity(generationLogId, MemoryActivityStatus.FAILED, "没有可用于生成记忆的模型响应")
+            activityLogger.finishRunSafely(
+                activityRunId = activityRunId,
+                expectedPhase = MemoryActivityPhase.MODEL_CALL,
+                status = MemoryActivityStatus.FAILED,
+                data = platform.toMemoryActivityData(
+                    inputCount = request.turns.size,
+                    errorCode = ERROR_MODEL_CALL_FAILED
+                )
+            )
             return null
         }
-        finishActivity(modelCallLogId, MemoryActivityStatus.SUCCEEDED)
+        activityLogger.advanceRunSafely(
+            activityRunId = activityRunId,
+            expectedPhase = MemoryActivityPhase.MODEL_CALL,
+            nextPhase = MemoryActivityPhase.GENERATION,
+            data = platform.toMemoryActivityData(inputCount = request.turns.size)
+        )
         return try {
-            val proposal = strictJson.decodeFromString<MemoryBatchConsolidationProposal>(extractJsonObject(response))
-            finishActivity(
-                generationLogId,
-                MemoryActivityStatus.SUCCEEDED,
-                operationCount = proposal.operations.size
-            )
-            proposal
+            strictJson.decodeFromString<MemoryBatchConsolidationProposal>(extractJsonObject(response))
         } catch (e: SerializationException) {
             runCatching { Log.w(TAG, "Memory consolidate_batch returned invalid JSON", e) }
-            finishActivity(generationLogId, MemoryActivityStatus.FAILED, "模型返回的记忆格式无效")
+            finishInvalidGeneration(activityRunId, platform, request.turns.size)
             null
         } catch (e: IllegalArgumentException) {
             runCatching { Log.w(TAG, "Memory consolidate_batch returned invalid JSON", e) }
-            finishActivity(generationLogId, MemoryActivityStatus.FAILED, "模型返回的记忆格式无效")
+            finishInvalidGeneration(activityRunId, platform, request.turns.size)
             null
         }
     }
@@ -103,19 +109,19 @@ class LlmMemoryIntelligence @Inject constructor(
     override suspend fun distillDailyMemory(
         request: MemoryDailyDistillationFrozenInput,
         resolvedPlatform: PlatformV2
+    ): MemoryDailyDistillationProposal? = distillDailyMemory(request, resolvedPlatform, activityRunId = "")
+
+    override suspend fun distillDailyMemory(
+        request: MemoryDailyDistillationFrozenInput,
+        resolvedPlatform: PlatformV2,
+        activityRunId: String
     ): MemoryDailyDistillationProposal? {
         val platform = resolvedPlatform
-        val modelCallLogId = startActivity(
-            batchId = request.batchId,
-            itemCount = request.dailyEvidence.size,
-            category = MemoryActivityCategory.MODEL_CALL,
-            platform = platform
-        )
-        val generationLogId = startActivity(
-            batchId = request.batchId,
-            itemCount = request.dailyEvidence.size,
-            category = MemoryActivityCategory.MEMORY_GENERATION,
-            platform = platform
+        activityLogger.advanceRunSafely(
+            activityRunId = activityRunId,
+            expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION,
+            nextPhase = MemoryActivityPhase.MODEL_CALL,
+            data = platform.toMemoryActivityData(inputCount = request.dailyEvidence.size)
         )
         val response = requestJson(
             operation = OPERATION_DISTILL_DAILY,
@@ -124,26 +130,32 @@ class LlmMemoryIntelligence @Inject constructor(
             resolvedPlatform = platform
         )
         if (response == null) {
-            finishActivity(modelCallLogId, MemoryActivityStatus.FAILED, "模型未返回可用响应")
-            finishActivity(generationLogId, MemoryActivityStatus.FAILED, "没有可用于提炼长期记忆的模型响应")
+            activityLogger.finishRunSafely(
+                activityRunId = activityRunId,
+                expectedPhase = MemoryActivityPhase.MODEL_CALL,
+                status = MemoryActivityStatus.FAILED,
+                data = platform.toMemoryActivityData(
+                    inputCount = request.dailyEvidence.size,
+                    errorCode = ERROR_MODEL_CALL_FAILED
+                )
+            )
             return null
         }
-        finishActivity(modelCallLogId, MemoryActivityStatus.SUCCEEDED)
+        activityLogger.advanceRunSafely(
+            activityRunId = activityRunId,
+            expectedPhase = MemoryActivityPhase.MODEL_CALL,
+            nextPhase = MemoryActivityPhase.GENERATION,
+            data = platform.toMemoryActivityData(inputCount = request.dailyEvidence.size)
+        )
         return try {
-            val proposal = strictJson.decodeFromString<MemoryDailyDistillationProposal>(extractJsonObject(response))
-            finishActivity(
-                generationLogId,
-                MemoryActivityStatus.SUCCEEDED,
-                operationCount = proposal.operations.size
-            )
-            proposal
+            strictJson.decodeFromString<MemoryDailyDistillationProposal>(extractJsonObject(response))
         } catch (e: SerializationException) {
             runCatching { Log.w(TAG, "Memory distill_daily returned invalid JSON", e) }
-            finishActivity(generationLogId, MemoryActivityStatus.FAILED, "模型返回的长期记忆格式无效")
+            finishInvalidGeneration(activityRunId, platform, request.dailyEvidence.size)
             null
         } catch (e: IllegalArgumentException) {
             runCatching { Log.w(TAG, "Memory distill_daily returned invalid JSON", e) }
-            finishActivity(generationLogId, MemoryActivityStatus.FAILED, "模型返回的长期记忆格式无效")
+            finishInvalidGeneration(activityRunId, platform, request.dailyEvidence.size)
             null
         }
     }
@@ -151,7 +163,23 @@ class LlmMemoryIntelligence @Inject constructor(
     override suspend fun consolidateLongTermMemory(
         request: MemoryLongTermConsolidationPartitionRequest,
         resolvedPlatform: PlatformV2
+    ): MemoryLongTermConsolidationProposal? = consolidateLongTermMemory(
+        request = request,
+        resolvedPlatform = resolvedPlatform,
+        activityRunId = ""
+    )
+
+    override suspend fun consolidateLongTermMemory(
+        request: MemoryLongTermConsolidationPartitionRequest,
+        resolvedPlatform: PlatformV2,
+        activityRunId: String
     ): MemoryLongTermConsolidationProposal? {
+        val transitionedToModelCall = activityLogger.advanceRunSafely(
+            activityRunId = activityRunId,
+            expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION,
+            nextPhase = MemoryActivityPhase.MODEL_CALL,
+            data = resolvedPlatform.toMemoryActivityData()
+        )
         val userJson = strictJson.encodeToString(request)
         require(userJson.length <= MemoryLongTermConsolidationPolicy.MAX_SERIALIZED_REQUEST_CHARS) {
             "Long-term consolidation request exceeds the serialized character budget"
@@ -161,40 +189,56 @@ class LlmMemoryIntelligence @Inject constructor(
             systemPrompt = LONG_TERM_CONSOLIDATION_PROMPT,
             userJson = userJson,
             resolvedPlatform = resolvedPlatform
-        ) ?: return null
+        ) ?: run {
+            activityLogger.finishRunSafely(
+                activityRunId = activityRunId,
+                expectedPhase = if (transitionedToModelCall) {
+                    MemoryActivityPhase.MODEL_CALL
+                } else {
+                    MemoryActivityPhase.GENERATION
+                },
+                status = MemoryActivityStatus.FAILED,
+                data = resolvedPlatform.toMemoryActivityData(
+                    errorCode = ERROR_MODEL_CALL_FAILED
+                )
+            )
+            return null
+        }
+        if (transitionedToModelCall) {
+            activityLogger.advanceRunSafely(
+                activityRunId = activityRunId,
+                expectedPhase = MemoryActivityPhase.MODEL_CALL,
+                nextPhase = MemoryActivityPhase.GENERATION,
+                data = resolvedPlatform.toMemoryActivityData()
+            )
+        }
         return try {
             strictJson.decodeFromString<MemoryLongTermConsolidationProposal>(extractJsonObject(response))
         } catch (e: SerializationException) {
             runCatching { Log.w(TAG, "Memory consolidate_long_term returned invalid JSON", e) }
+            finishInvalidGeneration(activityRunId, resolvedPlatform, inputCount = null)
             null
         } catch (e: IllegalArgumentException) {
             runCatching { Log.w(TAG, "Memory consolidate_long_term returned invalid JSON", e) }
+            finishInvalidGeneration(activityRunId, resolvedPlatform, inputCount = null)
             null
         }
     }
 
-    private suspend fun startActivity(
-        batchId: String,
-        itemCount: Int,
-        category: String,
-        platform: PlatformV2?
-    ): String = runCatching {
-        activityLogger.start(
-            batchId = batchId,
-            category = category,
-            platformName = platform?.name,
-            modelName = platform?.model,
-            turnCount = itemCount
-        )
-    }.getOrDefault("")
-
-    private suspend fun finishActivity(
-        logId: String,
-        status: String,
-        detail: String? = null,
-        operationCount: Int? = null
+    private suspend fun finishInvalidGeneration(
+        activityRunId: String,
+        platform: PlatformV2,
+        inputCount: Int?
     ) {
-        runCatching { activityLogger.finish(logId, status, detail, operationCount) }
+        activityLogger.finishRunSafely(
+            activityRunId = activityRunId,
+            expectedPhase = MemoryActivityPhase.GENERATION,
+            status = MemoryActivityStatus.FAILED,
+            data = platform.toMemoryActivityData(
+                inputCount = inputCount,
+                errorCode = ERROR_INVALID_MODEL_JSON
+            )
+        )
     }
 
     private suspend fun requestJson(
@@ -567,6 +611,8 @@ class LlmMemoryIntelligence @Inject constructor(
         private const val OPERATION_CONSOLIDATE_BATCH = "consolidate_batch"
         private const val OPERATION_DISTILL_DAILY = "distill_daily"
         private const val OPERATION_CONSOLIDATE_LONG_TERM = "consolidate_long_term"
+        private const val ERROR_MODEL_CALL_FAILED = "model_call_failed"
+        private const val ERROR_INVALID_MODEL_JSON = "invalid_model_json"
 
         private const val BATCH_CONSOLIDATION_PROMPT = """
 Consolidate one immutable batch of completed chat turns into controlled personal-memory operations.

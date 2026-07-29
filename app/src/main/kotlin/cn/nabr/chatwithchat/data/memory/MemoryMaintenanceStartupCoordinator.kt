@@ -9,7 +9,8 @@ class MemoryMaintenanceStartupCoordinator @Inject constructor(
     private val memoryMutationRecoveryService: MemoryMutationRecoveryService,
     private val vectorIndexBootstrapService: MemoryVectorIndexBootstrapService,
     private val memoryMaintenanceRepairer: MemoryMaintenanceRepairer,
-    private val workEnqueuer: MemoryMaintenanceWorkEnqueuer
+    private val workEnqueuer: MemoryMaintenanceWorkEnqueuer,
+    private val activityLogger: MemoryActivityLogger
 ) {
     suspend fun run() {
         runMemoryStartupTasks(
@@ -22,7 +23,15 @@ class MemoryMaintenanceStartupCoordinator @Inject constructor(
             provision = { embeddingProvisioner.provision() },
             recoverReceipts = { memoryMutationRecoveryService.recoverIncomplete() },
             bootstrap = { vectorIndexBootstrapService.bootstrap() },
-            repair = { memoryMaintenanceRepairer.repairAndEnqueue(reopenWaitingRepair = true) }
+            repair = { memoryMaintenanceRepairer.repairAndEnqueue(reopenWaitingRepair = true) },
+            recordFailure = { errorCode, status ->
+                activityLogger.recordStandalonePlanningResult(
+                    jobType = null,
+                    triggerReason = "startup",
+                    status = status,
+                    outcomeCode = errorCode
+                )
+            }
         )
     }
 
@@ -36,27 +45,50 @@ internal suspend fun runMemoryStartupTasks(
     provision: suspend () -> Unit,
     recoverReceipts: suspend () -> MemoryMutationRecoveryResult,
     bootstrap: suspend () -> Unit,
-    repair: suspend () -> Unit
+    repair: suspend () -> Unit,
+    recordFailure: suspend (errorCode: String, status: String) -> Unit = { _, _ -> }
 ) {
-    runOptionalStartupStep(enqueueRepair)
-    runOptionalStartupStep(provision)
-    val receiptsRecovered = runOptionalStartupStep {
+    runOptionalStartupStep("startup_repair_enqueue_failed", recordFailure, enqueueRepair)
+    runOptionalStartupStep("startup_embedding_provision_failed", recordFailure, provision)
+    val receiptsRecovered = try {
         val result = recoverReceipts()
-        check(result.allowsBootstrap) { "Memory receipt recovery did not complete before bootstrap" }
+        if (result.allowsBootstrap) {
+            true
+        } else {
+            recordFailure("startup_receipt_recovery_incomplete", MemoryActivityStatus.BLOCKED)
+            false
+        }
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (_: Throwable) {
+        recordFailure("startup_receipt_recovery_failed", MemoryActivityStatus.FAILED)
+        false
     }
     if (receiptsRecovered) {
-        runOptionalStartupStep(bootstrap)
+        runOptionalStartupStep("startup_vector_bootstrap_failed", recordFailure, bootstrap)
     }
-    repair()
+    try {
+        repair()
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (throwable: Throwable) {
+        recordFailure("startup_final_repair_failed", MemoryActivityStatus.FAILED)
+        throw throwable
+    }
 }
 
-private suspend fun runOptionalStartupStep(step: suspend () -> Unit): Boolean {
+private suspend fun runOptionalStartupStep(
+    errorCode: String,
+    recordFailure: suspend (errorCode: String, status: String) -> Unit,
+    step: suspend () -> Unit
+): Boolean {
     try {
         step()
         return true
     } catch (cancellation: CancellationException) {
         throw cancellation
     } catch (_: Throwable) {
+        recordFailure(errorCode, MemoryActivityStatus.FAILED)
         return false
     }
 }

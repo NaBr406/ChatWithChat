@@ -40,11 +40,42 @@ class MemoryBatchConsolidationService(
 
     suspend fun process(job: MemoryMaintenanceJob): MemoryBatchProcessResult {
         terminalResultOrNull(job)?.let { return it }
-        val payload = decodePayload(job) ?: return terminal(job, "invalid_batch_payload")
-        val turns = payload.turns.map { turn -> json.decodeFromString<MemoryCompletedTurnSnapshot>(turn.payloadJson) }
+        val payload = decodePayload(job) ?: run {
+            val activityRunId = activityLogger.startSemanticRun(job, MemoryActivityCategory.TURN_BATCH_CONSOLIDATION)
+            activityLogger.finishRunSafely(
+                activityRunId,
+                MemoryActivityStatus.FAILED,
+                MemoryActivityRunData(errorCode = "invalid_batch_payload"),
+                expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
+            )
+            return terminal(job, "invalid_batch_payload")
+        }
+        val activityRunId = activityLogger.startSemanticRun(
+            job = job,
+            category = MemoryActivityCategory.TURN_BATCH_CONSOLIDATION,
+            triggerReason = payload.triggerReason,
+            inputCount = payload.turns.size
+        )
+        val turns = runCatching {
+            payload.turns.map { turn -> json.decodeFromString<MemoryCompletedTurnSnapshot>(turn.payloadJson) }
+        }.getOrElse {
+            activityLogger.finishRunSafely(
+                activityRunId,
+                MemoryActivityStatus.FAILED,
+                MemoryActivityRunData(inputCount = payload.turns.size, errorCode = "invalid_batch_turns"),
+                expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
+            )
+            return terminal(job, "invalid_batch_turns")
+        }
         val existingMutation = memoryMutationCoordinator.findBySemanticJobId(job.jobId)
         val batchAlreadyComplete = existingMutation == null && isClaimedBatchComplete(job.jobId, payload)
         if (existingMutation == null && !batchAlreadyComplete && !validateClaimedTurns(job, payload)) {
+            activityLogger.finishRunSafely(
+                activityRunId,
+                MemoryActivityStatus.FAILED,
+                MemoryActivityRunData(inputCount = payload.turns.size, errorCode = "invalid_claimed_batch"),
+                expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
+            )
             return terminal(job, "invalid_claimed_batch")
         }
         val existingMemories = if (existingMutation == null && !batchAlreadyComplete) {
@@ -65,6 +96,7 @@ class MemoryBatchConsolidationService(
             request = request,
             existingMutation = existingMutation,
             batchAlreadyComplete = batchAlreadyComplete,
+            activityRunId = activityRunId,
             complete = { turnBatchDao.completeClaimedBatch(job.jobId, now()) },
             isComplete = { isClaimedBatchComplete(job.jobId, payload) }
         )
@@ -72,7 +104,22 @@ class MemoryBatchConsolidationService(
 
     suspend fun processLegacy(job: MemoryMaintenanceJob): MemoryBatchProcessResult {
         terminalResultOrNull(job)?.let { return it }
-        val requestWithoutMemories = decodeLegacyRequest(job) ?: return terminal(job, "invalid_legacy_memory_payload")
+        val requestWithoutMemories = decodeLegacyRequest(job) ?: run {
+            val activityRunId = activityLogger.startSemanticRun(job, MemoryActivityCategory.TURN_BATCH_CONSOLIDATION)
+            activityLogger.finishRunSafely(
+                activityRunId,
+                MemoryActivityStatus.FAILED,
+                MemoryActivityRunData(errorCode = "invalid_legacy_memory_payload"),
+                expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
+            )
+            return terminal(job, "invalid_legacy_memory_payload")
+        }
+        val activityRunId = activityLogger.startSemanticRun(
+            job = job,
+            category = MemoryActivityCategory.TURN_BATCH_CONSOLIDATION,
+            triggerReason = requestWithoutMemories.triggerReason,
+            inputCount = requestWithoutMemories.turns.size
+        )
         val existingMutation = memoryMutationCoordinator.findBySemanticJobId(job.jobId)
         val request = requestWithoutMemories.copy(
             existingMemories = if (existingMutation == null) {
@@ -86,6 +133,7 @@ class MemoryBatchConsolidationService(
             request = request,
             existingMutation = existingMutation,
             batchAlreadyComplete = false,
+            activityRunId = activityRunId,
             complete = { true },
             isComplete = { true }
         )
@@ -96,10 +144,17 @@ class MemoryBatchConsolidationService(
         request: MemoryBatchConsolidationRequest,
         existingMutation: MemoryPreparedMutation?,
         batchAlreadyComplete: Boolean,
+        activityRunId: String,
         complete: suspend () -> Boolean,
         isComplete: suspend () -> Boolean
     ): MemoryBatchProcessResult {
         if (existingMutation == null && !batchAlreadyComplete && !settingRepository.fetchMemoryEnabled()) {
+            activityLogger.finishRunSafely(
+                activityRunId,
+                MemoryActivityStatus.SKIPPED,
+                MemoryActivityRunData(inputCount = request.turns.size, errorCode = "memory_disabled"),
+                expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
+            )
             turnBatchScheduler.onMemoryEnabledChanged(false)
             return terminal(job, "memory_disabled", dismiss = true)
         }
@@ -114,11 +169,16 @@ class MemoryBatchConsolidationService(
         var operationCount = 0
         var dailyWriteCount = 0
         var longTermWriteCount = 0
-        val organizationLogId: String
+        var activityPlatform: PlatformV2? = null
         val preparedMutation: MemoryPreparedMutation?
 
         if (existingMutation != null || batchAlreadyComplete) {
-            organizationLogId = startOrganizationActivity(runningJob, request, platform = null)
+            activityLogger.advanceRunSafely(
+                activityRunId = activityRunId,
+                expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION,
+                nextPhase = MemoryActivityPhase.ORGANIZATION,
+                data = MemoryActivityRunData(inputCount = request.turns.size)
+            )
             preparedMutation = existingMutation
         } else {
             val binding = resolveClaimedMemoryModel(
@@ -130,6 +190,12 @@ class MemoryBatchConsolidationService(
             val resolvedPlatform = when (binding) {
                 is ClaimedMemoryModelBinding.Unavailable -> {
                     val reason = binding.reason.code
+                    activityLogger.finishRunSafely(
+                        activityRunId,
+                        MemoryActivityStatus.BLOCKED,
+                        MemoryActivityRunData(inputCount = request.turns.size, errorCode = reason),
+                        expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
+                    )
                     maintenanceScheduler.markBlockedDependency(runningJob, reason)
                     turnBatchScheduler.scheduleNextWake()
                     return MemoryBatchProcessResult(
@@ -143,25 +209,41 @@ class MemoryBatchConsolidationService(
                     binding.platform
                 }
             }
-            val proposal = memoryIntelligence.consolidateMemoryBatch(request, resolvedPlatform)
+            activityPlatform = resolvedPlatform
+            val proposal = memoryIntelligence.consolidateMemoryBatch(request, resolvedPlatform, activityRunId)
             runningJob = maintenanceScheduler.renewClaimedLease(runningJob)
             if (proposal == null) {
-                val failedLogId = startOrganizationActivity(runningJob, request, resolvedPlatform)
-                finishOrganizationActivity(
-                    failedLogId,
+                activityLogger.finishRunSafely(
+                    activityRunId,
                     MemoryActivityStatus.FAILED,
-                    "记忆生成失败，未能开始整理"
+                    resolvedPlatform.toMemoryActivityData(
+                        inputCount = request.turns.size,
+                        errorCode = "consolidation_unavailable_or_invalid"
+                    ),
+                    expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
                 )
                 return retryable(runningJob, request, "consolidation_unavailable_or_invalid", startedAt, null)
             }
-            organizationLogId = startOrganizationActivity(runningJob, request, resolvedPlatform)
+            activityLogger.advanceRunSafely(
+                activityRunId = activityRunId,
+                expectedPhase = MemoryActivityPhase.GENERATION,
+                nextPhase = MemoryActivityPhase.ORGANIZATION,
+                data = resolvedPlatform.toMemoryActivityData(
+                    inputCount = request.turns.size,
+                    operationCount = proposal.operations.size
+                )
+            )
             val validatedOperations = runCatching { validateOperations(request, proposal.operations) }
                 .getOrElse { throwable ->
-                    finishOrganizationActivity(
-                        organizationLogId,
+                    activityLogger.finishRunSafely(
+                        activityRunId,
                         MemoryActivityStatus.FAILED,
-                        "记忆整理方案校验失败：${throwable.message}",
-                        proposal.operations.size
+                        resolvedPlatform.toMemoryActivityData(
+                            inputCount = request.turns.size,
+                            operationCount = proposal.operations.size,
+                            errorCode = "invalid_consolidation_operations"
+                        ),
+                        expectedPhase = MemoryActivityPhase.ORGANIZATION
                     )
                     return retryable(
                         runningJob,
@@ -180,11 +262,15 @@ class MemoryBatchConsolidationService(
                 )
             }.getOrElse { throwable ->
                 rethrowCommitInterruption(throwable)
-                finishOrganizationActivity(
-                    organizationLogId,
+                activityLogger.finishRunSafely(
+                    activityRunId,
                     MemoryActivityStatus.FAILED,
-                    "渲染记忆失败：${throwable.message}",
-                    proposal.operations.size
+                    resolvedPlatform.toMemoryActivityData(
+                        inputCount = request.turns.size,
+                        operationCount = proposal.operations.size,
+                        errorCode = "memory_render_failed"
+                    ),
+                    expectedPhase = MemoryActivityPhase.ORGANIZATION
                 )
                 return retryable(
                     runningJob,
@@ -206,11 +292,15 @@ class MemoryBatchConsolidationService(
                 ).also { mutation -> commitObserver.afterPrepared(mutation) }
             }.getOrElse { throwable ->
                 rethrowCommitInterruption(throwable)
-                finishOrganizationActivity(
-                    organizationLogId,
+                activityLogger.finishRunSafely(
+                    activityRunId,
                     MemoryActivityStatus.FAILED,
-                    "准备记忆提交失败：${throwable.message}",
-                    proposal.operations.size
+                    resolvedPlatform.toMemoryActivityData(
+                        inputCount = request.turns.size,
+                        operationCount = proposal.operations.size,
+                        errorCode = "memory_prepare_failed"
+                    ),
+                    expectedPhase = MemoryActivityPhase.ORGANIZATION
                 )
                 return retryable(
                     runningJob,
@@ -232,11 +322,15 @@ class MemoryBatchConsolidationService(
                 }
             }.getOrElse { throwable ->
                 rethrowCommitInterruption(throwable)
-                finishOrganizationActivity(
-                    organizationLogId,
+                activityLogger.finishRunSafely(
+                    activityRunId,
                     MemoryActivityStatus.FAILED,
-                    "提交记忆失败：${throwable.message}",
-                    operationCount.takeIf { it > 0 }
+                    activityPlatform.activityData(
+                        inputCount = request.turns.size,
+                        operationCount = operationCount.takeIf { it > 0 },
+                        errorCode = "memory_commit_failed"
+                    ),
+                    expectedPhase = MemoryActivityPhase.ORGANIZATION
                 )
                 return retryable(
                     runningJob,
@@ -247,11 +341,15 @@ class MemoryBatchConsolidationService(
                 )
             }
             if (commitResult is MemoryMutationCommitResult.Conflict) {
-                finishOrganizationActivity(
-                    organizationLogId,
+                activityLogger.finishRunSafely(
+                    activityRunId,
                     MemoryActivityStatus.FAILED,
-                    "记忆文件发生并发冲突：${commitResult.sourcePath}",
-                    operationCount.takeIf { it > 0 }
+                    activityPlatform.activityData(
+                        inputCount = request.turns.size,
+                        operationCount = operationCount.takeIf { it > 0 },
+                        errorCode = "memory_commit_conflict"
+                    ),
+                    expectedPhase = MemoryActivityPhase.ORGANIZATION
                 )
                 val conflictBatchCompleted = runCatching { complete() || isComplete() }.getOrElse { throwable ->
                     rethrowCommitInterruption(throwable)
@@ -280,11 +378,15 @@ class MemoryBatchConsolidationService(
         runningJob = maintenanceScheduler.renewClaimedLease(runningJob)
         val batchCompleted = runCatching { complete() || isComplete() }.getOrElse { throwable ->
             rethrowCommitInterruption(throwable)
-            finishOrganizationActivity(
-                organizationLogId,
+            activityLogger.finishRunSafely(
+                activityRunId,
                 MemoryActivityStatus.FAILED,
-                "记忆批次完成状态写入失败，提交内容保持不变",
-                operationCount.takeIf { it > 0 }
+                activityPlatform.activityData(
+                    inputCount = request.turns.size,
+                    operationCount = operationCount.takeIf { it > 0 },
+                    errorCode = "batch_completion_failed"
+                ),
+                expectedPhase = MemoryActivityPhase.ORGANIZATION
             )
             return retryable(
                 runningJob,
@@ -295,11 +397,15 @@ class MemoryBatchConsolidationService(
             )
         }
         if (!batchCompleted) {
-            finishOrganizationActivity(
-                organizationLogId,
+            activityLogger.finishRunSafely(
+                activityRunId,
                 MemoryActivityStatus.FAILED,
-                "记忆批次完成状态写入失败，提交内容保持不变",
-                operationCount.takeIf { it > 0 }
+                activityPlatform.activityData(
+                    inputCount = request.turns.size,
+                    operationCount = operationCount.takeIf { it > 0 },
+                    errorCode = "batch_completion_failed"
+                ),
+                expectedPhase = MemoryActivityPhase.ORGANIZATION
             )
             return retryable(
                 runningJob,
@@ -316,11 +422,18 @@ class MemoryBatchConsolidationService(
             memoryMutationCoordinator.acknowledgeSemanticCompletion(mutation.group.groupId)
         }
         turnBatchScheduler.repairAndSchedule()
-        finishOrganizationActivity(
-            organizationLogId,
-            MemoryActivityStatus.SUCCEEDED,
-            "长期记忆 $longTermWriteCount 条，每日记忆 $dailyWriteCount 条",
-            operationCount.takeIf { it > 0 }
+        activityLogger.finishRunSafely(
+            activityRunId,
+            if (operationCount == 0 && existingMutation == null && !batchAlreadyComplete) {
+                MemoryActivityStatus.NO_OP
+            } else {
+                MemoryActivityStatus.SUCCEEDED
+            },
+            activityPlatform.activityData(
+                inputCount = request.turns.size,
+                operationCount = operationCount
+            ),
+            expectedPhase = MemoryActivityPhase.ORGANIZATION
         )
         logBatch(
             runningJob,
@@ -930,29 +1043,19 @@ class MemoryBatchConsolidationService(
         return "${prefix}_${sha256("$batchId|$operationIndex|$destination").take(24)}"
     }
 
-    private suspend fun startOrganizationActivity(
-        job: MemoryMaintenanceJob,
-        request: MemoryBatchConsolidationRequest,
-        platform: PlatformV2?
-    ): String = runCatching {
-        activityLogger.start(
-            batchId = request.batchId,
-            category = MemoryActivityCategory.MEMORY_ORGANIZATION,
-            platformName = platform?.name,
-            modelName = platform?.model,
-            attempt = job.attempts,
-            turnCount = request.turns.size
-        )
-    }.getOrDefault("")
-
-    private suspend fun finishOrganizationActivity(
-        logId: String,
-        status: String,
-        detail: String? = null,
-        operationCount: Int? = null
-    ) {
-        runCatching { activityLogger.finish(logId, status, detail, operationCount) }
-    }
+    private fun PlatformV2?.activityData(
+        inputCount: Int? = null,
+        operationCount: Int? = null,
+        errorCode: String? = null
+    ): MemoryActivityRunData = this?.toMemoryActivityData(
+        inputCount = inputCount,
+        operationCount = operationCount,
+        errorCode = errorCode
+    ) ?: MemoryActivityRunData(
+        inputCount = inputCount,
+        operationCount = operationCount,
+        errorCode = errorCode
+    )
 
     private suspend fun retryable(
         job: MemoryMaintenanceJob,

@@ -460,6 +460,8 @@ class MemoryMaintenanceProcessorTest {
         val jobDao = InMemoryMaintenanceJobDao()
         val recoveryDao = InMemoryMemoryRecoveryDao()
         val enqueuer = RecordingWorkEnqueuer()
+        val activityDao = InMemoryActivityLogDao()
+        val activityLogger = RoomMemoryActivityLogger(activityDao, FIXED_CLOCK)
         val dailyScheduler = MemoryDailyDistillationScheduler(
             memoryFileStore = fileStore,
             markdownMemoryCodec = MarkdownMemoryCodec(),
@@ -467,12 +469,14 @@ class MemoryMaintenanceProcessorTest {
             maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK),
             settingRepository = FakeMaintenanceSettingRepository(memoryEnabled = true),
             workEnqueuer = enqueuer,
+            activityLogger = activityLogger,
             clock = FIXED_CLOCK
         )
         dailyScheduler.ensurePlanningJobs()
         val processor = createProcessor(
             jobDao = jobDao,
-            memoryDailyDistillationScheduler = dailyScheduler
+            memoryDailyDistillationScheduler = dailyScheduler,
+            activityLogger = activityLogger
         )
 
         val result = processor.processRunnableJobs(MemoryMaintenanceJobFamily.REPAIR, limit = 1)
@@ -480,6 +484,17 @@ class MemoryMaintenanceProcessorTest {
         assertEquals(1, result.succeededCount)
         assertEquals(1, jobDao.jobs.count { job -> job.type == MemoryMaintenanceJobType.DISTILL_DAILY_NOTES })
         assertEquals(1, recoveryDao.getDistillationCheckpointsByStatuses(listOf(MemoryDistillationCheckpointStatus.PENDING)).size)
+        val processedPlan = jobDao.jobs.single { job ->
+            job.type == MemoryMaintenanceJobType.PLAN_DAILY_DISTILLATION && job.nextRunAt == null
+        }
+        val plannerRow = activityDao.rows.single { row -> row.jobId == processedPlan.jobId }
+        assertEquals(MemoryActivityCategory.MAINTENANCE_PLANNING, plannerRow.category)
+        assertEquals(MemoryActivityPhase.PLANNING, plannerRow.phase)
+        assertEquals(MemoryActivityStatus.SUCCEEDED, plannerRow.status)
+        assertEquals(MemoryDailyDistillationPlanReason.SEMANTIC_JOB_SCHEDULED, plannerRow.errorCode)
+        assertEquals(null, plannerRow.platformUid)
+        assertEquals(null, plannerRow.modelId)
+        assertEquals(1, activityDao.rows.count { row -> row.jobId == processedPlan.jobId })
     }
 
     @Test
@@ -512,6 +527,7 @@ class MemoryMaintenanceProcessorTest {
 
     @Test
     fun `repair scheduling failure keeps persisted retry truth without throwing`() = runBlocking {
+        val activityDao = InMemoryActivityLogDao()
         val jobDao = InMemoryMaintenanceJobDao(
             listOf(
                 job(
@@ -523,7 +539,8 @@ class MemoryMaintenanceProcessorTest {
         )
         val repairer = MemoryMaintenanceRepairer(
             maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK),
-            workScheduler = FailingRepairWorkEnqueuer
+            workScheduler = FailingRepairWorkEnqueuer,
+            activityLogger = RoomMemoryActivityLogger(activityDao, FIXED_CLOCK)
         )
 
         val result = repairer.repairAndEnqueue()
@@ -532,6 +549,10 @@ class MemoryMaintenanceProcessorTest {
         assertFalse(result.schedulingSucceeded)
         assertEquals(MemoryMaintenanceJobStatus.FAILED_RETRYABLE, jobDao.jobs.single().status)
         assertEquals(1_000L, jobDao.jobs.single().nextRunAt)
+        assertTrue(activityDao.rows.isNotEmpty())
+        assertTrue(activityDao.rows.all { row -> row.status == MemoryActivityStatus.FAILED })
+        assertTrue(activityDao.rows.all { row -> row.errorCode?.startsWith("repair_") == true })
+        assertTrue(activityDao.rows.none { row -> row.phaseSummaryJson.orEmpty().contains("work scheduling unavailable") })
     }
 
     @Test
@@ -587,14 +608,16 @@ class MemoryMaintenanceProcessorTest {
         leaseWatchdog: MemoryMaintenanceLeaseWatchdog = NoOpLeaseWatchdog,
         memoryMutationRecoveryService: MemoryMutationRecoveryService? = null,
         memoryIndexSyncService: MemoryIndexSyncService? = null,
-        memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler? = null
+        memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler? = null,
+        activityLogger: MemoryActivityLogger = MemoryActivityLogger.None
     ): MemoryMaintenanceProcessor = MemoryMaintenanceProcessor(
         maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK),
         settingRepository = FakeMaintenanceSettingRepository(memoryEnabled = memoryEnabled),
         leaseWatchdog = leaseWatchdog,
         memoryMutationRecoveryService = memoryMutationRecoveryService,
         memoryIndexSyncService = memoryIndexSyncService,
-        memoryDailyDistillationScheduler = memoryDailyDistillationScheduler
+        memoryDailyDistillationScheduler = memoryDailyDistillationScheduler,
+        activityLogger = activityLogger
     )
 
     private fun syncServiceReturning(result: MemoryIndexSyncResult): MemoryIndexSyncService =

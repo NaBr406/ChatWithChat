@@ -20,6 +20,7 @@ class MemoryDailyDistillationScheduler(
     private val maintenanceScheduler: MemoryMaintenanceScheduler,
     private val settingRepository: SettingRepository,
     private val workEnqueuer: MemoryMaintenanceWorkEnqueuer,
+    private val activityLogger: MemoryActivityLogger = MemoryActivityLogger.None,
     private val clock: Clock = Clock.systemDefaultZone(),
     private val json: Json = Json {
         ignoreUnknownKeys = false
@@ -28,12 +29,23 @@ class MemoryDailyDistillationScheduler(
         explicitNulls = false
     }
 ) {
-    suspend fun ensurePlanningJobs(): MemoryDailyDistillationPlanResult {
-        if (!settingRepository.fetchMemoryEnabled()) return MemoryDailyDistillationPlanResult()
+    suspend fun ensurePlanningJobs(
+        recordStandaloneDisposition: Boolean = true
+    ): MemoryDailyDistillationPlanResult {
+        if (!settingRepository.fetchMemoryEnabled()) {
+            val result = MemoryDailyDistillationPlanResult(
+                disposition = MemoryDailyDistillationPlanDisposition.SKIPPED,
+                reason = MemoryDailyDistillationPlanReason.MEMORY_DISABLED
+            )
+            if (recordStandaloneDisposition) recordStandaloneDisposition(result)
+            return result
+        }
         val nextBatch = findNextBatch()
         var scheduledJobId: String? = null
         var scheduledCheckpointId: String? = null
         var completedBatchCount = 0
+        var disposition = MemoryDailyDistillationPlanDisposition.NO_ELIGIBLE_INPUT
+        var reason = MemoryDailyDistillationPlanReason.NO_ELIGIBLE_DAILY_FILE
         if (nextBatch != null) {
             completedBatchCount = nextBatch.completedBatchCount
             val checkpoint = nextBatch.checkpoint
@@ -41,6 +53,8 @@ class MemoryDailyDistillationScheduler(
                 checkpoint == null -> {
                     val planJob = enqueueBatchPlan(nextBatch)
                     scheduledJobId = planJob.jobId
+                    disposition = MemoryDailyDistillationPlanDisposition.WORK_SCHEDULED
+                    reason = MemoryDailyDistillationPlanReason.PLANNER_JOB_SCHEDULED
                     workEnqueuer.enqueueWork(MemoryMaintenanceJobFamily.REPAIR)
                 }
                 checkpoint.status == MemoryDistillationCheckpointStatus.PENDING &&
@@ -48,6 +62,8 @@ class MemoryDailyDistillationScheduler(
                     val semanticJob = ensureSemanticJob(checkpoint, nextBatch.input)
                     scheduledJobId = semanticJob.jobId
                     scheduledCheckpointId = checkpoint.checkpointId
+                    disposition = MemoryDailyDistillationPlanDisposition.WORK_SCHEDULED
+                    reason = MemoryDailyDistillationPlanReason.SEMANTIC_JOB_SCHEDULED
                     workEnqueuer.enqueueWork(MemoryMaintenanceJobFamily.SEMANTIC)
                 }
                 checkpoint.status == MemoryDistillationCheckpointStatus.PENDING -> {
@@ -60,6 +76,8 @@ class MemoryDailyDistillationScheduler(
                         MemoryRecoveredJobDisposition.ACTIVE -> {
                             scheduledJobId = checkpoint.semanticJobId
                             scheduledCheckpointId = checkpoint.checkpointId
+                            disposition = MemoryDailyDistillationPlanDisposition.SKIPPED
+                            reason = MemoryDailyDistillationPlanReason.ALREADY_ACTIVE
                         }
                         MemoryRecoveredJobDisposition.MISSING,
                         MemoryRecoveredJobDisposition.SUCCEEDED -> {
@@ -71,6 +89,8 @@ class MemoryDailyDistillationScheduler(
                             )
                             scheduledJobId = semanticJob.jobId
                             scheduledCheckpointId = replanned.checkpointId
+                            disposition = MemoryDailyDistillationPlanDisposition.WORK_SCHEDULED
+                            reason = MemoryDailyDistillationPlanReason.SEMANTIC_JOB_SCHEDULED
                             workEnqueuer.enqueueWork(MemoryMaintenanceJobFamily.SEMANTIC)
                         }
                     }
@@ -80,36 +100,62 @@ class MemoryDailyDistillationScheduler(
                     val semanticJob = ensureSemanticJob(replanned, nextBatch.input.withCreatedAt(replanned.createdAt))
                     scheduledJobId = semanticJob.jobId
                     scheduledCheckpointId = replanned.checkpointId
+                    disposition = MemoryDailyDistillationPlanDisposition.WORK_SCHEDULED
+                    reason = MemoryDailyDistillationPlanReason.SEMANTIC_JOB_SCHEDULED
                     workEnqueuer.enqueueWork(MemoryMaintenanceJobFamily.SEMANTIC)
                 }
                 checkpoint.status == MemoryDistillationCheckpointStatus.PREPARED -> {
                     val semanticJob = ensureSemanticJob(checkpoint, nextBatch.input.withCreatedAt(checkpoint.createdAt))
                     scheduledJobId = semanticJob.jobId
                     scheduledCheckpointId = checkpoint.checkpointId
+                    disposition = MemoryDailyDistillationPlanDisposition.WORK_SCHEDULED
+                    reason = MemoryDailyDistillationPlanReason.SEMANTIC_JOB_SCHEDULED
                     workEnqueuer.enqueueWork(MemoryMaintenanceJobFamily.SEMANTIC)
                 }
             }
         }
         val nextDailyPlanAt = ensureNextDailyWake()
-        return MemoryDailyDistillationPlanResult(
+        val result = MemoryDailyDistillationPlanResult(
             scheduledJobId = scheduledJobId,
             scheduledCheckpointId = scheduledCheckpointId,
             completedBatchCount = completedBatchCount,
-            nextDailyPlanAt = nextDailyPlanAt
+            nextDailyPlanAt = nextDailyPlanAt,
+            disposition = disposition,
+            reason = reason
         )
+        if (
+            recordStandaloneDisposition &&
+            result.disposition != MemoryDailyDistillationPlanDisposition.WORK_SCHEDULED
+        ) {
+            recordStandaloneDisposition(result)
+        }
+        return result
     }
 
     suspend fun processPlan(job: MemoryMaintenanceJob): MemoryDailyDistillationPlanResult {
         val payload = decodePlanPayload(job)
             ?: error("invalid_daily_distillation_plan_payload")
-        if (!settingRepository.fetchMemoryEnabled()) return MemoryDailyDistillationPlanResult()
+        if (!settingRepository.fetchMemoryEnabled()) {
+            return MemoryDailyDistillationPlanResult(
+                disposition = MemoryDailyDistillationPlanDisposition.SKIPPED,
+                reason = MemoryDailyDistillationPlanReason.MEMORY_DISABLED
+            )
+        }
         if (payload.kind == MemoryDailyDistillationPlanKind.DAILY_WAKE) {
-            return ensurePlanningJobs()
+            return ensurePlanningJobs(recordStandaloneDisposition = false)
         }
 
         val nextBatch = findNextBatch()
         if (nextBatch == null || !nextBatch.matches(payload)) {
-            return ensurePlanningJobs()
+            val replanned = ensurePlanningJobs(recordStandaloneDisposition = false)
+            return if (replanned.disposition == MemoryDailyDistillationPlanDisposition.WORK_SCHEDULED) {
+                replanned
+            } else {
+                replanned.copy(
+                    disposition = MemoryDailyDistillationPlanDisposition.SKIPPED,
+                    reason = MemoryDailyDistillationPlanReason.PLAN_SUPERSEDED
+                )
+            }
         }
         val checkpoint = nextBatch.checkpoint ?: insertPendingCheckpoint(nextBatch.input)
         val semanticJob = ensureSemanticJob(checkpoint, nextBatch.input.withCreatedAt(checkpoint.createdAt))
@@ -119,7 +165,9 @@ class MemoryDailyDistillationScheduler(
             scheduledJobId = semanticJob.jobId,
             scheduledCheckpointId = checkpoint.checkpointId,
             completedBatchCount = nextBatch.completedBatchCount,
-            nextDailyPlanAt = nextDailyPlanAt
+            nextDailyPlanAt = nextDailyPlanAt,
+            disposition = MemoryDailyDistillationPlanDisposition.WORK_SCHEDULED,
+            reason = MemoryDailyDistillationPlanReason.SEMANTIC_JOB_SCHEDULED
         )
     }
 
@@ -183,7 +231,7 @@ class MemoryDailyDistillationScheduler(
 
     private suspend fun enqueueBatchPlan(batch: PlannedBatch): MemoryMaintenanceJob {
         val input = batch.input
-        val job = maintenanceScheduler.enqueue(
+        var job = maintenanceScheduler.enqueue(
             type = MemoryMaintenanceJobType.PLAN_DAILY_DISTILLATION,
             idempotencyKey = "memory-daily-distillation-plan:${input.batchId}:${input.targetBaseHash}",
             payloadJson = json.encodeToString(
@@ -197,14 +245,20 @@ class MemoryDailyDistillationScheduler(
                 )
             )
         )
-        return if (
+        if (
             job.status == MemoryMaintenanceJobStatus.DISMISSED &&
             job.lastError == "memory_disabled"
         ) {
-            maintenanceScheduler.reviveDismissedDailyPlan(job.jobId) ?: job
-        } else {
-            job
+            job = maintenanceScheduler.reviveDismissedDailyPlan(job.jobId) ?: job
         }
+        if (job.status in ACTIVITY_RUN_STATUSES) {
+            activityLogger.startScheduledRun(
+                job = job,
+                category = MemoryActivityCategory.MAINTENANCE_PLANNING,
+                triggerReason = "daily_batch_discovered"
+            )
+        }
+        return job
     }
 
     private suspend fun insertPendingCheckpoint(
@@ -262,7 +316,7 @@ class MemoryDailyDistillationScheduler(
             ),
             jobId = checkpoint.semanticJobId
         )
-        return if (
+        val scheduledJob = if (
             job.status == MemoryMaintenanceJobStatus.DISMISSED &&
             job.lastError == "memory_disabled"
         ) {
@@ -270,6 +324,15 @@ class MemoryDailyDistillationScheduler(
         } else {
             job
         }
+        if (scheduledJob.status in ACTIVITY_RUN_STATUSES) {
+            activityLogger.startScheduledRun(
+                job = scheduledJob,
+                category = MemoryActivityCategory.DAILY_DISTILLATION,
+                triggerReason = "daily_distillation_planned",
+                inputCount = input.dailyEvidence.size
+            )
+        }
+        return scheduledJob
     }
 
     private suspend fun markCheckpointStale(
@@ -371,7 +434,7 @@ class MemoryDailyDistillationScheduler(
     private suspend fun ensureNextDailyWake(): Long {
         val nextDate = LocalDate.now(clock).plusDays(1)
         val nextRunAt = nextDate.atStartOfDay(clock.zone).toEpochSecond()
-        val job = maintenanceScheduler.enqueue(
+        var job = maintenanceScheduler.enqueue(
             type = MemoryMaintenanceJobType.PLAN_DAILY_DISTILLATION,
             idempotencyKey = "memory-daily-distillation-wake:$nextDate",
             payloadJson = json.encodeToString(
@@ -386,9 +449,30 @@ class MemoryDailyDistillationScheduler(
             job.status == MemoryMaintenanceJobStatus.DISMISSED &&
             job.lastError == "memory_disabled"
         ) {
-            maintenanceScheduler.reviveDismissedDailyPlan(job.jobId)
+            job = maintenanceScheduler.reviveDismissedDailyPlan(job.jobId) ?: job
+        }
+        if (job.status in ACTIVITY_RUN_STATUSES) {
+            activityLogger.startScheduledRun(
+                job = job,
+                category = MemoryActivityCategory.MAINTENANCE_PLANNING,
+                triggerReason = "daily_wake_scheduled"
+            )
         }
         return nextRunAt
+    }
+
+    private suspend fun recordStandaloneDisposition(result: MemoryDailyDistillationPlanResult) {
+        val status = when (result.disposition) {
+            MemoryDailyDistillationPlanDisposition.NO_ELIGIBLE_INPUT -> MemoryActivityStatus.NO_OP
+            MemoryDailyDistillationPlanDisposition.SKIPPED -> MemoryActivityStatus.SKIPPED
+            else -> return
+        }
+        activityLogger.recordStandalonePlanningResult(
+            jobType = MemoryMaintenanceJobType.PLAN_DAILY_DISTILLATION,
+            triggerReason = "daily_planning_check",
+            status = status,
+            outcomeCode = result.reason
+        )
     }
 
     private fun decodePlanPayload(job: MemoryMaintenanceJob): MemoryDailyDistillationPlanJobPayload? = try {
@@ -552,6 +636,11 @@ class MemoryDailyDistillationScheduler(
         const val MAX_EXISTING_MEMORIES = 100
         const val MAX_EXISTING_MEMORY_CHARS = 32_000
         const val EMPTY_BATCH_KEY = "empty"
+        val ACTIVITY_RUN_STATUSES = setOf(
+            MemoryMaintenanceJobStatus.PENDING,
+            MemoryMaintenanceJobStatus.FAILED_RETRYABLE,
+            MemoryMaintenanceJobStatus.RUNNING
+        )
         val DAILY_SOURCE_REGEX = Regex("memory/(\\d{4}-\\d{2}-\\d{2})\\.md")
         val SHA_256_REGEX = Regex("[0-9a-f]{64}")
     }
