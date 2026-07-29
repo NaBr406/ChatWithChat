@@ -54,7 +54,7 @@ class MemorySchema17StartupRecoveryInstrumentedTest {
         var reopenedVectorStore: MemoryVectorStore? = null
         try {
             val sqliteDatabase = database.openHelper.writableDatabase
-            assertEquals(17, sqliteDatabase.version)
+            assertEquals(19, sqliteDatabase.version)
             sqliteDatabase.query(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('memory_chunk', 'memory_document')"
             ).use { cursor -> assertEquals(0, cursor.count) }
@@ -276,7 +276,23 @@ class MemorySchema17StartupRecoveryInstrumentedTest {
                 jobId = "schema17-receipt-startup-source"
             )
             val canonicalBefore = fileStore.readLongTermMemory().getOrThrow()
-            val target = "# ChatWithChat Memory\n\n- Canonical target survived process death"
+            val target = MarkdownMemoryCodec().renderLongTerm(
+                listOf(
+                    MarkdownMemoryEntry(
+                        id = "schema17-receipt-target",
+                        text = "Canonical target survived process death",
+                        type = "project_context",
+                        sensitivity = MemorySensitivity.NORMAL,
+                        source = MemorySource.EXPLICIT_USER_STATEMENT,
+                        createdAt = 900L,
+                        updatedAt = 900L,
+                        canonicalKey = "project.schema17_receipt_target",
+                        scope = MemoryScope.GENERAL,
+                        lastObservedAt = 900L,
+                        recallState = MemoryRecallState.QUERY
+                    )
+                )
+            )
             val prepared = initialCoordinator.prepare(
                 semanticJobId = sourceJob.jobId,
                 semanticBatchId = "schema17-receipt-startup-batch",
@@ -360,6 +376,8 @@ class MemorySchema17StartupRecoveryInstrumentedTest {
             assertEquals(0, checkNotNull(startupRecovery).failedCount)
             val alreadyCurrent = bootstrapResult as MemoryVectorIndexBootstrapResult.AlreadyCurrent
             assertEquals(prepared.group.generation, alreadyCurrent.generation)
+            assertEquals(MemoryVectorIndexDefaults.configuration.fingerprint(), alreadyCurrent.indexFingerprint)
+            assertEquals(MemoryCorpusIndexStatus.PENDING, alreadyCurrent.indexStatus)
             assertEquals(prepared.group.generation, recoveryDao.getLatestMutationGeneration())
             assertEquals(
                 MemoryMutationState.INDEX_PENDING,
