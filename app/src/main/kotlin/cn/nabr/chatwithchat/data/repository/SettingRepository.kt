@@ -4,6 +4,7 @@ import cn.nabr.chatwithchat.data.database.entity.PlatformModelV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.dto.Platform
 import cn.nabr.chatwithchat.data.dto.ThemeSetting
+import cn.nabr.chatwithchat.data.memory.MemoryModelPreference
 import cn.nabr.chatwithchat.data.model.AvailableChatModel
 import cn.nabr.chatwithchat.data.model.LastSelectedModel
 import cn.nabr.chatwithchat.data.model.ModelRefreshResult
@@ -22,6 +23,7 @@ interface SettingRepository {
     suspend fun fetchThemes(): ThemeSetting
     suspend fun fetchLastSelectedModel(): LastSelectedModel?
     suspend fun fetchMemoryEnabled(): Boolean
+    suspend fun fetchMemoryModelPreference(): MemoryModelPreference
     suspend fun fetchMemoryMaintenanceNotificationsEnabled(): Boolean
     suspend fun fetchAutomaticStickerRepliesEnabled(): Boolean = true
     suspend fun fetchToolCallingMode(): ToolCallingMode
@@ -36,6 +38,7 @@ interface SettingRepository {
     suspend fun updateThemes(themeSetting: ThemeSetting)
     suspend fun updateLastSelectedModel(platformUid: String, model: String, reasoningMode: ReasoningMode = ReasoningMode.AUTO)
     suspend fun updateMemoryEnabled(enabled: Boolean)
+    suspend fun updateMemoryModelPreference(preference: MemoryModelPreference)
     suspend fun updateMemoryMaintenanceNotificationsEnabled(enabled: Boolean)
     suspend fun updateAutomaticStickerRepliesEnabled(enabled: Boolean) = Unit
     suspend fun updateToolCallingMode(mode: ToolCallingMode)

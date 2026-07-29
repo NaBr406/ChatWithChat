@@ -1,15 +1,22 @@
 package cn.nabr.chatwithchat.presentation.ui.memory
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -19,12 +26,14 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -32,14 +41,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.database.entity.MemoryActivityLog
 import cn.nabr.chatwithchat.data.memory.MemoryActivityCategory
 import cn.nabr.chatwithchat.data.memory.MemoryActivityStatus
+import cn.nabr.chatwithchat.data.memory.MemoryModelPreference
 import cn.nabr.chatwithchat.presentation.common.AppleBlue
 import cn.nabr.chatwithchat.presentation.common.SettingsMaterialGroup
 import cn.nabr.chatwithchat.presentation.common.SettingsTopAppBar
@@ -57,7 +71,18 @@ fun MemoryScreen(
     val uiState by memoryViewModel.uiState.collectAsStateWithLifecycle()
     val emptyMarkdownText = stringResource(R.string.memory_export_empty_markdown)
     var selectedTab by rememberSaveable { mutableIntStateOf(MEMORY_TAB) }
+    val lifecycleOwner = LocalLifecycleOwner.current
     val materialColors = settingsMaterialColors()
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                memoryViewModel.refreshMemoryModels()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     Scaffold(
         topBar = {
@@ -110,6 +135,11 @@ fun MemoryScreen(
             if (selectedTab == MEMORY_TAB) {
                 MemoryContent(
                     memoryEnabled = uiState.memoryEnabled,
+                    memoryModelPreference = uiState.memoryModelPreference,
+                    memoryModelOptions = uiState.memoryModelOptions,
+                    isMemoryModelLoading = uiState.isMemoryModelLoading,
+                    memoryModelError = uiState.memoryModelError,
+                    onMemoryModelClick = memoryViewModel::openMemoryModelPicker,
                     markdown = uiState.markdown,
                     emptyMarkdownText = emptyMarkdownText
                 )
@@ -138,16 +168,47 @@ fun MemoryScreen(
             }
         )
     }
+
+    if (uiState.isMemoryModelPickerOpen) {
+        MemoryModelPickerDialog(
+            preference = uiState.memoryModelPreference,
+            options = uiState.memoryModelOptions,
+            isSaving = uiState.isMemoryModelSaving,
+            error = uiState.memoryModelError,
+            onSelect = memoryViewModel::selectMemoryModel,
+            onDismiss = memoryViewModel::closeMemoryModelPicker
+        )
+    }
 }
 
 @Composable
-private fun MemoryContent(memoryEnabled: Boolean, markdown: String, emptyMarkdownText: String) {
+private fun MemoryContent(
+    memoryEnabled: Boolean,
+    memoryModelPreference: MemoryModelPreference,
+    memoryModelOptions: List<MemoryModelOption>,
+    isMemoryModelLoading: Boolean,
+    memoryModelError: MemoryModelUiError?,
+    onMemoryModelClick: () -> Unit,
+    markdown: String,
+    emptyMarkdownText: String
+) {
     val materialColors = settingsMaterialColors()
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        item {
+            SettingsMaterialGroup {
+                MemoryModelSettingRow(
+                    preference = memoryModelPreference,
+                    options = memoryModelOptions,
+                    isLoading = isMemoryModelLoading,
+                    error = memoryModelError,
+                    onClick = onMemoryModelClick
+                )
+            }
+        }
         if (!memoryEnabled) {
             item {
                 SettingsMaterialGroup { MemoryDisabledNotice() }
@@ -169,6 +230,193 @@ private fun MemoryContent(memoryEnabled: Boolean, markdown: String, emptyMarkdow
         }
     }
 }
+
+@Composable
+private fun MemoryModelSettingRow(
+    preference: MemoryModelPreference,
+    options: List<MemoryModelOption>,
+    isLoading: Boolean,
+    error: MemoryModelUiError?,
+    onClick: () -> Unit
+) {
+    val selectedLabel = memoryModelPreferenceLabel(preference, options)
+    val description = when {
+        error != null -> memoryModelErrorLabel(error)
+        isLoading -> stringResource(R.string.memory_model_loading)
+        else -> selectedLabel
+    }
+    ListItem(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = !isLoading, onClick = onClick)
+            .padding(horizontal = 8.dp),
+        headlineContent = {
+            Text(
+                text = stringResource(R.string.memory_model_title),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        },
+        supportingContent = {
+            Text(
+                text = description,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                color = if (error == null) {
+                    settingsMaterialColors().secondaryLabel
+                } else {
+                    MaterialTheme.colorScheme.error
+                }
+            )
+        },
+        trailingContent = {
+            Icon(
+                imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                contentDescription = stringResource(R.string.arrow_icon),
+                modifier = Modifier.size(18.dp)
+            )
+        },
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+    )
+}
+
+@Composable
+private fun MemoryModelPickerDialog(
+    preference: MemoryModelPreference,
+    options: List<MemoryModelOption>,
+    isSaving: Boolean,
+    error: MemoryModelUiError?,
+    onSelect: (MemoryModelPreference) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val selectedOption = (preference as? MemoryModelPreference.Fixed)?.let { fixed ->
+        options.firstOrNull { option -> option.platformUid == fixed.platformUid && option.modelId == fixed.modelId }
+    }
+    AlertDialog(
+        title = { Text(stringResource(R.string.memory_model_picker_title)) },
+        text = {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp)
+            ) {
+                error?.let { currentError ->
+                    item {
+                        Text(
+                            text = memoryModelErrorLabel(currentError),
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                        )
+                    }
+                }
+                item {
+                    MemoryModelRadioRow(
+                        label = stringResource(R.string.memory_model_auto),
+                        selected = preference == MemoryModelPreference.Auto,
+                        enabled = !isSaving,
+                        onClick = { onSelect(MemoryModelPreference.Auto) }
+                    )
+                }
+                if (preference is MemoryModelPreference.Fixed && selectedOption == null) {
+                    item {
+                        MemoryModelRadioRow(
+                            label = stringResource(
+                                R.string.memory_model_unavailable_selection,
+                                preference.platformUid,
+                                preference.modelId
+                            ),
+                            selected = true,
+                            enabled = false,
+                            onClick = {}
+                        )
+                    }
+                } else if (preference is MemoryModelPreference.Invalid) {
+                    item {
+                        MemoryModelRadioRow(
+                            label = stringResource(R.string.memory_model_invalid_selection),
+                            selected = true,
+                            enabled = false,
+                            onClick = {}
+                        )
+                    }
+                }
+                items(options, key = { option -> "${option.platformUid}:${option.modelId}" }) { option ->
+                    MemoryModelRadioRow(
+                        label = "${option.platformName} / ${option.modelName}",
+                        selected = option == selectedOption,
+                        enabled = !isSaving,
+                        onClick = { onSelect(option.preference) }
+                    )
+                }
+                if (options.isEmpty() && error != MemoryModelUiError.LOAD_FAILED) {
+                    item {
+                        Text(
+                            text = stringResource(R.string.memory_model_no_available_models),
+                            color = settingsMaterialColors().secondaryLabel,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                        )
+                    }
+                }
+            }
+        },
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onDismiss, enabled = !isSaving) {
+                Text(stringResource(R.string.cancel))
+            }
+        }
+    )
+}
+
+@Composable
+private fun MemoryModelRadioRow(
+    label: String,
+    selected: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = enabled, role = Role.RadioButton, onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 6.dp)
+    ) {
+        RadioButton(selected = selected, onClick = null, enabled = enabled)
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = label,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+@Composable
+private fun memoryModelPreferenceLabel(
+    preference: MemoryModelPreference,
+    options: List<MemoryModelOption>
+): String = when (preference) {
+    MemoryModelPreference.Auto -> stringResource(R.string.memory_model_auto)
+    is MemoryModelPreference.Fixed ->
+        options
+            .firstOrNull { option -> option.platformUid == preference.platformUid && option.modelId == preference.modelId }
+            ?.let { option -> "${option.platformName} / ${option.modelName}" }
+            ?: stringResource(
+                R.string.memory_model_unavailable_selection,
+                preference.platformUid,
+                preference.modelId
+            )
+    is MemoryModelPreference.Invalid -> stringResource(R.string.memory_model_invalid_selection)
+}
+
+@Composable
+private fun memoryModelErrorLabel(error: MemoryModelUiError): String = stringResource(
+    when (error) {
+        MemoryModelUiError.LOAD_FAILED -> R.string.memory_model_load_failed
+        MemoryModelUiError.SAVE_FAILED -> R.string.memory_model_save_failed
+    }
+)
 
 @Composable
 private fun MemoryActivityLogList(logs: List<MemoryActivityLog>) {

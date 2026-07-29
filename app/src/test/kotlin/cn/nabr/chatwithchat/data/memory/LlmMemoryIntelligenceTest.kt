@@ -458,6 +458,7 @@ private class FakeSettingRepository(
     override suspend fun fetchThemes(): ThemeSetting = ThemeSetting()
     override suspend fun fetchLastSelectedModel(): LastSelectedModel? = null
     override suspend fun fetchMemoryEnabled(): Boolean = false
+    override suspend fun fetchMemoryModelPreference(): MemoryModelPreference = MemoryModelPreference.Auto
     override suspend fun fetchMemoryMaintenanceNotificationsEnabled(): Boolean = true
     override suspend fun fetchToolCallingMode(): ToolCallingMode = ToolCallingMode.Off
     override suspend fun fetchDisabledToolNames(): Set<String> = emptySet()
@@ -468,6 +469,7 @@ private class FakeSettingRepository(
     override suspend fun updateThemes(themeSetting: ThemeSetting) = Unit
     override suspend fun updateLastSelectedModel(platformUid: String, model: String, reasoningMode: ReasoningMode) = Unit
     override suspend fun updateMemoryEnabled(enabled: Boolean) = Unit
+    override suspend fun updateMemoryModelPreference(preference: MemoryModelPreference) = Unit
     override suspend fun updateMemoryMaintenanceNotificationsEnabled(enabled: Boolean) = Unit
     override suspend fun updateToolCallingMode(mode: ToolCallingMode) = Unit
     override suspend fun updateToolEnabled(toolName: String, enabled: Boolean) = Unit

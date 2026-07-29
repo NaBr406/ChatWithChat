@@ -11,6 +11,7 @@ import cn.nabr.chatwithchat.data.datastore.SettingDataSource
 import cn.nabr.chatwithchat.data.dto.APIModel
 import cn.nabr.chatwithchat.data.dto.Platform
 import cn.nabr.chatwithchat.data.dto.ThemeSetting
+import cn.nabr.chatwithchat.data.memory.MemoryModelPreference
 import cn.nabr.chatwithchat.data.model.ApiType
 import cn.nabr.chatwithchat.data.model.AvailableChatModel
 import cn.nabr.chatwithchat.data.model.ClientType
@@ -126,6 +127,9 @@ class SettingRepositoryImpl @Inject constructor(
 
     override suspend fun fetchMemoryEnabled(): Boolean = settingDataSource.getMemoryEnabled() ?: false
 
+    override suspend fun fetchMemoryModelPreference(): MemoryModelPreference =
+        settingDataSource.getMemoryModelPreference()
+
     override suspend fun fetchMemoryMaintenanceNotificationsEnabled(): Boolean =
         settingDataSource.getMemoryMaintenanceNotificationsEnabled() ?: true
 
@@ -224,6 +228,18 @@ class SettingRepositoryImpl @Inject constructor(
 
     override suspend fun updateMemoryEnabled(enabled: Boolean) {
         settingDataSource.updateMemoryEnabled(enabled)
+    }
+
+    override suspend fun updateMemoryModelPreference(preference: MemoryModelPreference) {
+        val normalized = when (preference) {
+            MemoryModelPreference.Auto -> MemoryModelPreference.Auto
+            is MemoryModelPreference.Fixed -> MemoryModelPreference.Fixed(
+                platformUid = preference.platformUid.trim(),
+                modelId = preference.modelId.trim()
+            )
+            is MemoryModelPreference.Invalid -> error("Invalid memory model preference cannot be selected")
+        }
+        settingDataSource.updateMemoryModelPreference(normalized)
     }
 
     override suspend fun updateMemoryMaintenanceNotificationsEnabled(enabled: Boolean) {

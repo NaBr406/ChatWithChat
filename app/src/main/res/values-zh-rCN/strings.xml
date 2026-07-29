@@ -86,6 +86,15 @@
     <string name="settings_section_app">应用</string>
     <string name="memory_disabled_notice_title">记忆链路未启用</string>
     <string name="memory_disabled_notice_description">仍可查看和导出已有长期记忆；开启后才会参与新聊天。</string>
+    <string name="memory_model_title">记忆模型</string>
+    <string name="memory_model_picker_title">选择记忆模型</string>
+    <string name="memory_model_auto">自动</string>
+    <string name="memory_model_loading">正在读取模型</string>
+    <string name="memory_model_unavailable_selection">%1$s / %2$s（原选择已不可用）</string>
+    <string name="memory_model_invalid_selection">已保存的选择无效</string>
+    <string name="memory_model_no_available_models">没有可用模型</string>
+    <string name="memory_model_load_failed">无法读取可用模型</string>
+    <string name="memory_model_save_failed">无法保存记忆模型选择</string>
     <string name="memory_section_pending">待确认</string>
     <string name="memory_section_active">生效中</string>
     <string name="memory_section_inactive">已解决与已归档</string>

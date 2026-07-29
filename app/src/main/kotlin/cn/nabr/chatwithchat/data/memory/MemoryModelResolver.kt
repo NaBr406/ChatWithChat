@@ -1,12 +1,21 @@
 package cn.nabr.chatwithchat.data.memory
 
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
+import cn.nabr.chatwithchat.data.model.AvailableChatModel
 import cn.nabr.chatwithchat.data.model.ClientType
 import cn.nabr.chatwithchat.data.repository.SettingRepository
 
 class MemoryModelResolver(
     private val settingRepository: SettingRepository
 ) {
+    suspend fun resolvePreference(preference: MemoryModelPreference): MemoryModelResolution = when (preference) {
+        MemoryModelPreference.Auto -> resolveAuto()
+        is MemoryModelPreference.Fixed -> resolveFrozen(preference.platformUid, preference.modelId)
+        is MemoryModelPreference.Invalid -> MemoryModelResolution.Unavailable(
+            MemoryModelUnavailableReason.INVALID_PREFERENCE
+        )
+    }
+
     suspend fun resolveAuto(): MemoryModelResolution {
         val enabledModelIdsByPlatform = settingRepository.fetchPlatformModels()
             .filter { model -> model.enabled }
@@ -41,6 +50,9 @@ class MemoryModelResolver(
         }
     }
 
+    fun isEligible(option: AvailableChatModel): Boolean =
+        option.platform.copy(model = option.modelId).isEligibleMemoryModel()
+
     private fun PlatformV2.isEligibleMemoryModel(): Boolean = enabled &&
         uid.isNotBlank() &&
         model.isNotBlank() &&
@@ -63,11 +75,12 @@ class MemoryModelResolver(
 
 sealed interface MemoryModelResolution {
     data class Resolved(val platform: PlatformV2) : MemoryModelResolution
-    data class Unavailable(val reason: String) : MemoryModelResolution
+    data class Unavailable(val reason: MemoryModelUnavailableReason) : MemoryModelResolution
 }
 
-object MemoryModelUnavailableReason {
-    const val NO_ELIGIBLE_MODEL = "no_eligible_memory_model"
-    const val INVALID_FROZEN_IDENTITY = "invalid_frozen_memory_model_identity"
-    const val FROZEN_MODEL_UNAVAILABLE = "frozen_memory_model_unavailable"
+enum class MemoryModelUnavailableReason(val code: String) {
+    NO_ELIGIBLE_MODEL("no_eligible_memory_model"),
+    INVALID_PREFERENCE("invalid_memory_model_preference"),
+    INVALID_FROZEN_IDENTITY("invalid_frozen_memory_model_identity"),
+    FROZEN_MODEL_UNAVAILABLE("frozen_memory_model_unavailable")
 }

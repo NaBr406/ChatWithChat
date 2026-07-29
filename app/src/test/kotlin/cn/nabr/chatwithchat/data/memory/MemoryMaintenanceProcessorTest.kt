@@ -613,6 +613,7 @@ internal class FakeMaintenanceSettingRepository(
     private val platforms: List<PlatformV2> = emptyList()
 ) : SettingRepository {
     override suspend fun fetchMemoryEnabled(): Boolean = memoryEnabled
+    override suspend fun fetchMemoryModelPreference(): MemoryModelPreference = MemoryModelPreference.Auto
     override suspend fun fetchPlatforms(): List<Platform> = emptyList()
     override suspend fun fetchPlatformV2s(): List<PlatformV2> = platforms
     override suspend fun fetchPlatformModels(): List<PlatformModelV2> = emptyList()
@@ -631,6 +632,7 @@ internal class FakeMaintenanceSettingRepository(
     override suspend fun updateThemes(themeSetting: ThemeSetting) = Unit
     override suspend fun updateLastSelectedModel(platformUid: String, model: String, reasoningMode: ReasoningMode) = Unit
     override suspend fun updateMemoryEnabled(enabled: Boolean) = Unit
+    override suspend fun updateMemoryModelPreference(preference: MemoryModelPreference) = Unit
     override suspend fun updateMemoryMaintenanceNotificationsEnabled(enabled: Boolean) = Unit
     override suspend fun updateToolCallingMode(mode: ToolCallingMode) = Unit
     override suspend fun updateToolEnabled(toolName: String, enabled: Boolean) = Unit

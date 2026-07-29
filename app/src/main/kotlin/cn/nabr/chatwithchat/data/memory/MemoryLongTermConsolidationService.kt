@@ -400,7 +400,7 @@ class MemoryLongTermConsolidationService(
         }
         val platform = when (initialResolution) {
             is MemoryModelResolution.Resolved -> initialResolution.platform
-            is MemoryModelResolution.Unavailable -> return ModelBindingResult.Unavailable(initialResolution.reason)
+            is MemoryModelResolution.Unavailable -> return ModelBindingResult.Unavailable(initialResolution.reason.code)
         }
         if (boundJob.resolvedPlatformUid == null) {
             boundJob = maintenanceScheduler.bindResolvedModel(
@@ -449,7 +449,7 @@ class MemoryLongTermConsolidationService(
         )
         return when (frozen) {
             is MemoryModelResolution.Resolved -> ModelBindingResult.Resolved(boundJob, boundCheckpoint, frozen.platform)
-            is MemoryModelResolution.Unavailable -> ModelBindingResult.Unavailable(frozen.reason)
+            is MemoryModelResolution.Unavailable -> ModelBindingResult.Unavailable(frozen.reason.code)
         }
     }
 

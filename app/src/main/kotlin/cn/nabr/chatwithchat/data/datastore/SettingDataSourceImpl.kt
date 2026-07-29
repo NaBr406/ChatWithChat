@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
+import cn.nabr.chatwithchat.data.memory.MemoryModelPreference
 import cn.nabr.chatwithchat.data.model.ApiType
 import cn.nabr.chatwithchat.data.model.DynamicTheme
 import cn.nabr.chatwithchat.data.model.ThemeMode
@@ -73,6 +74,8 @@ class SettingDataSourceImpl @Inject constructor(
     private val lastSelectedModelKey = stringPreferencesKey("last_selected_model")
     private val lastSelectedReasoningModeKey = stringPreferencesKey("last_selected_reasoning_mode")
     private val memoryEnabledKey = booleanPreferencesKey("memory_enabled")
+    private val memoryModelPlatformUidKey = stringPreferencesKey("memory_model_platform_uid")
+    private val memoryModelIdKey = stringPreferencesKey("memory_model_id")
     private val memoryMaintenanceNotificationsEnabledKey = booleanPreferencesKey("memory_maintenance_notifications_enabled")
     private val automaticStickerRepliesEnabledKey = booleanPreferencesKey("automatic_sticker_replies_enabled")
     private val toolCallingModeKey = stringPreferencesKey("tool_calling_mode")
@@ -146,6 +149,22 @@ class SettingDataSourceImpl @Inject constructor(
     override suspend fun updateMemoryEnabled(enabled: Boolean) {
         dataStore.edit { pref ->
             pref[memoryEnabledKey] = enabled
+        }
+    }
+
+    override suspend fun updateMemoryModelPreference(preference: MemoryModelPreference) {
+        dataStore.edit { pref ->
+            when (preference) {
+                MemoryModelPreference.Auto -> {
+                    pref.remove(memoryModelPlatformUidKey)
+                    pref.remove(memoryModelIdKey)
+                }
+                is MemoryModelPreference.Fixed -> {
+                    pref[memoryModelPlatformUidKey] = preference.platformUid.trim()
+                    pref[memoryModelIdKey] = preference.modelId.trim()
+                }
+                is MemoryModelPreference.Invalid -> error("Invalid memory model preference cannot be persisted")
+            }
         }
     }
 
@@ -253,6 +272,13 @@ class SettingDataSourceImpl @Inject constructor(
 
     override suspend fun getMemoryEnabled(): Boolean? = dataStore.data.map { pref ->
         pref[memoryEnabledKey]
+    }.first()
+
+    override suspend fun getMemoryModelPreference(): MemoryModelPreference = dataStore.data.map { pref ->
+        MemoryModelPreference.fromStored(
+            platformUid = pref[memoryModelPlatformUidKey],
+            modelId = pref[memoryModelIdKey]
+        )
     }.first()
 
     override suspend fun getMemoryMaintenanceNotificationsEnabled(): Boolean? = dataStore.data.map { pref ->

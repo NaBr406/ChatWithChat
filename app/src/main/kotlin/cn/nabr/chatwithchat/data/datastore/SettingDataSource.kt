@@ -1,5 +1,6 @@
 package cn.nabr.chatwithchat.data.datastore
 
+import cn.nabr.chatwithchat.data.memory.MemoryModelPreference
 import cn.nabr.chatwithchat.data.model.ApiType
 import cn.nabr.chatwithchat.data.model.DynamicTheme
 import cn.nabr.chatwithchat.data.model.ThemeMode
@@ -16,6 +17,7 @@ interface SettingDataSource {
     suspend fun updateSystemPrompt(apiType: ApiType, prompt: String)
     suspend fun updateLastSelectedModel(platformUid: String, model: String, reasoningMode: String)
     suspend fun updateMemoryEnabled(enabled: Boolean)
+    suspend fun updateMemoryModelPreference(preference: MemoryModelPreference)
     suspend fun updateMemoryMaintenanceNotificationsEnabled(enabled: Boolean)
     suspend fun updateAutomaticStickerRepliesEnabled(enabled: Boolean)
     suspend fun updateToolCallingMode(mode: String)
@@ -35,6 +37,7 @@ interface SettingDataSource {
     suspend fun getLastSelectedModel(): String?
     suspend fun getLastSelectedReasoningMode(): String?
     suspend fun getMemoryEnabled(): Boolean?
+    suspend fun getMemoryModelPreference(): MemoryModelPreference
     suspend fun getMemoryMaintenanceNotificationsEnabled(): Boolean?
     suspend fun getAutomaticStickerRepliesEnabled(): Boolean?
     suspend fun getToolCallingMode(): String?

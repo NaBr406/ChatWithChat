@@ -12,6 +12,38 @@ import org.junit.Test
 
 class MemoryModelResolverTest {
     @Test
+    fun `fixed preference resolves its exact platform and model pair`() = runBlocking {
+        val first = platform(uid = "first", model = "shared-model")
+        val second = platform(uid = "second", model = "second-current")
+        val resolver = resolver(
+            platforms = listOf(first, second),
+            models = listOf(model(first.uid, "shared-model"), model(second.uid, "shared-model"))
+        )
+
+        val resolution = resolver.resolvePreference(MemoryModelPreference.Fixed(second.uid, "shared-model"))
+
+        assertEquals(second.copy(model = "shared-model"), resolution.resolvedPlatform())
+    }
+
+    @Test
+    fun `invalid stored preference fails closed without auto fallback`() = runBlocking {
+        val eligible = platform(uid = "eligible")
+        val resolver = resolver(listOf(eligible), listOf(model(eligible.uid, eligible.model)))
+        val invalid = MemoryModelPreference.Invalid(
+            platformUid = eligible.uid,
+            modelId = null,
+            reason = MemoryModelPreferenceInvalidReason.MISSING_MODEL_ID
+        )
+
+        val resolution = resolver.resolvePreference(invalid)
+
+        assertEquals(
+            MemoryModelResolution.Unavailable(MemoryModelUnavailableReason.INVALID_PREFERENCE),
+            resolution
+        )
+    }
+
+    @Test
     fun `auto skips disabled uncredentialed and unusable provider configurations`() = runBlocking {
         val disabled = platform(uid = "disabled", enabled = false)
         val uncredentialed = platform(uid = "uncredentialed", token = " ")
