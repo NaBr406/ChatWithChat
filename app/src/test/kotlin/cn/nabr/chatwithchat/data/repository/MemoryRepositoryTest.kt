@@ -55,16 +55,16 @@ class MemoryRepositoryTest {
         assertEquals(1, retriever.calls)
         assertEquals("Please implement this directly.", retriever.lastRequest?.query)
         assertEquals(MemoryCorpus.CHAT_RECALL_LONG_TERM, retriever.lastRequest?.corpus)
-        assertEquals(900, retriever.lastRequest?.tokenBudget)
-        assertEquals(setOf("communication_style"), retriever.lastRequest?.alwaysIncludeTypes)
+        assertEquals(300, retriever.lastRequest?.tokenBudget)
         assertTrue(retriever.lastRequest?.includePrivate == true)
         assertEquals(MemoryRetrievalStrategy.HYBRID, retriever.lastRequest?.strategy)
         assertEquals(1, prepared.retrievedMemories.size)
-        assertTrue(prepared.prompt!!.contains("implementation before long explanations"))
-        assertFalse(prepared.prompt.contains("MEMORY.md"))
-        assertFalse(prepared.prompt.contains("type:"))
-        assertFalse(prepared.prompt.contains("sensitivity:"))
-        assertFalse(prepared.prompt.contains("source:"))
+        val prompt = prepared.prompt.orEmpty()
+        assertTrue(prompt.contains("implementation before long explanations"))
+        assertFalse(prompt.contains("MEMORY.md"))
+        assertFalse(prompt.contains("type:"))
+        assertFalse(prompt.contains("sensitivity:"))
+        assertFalse(prompt.contains("source:"))
     }
 
     @Test
@@ -79,6 +79,74 @@ class MemoryRepositoryTest {
 
         assertTrue(prepared.retrievedMemories.isEmpty())
         assertNull(prepared.prompt)
+    }
+
+    @Test
+    fun `greeting invokes recall once and freezes a seeded core only snapshot`() = runBlocking {
+        val core = coreRetrievalResult("mem_address", "Call the user Alex.")
+        val retriever = FakeMemoryRetriever(
+            report = MemoryRetrievalReport(
+                results = emptyList(),
+                coreResults = listOf(core),
+                mode = MemoryRetrievalMode.NONE,
+                canonicalRevision = 17,
+                canonicalSourceHash = "canonical-hash",
+                recallProjectionHash = "projection-hash"
+            )
+        )
+        val prepared = createRepository(retriever).prepareMemoryContext(
+            chatRoom(),
+            userMessages("你好"),
+            listOf(emptyList())
+        )
+
+        assertEquals(1, retriever.calls)
+        assertEquals(listOf("Call the user Alex."), prepared.snapshot.coreFacts.map { fact -> fact.text })
+        assertTrue(prepared.snapshot.queryFacts.isEmpty())
+        assertEquals(MemoryRetrievalMode.NONE, prepared.snapshot.mode)
+        assertEquals(17L, prepared.snapshot.canonicalRevision)
+        assertEquals("canonical-hash", prepared.snapshot.canonicalSourceHash)
+        assertEquals("projection-hash", prepared.snapshot.recallProjectionHash)
+        assertTrue(prepared.prompt.orEmpty().contains("Call the user Alex."))
+    }
+
+    @Test
+    fun `greeting without a stored core still invokes recall exactly once`() = runBlocking {
+        val retriever = FakeMemoryRetriever()
+
+        val prepared = createRepository(retriever).prepareMemoryContext(
+            chatRoom(),
+            userMessages("你好"),
+            listOf(emptyList())
+        )
+
+        assertEquals(1, retriever.calls)
+        assertTrue(prepared.snapshot.coreFacts.isEmpty())
+        assertTrue(prepared.snapshot.queryFacts.isEmpty())
+        assertNull(prepared.prompt)
+    }
+
+    @Test
+    fun `repository freezes at most three rendered query facts under the final prompt budget`() = runBlocking {
+        val results = (1..5).map { index ->
+            retrievalResult("Query fact $index.").copy(
+                chunkId = "MEMORY.md#mem_$index#0",
+                entryId = "mem_$index",
+                embeddingContentHash = "hash-$index"
+            )
+        }
+        val retriever = FakeMemoryRetriever(results = results)
+
+        val prepared = createRepository(retriever).prepareMemoryContext(
+            chatRoom(),
+            userMessages("query fact"),
+            listOf(emptyList())
+        )
+
+        assertEquals(3, prepared.snapshot.queryFacts.size)
+        assertEquals(3, prepared.retrievedMemories.size)
+        assertTrue(prepared.snapshot.estimatedTokens <= 500)
+        assertEquals(prepared.prompt, prepared.snapshot.prompt)
     }
 
     @Test
@@ -131,8 +199,9 @@ class MemoryRepositoryTest {
         assertTrue(hidden.retrievedMemories.isEmpty())
         assertNull(hidden.prompt)
         assertEquals("day_hidden", visible.retrievedMemories.single().entryId)
-        assertTrue(visible.prompt!!.contains("violet-compass"))
-        assertFalse(visible.prompt.contains("MEMORY.md"))
+        val visiblePrompt = visible.prompt.orEmpty()
+        assertTrue(visiblePrompt.contains("violet-compass"))
+        assertFalse(visiblePrompt.contains("MEMORY.md"))
     }
 
     @Test
@@ -153,6 +222,38 @@ class MemoryRepositoryTest {
 
         assertTrue(prepared.retrievedMemories.isEmpty())
         assertNull(prepared.prompt)
+    }
+
+    @Test
+    fun `ordinary prompt drops metadata shaped fact text and keeps safe facts`() = runBlocking {
+        val unsafeTexts = listOf(
+            "scope: general",
+            "jobId: job_42",
+            "checkpointId: checkpoint_7",
+            "maintenanceHash: abcdef123456",
+            "memoryIds: [opaque_1], hitCount: 1"
+        )
+        val unsafe = unsafeTexts.mapIndexed { index, text ->
+            retrievalResult(text).copy(
+                chunkId = "MEMORY.md#unsafe_$index#0",
+                entryId = "unsafe_$index",
+                embeddingContentHash = "unsafe-hash-$index"
+            )
+        }
+        val safe = retrievalResult("The user prefers concise answers.").copy(
+            chunkId = "MEMORY.md#safe#0",
+            entryId = "safe",
+            embeddingContentHash = "safe-hash"
+        )
+        val prepared = createRepository(FakeMemoryRetriever(results = unsafe + safe)).prepareMemoryContext(
+            chatRoom(),
+            userMessages("concise answers"),
+            listOf(emptyList())
+        )
+
+        assertEquals(listOf("safe"), prepared.retrievedMemories.mapNotNull { memory -> memory.entryId })
+        unsafeTexts.forEach { text -> assertFalse(prepared.prompt.orEmpty().contains(text)) }
+        assertTrue(prepared.prompt.orEmpty().contains("The user prefers concise answers."))
     }
 
     @Test
@@ -223,6 +324,8 @@ class MemoryRepositoryTest {
         assertEquals(MemoryRetrievalMode.LEXICAL, entry.memoryRecall?.mode)
         assertEquals(1, entry.memoryRecall?.hitCount)
         assertEquals(listOf("mem_1"), entry.memoryRecall?.memoryIds)
+        assertEquals(0, entry.memoryRecall?.coreCount)
+        assertEquals(1, entry.memoryRecall?.queryCount)
     }
 
     @Test
@@ -412,6 +515,17 @@ class MemoryRepositoryTest {
         fusedScore = 1f,
         updatedAt = 20L
     )
+
+    private fun coreRetrievalResult(id: String, text: String): MemoryRetrievalResult = retrievalResult(text).copy(
+        chunkId = "MEMORY.md#$id#0",
+        entryId = id,
+        type = "stable_profile",
+        canonicalKey = "identity.preferred_address",
+        scope = "general",
+        validity = "current",
+        recallState = "core",
+        embeddingContentHash = "$id-hash"
+    )
 }
 
 private class FakeMemoryRetriever(
@@ -467,4 +581,7 @@ private class LexicalFallbackMemoryRetriever(
 ) : MemoryRetriever {
     override suspend fun retrieve(request: MemoryRetrievalRequest): Result<List<MemoryRetrievalResult>> =
         lexicalRetriever.retrieve(request.copy(strategy = MemoryRetrievalStrategy.LEXICAL))
+
+    override suspend fun retrieveWithDiagnostics(request: MemoryRetrievalRequest): Result<MemoryRetrievalReport> =
+        lexicalRetriever.retrieveWithDiagnostics(request.copy(strategy = MemoryRetrievalStrategy.LEXICAL))
 }

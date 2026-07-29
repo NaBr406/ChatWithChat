@@ -49,8 +49,8 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.nabr.chatwithchat.R
-import cn.nabr.chatwithchat.data.debug.PromptTraceEntry
 import cn.nabr.chatwithchat.data.debug.MemoryRecallTrace
+import cn.nabr.chatwithchat.data.debug.PromptTraceEntry
 import cn.nabr.chatwithchat.data.debug.PromptTraceStage
 import cn.nabr.chatwithchat.data.memory.MemoryRetrievalMode
 import cn.nabr.chatwithchat.presentation.common.SettingsTopAppBar
@@ -281,8 +281,8 @@ private fun PromptTraceDetailDialog(entry: PromptTraceEntry, onDismissRequest: (
 @Composable
 private fun memoryRecallSummary(recall: MemoryRecallTrace?): String {
     if (recall == null) return stringResource(R.string.prompt_trace_recall_unavailable)
-    val label = memoryRecallModeLabel(recall.mode, recall.hitCount, recall.errorMessage)
-    return stringResource(R.string.prompt_trace_recall_summary, label, recall.hitCount)
+    val label = memoryRecallModeLabel(recall)
+    return stringResource(R.string.prompt_trace_recall_summary, label, recall.coreCount, recall.queryCount)
 }
 
 @Composable
@@ -298,7 +298,7 @@ private fun MemoryRecallDetail(recall: MemoryRecallTrace?) {
     }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(
-            text = memoryRecallModeLabel(recall.mode, recall.hitCount, recall.errorMessage),
+            text = memoryRecallModeLabel(recall),
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.SemiBold,
             color = colors.primaryLabel
@@ -308,6 +308,28 @@ private fun MemoryRecallDetail(recall: MemoryRecallTrace?) {
                 text = stringResource(
                     R.string.prompt_trace_recall_ids,
                     recall.memoryIds.joinToString(", ")
+                ),
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.secondaryLabel
+            )
+        }
+        if (recall.diagnosticCodes.isNotEmpty()) {
+            Text(
+                text = stringResource(
+                    R.string.prompt_trace_recall_diagnostics,
+                    recall.diagnosticCodes.joinToString(", ")
+                ),
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.secondaryLabel
+            )
+        }
+        recall.recallProjectionHash?.let { projectionHash ->
+            Text(
+                text = stringResource(
+                    R.string.prompt_trace_recall_snapshot,
+                    recall.canonicalRevision?.toString().orEmpty(),
+                    projectionHash.take(PROMPT_TRACE_HASH_PREFIX_LENGTH),
+                    recall.promptEstimatedTokens
                 ),
                 style = MaterialTheme.typography.labelSmall,
                 color = colors.secondaryLabel
@@ -325,19 +347,19 @@ private fun MemoryRecallDetail(recall: MemoryRecallTrace?) {
 
 @Composable
 private fun memoryRecallModeLabel(
-    mode: MemoryRetrievalMode,
-    hitCount: Int,
-    errorMessage: String?
+    recall: MemoryRecallTrace
 ): String = when {
-    errorMessage != null || mode == MemoryRetrievalMode.FAILED ->
+    recall.errorMessage != null || recall.mode == MemoryRetrievalMode.FAILED ->
         stringResource(R.string.prompt_trace_recall_failed)
-    hitCount <= 0 || mode == MemoryRetrievalMode.NONE ->
+    recall.coreCount > 0 && recall.queryCount == 0 ->
+        stringResource(R.string.prompt_trace_recall_core_only)
+    recall.hitCount <= 0 || recall.mode == MemoryRetrievalMode.NONE ->
         stringResource(R.string.prompt_trace_recall_none)
-    mode == MemoryRetrievalMode.LEXICAL -> stringResource(R.string.prompt_trace_recall_lexical)
-    mode == MemoryRetrievalMode.LEXICAL_FALLBACK ->
+    recall.mode == MemoryRetrievalMode.LEXICAL -> stringResource(R.string.prompt_trace_recall_lexical)
+    recall.mode == MemoryRetrievalMode.LEXICAL_FALLBACK ->
         stringResource(R.string.prompt_trace_recall_lexical_fallback)
-    mode == MemoryRetrievalMode.SEMANTIC -> stringResource(R.string.prompt_trace_recall_semantic)
-    mode == MemoryRetrievalMode.HYBRID -> stringResource(R.string.prompt_trace_recall_hybrid)
+    recall.mode == MemoryRetrievalMode.SEMANTIC -> stringResource(R.string.prompt_trace_recall_semantic)
+    recall.mode == MemoryRetrievalMode.HYBRID -> stringResource(R.string.prompt_trace_recall_hybrid)
     else -> stringResource(R.string.prompt_trace_recall_none)
 }
 
@@ -355,5 +377,6 @@ private fun promptTraceStageLabel(stage: String): String = when {
 }
 
 private const val TOOL_REQUEST_STAGE_PREFIX = "tool_request_"
+private const val PROMPT_TRACE_HASH_PREFIX_LENGTH = 12
 private val PROMPT_TRACE_TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm:ss.SSS")
     .withZone(ZoneId.systemDefault())

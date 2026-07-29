@@ -7,6 +7,8 @@ import cn.nabr.chatwithchat.data.database.entity.effectiveContent
 import cn.nabr.chatwithchat.data.database.entity.effectiveThoughts
 import cn.nabr.chatwithchat.data.database.entity.resetActiveRevision
 import cn.nabr.chatwithchat.data.database.entity.selectRevision
+import cn.nabr.chatwithchat.data.memory.PreparedMemoryContext
+import cn.nabr.chatwithchat.data.memory.TurnRecallSnapshot
 import cn.nabr.chatwithchat.data.model.ChatAttachment
 import cn.nabr.chatwithchat.data.repository.hasSendableAssistantPayload
 import kotlinx.coroutines.runBlocking
@@ -21,13 +23,88 @@ class ChatViewModelRetryTest {
     fun `memory disabled skips retrieval and prompt injection`() = runBlocking {
         var retrievalCalls = 0
 
-        val prompt = prepareMemoryPromptWhenEnabled(memoryEnabled = false) {
+        val context = prepareMemoryContextWhenEnabled(memoryEnabled = false) {
             retrievalCalls += 1
-            "Should not be injected"
+            PreparedMemoryContext(snapshot = TurnRecallSnapshot(prompt = "Should not be injected"))
         }
 
-        assertNull(prompt)
+        assertNull(context.prompt)
         assertEquals(0, retrievalCalls)
+    }
+
+    @Test
+    fun `memory enabled prepares one immutable turn snapshot`() = runBlocking {
+        var retrievalCalls = 0
+        val expected = PreparedMemoryContext(
+            snapshot = TurnRecallSnapshot(
+                recallProjectionHash = "projection",
+                prompt = "Frozen memory prompt"
+            )
+        )
+
+        val context = prepareMemoryContextWhenEnabled(memoryEnabled = true) {
+            retrievalCalls += 1
+            expected
+        }
+
+        assertEquals(1, retrievalCalls)
+        assertEquals(expected, context)
+        assertEquals("Frozen memory prompt", context.prompt)
+    }
+
+    @Test
+    fun `same user turn reuses one frozen memory snapshot across retry`() = runBlocking {
+        val cache = TurnMemoryContextCache()
+        val key = MemoryTurnSnapshotKey(
+            chatId = 7,
+            turnIndex = 2,
+            createdAt = 100,
+            content = "Retry this turn",
+            attachmentSemantics = emptyList()
+        )
+        var retrievalCalls = 0
+
+        val first = cache.getOrPrepare(key) {
+            retrievalCalls += 1
+            PreparedMemoryContext(
+                snapshot = TurnRecallSnapshot(
+                    recallProjectionHash = "projection-$retrievalCalls",
+                    prompt = "prompt-$retrievalCalls"
+                )
+            )
+        }
+        val retry = cache.getOrPrepare(key) {
+            retrievalCalls += 1
+            PreparedMemoryContext(
+                snapshot = TurnRecallSnapshot(
+                    recallProjectionHash = "projection-$retrievalCalls",
+                    prompt = "prompt-$retrievalCalls"
+                )
+            )
+        }
+
+        assertEquals(1, retrievalCalls)
+        assertEquals(first, retry)
+        assertEquals("prompt-1", retry.prompt)
+        assertEquals("projection-1", retry.snapshot.recallProjectionHash)
+    }
+
+    @Test
+    fun `edited or new user turn prepares a new memory snapshot`() = runBlocking {
+        val cache = TurnMemoryContextCache()
+        var retrievalCalls = 0
+        suspend fun prepare(key: MemoryTurnSnapshotKey): PreparedMemoryContext = cache.getOrPrepare(key) {
+            retrievalCalls += 1
+            PreparedMemoryContext(snapshot = TurnRecallSnapshot(prompt = "prompt-$retrievalCalls"))
+        }
+        val original = MemoryTurnSnapshotKey(7, 0, 100, "Original", emptyList())
+        val edited = original.copy(content = "Edited")
+        val nextTurn = original.copy(turnIndex = 1, createdAt = 200)
+
+        assertEquals("prompt-1", prepare(original).prompt)
+        assertEquals("prompt-2", prepare(edited).prompt)
+        assertEquals("prompt-3", prepare(nextTurn).prompt)
+        assertEquals(3, retrievalCalls)
     }
 
     @Test

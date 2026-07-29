@@ -23,7 +23,7 @@ class HybridMemoryRetriever(
     private val repairTrigger: MemoryVectorRecallRepairTrigger
 ) : MemoryRetriever {
     override suspend fun retrieve(request: MemoryRetrievalRequest): Result<List<MemoryRetrievalResult>> =
-        retrieveWithDiagnostics(request).map(MemoryRetrievalReport::results)
+        retrieveWithDiagnostics(request).map { report -> report.coreResults + report.results }
 
     override suspend fun retrieveWithDiagnostics(request: MemoryRetrievalRequest): Result<MemoryRetrievalReport> = try {
         Result.success(retrieveCurrentSnapshot(request))
@@ -44,6 +44,7 @@ class HybridMemoryRetriever(
         if (lexicalQuery.isBlank()) return MemoryRetrievalReport(emptyList(), MemoryRetrievalMode.NONE)
         val combinedQuery = request.combinedQuery()
 
+        var lastSnapshot: MemoryCorpusSnapshot? = null
         repeat(MAX_SNAPSHOT_ATTEMPTS) {
             val snapshots = snapshotSource.snapshots(request.corpus).getOrThrow()
             val snapshot = snapshots.singleOrNull()
@@ -52,6 +53,7 @@ class HybridMemoryRetriever(
                         current.sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME
                 }
                 ?: return MemoryRetrievalReport(emptyList(), MemoryRetrievalMode.NONE)
+            lastSnapshot = snapshot
             if (snapshot.diagnostics.isNotEmpty()) {
                 if (snapshotSource.isProjectionCurrent(listOf(snapshot)).getOrThrow()) {
                     return MemoryRetrievalReport(
@@ -59,22 +61,27 @@ class HybridMemoryRetriever(
                         mode = MemoryRetrievalMode.FAILED,
                         errorMessage = snapshot.diagnostics.toBoundedErrorMessage(),
                         recallProjectionHash = snapshot.recallProjectionHash,
-                        diagnostics = snapshot.diagnostics
+                        diagnostics = snapshot.diagnostics,
+                        canonicalRevision = snapshot.generation,
+                        canonicalSourceHash = snapshot.canonicalSourceHash
                     )
                 }
                 return@repeat
             }
+            val coreResults = snapshot.selectCoreResults(request.includePrivate)
+            val coreKeys = coreResults.mapTo(mutableSetOf(), MemoryRetrievalResult::deduplicationKey)
             val lexicalCandidates = lexicalRetriever.rankCandidates(
                 request = request.copy(strategy = MemoryRetrievalStrategy.LEXICAL),
                 combinedQuery = lexicalQuery,
                 snapshots = listOf(snapshot)
-            )
+            ).filterNot { result -> result.deduplicationKey() in coreKeys }
             val rankedWithMode = when (request.strategy) {
                 MemoryRetrievalStrategy.LEXICAL -> lexicalCandidates to MemoryRetrievalMode.LEXICAL
                 MemoryRetrievalStrategy.VECTOR,
                 MemoryRetrievalStrategy.HYBRID -> {
                     val vectorCandidates = retrieveVectorCandidates(request, combinedQuery, snapshot)
-                    if (vectorCandidates.isNullOrEmpty()) {
+                        ?.filterNot { candidate -> candidate.result.deduplicationKey() in coreKeys }
+                    if (vectorCandidates == null) {
                         diversifyLexical(lexicalCandidates, request.candidateLimit) to
                             MemoryRetrievalMode.LEXICAL_FALLBACK
                     } else {
@@ -87,8 +94,12 @@ class HybridMemoryRetriever(
                             vectorCandidates = vectorCandidates,
                             candidateLimit = request.candidateLimit
                         ) to when {
-                            request.strategy == MemoryRetrievalStrategy.HYBRID && lexicalCandidates.isNotEmpty() ->
+                            request.strategy == MemoryRetrievalStrategy.HYBRID &&
+                                lexicalCandidates.isNotEmpty() &&
+                                vectorCandidates.isNotEmpty() ->
                                 MemoryRetrievalMode.HYBRID
+                            request.strategy == MemoryRetrievalStrategy.HYBRID && lexicalCandidates.isNotEmpty() ->
+                                MemoryRetrievalMode.LEXICAL
                             else -> MemoryRetrievalMode.SEMANTIC
                         }
                     }
@@ -96,35 +107,35 @@ class HybridMemoryRetriever(
             }
             val ranked = rankedWithMode.first
             val mode = rankedWithMode.second
-            val packed = ranked.packFor(request)
-            val alwaysIncluded = snapshot.chunks
-                .asSequence()
-                .filter { chunk ->
-                    chunk.sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME &&
-                        chunk.type in request.alwaysIncludeTypes &&
-                        (
-                            request.includePrivate ||
-                                chunk.sensitivity == null ||
-                                chunk.sensitivity !in setOf(MemorySensitivity.PRIVATE, MemorySensitivity.SENSITIVE)
-                            )
-                }
-                .map(::toUnrankedRetrievalResult)
-                .toList()
-            val selected = if (alwaysIncluded.isEmpty()) {
-                packed
-            } else {
-                (packed.filterNot { result -> result.type in request.alwaysIncludeTypes } + alwaysIncluded)
-                    .packFor(request)
-            }
+            val selected = ranked
+                .filterNot { result -> result.deduplicationKey() in coreKeys }
+                .packFor(request.queryLayerRequest())
             if (snapshotSource.isProjectionCurrent(listOf(snapshot)).getOrThrow()) {
                 return MemoryRetrievalReport(
                     results = selected,
                     mode = mode.takeIf { selected.isNotEmpty() } ?: MemoryRetrievalMode.NONE,
-                    recallProjectionHash = snapshot.recallProjectionHash
+                    recallProjectionHash = snapshot.recallProjectionHash,
+                    coreResults = coreResults,
+                    canonicalRevision = snapshot.generation,
+                    canonicalSourceHash = snapshot.canonicalSourceHash
                 )
             }
         }
-        return MemoryRetrievalReport(emptyList(), MemoryRetrievalMode.NONE)
+        val changedSnapshot = lastSnapshot ?: return MemoryRetrievalReport(emptyList(), MemoryRetrievalMode.NONE)
+        val freshnessDiagnostic = MemoryProjectionDiagnostic(
+            code = RECALL_SNAPSHOT_CHANGED_DIAGNOSTIC,
+            sourcePath = changedSnapshot.sourcePath,
+            count = MAX_SNAPSHOT_ATTEMPTS
+        )
+        return MemoryRetrievalReport(
+            results = emptyList(),
+            mode = MemoryRetrievalMode.FAILED,
+            errorMessage = listOf(freshnessDiagnostic).toBoundedErrorMessage(),
+            recallProjectionHash = changedSnapshot.recallProjectionHash,
+            diagnostics = changedSnapshot.diagnostics + freshnessDiagnostic,
+            canonicalRevision = changedSnapshot.generation,
+            canonicalSourceHash = changedSnapshot.canonicalSourceHash
+        )
     }
 
     private suspend fun retrieveVectorCandidates(
@@ -161,7 +172,7 @@ class HybridMemoryRetriever(
                 embedding = queryEmbedding,
                 limit = queryLimit
             ) ?: return unavailableVectorBranch()
-            var candidates = queryResult.toCurrentVectorCandidates(snapshot, request.includePrivate)
+            var candidates = queryResult.toCurrentVectorCandidates(snapshot, request)
             val maximumQueryLimit = snapshot.chunks.size.coerceAtLeast(candidateLimit)
             while (
                 candidates.size < candidateLimit &&
@@ -175,7 +186,7 @@ class HybridMemoryRetriever(
                     embedding = queryEmbedding,
                     limit = queryLimit
                 ) ?: return unavailableVectorBranch()
-                candidates = queryResult.toCurrentVectorCandidates(snapshot, request.includePrivate)
+                candidates = queryResult.toCurrentVectorCandidates(snapshot, request)
             }
             candidates.take(candidateLimit)
         } catch (cancellation: CancellationException) {
@@ -201,7 +212,7 @@ class HybridMemoryRetriever(
 
     private fun MemoryVectorQueryResult.Ready.toCurrentVectorCandidates(
         snapshot: MemoryCorpusSnapshot,
-        includePrivate: Boolean
+        request: MemoryRetrievalRequest
     ): List<VectorCandidate> {
         val currentChunks = snapshot.chunks.associateBy(MemoryCorpusChunk::chunkId)
         return matches
@@ -210,13 +221,14 @@ class HybridMemoryRetriever(
                 val current = currentChunks[match.chunk.chunkId]
                     ?.takeIf { chunk ->
                         chunk.sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME &&
-                            chunk.embeddingContentHash == match.chunk.embeddingContentHash
+                            chunk.embeddingContentHash == match.chunk.embeddingContentHash &&
+                            (chunk.scope ?: MemoryScope.GENERAL) == request.recallScope
                     }
                     ?: return@mapNotNull null
                 CurrentVectorMatch(current, match.embedding, match.cosineDistance)
             }
             .filter { match ->
-                includePrivate ||
+                request.includePrivate ||
                     match.chunk.sensitivity == null ||
                     match.chunk.sensitivity !in setOf(MemorySensitivity.PRIVATE, MemorySensitivity.SENSITIVE)
             }
@@ -256,6 +268,9 @@ class HybridMemoryRetriever(
                     embedding = match.embedding
                 )
             }
+            .filter { candidate ->
+                candidate.result.vectorScore?.let { score -> score >= VECTOR_RELEVANCE_FLOOR } == true
+            }
             .distinctBy { candidate -> candidate.result.deduplicationKey() }
             .distinctBy { candidate -> normalizeExactMemoryText(candidate.result.text) }
             .toList()
@@ -279,27 +294,10 @@ class HybridMemoryRetriever(
         val vectorRanks = vectorCandidates.withIndex().associate { indexed ->
             indexed.value.result.deduplicationKey() to indexed.index + 1
         }
-        val maxVectorScore = vectorCandidates.maxOfOrNull { candidate ->
-            candidate.result.vectorScore ?: Float.NEGATIVE_INFINITY
-        }
         val keys = (lexicalRanks.keys + vectorRanks.keys).toSet()
         val fused = keys.mapNotNull { key ->
             val lexical = lexicalByKey[key]
             val vector = vectorByKey[key]
-            if (
-                lexical == null &&
-                vector != null &&
-                maxVectorScore != null &&
-                (
-                    !vectorPassesRelevanceFloor(vector.result.vectorScore, maxVectorScore) ||
-                        (
-                            lexicalCandidates.isNotEmpty() &&
-                                vectorRanks.getValue(key) > MAX_VECTOR_ONLY_RANK_WITH_LEXICAL_MATCH
-                            )
-                    )
-            ) {
-                return@mapNotNull null
-            }
             val representative = lexical ?: checkNotNull(vector).result
             val score = listOfNotNull(
                 lexicalRanks[key]?.let { rank -> reciprocalRank(rank) },
@@ -316,46 +314,6 @@ class HybridMemoryRetriever(
         }
         return diversify(fused, candidateLimit.coerceIn(1, MAX_CANDIDATE_LIMIT))
             .map(DiversifiableCandidate::result)
-    }
-
-    private fun toUnrankedRetrievalResult(chunk: MemoryCorpusChunk): MemoryRetrievalResult =
-        MemoryRetrievalResult(
-            chunkId = chunk.chunkId,
-            entryId = chunk.entryId,
-            sourcePath = chunk.sourcePath,
-            text = chunk.text,
-            type = chunk.type,
-            sensitivity = chunk.sensitivity,
-            source = chunk.source,
-            chatId = chunk.chatId,
-            createdAt = chunk.createdAt,
-            section = chunk.heading,
-            canonicalKey = chunk.canonicalKey,
-            scope = chunk.scope,
-            recallState = chunk.recallState,
-            validity = chunk.validity,
-            lastObservedAt = chunk.lastObservedAt,
-            supersededBy = chunk.supersededBy,
-            evidenceRefs = chunk.evidenceRefs,
-            extraMetadata = chunk.extraMetadata,
-            embeddingContentHash = chunk.embeddingContentHash,
-            rankingHash = chunk.rankingHash,
-            lexicalScore = null,
-            vectorScore = null,
-            fusedScore = 0f,
-            updatedAt = chunk.updatedAt
-        )
-
-    private fun vectorPassesRelevanceFloor(
-        vectorScore: Float?,
-        maxVectorScore: Float
-    ): Boolean {
-        val score = vectorScore ?: return false
-        return if (maxVectorScore <= 0f) {
-            score >= maxVectorScore
-        } else {
-            score >= maxVectorScore * MIN_VECTOR_RELEVANCE_RATIO
-        }
     }
 
     private fun diversifyLexical(
@@ -460,8 +418,8 @@ class HybridMemoryRetriever(
         const val MMR_RELEVANCE_WEIGHT = 0.75f
         const val MMR_DIVERSITY_WEIGHT = 0.25f
         const val MIN_RELEVANCE_RATIO_FOR_DIVERSITY = 0.85f
-        const val MIN_VECTOR_RELEVANCE_RATIO = 0.85f
-        const val MAX_VECTOR_ONLY_RANK_WITH_LEXICAL_MATCH = 3
+        const val VECTOR_RELEVANCE_FLOOR = 0.45f
+        const val RECALL_SNAPSHOT_CHANGED_DIAGNOSTIC = "recall_snapshot_changed_during_retrieval"
         const val MAX_CANDIDATE_LIMIT = 500
         const val MAX_SNAPSHOT_ATTEMPTS = 2
         const val NORMALIZED_VECTOR_TOLERANCE = 1e-3

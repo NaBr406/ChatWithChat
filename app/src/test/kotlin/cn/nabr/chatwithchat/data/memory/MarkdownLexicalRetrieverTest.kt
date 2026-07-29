@@ -26,14 +26,15 @@ class MarkdownLexicalRetrieverTest {
         ).getOrThrow()
         val retriever = createRetriever(fileStore)
 
-        val chatResults = retriever.retrieve(
+        val chatReport = retriever.retrieveWithDiagnostics(
             request(MemoryCorpus.CHAT_RECALL_LONG_TERM, "violet-compass")
         ).getOrThrow()
         val maintenanceResults = retriever.retrieveWorkingSet(
             request(MemoryCorpus.MAINTENANCE_WORKING_SET, "violet-compass")
         ).getOrThrow()
 
-        assertTrue(chatResults.isEmpty())
+        assertTrue(chatReport.results.isEmpty())
+        assertEquals("mem_visible", chatReport.coreResults.single().entryId)
         assertEquals("day_hidden", maintenanceResults.single().entryId)
         assertTrue(maintenanceResults.single().sourcePath.startsWith("memory/"))
     }
@@ -76,8 +77,8 @@ class MarkdownLexicalRetrieverTest {
             ).getOrThrow()
 
             assertTrue(chatResults.isEmpty())
-            assertEquals(hidden.id, maintenanceResults.single().entryId)
-            assertEquals(MemoryRecallState.MAINTENANCE_ONLY, maintenanceResults.single().recallState)
+            assertEquals(hidden.id, maintenanceResults.first().entryId)
+            assertEquals(MemoryRecallState.MAINTENANCE_ONLY, maintenanceResults.first().recallState)
         }
     }
 
@@ -177,17 +178,126 @@ class MarkdownLexicalRetrieverTest {
         ).getOrThrow()
         val retriever = createRetriever(fileStore)
 
-        val chinese = retriever.retrieve(
+        val chinese = retriever.retrieveWithDiagnostics(
             request(MemoryCorpus.CHAT_RECALL_LONG_TERM, "请直接回答就好")
         ).getOrThrow()
-        val english = retriever.retrieve(
+        val english = retriever.retrieveWithDiagnostics(
             request(MemoryCorpus.CHAT_RECALL_LONG_TERM, "implementation steps")
         ).getOrThrow()
 
-        assertEquals("mem_zh", chinese.first().entryId)
-        assertTrue(chinese.first().lexicalScore!! > 0f)
-        assertEquals("mem_en", english.first().entryId)
-        assertEquals(english.first().lexicalScore, english.first().fusedScore)
+        assertEquals("mem_zh", chinese.coreResults.single().entryId)
+        assertTrue(chinese.results.isEmpty())
+        assertEquals("mem_zh", english.coreResults.single().entryId)
+        assertEquals("mem_en", english.results.single().entryId)
+        assertEquals(english.results.single().lexicalScore, english.results.single().fusedScore)
+    }
+
+    @Test
+    fun `chat recall admits a meaningful latin token at the absolute score floor`() = runBlocking {
+        val chunk = corpusChunk(
+            chunkId = "MEMORY.md#mem_floor#0",
+            entryId = "mem_floor",
+            text = "Alpha preference."
+        )
+        val retriever = MarkdownLexicalRetriever(StaticSnapshotSource(snapshot(1L, listOf(chunk))))
+
+        val result = retriever.retrieve(
+            request(MemoryCorpus.CHAT_RECALL_LONG_TERM, "alpha missing")
+        ).getOrThrow().single()
+
+        assertEquals(1.25f, result.lexicalScore!!, 0.000001f)
+    }
+
+    @Test
+    fun `chat recall admits a meaningful CJK bigram`() = runBlocking {
+        val chunk = corpusChunk(
+            chunkId = "MEMORY.md#mem_bigram#0",
+            entryId = "mem_bigram",
+            text = "用户喜欢蓝色。"
+        )
+        val retriever = MarkdownLexicalRetriever(StaticSnapshotSource(snapshot(1L, listOf(chunk))))
+
+        val result = retriever.retrieve(
+            request(MemoryCorpus.CHAT_RECALL_LONG_TERM, "蓝色 未知")
+        ).getOrThrow().single()
+
+        assertTrue(result.lexicalScore!! >= 1.25f)
+    }
+
+    @Test
+    fun `chat recall rejects an exact single CJK character`() = runBlocking {
+        val chunk = corpusChunk(
+            chunkId = "MEMORY.md#mem_single#0",
+            entryId = "mem_single",
+            text = "读"
+        )
+        val retriever = MarkdownLexicalRetriever(StaticSnapshotSource(snapshot(1L, listOf(chunk))))
+
+        val results = retriever.retrieve(
+            request(MemoryCorpus.CHAT_RECALL_LONG_TERM, "读")
+        ).getOrThrow()
+
+        assertTrue(results.isEmpty())
+    }
+
+    @Test
+    fun `chat recall rejects multiple isolated weak CJK characters`() = runBlocking {
+        val chunk = corpusChunk(
+            chunkId = "MEMORY.md#mem_weak#0",
+            entryId = "mem_weak",
+            text = "甲。乙。丙。"
+        )
+        val retriever = MarkdownLexicalRetriever(StaticSnapshotSource(snapshot(1L, listOf(chunk))))
+
+        val results = retriever.retrieve(
+            request(MemoryCorpus.CHAT_RECALL_LONG_TERM, "甲 乙 丙")
+        ).getOrThrow()
+
+        assertTrue(results.isEmpty())
+    }
+
+    @Test
+    fun `heading and type metadata cannot satisfy chat relevance`() = runBlocking {
+        val chunk = corpusChunk(
+            chunkId = "MEMORY.md#mem_metadata#0",
+            entryId = "mem_metadata",
+            text = "Natural language about concise replies."
+        ).copy(
+            heading = "metadata-heading-needle",
+            type = "metadata_type_needle"
+        )
+        val retriever = MarkdownLexicalRetriever(StaticSnapshotSource(snapshot(1L, listOf(chunk))))
+
+        val headingResults = retriever.retrieve(
+            request(MemoryCorpus.CHAT_RECALL_LONG_TERM, "metadata-heading-needle")
+        ).getOrThrow()
+        val typeResults = retriever.retrieve(
+            request(MemoryCorpus.CHAT_RECALL_LONG_TERM, "metadata_type_needle")
+        ).getOrThrow()
+
+        assertTrue(headingResults.isEmpty())
+        assertTrue(typeResults.isEmpty())
+    }
+
+    @Test
+    fun `maintenance retrieval keeps positive weak matches below the chat floor`() = runBlocking {
+        val chunk = corpusChunk(
+            chunkId = "MEMORY.md#mem_maintenance_weak#0",
+            entryId = "mem_maintenance_weak",
+            text = "用户正在读书。"
+        )
+        val maintenanceSnapshot = snapshot(1L, listOf(chunk)).copy(
+            corpus = MemoryCorpus.MAINTENANCE_WORKING_SET
+        )
+        val retriever = MarkdownLexicalRetriever(StaticSnapshotSource(maintenanceSnapshot))
+
+        val result = retriever.retrieveWorkingSet(
+            request(MemoryCorpus.MAINTENANCE_WORKING_SET, "读 甲")
+        ).getOrThrow().single()
+
+        val score = result.lexicalScore!!
+        assertTrue(score > 0f)
+        assertTrue(score < 1.25f)
     }
 
     @Test
@@ -259,6 +369,49 @@ class MarkdownLexicalRetrieverTest {
     }
 
     @Test
+    fun `chat query defaults to general scope while explicit work scope stays selectable`() = runBlocking {
+        val general = corpusChunk(
+            "MEMORY.md#mem_general#0",
+            "mem_general",
+            "Preferred address is Alex."
+        ).copy(scope = MemoryScope.GENERAL)
+        val work = corpusChunk(
+            "MEMORY.md#mem_work#0",
+            "mem_work",
+            "Preferred work address is Director."
+        ).copy(scope = MemoryScope.WORK)
+        val retriever = MarkdownLexicalRetriever(StaticSnapshotSource(snapshot(1L, listOf(general, work))))
+
+        val generalResults = retriever.retrieve(
+            request(MemoryCorpus.CHAT_RECALL_LONG_TERM, "preferred address")
+        ).getOrThrow()
+        val workResults = retriever.retrieve(
+            request(MemoryCorpus.CHAT_RECALL_LONG_TERM, "preferred address").copy(recallScope = MemoryScope.WORK)
+        ).getOrThrow()
+
+        assertEquals(listOf("mem_general"), generalResults.map { result -> result.entryId })
+        assertEquals(listOf("mem_work"), workResults.map { result -> result.entryId })
+    }
+
+    @Test
+    fun `latin compound components satisfy the meaningful match gate`() = runBlocking {
+        val retriever = MarkdownLexicalRetriever(
+            StaticSnapshotSource(
+                snapshot(
+                    1L,
+                    listOf(corpusChunk("MEMORY.md#mem_server#0", "mem_server", "The minecraft-server uses Paper."))
+                )
+            )
+        )
+
+        val results = retriever.retrieve(
+            request(MemoryCorpus.CHAT_RECALL_LONG_TERM, "server")
+        ).getOrThrow()
+
+        assertEquals(listOf("mem_server"), results.map { result -> result.entryId })
+    }
+
+    @Test
     fun `retrieval retries once when corpus revision changes`() = runBlocking {
         val source = SequencedSnapshotSource(
             snapshots = listOf(
@@ -275,6 +428,28 @@ class MarkdownLexicalRetrieverTest {
 
         assertEquals(2, source.snapshotCalls)
         assertEquals("new", results.single().entryId)
+    }
+
+    @Test
+    fun `repeated projection changes fail with an observable diagnostic`() = runBlocking {
+        val source = SequencedSnapshotSource(
+            snapshots = listOf(
+                snapshot(1L, listOf(corpusChunk("MEMORY.md#old#0", "old", "Old revision phrase."))),
+                snapshot(2L, listOf(corpusChunk("MEMORY.md#middle#0", "middle", "Middle revision phrase.")))
+            ),
+            currentGeneration = 3L
+        )
+        val report = MarkdownLexicalRetriever(source).retrieveWithDiagnostics(
+            request(MemoryCorpus.CHAT_RECALL_LONG_TERM, "revision phrase")
+        ).getOrThrow()
+
+        assertEquals(MemoryRetrievalMode.FAILED, report.mode)
+        assertEquals("recall_snapshot_changed_during_retrieval:2", report.errorMessage)
+        assertEquals(
+            listOf("recall_snapshot_changed_during_retrieval"),
+            report.diagnostics.map(MemoryProjectionDiagnostic::code)
+        )
+        assertEquals(2, source.snapshotCalls)
     }
 
     @Test

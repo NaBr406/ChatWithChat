@@ -12,8 +12,11 @@ data class MemoryConversationMessage(
 
 data class PreparedMemoryContext(
     val retrievedMemories: List<MemoryRetrievalResult> = emptyList(),
-    val prompt: String? = null
-)
+    val snapshot: TurnRecallSnapshot = TurnRecallSnapshot()
+) {
+    val prompt: String?
+        get() = snapshot.prompt
+}
 
 object MemorySensitivity {
     const val NORMAL = "normal"

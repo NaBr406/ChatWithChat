@@ -16,13 +16,19 @@ import cn.nabr.chatwithchat.data.memory.MemoryPromptBuilder
 import cn.nabr.chatwithchat.data.memory.MemoryRetrievalMode
 import cn.nabr.chatwithchat.data.memory.MemoryRetrievalReport
 import cn.nabr.chatwithchat.data.memory.MemoryRetrievalRequest
+import cn.nabr.chatwithchat.data.memory.MemoryRetrievalResult
 import cn.nabr.chatwithchat.data.memory.MemoryRetrievalStrategy
 import cn.nabr.chatwithchat.data.memory.MemoryRetriever
 import cn.nabr.chatwithchat.data.memory.MemoryTurnBatchCoordinator
 import cn.nabr.chatwithchat.data.memory.MemoryTurnBatchScheduler
 import cn.nabr.chatwithchat.data.memory.MemoryTurnRecordingResult
+import cn.nabr.chatwithchat.data.memory.ModelVisibleMemoryFact
 import cn.nabr.chatwithchat.data.memory.PreparedMemoryContext
+import cn.nabr.chatwithchat.data.memory.TurnRecallSnapshot
 import cn.nabr.chatwithchat.data.memory.buildMemoryMessages
+import cn.nabr.chatwithchat.data.memory.deduplicationKey
+import cn.nabr.chatwithchat.data.memory.normalizeExactMemoryText
+import cn.nabr.chatwithchat.data.memory.toModelVisibleMemoryFactOrNull
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOf
@@ -76,10 +82,9 @@ class MemoryRepositoryImpl(
             corpus = MemoryCorpus.CHAT_RECALL_LONG_TERM,
             query = query,
             recentContext = recentContext,
-            alwaysIncludeTypes = ALWAYS_INCLUDED_MEMORY_TYPES,
-            limit = MAX_SELECTED_MEMORIES,
+            limit = MAX_QUERY_MEMORIES,
             candidateLimit = MAX_CANDIDATE_MEMORIES,
-            tokenBudget = MEMORY_RECALL_TOKEN_BUDGET,
+            tokenBudget = QUERY_RECALL_TOKEN_BUDGET,
             includePrivate = true,
             strategy = MemoryRetrievalStrategy.HYBRID
         )
@@ -91,25 +96,53 @@ class MemoryRepositoryImpl(
                 errorMessage = throwable.message
             )
         }
-        val retrievedMemories = retrievalReport.results
+        val coreResults = retrievalReport.coreResults
             .filter { memory -> memory.sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME }
+            .filter { memory -> memory.text.toModelVisibleMemoryFactOrNull() != null }
+        val coreKeys = coreResults.mapTo(mutableSetOf(), MemoryRetrievalResult::deduplicationKey)
+        val queryResults = retrievalReport.results
+            .filter { memory -> memory.sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME }
+            .filterNot { memory -> memory.deduplicationKey() in coreKeys }
+            .filter { memory -> memory.text.toModelVisibleMemoryFactOrNull() != null }
+            .take(MAX_QUERY_MEMORIES)
+        val renderedPrompt = memoryPromptBuilder.build(
+            coreFacts = coreResults.mapNotNull { memory -> memory.text.toModelVisibleMemoryFactOrNull() },
+            queryFacts = queryResults.mapNotNull { memory -> memory.text.toModelVisibleMemoryFactOrNull() }
+        )
+        val selectedCoreResults = coreResults.selectedBy(renderedPrompt.coreFacts)
+        val selectedQueryResults = queryResults.selectedBy(renderedPrompt.queryFacts)
+        val retrievedMemories = selectedCoreResults + selectedQueryResults
+        val turnSnapshot = TurnRecallSnapshot(
+            canonicalRevision = retrievalReport.canonicalRevision,
+            canonicalSourceHash = retrievalReport.canonicalSourceHash,
+            recallProjectionHash = retrievalReport.recallProjectionHash,
+            coreFacts = renderedPrompt.coreFacts,
+            queryFacts = renderedPrompt.queryFacts,
+            mode = retrievalReport.mode,
+            errorMessage = retrievalReport.errorMessage,
+            diagnostics = retrievalReport.diagnostics,
+            prompt = renderedPrompt.prompt,
+            estimatedTokens = renderedPrompt.estimatedTokens
+        )
         recordMemoryRecall(
             key = recallKey,
             recall = MemoryRecallTrace(
-                mode = when {
-                    retrievalReport.mode == MemoryRetrievalMode.FAILED -> MemoryRetrievalMode.FAILED
-                    retrievedMemories.isEmpty() -> MemoryRetrievalMode.NONE
-                    else -> retrievalReport.mode
-                },
+                mode = retrievalReport.mode,
                 hitCount = retrievedMemories.size,
                 memoryIds = retrievedMemories.map { memory -> memory.entryId ?: memory.chunkId }.distinct(),
                 errorMessage = retrievalReport.errorMessage,
-                diagnosticCodes = retrievalReport.diagnostics.map { diagnostic -> diagnostic.code }.distinct()
+                diagnosticCodes = retrievalReport.diagnostics.map { diagnostic -> diagnostic.code }.distinct(),
+                coreCount = selectedCoreResults.size,
+                queryCount = selectedQueryResults.size,
+                canonicalRevision = retrievalReport.canonicalRevision,
+                canonicalSourceHash = retrievalReport.canonicalSourceHash,
+                recallProjectionHash = retrievalReport.recallProjectionHash,
+                promptEstimatedTokens = renderedPrompt.estimatedTokens
             )
         )
         return PreparedMemoryContext(
             retrievedMemories = retrievedMemories,
-            prompt = memoryPromptBuilder.buildRetrieved(retrievedMemories)
+            snapshot = turnSnapshot
         )
     }
 
@@ -145,6 +178,17 @@ class MemoryRepositoryImpl(
 
     private fun String.trimForMemoryContext(): String = trim().take(MAX_CONTEXT_MESSAGE_LENGTH)
 
+    private fun List<MemoryRetrievalResult>.selectedBy(
+        facts: List<ModelVisibleMemoryFact>
+    ): List<MemoryRetrievalResult> {
+        val remaining = toMutableList()
+        return facts.mapNotNull { fact ->
+            val normalized = normalizeExactMemoryText(fact.text)
+            val index = remaining.indexOfFirst { result -> normalizeExactMemoryText(result.text) == normalized }
+            if (index < 0) null else remaining.removeAt(index)
+        }
+    }
+
     private fun memoryRecallKey(chatId: Int, userMessages: List<MessageV2>): MemoryRecallKey = MemoryRecallKey(
         chatId = userMessages.lastOrNull()?.chatId?.takeIf { it > 0 } ?: chatId,
         turnNumber = userMessages.size,
@@ -167,9 +211,8 @@ class MemoryRepositoryImpl(
     companion object {
         private const val TAG = "MemoryRepository"
         private const val MAX_CANDIDATE_MEMORIES = 24
-        private const val MAX_SELECTED_MEMORIES = 8
-        private const val MEMORY_RECALL_TOKEN_BUDGET = 900
-        private val ALWAYS_INCLUDED_MEMORY_TYPES = setOf("communication_style")
+        private const val MAX_QUERY_MEMORIES = 3
+        private const val QUERY_RECALL_TOKEN_BUDGET = 300
         private const val MAX_CONTEXT_MESSAGE_LENGTH = 1200
         private const val LOCAL_RECALL_RECENT_MESSAGE_COUNT = 6
         private const val MAX_LOCAL_RECALL_QUERY_LENGTH = 2_000

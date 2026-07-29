@@ -113,7 +113,7 @@ class HybridMemoryRetrieverTest {
     }
 
     @Test
-    fun `hybrid keeps communication preferences on topical first turn`() = runBlocking {
+    fun `hybrid does not force unrelated communication preferences into query results`() = runBlocking {
         val server = chunk("server", "mem_server", "Linux 服务器配置：2 核 4GB、200M 带宽，用于 Minecraft 联机。")
         val address = chunk("address", "mem_address", "希望以后被称呼为大哥。")
         val nickname = chunk("nickname", "mem_nickname", "用户为 AI 取名为小 c，以后称其为小 c。")
@@ -130,18 +130,29 @@ class HybridMemoryRetrieverTest {
             capability = unavailableCapability()
         )
 
-        val results = fixture.retriever.retrieve(
-            request("我的服务器配置是什么").copy(alwaysIncludeTypes = setOf("communication_style"))
-        ).getOrThrow()
+        val results = fixture.retriever.retrieve(request("我的服务器配置是什么")).getOrThrow()
 
-        assertEquals(
-            listOf("mem_server", "mem_address", "mem_nickname"),
-            results.map { result -> result.entryId }
-        )
+        assertEquals(listOf("mem_server"), results.map { result -> result.entryId })
     }
 
     @Test
-    fun `lexical fallback matches Chinese paraphrase with a meaningful single character`() = runBlocking {
+    fun `hybrid query defaults to general scope and excludes work conflict`() = runBlocking {
+        val general = chunk("general", "mem_general", "Preferred address is Alex.").copy(scope = MemoryScope.GENERAL)
+        val work = chunk("work", "mem_work", "Preferred work address is Director.").copy(scope = MemoryScope.WORK)
+        val fixture = fixture(snapshot(chunks = listOf(general, work)))
+        fixture.vectorStore.matches = listOf(
+            match(general, TARGET_VECTOR, 0.01f),
+            match(work, DIVERSE_VECTOR, 0.02f)
+        )
+
+        val report = fixture.retriever.retrieveWithDiagnostics(request("preferred address")).getOrThrow()
+
+        assertEquals(MemoryRetrievalMode.HYBRID, report.mode)
+        assertEquals(listOf("mem_general"), report.results.map { result -> result.entryId })
+    }
+
+    @Test
+    fun `lexical fallback rejects a Chinese paraphrase with only weak single characters`() = runBlocking {
         val education = chunk(
             "education",
             "mem_education",
@@ -158,7 +169,7 @@ class HybridMemoryRetrieverTest {
 
         val results = fixture.retriever.retrieve(request("我读大几")).getOrThrow()
 
-        assertEquals(listOf("mem_education"), results.map { result -> result.entryId })
+        assertTrue(results.isEmpty())
     }
 
     @Test
@@ -261,10 +272,7 @@ class HybridMemoryRetrieverTest {
             fixture.vectorStore.matches = listOf(match(daily, TARGET_VECTOR, 0f))
 
             val report = fixture.retriever.retrieveWithDiagnostics(
-                request("Daily-only-vector-marker").copy(
-                    strategy = strategy,
-                    alwaysIncludeTypes = setOf("communication_style")
-                )
+                request("Daily-only-vector-marker").copy(strategy = strategy)
             ).getOrThrow()
 
             assertTrue("$strategy leaked daily vector content", report.results.isEmpty())
@@ -274,9 +282,7 @@ class HybridMemoryRetrieverTest {
         val fallback = fixture(snapshot(chunks = listOf(daily)))
         fallback.vectorStore.verification = MemoryVectorSnapshotVerification.Missing
         val fallbackReport = fallback.retriever.retrieveWithDiagnostics(
-            request("Daily-only-vector-marker").copy(
-                alwaysIncludeTypes = setOf("communication_style")
-            )
+            request("Daily-only-vector-marker")
         ).getOrThrow()
 
         assertTrue(fallbackReport.results.isEmpty())
@@ -300,6 +306,120 @@ class HybridMemoryRetrieverTest {
         assertEquals("chat_projection_parse_failed:2", report.errorMessage)
         assertEquals(0, fixture.provider.embedQueryCalls)
         assertEquals(0, fixture.vectorStore.queryCalls)
+    }
+
+    @Test
+    fun `greeting returns core only from the same snapshot when vectors are unavailable`() = runBlocking {
+        val core = chunk("core", "mem_address", "希望以后被称呼为大哥。").copy(
+            type = "stable_profile",
+            canonicalKey = "identity.preferred_address",
+            scope = MemoryScope.GENERAL,
+            validity = MemoryValidity.CURRENT,
+            recallState = MemoryRecallState.CORE
+        )
+        val fixture = fixture(
+            snapshot(chunks = listOf(core)),
+            capability = unavailableCapability()
+        )
+
+        val report = fixture.retriever.retrieveWithDiagnostics(request("你好")).getOrThrow()
+
+        assertEquals(MemoryRetrievalMode.NONE, report.mode)
+        assertEquals(listOf("mem_address"), report.coreResults.map { result -> result.entryId })
+        assertTrue(report.results.isEmpty())
+        assertEquals(1, fixture.repairTrigger.requestCalls)
+    }
+
+    @Test
+    fun `vector ready greeting keeps seeded core and rejects weak query candidates`() = runBlocking {
+        val core = chunk("core", "mem_address", "Call the user Alex.").copy(
+            canonicalKey = "identity.preferred_address",
+            scope = MemoryScope.GENERAL,
+            validity = MemoryValidity.CURRENT,
+            recallState = MemoryRecallState.CORE
+        )
+        val weak = chunk("weak", "mem_weak", "Unrelated project event.")
+        val fixture = fixture(snapshot(chunks = listOf(core, weak)))
+        fixture.vectorStore.matches = listOf(match(weak, TARGET_VECTOR, 0.551f))
+
+        val report = fixture.retriever.retrieveWithDiagnostics(request("你好")).getOrThrow()
+
+        assertEquals(MemoryRetrievalMode.NONE, report.mode)
+        assertEquals(listOf("mem_address"), report.coreResults.map { result -> result.entryId })
+        assertTrue(report.results.isEmpty())
+        assertEquals(1, fixture.vectorStore.queryCalls)
+        assertEquals(0, fixture.repairTrigger.requestCalls)
+    }
+
+    @Test
+    fun `vector absolute floor rejects 0_449 and admits 0_45`() = runBlocking {
+        val below = chunk("below", "mem_below", "Below vector floor.")
+        val boundary = chunk("boundary", "mem_boundary", "At vector floor.")
+        val fixture = fixture(snapshot(chunks = listOf(below, boundary)))
+        fixture.vectorStore.matches = listOf(
+            match(below, TARGET_VECTOR, 0.551f),
+            match(boundary, DIVERSE_VECTOR, 0.55f)
+        )
+
+        val report = fixture.retriever.retrieveWithDiagnostics(
+            request("unrelated query").copy(strategy = MemoryRetrievalStrategy.VECTOR)
+        ).getOrThrow()
+
+        assertEquals(MemoryRetrievalMode.SEMANTIC, report.mode)
+        assertEquals(listOf("mem_boundary"), report.results.map { result -> result.entryId })
+        assertEquals(0.45f, report.results.single().vectorScore!!, 0.000001f)
+    }
+
+    @Test
+    fun `ready vectors with no absolute survivor do not masquerade as lexical fallback`() = runBlocking {
+        val weak = chunk("weak", "mem_weak", "Weak vector candidate.")
+        val fixture = fixture(snapshot(chunks = listOf(weak)))
+        fixture.vectorStore.matches = listOf(match(weak, TARGET_VECTOR, 0.551f))
+
+        val report = fixture.retriever.retrieveWithDiagnostics(
+            request("unrelated query").copy(strategy = MemoryRetrievalStrategy.VECTOR)
+        ).getOrThrow()
+
+        assertEquals(MemoryRetrievalMode.NONE, report.mode)
+        assertTrue(report.results.isEmpty())
+        assertEquals(1, fixture.vectorStore.queryCalls)
+        assertEquals(0, fixture.repairTrigger.requestCalls)
+    }
+
+    @Test
+    fun `ready hybrid with no vector survivor reports lexical mode`() = runBlocking {
+        val lexical = chunk("lexical", "mem_lexical", "Concrete implementation steps are preferred.")
+        val fixture = fixture(snapshot(chunks = listOf(lexical)))
+        fixture.vectorStore.matches = listOf(match(lexical, TARGET_VECTOR, 0.551f))
+
+        val report = fixture.retriever.retrieveWithDiagnostics(
+            request("concrete implementation steps")
+        ).getOrThrow()
+
+        assertEquals(MemoryRetrievalMode.LEXICAL, report.mode)
+        assertEquals(listOf("mem_lexical"), report.results.map { result -> result.entryId })
+        assertEquals(1, fixture.vectorStore.queryCalls)
+        assertEquals(0, fixture.repairTrigger.requestCalls)
+    }
+
+    @Test
+    fun `vector gate embeds only the current query and caps query facts at three`() = runBlocking {
+        val chunks = (1..5).map { index -> chunk("vector-$index", "mem_vector_$index", "Vector fact $index.") }
+        val fixture = fixture(snapshot(chunks = chunks))
+        fixture.vectorStore.matches = chunks.mapIndexed { index, chunk ->
+            match(chunk, TARGET_VECTOR, index * 0.01f)
+        }
+
+        val report = fixture.retriever.retrieveWithDiagnostics(
+            request("vector facts").copy(
+                recentContext = "project alpha project alpha project alpha",
+                strategy = MemoryRetrievalStrategy.VECTOR,
+                limit = 8
+            )
+        ).getOrThrow()
+
+        assertEquals(listOf("vector facts"), fixture.provider.embeddedQueries)
+        assertEquals(3, report.results.size)
     }
 
     @Test
@@ -340,7 +460,7 @@ class HybridMemoryRetrieverTest {
             match(fallbackTwo, OTHER_VECTOR, 0.03f)
         )
 
-        val results = fixture.retriever.retrieve(request("cross branch preference")).getOrThrow()
+        val results = fixture.retriever.retrieve(request("cross branch preference fallback duplicate")).getOrThrow()
 
         assertEquals(2, results.size)
         assertEquals(1, results.count { result -> result.entryId == "mem_same" })
@@ -537,6 +657,40 @@ class HybridMemoryRetrieverTest {
 
         assertEquals(2, source.snapshotCalls)
         assertEquals(listOf("mem_new"), results.map { result -> result.entryId })
+    }
+
+    @Test
+    fun `repeated hybrid projection changes fail with an observable diagnostic`() = runBlocking {
+        val old = snapshot(
+            sourceHash = "a".repeat(64),
+            recallProjectionHash = "1".repeat(64),
+            generation = 1,
+            chunks = listOf(chunk("old", "mem_old", "Old current phrase."))
+        )
+        val middle = snapshot(
+            sourceHash = "b".repeat(64),
+            recallProjectionHash = "2".repeat(64),
+            generation = 2,
+            chunks = listOf(chunk("middle", "mem_middle", "Middle current phrase."))
+        )
+        val current = snapshot(
+            sourceHash = "c".repeat(64),
+            recallProjectionHash = "3".repeat(64),
+            generation = 3,
+            chunks = listOf(chunk("current", "mem_current", "Current phrase."))
+        )
+        val source = SequencedSnapshotSource(listOf(old, middle), currentSnapshot = current)
+        val fixture = fixture(current, snapshotSource = source, capability = unavailableCapability())
+
+        val report = fixture.retriever.retrieveWithDiagnostics(request("current phrase")).getOrThrow()
+
+        assertEquals(MemoryRetrievalMode.FAILED, report.mode)
+        assertEquals("recall_snapshot_changed_during_retrieval:2", report.errorMessage)
+        assertEquals(
+            listOf("recall_snapshot_changed_during_retrieval"),
+            report.diagnostics.map(MemoryProjectionDiagnostic::code)
+        )
+        assertEquals(2, source.snapshotCalls)
     }
 
     @Test
@@ -836,6 +990,7 @@ class HybridMemoryRetrieverTest {
     private class FakeEmbeddingProvider : MemoryEmbeddingProvider {
         override val descriptor = TEST_DESCRIPTOR
         var embedQueryCalls = 0
+        val embeddedQueries = mutableListOf<String>()
 
         override suspend fun availability(): MemoryEmbeddingAvailability = MemoryEmbeddingAvailability.Available
 
@@ -844,6 +999,7 @@ class HybridMemoryRetrieverTest {
 
         override suspend fun embedQuery(text: String): Result<FloatArray> {
             embedQueryCalls += 1
+            embeddedQueries += text
             return Result.success(TARGET_VECTOR.copyOf())
         }
     }

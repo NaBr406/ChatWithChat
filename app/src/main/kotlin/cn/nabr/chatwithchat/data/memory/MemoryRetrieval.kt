@@ -23,13 +23,17 @@ data class MemoryRetrievalRequest(
     val corpus: MemoryCorpus,
     val query: String,
     val recentContext: String? = null,
-    val alwaysIncludeTypes: Set<String> = emptySet(),
-    val limit: Int = 8,
+    val recallScope: String = MemoryScope.GENERAL,
+    val limit: Int = 3,
     val candidateLimit: Int = 200,
-    val tokenBudget: Int = 900,
+    val tokenBudget: Int = 300,
     val includePrivate: Boolean = true,
     val strategy: MemoryRetrievalStrategy = MemoryRetrievalStrategy.LEXICAL
-)
+) {
+    init {
+        require(MarkdownMemoryMetadataPolicy.isScope(recallScope)) { "Invalid memory recall scope" }
+    }
+}
 
 data class MemoryRetrievalResult(
     val chunkId: String,
@@ -63,8 +67,14 @@ data class MemoryRetrievalReport(
     val mode: MemoryRetrievalMode,
     val errorMessage: String? = null,
     val recallProjectionHash: String? = null,
-    val diagnostics: List<MemoryProjectionDiagnostic> = emptyList()
-)
+    val diagnostics: List<MemoryProjectionDiagnostic> = emptyList(),
+    val coreResults: List<MemoryRetrievalResult> = emptyList(),
+    val canonicalRevision: Long? = null,
+    val canonicalSourceHash: String? = null
+) {
+    val tieredRecall: TieredMemoryRecall
+        get() = TieredMemoryRecall(coreResults = coreResults, queryResults = results)
+}
 
 enum class MemoryRetrievalMode {
     LEXICAL,
@@ -123,25 +133,32 @@ internal fun List<MemoryRetrievalResult>.packFor(request: MemoryRetrievalRequest
         .toList()
 }
 
+internal fun MemoryRetrievalRequest.queryLayerRequest(): MemoryRetrievalRequest =
+    if (corpus == MemoryCorpus.CHAT_RECALL_LONG_TERM) {
+        copy(
+            limit = limit.coerceAtMost(MAX_QUERY_RECALL_FACTS),
+            tokenBudget = tokenBudget.coerceAtMost(MAX_QUERY_RECALL_TOKENS)
+        )
+    } else {
+        this
+    }
+
 internal fun MemoryRetrievalResult.deduplicationKey(): String =
     entryId?.let { value -> "entry:$value" } ?: "embedding:$embeddingContentHash"
 
-internal fun MemoryRetrievalRequest.combinedQuery(): String = listOfNotNull(
-    query.trim().takeIf { it.isNotBlank() },
-    recentContext?.trim()?.takeIf { it.isNotBlank() }
-).joinToString(separator = "\n").take(MAX_MEMORY_RETRIEVAL_QUERY_CHARS)
+internal fun MemoryRetrievalRequest.combinedQuery(): String = query
+    .trim()
+    .take(MAX_MEMORY_RETRIEVAL_QUERY_CHARS)
 
-/**
- * The current user turn is the authoritative lexical signal. Recent history
- * is useful for semantic embeddings, but including it in token matching lets
- * unrelated earlier turns make every memory candidate score above zero.
- */
+/** The current user turn is the only relevance signal for chat recall. */
 internal fun MemoryRetrievalRequest.lexicalQuery(): String = query
     .trim()
     .take(MAX_MEMORY_RETRIEVAL_QUERY_CHARS)
 
 private const val MEMORY_RETRIEVAL_RESULT_TOKEN_OVERHEAD = 24
 private const val MAX_MEMORY_RETRIEVAL_QUERY_CHARS = 8_000
+private const val MAX_QUERY_RECALL_FACTS = 3
+private const val MAX_QUERY_RECALL_TOKENS = 300
 
 internal fun List<MemoryProjectionDiagnostic>.toBoundedErrorMessage(): String? =
     take(MAX_REPORTED_PROJECTION_DIAGNOSTICS)

@@ -767,28 +767,28 @@ git diff --check
 
 **Implementation requirements:**
 
-- [ ] 引入明确的 `TieredMemoryRecall` / `TurnRecallSnapshot` 边界，使用一个 canonical snapshot 同时生成 core 和 query layer。
-- [ ] core 按 `recallState=core` 和受控 canonical keys 构建，稳定排序、去重、最多 4 facts，目标 80-150 tokens。
-- [ ] legacy fallback 必须 bounded；不得继续使用 `alwaysIncludeTypes = communication_style` 把全部风格记忆注入。
-- [ ] query layer 最多 3 facts、目标 200-300 tokens；先过 absolute floor，再用 RRF/MMR 做相对排序和去冗余。
-- [ ] lexical 初始 floor 以 `1.25f`（至少一个有意义 Latin/CJK bigram match 加现有 long-term bonus）作为校准起点；单个弱中文字符命中不能单独通过。
-- [ ] vector cosine-similarity 初始 floor 以 `0.45f` 作为校准起点。Task 0 corpus 可支持调整，但必须写出分布、false positive/negative 和最终常量；相对 `0.85 * max` 不能替代 absolute floor。
-- [ ] Hybrid candidate 需要满足 lexical floor 或 vector floor；RRF/MMR 只处理 survivors。
-- [ ] “你好”与无关闲聊应返回 core-only；称呼问题应返回 scoped active称呼且没有旧值；项目问题命中项目事实。
-- [ ] `MemoryPromptBuilder` 只接收 model-visible fact projection，只输出自然语言 bullet；不得再输出 `type/sensitivity/source/id/path/timestamps/key/scope/status`。
-- [ ] token budget 使用最终渲染 prompt 的 estimator 验收，不再只按 memory text + 24 overhead 近似。
-- [ ] 使用一段全局 privacy/usage guidance 代替每条重复指导语。
-- [ ] `PreparedMemoryContext` 暴露 immutable snapshot 给同一 turn；`ChatViewModel` 只调用一次，所有 tool rounds 复用，不重新读取索引。
-- [ ] core/file failure、lexical fallback、Hybrid、vector-only diagnostics 在本地 trace 中可区分，但不能出现在 provider prompt。
-- [ ] 扩展 108-entry evaluation，加入 hard negatives、greeting、scope conflicts、superseded rows 和 threshold boundary fixtures。
+- [x] 引入明确的 `TieredMemoryRecall` / `TurnRecallSnapshot` 边界，使用一个 canonical snapshot 同时生成 core 和 query layer。
+- [x] core 按 `recallState=core` 和受控 canonical keys 构建，稳定排序、去重、最多 4 facts，目标 80-150 tokens。
+- [x] legacy fallback 必须 bounded；不得继续使用 `alwaysIncludeTypes = communication_style` 把全部风格记忆注入。
+- [x] query layer 最多 3 facts、目标 200-300 tokens；先过 absolute floor，再用 RRF/MMR 做相对排序和去冗余。
+- [x] lexical 初始 floor 以 `1.25f`（至少一个有意义 Latin/CJK bigram match 加现有 long-term bonus）作为校准起点；单个弱中文字符命中不能单独通过。
+- [x] vector cosine-similarity 初始 floor 以 `0.45f` 作为校准起点。Task 0 corpus 可支持调整，但必须写出分布、false positive/negative 和最终常量；相对 `0.85 * max` 不能替代 absolute floor。
+- [x] Hybrid candidate 需要满足 lexical floor 或 vector floor；RRF/MMR 只处理 survivors。
+- [x] “你好”与无关闲聊应返回 core-only；称呼问题应返回 scoped active称呼且没有旧值；项目问题命中项目事实。
+- [x] `MemoryPromptBuilder` 只接收 model-visible fact projection，只输出自然语言 bullet；不得再输出 `type/sensitivity/source/id/path/timestamps/key/scope/status`。
+- [x] token budget 使用最终渲染 prompt 的 estimator 验收，不再只按 memory text + 24 overhead 近似。
+- [x] 使用一段全局 privacy/usage guidance 代替每条重复指导语。
+- [x] `PreparedMemoryContext` 暴露 immutable snapshot 给同一 turn；`ChatViewModel` 只调用一次，所有 tool rounds 复用，不重新读取索引。
+- [x] core/file failure、lexical fallback、Hybrid、vector-only diagnostics 在本地 trace 中可区分，但不能出现在 provider prompt。
+- [x] 扩展 108-entry evaluation，加入 hard negatives、greeting、scope conflicts、superseded rows 和 threshold boundary fixtures。
 
 **Acceptance criteria:**
 
-- [ ] 在 seeded core fixture 下，greeting 的 recall invocation count 为 1，core 非空，query facts 为 0；无 core 的新用户仍调用一次并返回空 core。
-- [ ] unrelated query 不再因为“最高分”被迫带回事件记忆。
-- [ ] lexical/vector/Hybrid/vector-failure lexical fallback 遵守相同 active-only 和 absolute-gate 合同。
-- [ ] 完整模型可见 memory section 初始 hard cap 为 500 tokens，且不含任何 maintenance metadata 字符串。
-- [ ] 108-entry target coverage 不回退，新增 hard negatives 不泄漏。
+- [x] 在 seeded core fixture 下，greeting 的 recall invocation count 为 1，core 非空，query facts 为 0；无 core 的新用户仍调用一次并返回空 core。
+- [x] unrelated query 不再因为“最高分”被迫带回事件记忆。
+- [x] lexical/vector/Hybrid/vector-failure lexical fallback 遵守相同 active-only 和 absolute-gate 合同。
+- [x] 完整模型可见 memory section 初始 hard cap 为 500 tokens，且不含任何 maintenance metadata 字符串。
+- [x] 108-entry target coverage 不回退，新增 hard negatives 不泄漏。
 
 **Focused verification:**
 
@@ -797,6 +797,18 @@ git diff --check
 ./gradlew.bat :app:compileDebugKotlin
 git diff --check
 ```
+
+#### Task 5 Implementation Record (2026-07-29)
+
+- Added explicit `TieredMemoryRecall`, model-visible fact, rendered prompt, and immutable `TurnRecallSnapshot` values. A single snapshot now freezes canonical revision/hash, recall projection hash, core/query facts, mode/diagnostics, final prompt, and rendered token count.
+- Core selection is restricted to controlled general-scope keys (`identity.preferred_address`, `locale.response_language`, `communication.response_style`, and typed `boundary.*`), ordered by key, trust, evidence observation time, and stable IDs, capped at 4 facts/150 fact tokens. Legacy unkeyed `communication_style` contributes at most one fallback fact.
+- Query recall defaults to `scope=general`, excludes scoped conflicts, caps at 3 facts/300 retrieval tokens, and removes core duplicates by identity and normalized text. Manual retry and initial multi-provider fan-out reuse a bounded per-turn `PreparedMemoryContext` cache; tool rounds receive the same frozen prompt.
+- Final lexical floor is `1.25f`: meaningful Latin tokens (including hyphen/underscore compound components) or CJK bigrams/trigrams are required; exact or accumulated isolated CJK characters fail closed. Vector cosine floor is `0.45f`; `0.449` is rejected and `0.45` is accepted before RRF/MMR. Ready vectors with no survivor remain distinct from unavailable-vector lexical fallback, and lexical-only survivors are no longer mislabeled Hybrid.
+- Calibration evidence: greeting, unrelated, single-CJK, metadata-only, scoped-work, obsolete/superseded, and hard-negative fixtures produced zero query leakage. Meaningful Latin/CJK boundary fixtures and the 108-entry project corpus produced no observed target false negatives before the configured top-k cap; the 108-entry evaluation kept all top 8 as targets and selected 3/3 target facts. Relative `0.85 * max` remains only a post-gate diversity filter.
+- `MemoryPromptBuilder` accepts only validated natural-language facts, drops oversized facts at whole-bullet boundaries, uses one global privacy/usage instruction, and clamps the complete rendered section to an unraiseable 500-token hard cap. A shared pre-provider guard rejects full metadata/hash/diagnostic shapes, including job/checkpoint/run IDs and trace counts, for OpenAI Responses, OpenAI Chat/OpenRouter, Custom, Ollama, Groq, Anthropic, and Google before any network request.
+- Measured prompts: seeded core-only greeting/unrelated = 61 estimated tokens; Task 0 108-entry baseline without the new core fixture = 148; extended 108-entry final prompt with 1 core + 3 project facts = 162. The extended corpus retained exactly 108 canonical entries, excluded work scope, obsolete text, single-CJK and hard-negative markers, and kept top-8 target coverage at 8/8.
+- Focused verification passed 175 tests with zero failures/errors/skips across 10 suites, including all 72 `ChatRepositoryImplTest` provider/DTO cases. `:app:compileDebugKotlin`, `:app:compileDebugAndroidTestKotlin`, ktlint 1.3.1 over every changed Kotlin file, and `git diff --check` passed.
+- Full `:app:testDebugUnitTest` executed 1048 tests with 6 failures in pre-existing Task 2/3 consolidation tests. The identical 6/63 failures reproduced in a clean detached `7bcd77c` worktree, proving they are not introduced by Task 5; they remain open for the later integration gate rather than being reported as passed.
 
 ### Task 6: Add Default Memory Model Selection And Unified Activity Runs
 
@@ -1133,11 +1145,11 @@ Projection and index:
 - vector failure fallback:
 
 Tiered recall:
-- core/query token budgets:
-- final lexical/vector absolute thresholds and calibration evidence:
-- greeting/unrelated/scoped-name/project results:
-- 108-entry evaluation before/after:
-- exactly-once per-turn snapshot proof:
+- core/query token budgets: core <= 4 facts / 150 fact tokens; query <= 3 facts / 300 retrieval tokens; full rendered prompt hard-capped at 500 tokens.
+- final lexical/vector absolute thresholds and calibration evidence: lexical `1.25f` with meaningful Latin/CJK gram; vector cosine `0.45f`; isolated CJK and vector `0.449` rejected, exact boundaries accepted.
+- greeting/unrelated/scoped-name/project results: greeting and unrelated are core-only; default-general address excludes work and obsolete values; project query selects 3 target facts.
+- 108-entry evaluation before/after: Task 0 final prompt 148 tokens; extended fixture top-8 targets 8/8, final targets 3/3, no hard-negative/scope/superseded leak, 162 tokens with core.
+- exactly-once per-turn snapshot proof: repository invocation count 1; initial provider fan-out/tool rounds share one value; same-turn manual retry cache returns the same prompt/projection snapshot without another retrieval.
 
 Memory model routing:
 - DataStore Auto/fixed representation and atomicity:

@@ -9,8 +9,6 @@ import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
 import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.context.semanticAssistantContent
 import cn.nabr.chatwithchat.data.database.entity.ACTIVE_REVISION_LATEST
@@ -25,6 +23,7 @@ import cn.nabr.chatwithchat.data.database.entity.selectRevision
 import cn.nabr.chatwithchat.data.database.entity.snapshotLatestAssistantRevision
 import cn.nabr.chatwithchat.data.dto.ApiState
 import cn.nabr.chatwithchat.data.memory.MemoryCompletedTurnInput
+import cn.nabr.chatwithchat.data.memory.PreparedMemoryContext
 import cn.nabr.chatwithchat.data.model.AvailableChatModel
 import cn.nabr.chatwithchat.data.model.ChatPlatformConfig
 import cn.nabr.chatwithchat.data.model.LastSelectedModel
@@ -43,6 +42,8 @@ import cn.nabr.chatwithchat.util.AttachmentPayloadCache
 import cn.nabr.chatwithchat.util.FileUtils
 import cn.nabr.chatwithchat.util.getPlatformName
 import cn.nabr.chatwithchat.util.handleStates
+import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.Collections
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
@@ -177,6 +178,7 @@ class ChatViewModel @Inject constructor(
     private val _pendingMessageEditAttachmentBatches = MutableStateFlow(0)
     val pendingMessageEditAttachmentBatches = _pendingMessageEditAttachmentBatches.asStateFlow()
     private val attachmentBatchMutex = Mutex()
+    private val memoryContextCache = TurnMemoryContextCache()
     private val pendingOwnedAttachmentPaths = Collections.synchronizedSet(mutableSetOf<String>())
 
     // Chat messages currently in the chat room
@@ -367,12 +369,12 @@ class ChatViewModel @Inject constructor(
 
         viewModelScope.launch {
             val retryContext = groupedMessagesThroughTurn(_groupedMessages.value, turnIndex)
-            val memoryPrompt = prepareMemoryPrompt(retryContext, platformSelection.platform)
+            val memoryContext = prepareMemoryContextForTurn(retryContext, platformSelection.platform)
             chatRepository.completeChat(
                 retryContext.userMessages,
                 retryContext.assistantMessages,
                 platformSelection.platform,
-                memoryPrompt,
+                memoryContext.prompt,
                 reasoningMode = platformSelection.reasoningMode
             ).handleStates(
                 messageFlow = _groupedMessages,
@@ -692,7 +694,7 @@ class ChatViewModel @Inject constructor(
         val memoryPlatform = preferredMemoryPlatform()
 
         viewModelScope.launch {
-            val memoryPrompt = prepareMemoryPrompt(groupedMessages, memoryPlatform)
+            val memoryContext = prepareMemoryContextForTurn(groupedMessages, memoryPlatform)
 
             // Send chat completion requests
             enabledPlatformsInChat.forEachIndexed { idx, platformUid ->
@@ -704,7 +706,7 @@ class ChatViewModel @Inject constructor(
                         latestGroupedMessages.userMessages,
                         latestGroupedMessages.assistantMessages,
                         platformSelection.platform,
-                        memoryPrompt,
+                        memoryContext.prompt,
                         reasoningMode = platformSelection.reasoningMode
                     ).handleStates(
                         messageFlow = _groupedMessages,
@@ -823,18 +825,27 @@ class ChatViewModel @Inject constructor(
         requestedMode: ReasoningMode
     ): ReasoningMode = selectedModel.platform.coerceReasoningModeForModel(requestedMode, selectedModel.modelId)
 
-    private suspend fun prepareMemoryPrompt(
+    private suspend fun prepareMemoryContext(
         groupedMessages: GroupedMessages,
         memoryPlatform: PlatformV2?
-    ): String? = withContext(Dispatchers.IO) {
-        prepareMemoryPromptWhenEnabled(refreshMemoryEnabled()) {
+    ): PreparedMemoryContext = withContext(Dispatchers.IO) {
+        prepareMemoryContextWhenEnabled(refreshMemoryEnabled()) {
             memoryRepository.prepareMemoryContext(
                 chatRoom = _chatRoom.value,
                 userMessages = groupedMessages.userMessages,
                 assistantMessages = groupedMessages.assistantMessages,
                 memoryPlatform = memoryPlatform
-            ).prompt
+            )
         }
+    }
+
+    private suspend fun prepareMemoryContextForTurn(
+        groupedMessages: GroupedMessages,
+        memoryPlatform: PlatformV2?
+    ): PreparedMemoryContext = memoryContextCache.getOrPrepare(
+        key = groupedMessages.memoryTurnSnapshotKey(chatRoomId)
+    ) {
+        prepareMemoryContext(groupedMessages, memoryPlatform)
     }
 
     private fun recordUserActivityIfEnabled(chatId: Int, activityAt: Long) {
@@ -1526,10 +1537,58 @@ internal fun shouldRecoverInitialRequest(
     initialRequestId < 0 &&
     (initialQuestion.isNotBlank() || initialAttachmentPaths.isNotEmpty())
 
-internal suspend fun prepareMemoryPromptWhenEnabled(
+internal suspend fun prepareMemoryContextWhenEnabled(
     memoryEnabled: Boolean,
-    prepare: suspend () -> String?
-): String? = if (memoryEnabled) runCatching { prepare() }.getOrNull() else null
+    prepare: suspend () -> PreparedMemoryContext
+): PreparedMemoryContext = if (memoryEnabled) {
+    runCatching { prepare() }.getOrDefault(PreparedMemoryContext())
+} else {
+    PreparedMemoryContext()
+}
+
+internal data class MemoryTurnSnapshotKey(
+    val chatId: Int,
+    val turnIndex: Int,
+    val createdAt: Long,
+    val content: String,
+    val attachmentSemantics: List<Pair<String, String>>
+)
+
+internal fun ChatViewModel.GroupedMessages.memoryTurnSnapshotKey(chatId: Int): MemoryTurnSnapshotKey? {
+    val latest = userMessages.lastOrNull() ?: return null
+    return MemoryTurnSnapshotKey(
+        chatId = chatId,
+        turnIndex = userMessages.lastIndex,
+        createdAt = latest.createdAt,
+        content = latest.content,
+        attachmentSemantics = latest.attachments.map { attachment ->
+            attachment.resolvedDisplayName to attachment.mimeType
+        }
+    )
+}
+
+internal class TurnMemoryContextCache(
+    private val maxEntries: Int = 32
+) {
+    private val mutex = Mutex()
+    private val contexts = LinkedHashMap<MemoryTurnSnapshotKey, PreparedMemoryContext>()
+
+    suspend fun getOrPrepare(
+        key: MemoryTurnSnapshotKey?,
+        prepare: suspend () -> PreparedMemoryContext
+    ): PreparedMemoryContext {
+        if (key == null) return prepare()
+        return mutex.withLock {
+            contexts[key]?.let { cached -> return@withLock cached }
+            prepare().also { prepared ->
+                contexts[key] = prepared
+                while (contexts.size > maxEntries.coerceAtLeast(1)) {
+                    contexts.remove(contexts.keys.first())
+                }
+            }
+        }
+    }
+}
 
 internal fun List<ChatViewModel.ToolProgressState>.appendToolProgress(progress: ApiState): List<ChatViewModel.ToolProgressState> {
     if (progress.toolNameOrNull()?.isStickerToolName() == true) return this

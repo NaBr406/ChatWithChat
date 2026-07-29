@@ -2955,6 +2955,13 @@ class ChatRepositoryImplTest {
             "Relevant user memories:\nentryId: mem_internal_42\n- The user prefers concise answers.",
             "Relevant user memories:\nsourcePath: memory/2026-07-29.md\n- The user prefers concise answers.",
             "Relevant user memories:\ntype: communication_style, sensitivity: private, source: user_confirmed\n- The user prefers concise answers.",
+            "Relevant user memories:\ncanonicalKey: identity.preferred_address, scope: general\n- Call the user Alex.",
+            "Relevant user memories:\ncreatedAt: 1, updatedAt: 2, observed: 3\n- Call the user Alex.",
+            "Relevant user memories:\nvalidity: current, recallState: core, status: active\n- Call the user Alex.",
+            "Relevant user memories:\ndiagnostics: chat_projection_parse_failed, mode: lexical_fallback\n- Call the user Alex.",
+            "Relevant user memories:\njobId: job_42, checkpointId: checkpoint_7\n- Call the user Alex.",
+            "Relevant user memories:\nmemoryIds: [opaque_1], hitCount: 1, coreCount: 1\n- Call the user Alex.",
+            "Relevant user memories:\nmaintenanceHash: abcdef123456, phase: model_call\n- Call the user Alex.",
             "Relevant user memories:\nembeddingContentHash: ${"a".repeat(64)}\n- The user prefers concise answers."
         )
 
@@ -3548,6 +3555,9 @@ class ChatRepositoryImplTest {
     private fun providerMemoryGuardScenarios(): List<ProviderMemoryGuardScenario> {
         val openAIResponsesAPI = RecordingOpenAIAPI()
         val openAIChatAPI = RecordingOpenAIAPI()
+        val customAPI = RecordingOpenAIAPI()
+        val ollamaAPI = RecordingOpenAIAPI()
+        val groqAPI = FakeGroqAPI()
         val anthropicAPI = RecordingAnthropicAPI()
         val googleAPI = RecordingGoogleAPI()
         return listOf(
@@ -3564,6 +3574,27 @@ class ChatRepositoryImplTest {
                 platform = openRouterPlatform(),
                 requestCount = { openAIChatAPI.streamChatCompletionCalls },
                 systemPrompt = { openAIChatAPI.chatCompletionRequests.single().systemText() }
+            ),
+            ProviderMemoryGuardScenario(
+                name = "Custom JSON fallback",
+                repository = createRepository(openAIAPI = customAPI),
+                platform = customPlatform(),
+                requestCount = { customAPI.streamChatCompletionCalls },
+                systemPrompt = { customAPI.chatCompletionRequests.single().systemText() }
+            ),
+            ProviderMemoryGuardScenario(
+                name = "Ollama Chat Completions",
+                repository = createRepository(openAIAPI = ollamaAPI),
+                platform = ollamaPlatform(),
+                requestCount = { ollamaAPI.streamChatCompletionCalls },
+                systemPrompt = { ollamaAPI.chatCompletionRequests.single().systemText() }
+            ),
+            ProviderMemoryGuardScenario(
+                name = "Groq",
+                repository = createRepository(groqAPI = groqAPI),
+                platform = groqPlatform(reasoning = false, model = "llama-3.3-70b-versatile"),
+                requestCount = { groqAPI.streamCalls },
+                systemPrompt = { checkNotNull(groqAPI.lastRequest).messages.systemText() }
             ),
             ProviderMemoryGuardScenario(
                 name = "Anthropic",

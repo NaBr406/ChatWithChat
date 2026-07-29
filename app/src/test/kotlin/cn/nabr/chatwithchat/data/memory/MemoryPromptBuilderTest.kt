@@ -1,63 +1,131 @@
 package cn.nabr.chatwithchat.data.memory
 
+import cn.nabr.chatwithchat.data.model.ClientType
+import cn.nabr.chatwithchat.data.token.TokenUsageEstimator
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MemoryPromptBuilderTest {
 
     @Test
-    fun `prompt includes locally retrieved markdown memory and privacy guidance`() {
-        val prompt = MemoryPromptBuilder().buildRetrieved(
-            listOf(
-                MemoryRetrievalResult(
-                    chunkId = "MEMORY.md#mem_1#0",
-                    entryId = "mem_1",
-                    sourcePath = "MEMORY.md",
-                    text = "The user prefers natural Chinese conversation.",
-                    type = "communication_style",
-                    sensitivity = MemorySensitivity.PRIVATE,
-                    source = MemorySource.USER_CONFIRMED,
-                    embeddingContentHash = "fixture_hash",
-                    lexicalScore = 1f,
-                    fusedScore = 1f,
-                    updatedAt = 100L
-                )
-            )
+    fun `prompt includes natural language facts and one global privacy guidance`() {
+        val rendered = MemoryPromptBuilder().build(
+            coreFacts = listOf(ModelVisibleMemoryFact("The user prefers natural Chinese conversation.")),
+            queryFacts = listOf(ModelVisibleMemoryFact("The current project is ChatWithChat."))
         )
+        val prompt = rendered.prompt.orEmpty()
 
-        assertTrue(prompt!!.contains("用户记忆"))
+        assertTrue(prompt.contains("用户记忆"))
         assertTrue(prompt.contains("The user prefers natural Chinese conversation."))
+        assertTrue(prompt.contains("The current project is ChatWithChat."))
         assertFalse(prompt.contains("MEMORY.md"))
-        assertFalse(prompt.contains("mem_1"))
-        assertFalse(prompt.contains("fixture_hash"))
+        assertFalse(prompt.contains("canonical_key"))
         assertFalse(prompt.contains("type:"))
         assertFalse(prompt.contains("sensitivity:"))
         assertFalse(prompt.contains("source:"))
-        assertFalse(prompt.contains(MemorySensitivity.PRIVATE))
-        assertFalse(prompt.contains(MemorySource.USER_CONFIRMED))
-        assertTrue(prompt.contains("不要在非必要时透露私密信息"))
+        assertEquals(1, prompt.split("不要提及记忆存储").size - 1)
     }
 
     @Test
-    fun `prompt returns null when local retrieval returns no memories`() {
-        assertFalse(MemoryPromptBuilder().buildRetrieved(emptyList()).orEmpty().isNotBlank())
+    fun `prompt returns null when both recall layers are empty`() {
+        val rendered = MemoryPromptBuilder().build(emptyList(), emptyList())
+
+        assertNull(rendered.prompt)
+        assertEquals(0, rendered.estimatedTokens)
+        assertTrue(rendered.coreFacts.isEmpty())
+        assertTrue(rendered.queryFacts.isEmpty())
     }
 
     @Test
-    fun `prompt defense keeps one exact text representative before memory limit`() {
-        val prompt = MemoryPromptBuilder(maxMemories = 2).buildRetrieved(
-            listOf(
-                retrievalResult("mem_duplicate_a", "The user prefers CAFÉ answers.", fusedScore = 3f),
-                retrievalResult("mem_duplicate_b", "\u00a0THE user prefers\u3000café\nanswers.  ", fusedScore = 2f),
-                retrievalResult("mem_unique", "The user keeps a unique project context.", fusedScore = 1f)
+    fun `builder keeps at most four core and three query facts with exact deduplication`() {
+        val rendered = MemoryPromptBuilder().build(
+            coreFacts = (1..6).map { index -> ModelVisibleMemoryFact("Core fact $index.") },
+            queryFacts = listOf(
+                ModelVisibleMemoryFact("Query fact 1."),
+                ModelVisibleMemoryFact("  QUERY   FACT 1.  "),
+                ModelVisibleMemoryFact("Query fact 2."),
+                ModelVisibleMemoryFact("Query fact 3."),
+                ModelVisibleMemoryFact("Query fact 4.")
             )
-        ).orEmpty()
-        val normalizedPrompt = normalizeExactMemoryText(prompt)
+        )
 
-        assertEquals(1, normalizedPrompt.split("the user prefers café answers.").size - 1)
-        assertTrue(normalizedPrompt.contains("the user keeps a unique project context."))
+        assertEquals(4, rendered.coreFacts.size)
+        assertEquals(3, rendered.queryFacts.size)
+        assertEquals(1, normalizeExactMemoryText(rendered.prompt.orEmpty()).split("query fact 1.").size - 1)
+    }
+
+    @Test
+    fun `builder deduplicates equivalent facts across core and query layers`() {
+        val rendered = MemoryPromptBuilder().build(
+            coreFacts = listOf(ModelVisibleMemoryFact("Call the user Alex.")),
+            queryFacts = listOf(
+                ModelVisibleMemoryFact("  CALL   THE USER ALEX.  "),
+                ModelVisibleMemoryFact("The current project is ChatWithChat.")
+            )
+        )
+
+        assertEquals(listOf("Call the user Alex."), rendered.coreFacts.map { fact -> fact.text })
+        assertEquals(
+            listOf("The current project is ChatWithChat."),
+            rendered.queryFacts.map { fact -> fact.text }
+        )
+        assertEquals(1, normalizeExactMemoryText(rendered.prompt.orEmpty()).split("call the user alex.").size - 1)
+    }
+
+    @Test
+    fun `token budgets drop an oversized fact at a bullet boundary without truncation`() {
+        val oversized = "oversized-marker " + "detail ".repeat(1_000)
+        val retained = "Short relevant fact."
+        val rendered = MemoryPromptBuilder().build(
+            coreFacts = listOf(ModelVisibleMemoryFact(retained)),
+            queryFacts = listOf(ModelVisibleMemoryFact(oversized), ModelVisibleMemoryFact("Second query fact."))
+        )
+        val prompt = rendered.prompt.orEmpty()
+
+        assertTrue(prompt.contains(retained))
+        assertTrue(prompt.contains("Second query fact."))
+        assertFalse(prompt.contains("oversized-marker"))
+        assertTrue(rendered.estimatedTokens <= 500)
+        assertEquals(
+            rendered.estimatedTokens,
+            TokenUsageEstimator.estimateText(prompt, model = "", clientType = ClientType.OPENAI)
+        )
+    }
+
+    @Test
+    fun `configured prompt budget cannot raise the five hundred token hard cap`() {
+        val rendered = MemoryPromptBuilder(
+            coreTokenBudget = 5_000,
+            queryTokenBudget = 5_000,
+            promptTokenBudget = 5_000
+        ).build(
+            coreFacts = (1..4).map { index ->
+                ModelVisibleMemoryFact("Core fact $index. " + "core-detail ".repeat(120))
+            },
+            queryFacts = (1..3).map { index ->
+                ModelVisibleMemoryFact("Query fact $index. " + "query-detail ".repeat(120))
+            }
+        )
+
+        assertTrue(rendered.coreFacts.size + rendered.queryFacts.size in 1..6)
+        assertTrue(rendered.estimatedTokens <= 500)
+        assertEquals(
+            rendered.estimatedTokens,
+            TokenUsageEstimator.estimateText(rendered.prompt.orEmpty(), model = "", clientType = ClientType.OPENAI)
+        )
+    }
+
+    @Test
+    fun `model visible fact rejects internal metadata shaped text`() {
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            ModelVisibleMemoryFact("scope: general")
+        }
+
+        assertEquals("Memory fact text must not contain internal metadata", error.message)
     }
 
     @Test
