@@ -936,26 +936,26 @@ git diff --check
 
 - [x] 把 sticker flow 表达为显式 state transition，而不是每轮始终复用初始 full tool scope。
 - [x] 初始请求按现有 enablement/scope 选择工具；成功、非空 `search_stickers` 后只暴露 `send_sticker`。空候选可以保留一次 bounded re-search，但不能重新暴露无关工具。
-- [ ] `send_sticker` 成功后立即进入 final-only state，不再发一个仍带工具 schema 的“看看模型是否 final”请求。
+- [x] `send_sticker` 成功后立即进入 final-only state，不再发一个仍带工具 schema 的“看看模型是否 final”请求。
 - [x] JSON fallback 的 final-only round 可以要求合法 `final_answer` envelope，但该 content 本身就是正式用户回答；不得再把它作为 draft 发给同一 provider 请求一次。
-- [ ] native final-only request 的 `tools` / `toolChoice` 必须为空；所有 provider adapter 有 serialized DTO assertion。
+- [x] native final-only request 的 `tools` / `toolChoice` 必须为空；所有 provider adapter 有 serialized DTO assertion。
 - [x] `ToolResult` 保留 canonical candidate data供 session validation。JSON prompt 使用 bounded textual representation；native adapters 只序列化一份 compact structured representation，不能重复发送等价 content。
 - [x] candidate projection 仍包含 stable `sticker_id`、bounded title/alt/tags；不包含 path、URI、asset hash、bytes 或完整 catalog。
-- [ ] post-search mechanical round 使用 `ToolRoundReasoningPolicy.LOW` 或等价 provider-aware mapping；initial/final 使用用户 reasoning。unsupported provider 不发送伪参数。
+- [x] post-search mechanical round 使用 `ToolRoundReasoningPolicy.LOW` 或等价 provider-aware mapping；initial/final 使用用户 reasoning。unsupported provider 不发送伪参数。
 - [x] JSON scratchpad 只保留下一轮所需 calls/results；已被 compact summary覆盖的候选不得全文重复累积到 8000 chars。
-- [ ] system/history/memory snapshot 在同一 turn 不重新计算。对必须重发的 stateless provider 保持 compact；支持 continuation 的 provider 不应重建重复 tool result。
-- [ ] direct answer with tools available 仍为一次模型请求；failed/malformed/stale sticker ID 路径 bounded 且能生成最终文本或清晰错误。
-- [ ] auto web-search decision 的额外调用在 request trace 和 usage aggregation 中可见；decision=false 不得静默丢失 usage。
-- [ ] 不改变 typed `StickerRef` persistence、revision/retry、render、source metadata 和 token aggregation contracts。
+- [x] system/history/memory snapshot 在同一 turn 不重新计算。对必须重发的 stateless provider 保持 compact；支持 continuation 的 provider 不应重建重复 tool result。
+- [x] direct answer with tools available 仍为一次模型请求；failed/malformed/stale sticker ID 路径 bounded 且能生成最终文本或清晰错误。
+- [x] auto web-search decision 的额外调用在 request trace 和 usage aggregation 中可见；decision=false 不得静默丢失 usage。
+- [x] 不改变 typed `StickerRef` persistence、revision/retry、render、source metadata 和 token aggregation contracts。
 
 **Acceptance criteria:**
 
 - [x] JSON fallback sticker happy path：恰好 3 model requests、2 local tool executions、1 persisted sticker presentation、1 final answer。
-- [ ] native sticker happy path：最多 3 model requests；第二轮 schema 只含 companion tool，最后一轮 tools 为空。
-- [ ] JSON fallback textual IDs 和 native structured candidates 均能成功 `send_sticker`，但每个 transport 的 serialized payload 只有一份 candidate list。
-- [ ] formal final reasoning 与用户设置一致；只有 send-selection mechanical round 被降低。
-- [ ] 固定 fixture 相比 Task 0：JSON total estimated input tokens 至少下降 30%，native 至少下降 20%；输出质量和 tool correctness tests 通过。
-- [ ] usage detail 数量、tool-related flags、aggregate totals 与真实请求数一致。
+- [x] native sticker happy path：最多 3 model requests；第二轮 schema 只含 companion tool，最后一轮 tools 为空。
+- [x] JSON fallback textual IDs 和 native structured candidates 均能成功 `send_sticker`，但每个 transport 的 serialized payload 只有一份 candidate list。
+- [x] formal final reasoning 与用户设置一致；只有 send-selection mechanical round 被降低。
+- [x] 固定 fixture 相比 Task 0：JSON total estimated input tokens 至少下降 30%，native 至少下降 20%；输出质量和 tool correctness tests 通过。
+- [x] usage detail 数量、tool-related flags、aggregate totals 与真实请求数一致。
 
 **Focused verification:**
 
@@ -972,7 +972,16 @@ git diff --check
 - All four native result adapters now keep canonical `ToolResult` data untouched but project sticker search results as one compact structured candidate representation. Focused assertions cover stable ID/title/alt/tags and prove path, URI, hash, bytes, catalog extras, and equivalent textual candidates are absent from the serialized DTO.
 - State-machine tests passed 7/7. The combined state/orchestrator/prompt/provider adapter gate passed, the deterministic repository baseline passed, `:app:compileDebugKotlin` passed, and `git diff --check` passed.
 - Frozen JSON measurements now show exactly 3 model requests, 2 local executions, 1 presentation, 1 final answer, and 3 usage details. Estimated input tokens fell from `2771 -> 1394` for Custom, `2783 -> 1403` for Ollama, and `2839 -> 1445` for Groq; candidate ID occurrences fell from 5 to 1 for each JSON transport.
-- Native projection alone reduced candidate ID occurrences from 5 to 3 and modestly reduced payloads, but native final-only schemas, mechanical LOW reasoning, consumed-result compaction, and the 20% native token target remain open for the next slice.
+- Native projection alone reduced candidate ID occurrences from 5 to 3 and modestly reduced payloads; the next slice completed final-only schemas, mechanical LOW reasoning, consumed-result compaction, and the 20% native token target.
+
+#### Task 7 Native Reasoning, Snapshot, And Usage Slice Record (2026-07-29)
+
+- OpenAI Responses, OpenRouter, Anthropic, and Google now share the same `ToolRoundStateMachine` execution allowlist. Their sticker happy paths serialize tool counts `2 -> 1 -> 0`; the final request removes the consumed search continuation while preserving the complete `send_sticker` call/result pair required by each native protocol.
+- JSON and native request construction now maps round reasoning as `USER -> LOW -> USER`. OpenAI Responses, Anthropic, Google, and Groq DTO tests prove the mechanical LOW value and restoration of the user's HIGH setting for the formal final request; an unsupported OpenRouter fixture proves that no synthetic reasoning field is sent.
+- Every JSON fallback turn freezes one `ConversationContext` and runtime prompt before model rounds. A repository fixture with an omitted history turn proves that three JSON model requests invoke the compaction scheduling side effect exactly once. Native user/LOW templates are likewise derived from one frozen conversation snapshot.
+- Search decisions have a distinct `search_decision` prompt trace. The decision=false sticker fixture now exposes one decision plus three answer requests: visible answer usage remains `30/3/33`, tool aggregate is `71/9/80`, all four details are tool-related, and exactly one detail is labeled `搜索决策`.
+- Frozen native estimated input totals are OpenAI Responses `2447 -> 1863`, OpenRouter `3129 -> 2456`, Anthropic `3036 -> 2386`, and Google `2979 -> 2349`; all reductions exceed 20%. Candidate ID occurrences are 2 because the compact candidate projection and selected send argument are distinct protocol data, while no request repeats an equivalent candidate list.
+- The final focused gate passed 225/225 tests across 13 suites; an additional 33/33 state-flow, `StickerRef`, revision, and context tests preserved the surrounding persistence contracts. `:app:compileDebugKotlin --no-daemon`, ktlint 1.3.1 on all eight touched Kotlin files, and `git diff --check` passed. Device persistence/render runtime proof remains part of Task 8.
 
 ### Task 8: Integrate, Migrate, Prove Runtime Behavior, And Document Evidence
 

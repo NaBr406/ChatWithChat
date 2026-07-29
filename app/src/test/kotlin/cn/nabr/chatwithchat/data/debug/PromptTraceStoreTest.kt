@@ -1,7 +1,7 @@
 package cn.nabr.chatwithchat.data.debug
 
-import cn.nabr.chatwithchat.data.model.ClientType
 import cn.nabr.chatwithchat.data.memory.MemoryRetrievalMode
+import cn.nabr.chatwithchat.data.model.ClientType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -39,6 +39,27 @@ class PromptTraceStoreTest {
         assertEquals(listOf(second.traceId, first.traceId), store.entries.value.map { it.traceId })
         assertEquals(exactPrompt, store.entries.value[1].systemPrompt)
         assertEquals(9, store.entries.value[1].userMessageId)
+    }
+
+    @Test
+    fun `search decision stage keeps the exact decision prompt`() {
+        val store = PromptTraceStore()
+        val prompt = "用户最新消息：需要最新资料吗？"
+
+        val entry = store.record(
+            chatId = 8,
+            turnNumber = 2,
+            userMessageId = 12,
+            platformUid = "provider",
+            platformName = "Provider",
+            clientType = ClientType.CUSTOM,
+            model = "model",
+            stage = PromptTraceStage.SEARCH_DECISION,
+            systemPrompt = prompt
+        )
+
+        assertEquals(PromptTraceStage.SEARCH_DECISION, entry.stage)
+        assertEquals(prompt, entry.systemPrompt)
     }
 
     @Test

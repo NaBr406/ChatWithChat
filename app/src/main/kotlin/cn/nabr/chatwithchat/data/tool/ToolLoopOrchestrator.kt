@@ -71,6 +71,22 @@ class ToolLoopOrchestrator(
         adapter: ToolCallingAdapter = defaultToolCallingAdapter,
         onProgress: suspend (ApiState) -> Unit = {},
         requestModel: suspend (toolPrompt: String) -> Result<String>
+    ): ToolLoopResult = runLoopWithRoundPolicy(
+        scope = scope,
+        adapter = adapter,
+        onProgress = onProgress
+    ) { toolPrompt, _ ->
+        requestModel(toolPrompt)
+    }
+
+    internal suspend fun runLoopWithRoundPolicy(
+        scope: ToolScope,
+        adapter: ToolCallingAdapter = defaultToolCallingAdapter,
+        onProgress: suspend (ApiState) -> Unit = {},
+        requestModel: suspend (
+            toolPrompt: String,
+            reasoningPolicy: ToolRoundReasoningPolicy
+        ) -> Result<String>
     ): ToolLoopResult {
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)
         if (maxRounds == 0) return ToolLoopResult.Failed("tool_loop_no_rounds")
@@ -101,7 +117,7 @@ class ToolLoopOrchestrator(
                     config = config
                 )
             }
-            val modelText = requestModel(toolPrompt).getOrElse { throwable ->
+            val modelText = requestModel(toolPrompt, roundState.reasoningPolicy).getOrElse { throwable ->
                 return fallbackOrFailure(
                     adapter = adapter,
                     allCalls = allCalls,

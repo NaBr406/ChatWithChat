@@ -136,6 +136,58 @@ class ToolLoopOrchestratorTest {
     }
 
     @Test
+    fun `sticker json loop lowers only the send selection round reasoning`() = runBlocking {
+        val executor = ToolExecutor(
+            ToolRegistry(
+                definitions = listOf(ToolDefinition.SearchStickers, ToolDefinition.SendSticker),
+                handlers = mapOf(
+                    ToolDefinition.SearchStickers.name to ToolHandler { call, _ ->
+                        ToolResult(
+                            callId = call.id,
+                            name = call.name,
+                            content = "sticker_id=builtin.reactions.wave",
+                            metadata = mapOf("candidate_count" to "1")
+                        )
+                    },
+                    ToolDefinition.SendSticker.name to ToolHandler { call, _ ->
+                        ToolResult(call.id, call.name, "Sticker queued.")
+                    }
+                ),
+                securityPolicies = mapOf(
+                    ToolDefinition.SearchStickers.name to ToolSecurityPolicy.ReadOnlyPrivate,
+                    ToolDefinition.SendSticker.name to ToolSecurityPolicy.ReadOnlyPrivate
+                )
+            )
+        )
+        val orchestrator = ToolLoopOrchestrator(executor)
+        val policies = mutableListOf<ToolRoundReasoningPolicy>()
+        val responses = ArrayDeque(
+            listOf(
+                """{"type":"tool_calls","tool_calls":[{"id":"search","name":"search_stickers","arguments":{"query":"wave"}}]}""",
+                """{"type":"tool_calls","tool_calls":[{"id":"send","name":"send_sticker","arguments":{"sticker_id":"builtin.reactions.wave"}}]}""",
+                """{"type":"final_answer","content":"Done."}"""
+            )
+        )
+
+        val result = orchestrator.runLoopWithRoundPolicy(
+            scope = orchestrator.createToolScope(orchestrator.toolDefinitions)
+        ) { _, policy ->
+            policies += policy
+            Result.success(responses.removeFirst())
+        }
+
+        assertTrue(result is ToolLoopResult.CompletedWithToolResults)
+        assertEquals(
+            listOf(
+                ToolRoundReasoningPolicy.USER,
+                ToolRoundReasoningPolicy.LOW,
+                ToolRoundReasoningPolicy.USER
+            ),
+            policies
+        )
+    }
+
+    @Test
     fun `malformed tool envelope preserves tool interaction intent`() = runBlocking {
         val orchestrator = ToolLoopOrchestrator(recordingExecutor(mutableListOf()))
 

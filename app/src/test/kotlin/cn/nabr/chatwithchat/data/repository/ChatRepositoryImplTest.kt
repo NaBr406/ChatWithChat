@@ -3,6 +3,8 @@ package cn.nabr.chatwithchat.data.repository
 import android.content.ContextWrapper
 import android.net.Uri
 import cn.nabr.chatwithchat.data.context.ContextBuilder
+import cn.nabr.chatwithchat.data.database.dao.MemoryMaintenanceJobDao
+import cn.nabr.chatwithchat.data.database.dao.MemoryTurnBatchDao
 import cn.nabr.chatwithchat.data.database.entity.MessageSourceMetadata
 import cn.nabr.chatwithchat.data.database.entity.MessageStickerRef
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
@@ -65,6 +67,9 @@ import cn.nabr.chatwithchat.data.dto.openai.response.ResponseError
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponseFailedEvent
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponseObject
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponsesStreamEvent
+import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceScheduler
+import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceWorkEnqueuer
+import cn.nabr.chatwithchat.data.memory.MemoryTurnBatchScheduler
 import cn.nabr.chatwithchat.data.model.ChatAttachment
 import cn.nabr.chatwithchat.data.model.ClientType
 import cn.nabr.chatwithchat.data.model.ReasoningMode
@@ -1530,12 +1535,27 @@ class ChatRepositoryImplTest {
         assertTrue(states.contains(ApiState.Success("Final answer without a marker")))
         assertEquals(3, openAIAPI.streamResponsesCalls)
         val sendRequest = openAIAPI.responsesRequests[1]
+        assertEquals(
+            listOf(ToolDefinition.SendSticker.name),
+            sendRequest.tools.orEmpty().map { tool -> tool.name }
+        )
         assertTrue(sendRequest.instructions.orEmpty().contains("你自身反应"))
         assertTrue(sendRequest.instructions.orEmpty().contains("立即调用 send_sticker"))
-        assertTrue(sendRequest.instructions.orEmpty().contains("再调用一次 search_stickers"))
+        assertTrue(sendRequest.instructions.orEmpty().contains("不要再次搜索"))
+        assertFalse(sendRequest.instructions.orEmpty().contains("再调用一次 search_stickers"))
         val finalRequest = openAIAPI.responsesRequests[2]
+        assertNull(finalRequest.tools)
+        assertNull(finalRequest.toolChoice)
+        assertEquals(
+            listOf(ToolDefinition.SendSticker.name),
+            finalRequest.input.filterIsInstance<ResponseFunctionCallInputItem>().map { item -> item.name }
+        )
+        assertEquals(
+            listOf("sticker_send_1"),
+            finalRequest.input.filterIsInstance<ResponseFunctionCallOutputItem>().map { item -> item.callId }
+        )
         assertTrue(finalRequest.instructions.orEmpty().contains("贴图已进入本地渲染队列"))
-        assertTrue(finalRequest.instructions.orEmpty().contains("不要再调用贴图工具"))
+        assertTrue(finalRequest.instructions.orEmpty().contains("不要再调用工具"))
     }
 
     @Test
@@ -1572,8 +1592,12 @@ class ChatRepositoryImplTest {
         rows.filterNot { row -> row.name.endsWith("_json") }.forEach { row ->
             assertEquals("${row.name} model request baseline", 3, row.modelRequests)
             assertEquals("${row.name} local execution baseline", 2, row.toolExecutions)
-            assertTrue("${row.name} currently repeats tools in the final request", row.advertisedToolCounts.last() > 0)
-            assertEquals("${row.name} compact candidate projection baseline", 3, row.candidateOccurrences)
+            assertEquals("${row.name} narrows sticker schemas", listOf(2, 1, 0), row.advertisedToolCounts)
+            assertEquals("${row.name} serializes candidates only before selection", 2, row.candidateOccurrences)
+            assertTrue(
+                "${row.name} should reduce estimated input tokens by at least 20%",
+                row.estimatedInputTokens.sum() <= NATIVE_STICKER_TOKEN_CEILINGS.getValue(row.name)
+            )
         }
         assertTrue(rows.all { row -> !row.usage.isEstimated })
         assertTrue(rows.all { row -> row.usage.details > 0 })
@@ -1583,9 +1607,10 @@ class ChatRepositoryImplTest {
     }
 
     @Test
-    fun `false auto search decision adds one request and drops its usage baseline`() = runBlocking {
+    fun `false auto search decision adds one traced request and aggregates its usage`() = runBlocking {
         val executions = intArrayOf(0)
         var decisionRequests = 0
+        val promptTraceStore = PromptTraceStore()
         val decisionUsage = ProviderUsage(promptTokens = 11, completionTokens = 3, totalTokens = 14)
         val openAIAPI = RecordingOpenAIAPI(
             chatCompletionResponses = mutableListOf(
@@ -1618,7 +1643,8 @@ class ChatRepositoryImplTest {
             openAIAPI = openAIAPI,
             settingRepository = settingRepository(WebSearchMode.Auto, ToolCallingMode.Auto),
             toolLoopOrchestrator = baselineStickerToolLoop(executions, includeWebSearch = true),
-            searchDecisionService = searchDecisionService
+            searchDecisionService = searchDecisionService,
+            promptTraceStore = promptTraceStore
         ).completeChat(
             userMessages = listOf(MessageV2(content = "Send a sticker", platformType = null)),
             assistantMessages = emptyList(),
@@ -1642,11 +1668,231 @@ class ChatRepositoryImplTest {
         assertEquals(30, visibleUsage.inputTokens)
         assertEquals(3, visibleUsage.outputTokens)
         assertEquals(33, visibleUsage.totalTokens)
-        assertEquals(60, visibleUsage.toolInputTokens)
-        assertEquals(6, visibleUsage.toolOutputTokens)
-        assertEquals(66, visibleUsage.toolTotalTokens)
-        assertEquals(3, visibleUsage.details.size)
-        assertFalse(visibleUsage.details.any { detail -> detail.label == "\u641c\u7d22\u51b3\u7b56" })
+        assertEquals(71, visibleUsage.toolInputTokens)
+        assertEquals(9, visibleUsage.toolOutputTokens)
+        assertEquals(80, visibleUsage.toolTotalTokens)
+        assertEquals(4, visibleUsage.details.size)
+        assertTrue(visibleUsage.details.all { detail -> detail.isToolRelated })
+        assertEquals(1, visibleUsage.details.count { detail -> detail.label == "\u641c\u7d22\u51b3\u7b56" })
+        val decisionTrace = promptTraceStore.entries.value.single { trace ->
+            trace.stage == PromptTraceStage.SEARCH_DECISION
+        }
+        assertTrue(decisionTrace.systemPrompt.contains("Send a sticker"))
+    }
+
+    @Test
+    fun `sticker selection lowers reasoning only for the mechanical round`() = runBlocking {
+        val userMessages = listOf(MessageV2(content = "Send a sticker", platformType = null))
+        val settings = settingRepository(WebSearchMode.Off, ToolCallingMode.Auto)
+
+        val responsesAPI = RecordingOpenAIAPI(
+            responsesResponses = mutableListOf(
+                responsesBaselineToolFlow(
+                    "search",
+                    "search_1",
+                    ToolDefinition.SearchStickers.name,
+                    "{\"query\":\"crying cat\"}",
+                    baselineProviderUsage(1)
+                ),
+                responsesBaselineToolFlow(
+                    "send",
+                    "send_1",
+                    ToolDefinition.SendSticker.name,
+                    "{\"sticker_id\":\"$BASELINE_STICKER_ID\"}",
+                    baselineProviderUsage(2)
+                ),
+                responseTextFlow("Final", baselineProviderUsage(3))
+            )
+        )
+        createRepository(
+            openAIAPI = responsesAPI,
+            settingRepository = settings,
+            toolLoopOrchestrator = baselineStickerToolLoop(intArrayOf(0))
+        ).completeChat(
+            userMessages,
+            emptyList(),
+            openAIPlatform(),
+            reasoningMode = ReasoningMode.HIGH
+        ).toList()
+        assertEquals(
+            listOf("high", "low", "high"),
+            responsesAPI.responsesRequests.map { request -> request.reasoning?.effort }
+        )
+
+        val anthropicAPI = RecordingAnthropicAPI(
+            responses = mutableListOf(
+                anthropicBaselineToolFlow(
+                    "search_1",
+                    ToolDefinition.SearchStickers.name,
+                    "{\"query\":\"crying cat\"}",
+                    usageRound = 1
+                ),
+                anthropicBaselineToolFlow(
+                    "send_1",
+                    ToolDefinition.SendSticker.name,
+                    "{\"sticker_id\":\"$BASELINE_STICKER_ID\"}",
+                    usageRound = 2
+                ),
+                anthropicTextFlow("Final", 30, 0, 0, 3, includeProviderUsage = true)
+            )
+        )
+        createRepository(
+            anthropicAPI = anthropicAPI,
+            settingRepository = settings,
+            toolLoopOrchestrator = baselineStickerToolLoop(intArrayOf(0))
+        ).completeChat(
+            userMessages,
+            emptyList(),
+            anthropicPlatform().copy(model = "claude-3-7-sonnet"),
+            reasoningMode = ReasoningMode.HIGH
+        ).toList()
+        assertEquals(
+            listOf(16_000, 4_096, 16_000),
+            anthropicAPI.requests.map { request -> request.thinking?.budgetTokens }
+        )
+
+        val googleAPI = RecordingGoogleAPI(
+            responses = mutableListOf(
+                googleBaselineToolFlow(
+                    "search_1",
+                    ToolDefinition.SearchStickers.name,
+                    buildJsonObject { put("query", JsonPrimitive("crying cat")) },
+                    baselineGoogleUsage(1)
+                ),
+                googleBaselineToolFlow(
+                    "send_1",
+                    ToolDefinition.SendSticker.name,
+                    buildJsonObject { put("sticker_id", JsonPrimitive(BASELINE_STICKER_ID)) },
+                    baselineGoogleUsage(2)
+                ),
+                googleTextFlow("Final", baselineGoogleUsage(3))
+            )
+        )
+        createRepository(
+            googleAPI = googleAPI,
+            settingRepository = settings,
+            toolLoopOrchestrator = baselineStickerToolLoop(intArrayOf(0))
+        ).completeChat(
+            userMessages,
+            emptyList(),
+            googlePlatform().copy(model = "gemini-2.5-pro"),
+            reasoningMode = ReasoningMode.HIGH
+        ).toList()
+        assertEquals(
+            listOf(8_192, 1_024, 8_192),
+            googleAPI.requests.map { request -> request.generationConfig?.thinkingConfig?.thinkingBudget }
+        )
+
+        val groqAPI = FakeGroqAPI(
+            responses = mutableListOf(
+                groqCompletionFlow(
+                    baselineJsonToolCall("search_1", ToolDefinition.SearchStickers.name, "{\"query\":\"crying cat\"}"),
+                    baselineProviderUsage(1)
+                ),
+                groqCompletionFlow(
+                    baselineJsonToolCall("send_1", ToolDefinition.SendSticker.name, "{\"sticker_id\":\"$BASELINE_STICKER_ID\"}"),
+                    baselineProviderUsage(2)
+                ),
+                groqCompletionFlow("{\"type\":\"final_answer\",\"content\":\"Final\"}", baselineProviderUsage(3))
+            )
+        )
+        createRepository(
+            groqAPI = groqAPI,
+            settingRepository = settings,
+            toolLoopOrchestrator = baselineStickerToolLoop(intArrayOf(0))
+        ).completeChat(
+            userMessages,
+            emptyList(),
+            groqPlatform(reasoning = true, model = "openai/gpt-oss-20b"),
+            reasoningMode = ReasoningMode.HIGH
+        ).toList()
+        assertEquals(listOf("high", "low", "high"), groqAPI.requests.map { request -> request.reasoningEffort })
+
+        val unsupportedAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatToolCallFlow("search_1", ToolDefinition.SearchStickers.name, "{\"query\":\"crying cat\"}"),
+                chatToolCallFlow("send_1", ToolDefinition.SendSticker.name, "{\"sticker_id\":\"$BASELINE_STICKER_ID\"}"),
+                chatCompletionFlow("Final")
+            )
+        )
+        createRepository(
+            openAIAPI = unsupportedAPI,
+            settingRepository = settings,
+            toolLoopOrchestrator = baselineStickerToolLoop(intArrayOf(0))
+        ).completeChat(
+            userMessages,
+            emptyList(),
+            openRouterPlatform().copy(model = "ordinary-openrouter-model"),
+            reasoningMode = ReasoningMode.HIGH
+        ).toList()
+        assertTrue(unsupportedAPI.chatCompletionRequests.all { request -> request.reasoningEffort == null })
+    }
+
+    @Test
+    fun `json tool rounds schedule omitted context compaction only once`() = runBlocking {
+        var compactionChecks = 0
+        val settings = settingRepository(
+            webSearchMode = WebSearchMode.Off,
+            toolCallingMode = ToolCallingMode.Auto,
+            memoryEnabled = true
+        )
+        val jobDao: MemoryMaintenanceJobDao = proxy()
+        val memoryScheduler = MemoryTurnBatchScheduler(
+            turnBatchDao = recordingMemoryTurnBatchDao { compactionChecks += 1 },
+            maintenanceJobDao = jobDao,
+            maintenanceScheduler = MemoryMaintenanceScheduler(jobDao),
+            workEnqueuer = object : MemoryMaintenanceWorkEnqueuer {
+                override fun enqueueWork(family: String, delaySeconds: Long) = Unit
+            },
+            settingRepository = settings
+        )
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatCompletionFlow(
+                    baselineJsonToolCall("search_1", ToolDefinition.SearchStickers.name, "{\"query\":\"crying cat\"}")
+                ),
+                chatCompletionFlow(
+                    baselineJsonToolCall("send_1", ToolDefinition.SendSticker.name, "{\"sticker_id\":\"$BASELINE_STICKER_ID\"}")
+                ),
+                chatCompletionFlow("{\"type\":\"final_answer\",\"content\":\"Final\"}")
+            )
+        )
+        val userMessages = (1..8).map { index ->
+            MessageV2(
+                id = index,
+                chatId = 91,
+                content = if (index == 8) "Send a sticker" else "history user $index",
+                platformType = null
+            )
+        }
+        val assistantMessages = (1..8).map { index ->
+            if (index == 8) {
+                emptyList()
+            } else {
+                listOf(
+                    MessageV2(
+                        id = 100 + index,
+                        chatId = 91,
+                        content = "history assistant $index",
+                        platformType = customPlatform().uid
+                    )
+                )
+            }
+        }
+
+        createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settings,
+            toolLoopOrchestrator = baselineStickerToolLoop(intArrayOf(0)),
+            memoryTurnBatchScheduler = memoryScheduler
+        ).completeChat(
+            userMessages = userMessages,
+            assistantMessages = assistantMessages,
+            platform = customPlatform()
+        ).toList()
+
+        assertEquals(3, openAIAPI.chatCompletionRequests.size)
+        assertEquals(1, compactionChecks)
     }
 
     @Test
@@ -1690,6 +1936,10 @@ class ChatRepositoryImplTest {
         ).toList()
 
         assertEquals(2, openAIAPI.chatCompletionRequests.size)
+        assertEquals(
+            listOf(ToolDefinition.SendSticker.name),
+            openAIAPI.chatCompletionRequests[1].tools.orEmpty().map { tool -> tool.function.name }
+        )
         val continuationPrompt = openAIAPI.chatCompletionRequests[1]
             .messages
             .filter { message -> message.role == OpenAIRole.SYSTEM }
@@ -1762,6 +2012,10 @@ class ChatRepositoryImplTest {
         ).toList()
 
         assertEquals(2, anthropicAPI.requests.size)
+        assertEquals(
+            listOf(ToolDefinition.SendSticker.name),
+            anthropicAPI.requests[1].tools.orEmpty().map { tool -> tool.name }
+        )
         val continuationPrompt = anthropicAPI.requests[1].systemPrompt.orEmpty()
         assertTrue(continuationPrompt.contains("立即调用 send_sticker"))
         assertTrue(continuationPrompt.contains("你自身反应"))
@@ -1834,6 +2088,10 @@ class ChatRepositoryImplTest {
         ).toList()
 
         assertEquals(2, googleAPI.requests.size)
+        assertEquals(
+            listOf(ToolDefinition.SendSticker.name),
+            googleAPI.requests[1].tools.orEmpty().flatMap { tool -> tool.functionDeclarations }.map { function -> function.name }
+        )
         val continuationPrompt = googleAPI.requests[1]
             .systemInstruction
             ?.parts
@@ -3035,7 +3293,9 @@ class ChatRepositoryImplTest {
         harness.execute(platform)
 
         val sentPrompt = harness.openAIAPI.responsesRequests.single().instructions.orEmpty()
-        val trace = harness.promptTraceStore.entries.value.single()
+        val trace = harness.promptTraceStore.entries.value.single { entry ->
+            entry.stage == PromptTraceStage.ANSWER_WITH_EXTRA_INSTRUCTIONS
+        }
         assertEquals(sentPrompt, trace.systemPrompt)
         harness.assertTracedProviderPrompt(provider = "Prompt trace", prompt = trace.systemPrompt)
         assertEquals(PromptTraceStage.ANSWER_WITH_EXTRA_INSTRUCTIONS, trace.stage)
@@ -3044,6 +3304,10 @@ class ChatRepositoryImplTest {
         assertEquals(12, trace.userMessageId)
         assertEquals(platform.uid, trace.platformUid)
         assertEquals(platform.model, trace.model)
+        val decisionTrace = harness.promptTraceStore.entries.value.single { entry ->
+            entry.stage == PromptTraceStage.SEARCH_DECISION
+        }
+        assertTrue(decisionTrace.systemPrompt.contains("Find current provider prompt assembly evidence"))
     }
 
     @Test
@@ -3493,7 +3757,8 @@ class ChatRepositoryImplTest {
         webSearchRepository: WebSearchRepository = RecordingWebSearchRepository(),
         toolLoopOrchestrator: ToolLoopOrchestrator = toolLoopOrchestrator(webSearchRepository),
         searchDecisionService: SearchDecisionService? = null,
-        promptTraceStore: PromptTraceStore = PromptTraceStore()
+        promptTraceStore: PromptTraceStore = PromptTraceStore(),
+        memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null
     ): ChatRepositoryImpl = ChatRepositoryImpl(
         context = ContextWrapper(null),
         chatRoomDao = proxy(),
@@ -3514,6 +3779,7 @@ class ChatRepositoryImplTest {
         contextBuilder = ContextBuilder(),
         toolLoopOrchestrator = toolLoopOrchestrator,
         searchDecisionService = searchDecisionService,
+        memoryTurnBatchScheduler = memoryTurnBatchScheduler,
         promptTraceStore = promptTraceStore
     )
 
@@ -3681,7 +3947,15 @@ class ChatRepositoryImplTest {
 
     private fun ProviderPromptHarness.assertTracedProviderPrompt(provider: String, prompt: String) {
         assertProviderPromptSections(provider = provider, prompt = prompt)
-        assertEquals("$provider trace differs from the sent prompt", prompt, promptTraceStore.entries.value.single().systemPrompt)
+        val answerTrace = promptTraceStore.entries.value.single { entry ->
+            entry.stage == PromptTraceStage.ANSWER_WITH_EXTRA_INSTRUCTIONS
+        }
+        assertEquals("$provider trace differs from the sent prompt", prompt, answerTrace.systemPrompt)
+        assertEquals(
+            "$provider search decision trace count",
+            1,
+            promptTraceStore.entries.value.count { entry -> entry.stage == PromptTraceStage.SEARCH_DECISION }
+        )
     }
 
     private data class ProviderPromptHarness(
@@ -3714,15 +3988,21 @@ class ChatRepositoryImplTest {
             "sticker-request-baseline|custom_json|3|2|1371,1430,719|614,526,254|1155,1202,524|67,67,67|54,54,54|159,73,0|0,247,0|0,0,0|1|30/3/33|60/6/66|3|1",
             "sticker-request-baseline|ollama_json|3|2|1367,1426,715|617,529,257|1155,1202,524|67,67,67|54,54,54|159,73,0|0,247,0|0,0,0|1|30/3/33|60/6/66|3|1",
             "sticker-request-baseline|groq_json|3|2|1422,1481,770|631,543,271|1155,1202,524|67,67,67|54,54,54|159,73,0|0,247,0|0,0,0|1|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|openai_responses|3|2|1529,2101,2406|648,820,919|586,675,644|42,42,42|54,54,54|803,803,803|0,479,813|2,2,2|3|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|openrouter_native|3|2|1672,2296,2633|852,1052,1167|586,674,643|67,67,67|54,54,54|829,829,829|0,509,875|2,2,2|3|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|anthropic_native|3|2|1525,2120,2450|825,1019,1134|586,675,644|67,67,67|54,54,54|742,742,742|0,502,861|2,2,2|3|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|google_native|3|2|1497,2058,2363|814,1000,1111|586,674,643|51,51,51|54,54,54|707,707,707|0,460,794|2,2,2|3|30/3/33|60/6/66|3|1"
+            "sticker-request-baseline|openai_responses|3|2|1529,1676,1187|648,650,565|586,646,737|42,42,42|54,54,54|803,361,0|0,479,334|2,1,0|2|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|openrouter_native|3|2|1672,1812,1358|852,830,774|586,645,736|67,67,67|54,54,54|829,374,0|0,509,366|2,1,0|2|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|anthropic_native|3|2|1525,1680,1260|825,805,756|586,646,737|67,67,67|54,54,54|742,331,0|0,502,359|2,1,0|2|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|google_native|3|2|1497,1649,1225|814,792,743|586,645,736|51,51,51|54,54,54|707,327,0|0,460,334|2,1,0|2|30/3/33|60/6/66|3|1"
         )
         val JSON_STICKER_TOKEN_CEILINGS = mapOf(
             "custom_json" to 1_939,
             "ollama_json" to 1_948,
             "groq_json" to 1_987
+        )
+        val NATIVE_STICKER_TOKEN_CEILINGS = mapOf(
+            "openai_responses" to 1_957,
+            "openrouter_native" to 2_503,
+            "anthropic_native" to 2_428,
+            "google_native" to 2_383
         )
     }
 
@@ -3926,6 +4206,30 @@ class ChatRepositoryImplTest {
             memoryPrompt = BASELINE_MEMORY_PROMPT
         ).toList()
 
+        assertEquals(
+            listOf(ToolDefinition.SearchStickers.name, ToolDefinition.SendSticker.name),
+            openAIAPI.responsesRequests[0].tools.orEmpty().map { tool -> tool.name }
+        )
+        assertEquals(
+            listOf(ToolDefinition.SendSticker.name),
+            openAIAPI.responsesRequests[1].tools.orEmpty().map { tool -> tool.name }
+        )
+        val finalRequest = openAIAPI.responsesRequests[2]
+        assertNull(finalRequest.tools)
+        assertNull(finalRequest.toolChoice)
+        assertEquals(
+            listOf(ToolDefinition.SendSticker.name),
+            finalRequest.input.filterIsInstance<ResponseFunctionCallInputItem>().map { item -> item.name }
+        )
+        assertEquals(
+            listOf("send_1"),
+            finalRequest.input.filterIsInstance<ResponseFunctionCallOutputItem>().map { item -> item.callId }
+        )
+        assertEquals(
+            listOf(null, "low", null),
+            openAIAPI.responsesRequests.map { request -> request.reasoning?.effort }
+        )
+
         return toolRequestBaselineRow(
             name = "openai_responses",
             platform = platform,
@@ -3969,6 +4273,26 @@ class ChatRepositoryImplTest {
             platform = platform,
             memoryPrompt = BASELINE_MEMORY_PROMPT
         ).toList()
+
+        assertEquals(
+            listOf(ToolDefinition.SearchStickers.name, ToolDefinition.SendSticker.name),
+            openAIAPI.chatCompletionRequests[0].tools.orEmpty().map { tool -> tool.function.name }
+        )
+        assertEquals(
+            listOf(ToolDefinition.SendSticker.name),
+            openAIAPI.chatCompletionRequests[1].tools.orEmpty().map { tool -> tool.function.name }
+        )
+        val finalRequest = openAIAPI.chatCompletionRequests[2]
+        assertNull(finalRequest.tools)
+        assertNull(finalRequest.toolChoice)
+        assertEquals(
+            listOf(ToolDefinition.SendSticker.name),
+            finalRequest.messages.flatMap { message -> message.toolCalls.orEmpty() }.map { call -> call.function.name }
+        )
+        assertEquals(
+            listOf("send_1"),
+            finalRequest.messages.filter { message -> message.role == OpenAIRole.TOOL }.mapNotNull { message -> message.toolCallId }
+        )
 
         return toolRequestBaselineRow(
             name = "openrouter_native",
@@ -4021,6 +4345,26 @@ class ChatRepositoryImplTest {
             memoryPrompt = BASELINE_MEMORY_PROMPT
         ).toList()
 
+        assertEquals(
+            listOf(ToolDefinition.SearchStickers.name, ToolDefinition.SendSticker.name),
+            anthropicAPI.requests[0].tools.orEmpty().map { tool -> tool.name }
+        )
+        assertEquals(
+            listOf(ToolDefinition.SendSticker.name),
+            anthropicAPI.requests[1].tools.orEmpty().map { tool -> tool.name }
+        )
+        val finalRequest = anthropicAPI.requests[2]
+        assertNull(finalRequest.tools)
+        assertNull(finalRequest.toolChoice)
+        assertEquals(
+            listOf(ToolDefinition.SendSticker.name),
+            finalRequest.messages.flatMap { message -> message.content.filterIsInstance<ToolUseContent>() }.map { call -> call.name }
+        )
+        assertEquals(
+            listOf("send_1"),
+            finalRequest.messages.flatMap { message -> message.content.filterIsInstance<ToolResultContent>() }.map { result -> result.toolUseId }
+        )
+
         return toolRequestBaselineRow(
             name = "anthropic_native",
             platform = platform,
@@ -4066,6 +4410,26 @@ class ChatRepositoryImplTest {
             platform = platform,
             memoryPrompt = BASELINE_MEMORY_PROMPT
         ).toList()
+
+        assertEquals(
+            listOf(ToolDefinition.SearchStickers.name, ToolDefinition.SendSticker.name),
+            googleAPI.requests[0].tools.orEmpty().flatMap { tool -> tool.functionDeclarations }.map { function -> function.name }
+        )
+        assertEquals(
+            listOf(ToolDefinition.SendSticker.name),
+            googleAPI.requests[1].tools.orEmpty().flatMap { tool -> tool.functionDeclarations }.map { function -> function.name }
+        )
+        val finalRequest = googleAPI.requests[2]
+        assertNull(finalRequest.tools)
+        assertNull(finalRequest.toolConfig)
+        assertEquals(
+            listOf(ToolDefinition.SendSticker.name),
+            finalRequest.contents.flatMap { content -> content.parts }.mapNotNull { part -> part.functionCall?.name }
+        )
+        assertEquals(
+            listOf("send_1"),
+            finalRequest.contents.flatMap { content -> content.parts }.mapNotNull { part -> part.functionResponse?.id }
+        )
 
         return toolRequestBaselineRow(
             name = "google_native",
@@ -4463,7 +4827,8 @@ class ChatRepositoryImplTest {
         toolCallingMode: ToolCallingMode = ToolCallingMode.Off,
         webSearchBaseUrl: String = if (webSearchMode == WebSearchMode.Off) "" else "https://search.example",
         disabledToolNames: Set<String> = emptySet(),
-        disabledToolNamesFailure: Throwable? = null
+        disabledToolNamesFailure: Throwable? = null,
+        memoryEnabled: Boolean = false
     ): SettingRepository {
         val handler = InvocationHandler { _, method, _ ->
             when (method.name) {
@@ -4484,6 +4849,7 @@ class ChatRepositoryImplTest {
                 "updateWebSearchMode" -> Unit
                 "fetchWebSearchSearxngBaseUrl" -> webSearchBaseUrl
                 "updateWebSearchSearxngBaseUrl" -> Unit
+                "fetchMemoryEnabled" -> memoryEnabled
                 else -> defaultReturnValue(method.returnType)
             }
         }
@@ -4754,6 +5120,24 @@ class ChatRepositoryImplTest {
             arrayOf(T::class.java),
             handler
         ) as T
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun recordingMemoryTurnBatchDao(onCompactionCheck: () -> Unit): MemoryTurnBatchDao {
+        val handler = InvocationHandler { _, method, _ ->
+            when (method.name) {
+                "getUnclaimedTurnsThrough" -> {
+                    onCompactionCheck()
+                    emptyList<Any>()
+                }
+                else -> defaultReturnValue(method.returnType)
+            }
+        }
+        return Proxy.newProxyInstance(
+            MemoryTurnBatchDao::class.java.classLoader,
+            arrayOf(MemoryTurnBatchDao::class.java),
+            handler
+        ) as MemoryTurnBatchDao
     }
 
     private fun defaultReturnValue(returnType: Class<*>): Any? = when (returnType) {

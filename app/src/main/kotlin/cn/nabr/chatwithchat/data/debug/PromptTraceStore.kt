@@ -42,6 +42,7 @@ data class MemoryRecallTrace(
 object PromptTraceStage {
     const val ANSWER = "answer"
     const val ANSWER_WITH_EXTRA_INSTRUCTIONS = "answer_with_extra_instructions"
+    const val SEARCH_DECISION = "search_decision"
     const val TOOL_FINAL_ANSWER = "tool_final_answer"
 
     fun toolRequest(roundNumber: Int): String = "tool_request_$roundNumber"

@@ -46,7 +46,9 @@ data class SearchDecisionModelResponse(
 
 data class SearchDecisionOutcome(
     val decision: SearchDecision,
-    val usage: TokenUsageRecord?
+    val usage: TokenUsageRecord?,
+    val wasRequested: Boolean,
+    val requestPrompt: String?
 )
 
 class SearchDecisionService(
@@ -67,7 +69,14 @@ class SearchDecisionService(
         runtimeContext: String? = null
     ): SearchDecisionOutcome {
         val normalizedMessage = latestUserMessage.trim()
-        if (normalizedMessage.isBlank()) return SearchDecisionOutcome(SearchDecision.NoSearch, usage = null)
+        if (normalizedMessage.isBlank()) {
+            return SearchDecisionOutcome(
+                decision = SearchDecision.NoSearch,
+                usage = null,
+                wasRequested = false,
+                requestPrompt = null
+            )
+        }
 
         val prompt = promptBuilder.build(
             latestUserMessage = normalizedMessage,
@@ -75,7 +84,12 @@ class SearchDecisionService(
             runtimeContext = runtimeContext
         )
         val response = modelClient.requestDecision(platform, prompt).getOrNull()
-            ?: return SearchDecisionOutcome(SearchDecision.NoSearch, usage = null)
+            ?: return SearchDecisionOutcome(
+                decision = SearchDecision.NoSearch,
+                usage = null,
+                wasRequested = true,
+                requestPrompt = prompt
+            )
         val decision = SearchDecisionParser.parse(response.content)
         val usage = response.usage?.toTokenUsageRecord(platform, SEARCH_DECISION_USAGE_LABEL)
             ?: TokenUsageEstimator.estimateRequestUsage(
@@ -84,7 +98,12 @@ class SearchDecisionService(
                 platform = platform,
                 label = SEARCH_DECISION_USAGE_LABEL
             )
-        return SearchDecisionOutcome(decision = decision, usage = usage)
+        return SearchDecisionOutcome(
+            decision = decision,
+            usage = usage,
+            wasRequested = true,
+            requestPrompt = prompt
+        )
     }
 
     private companion object {

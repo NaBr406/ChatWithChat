@@ -113,6 +113,8 @@ import cn.nabr.chatwithchat.data.tool.ToolLoopConfig
 import cn.nabr.chatwithchat.data.tool.ToolLoopOrchestrator
 import cn.nabr.chatwithchat.data.tool.ToolLoopResult
 import cn.nabr.chatwithchat.data.tool.ToolResult
+import cn.nabr.chatwithchat.data.tool.ToolRoundReasoningPolicy
+import cn.nabr.chatwithchat.data.tool.ToolRoundStateMachine
 import cn.nabr.chatwithchat.data.tool.appendToolProtocolFragment
 import cn.nabr.chatwithchat.data.tool.hasSuccessfulToolDiscovery
 import cn.nabr.chatwithchat.data.tool.maxToolProtocolResponseChars
@@ -396,7 +398,8 @@ class ChatRepositoryImpl @Inject constructor(
         memoryPrompt: String?,
         reasoningMode: ReasoningMode,
         extraPrompt: String? = null,
-        emitEstimatedUsageWithoutOutput: Boolean = false
+        emitEstimatedUsageWithoutOutput: Boolean = false,
+        conversationSnapshot: ProviderConversationSnapshot? = null
     ): Flow<ApiState> = when (platform.compatibleType) {
         ClientType.OPENAI -> {
             // Use Responses API for OpenAI (supports reasoning/thinking)
@@ -407,7 +410,8 @@ class ChatRepositoryImpl @Inject constructor(
                 memoryPrompt,
                 reasoningMode,
                 extraPrompt,
-                emitEstimatedUsageWithoutOutput
+                emitEstimatedUsageWithoutOutput,
+                conversationSnapshot
             )
         }
 
@@ -419,7 +423,8 @@ class ChatRepositoryImpl @Inject constructor(
                 memoryPrompt,
                 reasoningMode,
                 extraPrompt,
-                emitEstimatedUsageWithoutOutput
+                emitEstimatedUsageWithoutOutput,
+                conversationSnapshot
             )
         }
 
@@ -432,7 +437,8 @@ class ChatRepositoryImpl @Inject constructor(
                 memoryPrompt,
                 reasoningMode,
                 extraPrompt,
-                emitEstimatedUsageWithoutOutput
+                emitEstimatedUsageWithoutOutput,
+                conversationSnapshot
             )
         }
 
@@ -444,7 +450,8 @@ class ChatRepositoryImpl @Inject constructor(
                 memoryPrompt,
                 reasoningMode,
                 extraPrompt,
-                emitEstimatedUsageWithoutOutput
+                emitEstimatedUsageWithoutOutput,
+                conversationSnapshot
             )
         }
 
@@ -456,7 +463,8 @@ class ChatRepositoryImpl @Inject constructor(
                 memoryPrompt,
                 reasoningMode,
                 extraPrompt,
-                emitEstimatedUsageWithoutOutput
+                emitEstimatedUsageWithoutOutput,
+                conversationSnapshot
             )
         }
     }
@@ -467,16 +475,22 @@ class ChatRepositoryImpl @Inject constructor(
         platform: PlatformV2,
         memoryPrompt: String?,
         reasoningMode: ReasoningMode,
-        activeToolDefinitions: List<ToolDefinition>
+        activeToolDefinitions: List<ToolDefinition>,
+        conversationSnapshot: ProviderConversationSnapshot? = null,
+        priorSearchDecisionExecution: SearchDecisionExecution? = null
     ): Flow<ApiState> = flow {
         emit(ApiState.Loading)
-        val searchDecisionExecution = executeSearchDecisionIfNeeded(
+        val frozenConversationSnapshot = conversationSnapshot ?: withContext(Dispatchers.Default) {
+            buildProviderConversationSnapshot(userMessages, assistantMessages, platform)
+        }
+        val searchDecisionExecution = priorSearchDecisionExecution ?: executeSearchDecisionIfNeeded(
             userMessages = userMessages,
             assistantMessages = assistantMessages,
             platform = platform,
-            activeToolDefinitions = activeToolDefinitions
+            activeToolDefinitions = activeToolDefinitions,
+            runtimeContextPrompt = frozenConversationSnapshot.runtimeContextPrompt
         )
-        if (searchDecisionExecution != null) {
+        if (searchDecisionExecution?.finalAnswerPrompt != null) {
             emitSearchDecisionFinalStates(
                 completeChatByProvider(
                     userMessages = userMessages,
@@ -484,7 +498,8 @@ class ChatRepositoryImpl @Inject constructor(
                     platform = platform,
                     memoryPrompt = memoryPrompt,
                     reasoningMode = reasoningMode,
-                    extraPrompt = searchDecisionExecution.finalAnswerPrompt
+                    extraPrompt = searchDecisionExecution.finalAnswerPrompt,
+                    conversationSnapshot = frozenConversationSnapshot
                 ),
                 searchDecisionExecution.usage
             )
@@ -501,20 +516,22 @@ class ChatRepositoryImpl @Inject constructor(
             }
         )
         val toolUsageRecords = mutableListOf<TokenUsageRecord>()
-        val loopResult = toolLoopOrchestrator.runLoop(
+        searchDecisionExecution?.usage?.let { usage -> toolUsageRecords += usage }
+        val loopResult = toolLoopOrchestrator.runLoopWithRoundPolicy(
             adapter = toolCallingAdapter,
             onProgress = { progress -> emit(progress) },
             scope = toolScope,
-            requestModel = { toolPrompt ->
+            requestModel = { toolPrompt, reasoningPolicy ->
                 collectProviderText(
                     states = completeChatByProvider(
                         userMessages = userMessages,
                         assistantMessages = assistantMessages,
                         platform = platform,
                         memoryPrompt = memoryPrompt,
-                        reasoningMode = reasoningMode,
+                        reasoningMode = reasoningPolicy.resolve(reasoningMode),
                         extraPrompt = toolPrompt,
-                        emitEstimatedUsageWithoutOutput = true
+                        emitEstimatedUsageWithoutOutput = true,
+                        conversationSnapshot = frozenConversationSnapshot
                     ),
                     maxChars = config.maxToolProtocolResponseChars(),
                     onThinking = { thinkingChunk -> emit(ApiState.Thinking(thinkingChunk)) },
@@ -528,7 +545,14 @@ class ChatRepositoryImpl @Inject constructor(
                 loopResult.content.takeIf { it.isNotBlank() }?.let { content ->
                     emit(ApiState.Success(content))
                 }
-                toolUsageRecords.lastOrNull()?.let { usage -> emit(ApiState.UsageUpdated(usage)) }
+                val answerUsage = toolUsageRecords.lastOrNull()
+                val decisionUsage = searchDecisionExecution?.usage
+                val visibleUsage = if (answerUsage != null && decisionUsage != null) {
+                    answerUsage.withAdditionalToolUsage(listOf(decisionUsage))
+                } else {
+                    answerUsage
+                }
+                visibleUsage?.let { usage -> emit(ApiState.UsageUpdated(usage)) }
                 emit(ApiState.Done)
             }
             is ToolLoopResult.ToolResults -> {
@@ -548,7 +572,8 @@ class ChatRepositoryImpl @Inject constructor(
                     memoryPrompt = memoryPrompt,
                     reasoningMode = reasoningMode,
                     extraPrompt = loopResult.finalAnswerPrompt,
-                    emitEstimatedUsageWithoutOutput = true
+                    emitEstimatedUsageWithoutOutput = true,
+                    conversationSnapshot = frozenConversationSnapshot
                 ).collect { state ->
                     when (state) {
                         is ApiState.Loading -> {}
@@ -591,7 +616,7 @@ class ChatRepositoryImpl @Inject constructor(
                 val limitErrorCode = loopResult.message.toolLimitErrorCodeOrNull()
                 if (limitErrorCode != null) {
                     emit(ApiState.Error(limitErrorCode))
-                    if (loopResult.hadToolInteraction) {
+                    if (loopResult.hadToolInteraction || searchDecisionExecution?.usage != null) {
                         aggregateToolUsage(currentAnswerUsage = null, toolUsages = toolUsageRecords)?.let { usage ->
                             emit(ApiState.UsageUpdated(usage))
                         }
@@ -605,7 +630,21 @@ class ChatRepositoryImpl @Inject constructor(
                             platform = platform,
                             memoryPrompt = memoryPrompt,
                             reasoningMode = reasoningMode,
-                            emitEstimatedUsageWithoutOutput = true
+                            emitEstimatedUsageWithoutOutput = true,
+                            conversationSnapshot = frozenConversationSnapshot
+                        ),
+                        initialToolUsages = toolUsageRecords
+                    )
+                } else if (searchDecisionExecution?.usage != null) {
+                    emitToolAggregatedProviderStates(
+                        states = completeChatByProvider(
+                            userMessages = userMessages,
+                            assistantMessages = assistantMessages,
+                            platform = platform,
+                            memoryPrompt = memoryPrompt,
+                            reasoningMode = reasoningMode,
+                            emitEstimatedUsageWithoutOutput = true,
+                            conversationSnapshot = frozenConversationSnapshot
                         ),
                         initialToolUsages = toolUsageRecords
                     )
@@ -616,7 +655,8 @@ class ChatRepositoryImpl @Inject constructor(
                             assistantMessages = assistantMessages,
                             platform = platform,
                             memoryPrompt = memoryPrompt,
-                            reasoningMode = reasoningMode
+                            reasoningMode = reasoningMode,
+                            conversationSnapshot = frozenConversationSnapshot
                         )
                     )
                 }
@@ -642,7 +682,8 @@ class ChatRepositoryImpl @Inject constructor(
         userMessages: List<MessageV2>,
         assistantMessages: List<List<MessageV2>>,
         platform: PlatformV2,
-        activeToolDefinitions: List<ToolDefinition>
+        activeToolDefinitions: List<ToolDefinition>,
+        runtimeContextPrompt: String
     ): SearchDecisionExecution? {
         if (activeToolDefinitions.none { definition -> definition.name == ToolDefinition.WebSearch.name }) {
             return null
@@ -653,14 +694,30 @@ class ChatRepositoryImpl @Inject constructor(
                 platform = platform,
                 latestUserMessage = userMessages.lastOrNull()?.content.orEmpty(),
                 recentContext = searchDecisionRecentContext(userMessages, assistantMessages, platform),
-                runtimeContext = currentRuntimeContextPrompt()
+                runtimeContext = runtimeContextPrompt
             )
-        }.getOrNull()
-            ?.takeIf { it.decision.shouldSearch }
-            ?: return null
+        }.getOrNull() ?: return null
+        if (outcome.wasRequested) {
+            recordSystemPrompt(
+                context = promptTraceContext(userMessages, platform),
+                stage = PromptTraceStage.SEARCH_DECISION,
+                systemPrompt = outcome.requestPrompt
+            )
+        }
+        if (!outcome.decision.shouldSearch) {
+            return SearchDecisionExecution(
+                finalAnswerPrompt = null,
+                usage = outcome.usage
+            )
+        }
 
         val calls = outcome.decision.toWebSearchToolCalls()
-        if (calls.isEmpty()) return null
+        if (calls.isEmpty()) {
+            return SearchDecisionExecution(
+                finalAnswerPrompt = null,
+                usage = outcome.usage
+            )
+        }
 
         val results = toolLoopOrchestrator.executeToolCalls(
             calls = calls,
@@ -677,15 +734,17 @@ class ChatRepositoryImpl @Inject constructor(
             results = results,
             draftFinalAnswer = null,
             config = toolLoopOrchestrator.configuration
-        ) ?: return null
-        val usage = outcome.usage ?: return null
-        return SearchDecisionExecution(finalAnswerPrompt = finalAnswerPrompt, usage = usage)
+        )
+        return SearchDecisionExecution(
+            finalAnswerPrompt = finalAnswerPrompt,
+            usage = outcome.usage
+        )
     }
 
     private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.emitSearchDecisionFinalStates(
         states: Flow<ApiState>,
-        decisionUsage: TokenUsageRecord
-    ) = emitToolAggregatedProviderStates(states, listOf(decisionUsage))
+        decisionUsage: TokenUsageRecord?
+    ) = emitToolAggregatedProviderStates(states, listOfNotNull(decisionUsage))
 
     private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.emitPresentationArtifacts(
         results: List<ToolResult>
@@ -807,28 +866,37 @@ class ChatRepositoryImpl @Inject constructor(
             }
         )
 
+        val conversationSnapshot = withContext(Dispatchers.Default) {
+            buildProviderConversationSnapshot(userMessages, assistantMessages, platform)
+        }
         val prepared = withContext(Dispatchers.Default) {
-            val reasoningParameters = mapReasoningMode(platform, reasoningMode)
-            val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
-            val inputMessages = buildResponsesInputMessages(conversationContext.turns, platform.uid)
-            OpenAIResponsesNativeToolRequest(
-                model = platform.model,
-                input = inputMessages,
-                instructions = mergePromptSections(
-                    platform.systemPrompt,
-                    currentRuntimeContextPrompt(),
-                    memoryPrompt,
-                    conversationContext.summary,
-                    openAINativeToolInstruction(toolScope.definitions)
-                ),
-                temperature = if (reasoningParameters.hasExplicitReasoning) null else platform.temperature,
-                topP = if (reasoningParameters.hasExplicitReasoning) null else platform.topP,
-                reasoning = reasoningParameters.openAIEffort?.let { effort ->
-                    ReasoningConfig(
-                        effort = effort,
-                        summary = "auto"
-                    )
-                }
+            val inputMessages = buildResponsesInputMessages(conversationSnapshot.context.turns, platform.uid)
+            val instructions = mergePromptSections(
+                platform.systemPrompt,
+                conversationSnapshot.runtimeContextPrompt,
+                memoryPrompt,
+                conversationSnapshot.context.summary,
+                openAINativeToolInstruction(toolScope.definitions)
+            )
+            fun requestFor(mode: ReasoningMode): OpenAIResponsesNativeToolRequest {
+                val reasoningParameters = mapReasoningMode(platform, mode)
+                return OpenAIResponsesNativeToolRequest(
+                    model = platform.model,
+                    input = inputMessages,
+                    instructions = instructions,
+                    temperature = if (reasoningParameters.hasExplicitReasoning) null else platform.temperature,
+                    topP = if (reasoningParameters.hasExplicitReasoning) null else platform.topP,
+                    reasoning = reasoningParameters.openAIEffort?.let { effort ->
+                        ReasoningConfig(
+                            effort = effort,
+                            summary = "auto"
+                        )
+                    }
+                )
+            }
+            NativeToolRequestTemplates(
+                user = requestFor(reasoningMode),
+                low = requestFor(ReasoningMode.LOW)
             )
         }
 
@@ -838,15 +906,17 @@ class ChatRepositoryImpl @Inject constructor(
         val toolUsageRecords = mutableListOf<TokenUsageRecord>()
         var hasToolInteraction = false
         val toolExecutionSession = toolLoopOrchestrator.createExecutionSession()
+        val roundStateMachine = ToolRoundStateMachine(toolScope.definitions)
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)
 
         val searchDecisionExecution = executeSearchDecisionIfNeeded(
             userMessages = userMessages,
             assistantMessages = assistantMessages,
             platform = platform,
-            activeToolDefinitions = activeToolDefinitions
+            activeToolDefinitions = activeToolDefinitions,
+            runtimeContextPrompt = conversationSnapshot.runtimeContextPrompt
         )
-        if (searchDecisionExecution != null) {
+        if (searchDecisionExecution?.finalAnswerPrompt != null) {
             emitSearchDecisionFinalStates(
                 completeChatWithOpenAIResponses(
                     userMessages = userMessages,
@@ -854,16 +924,25 @@ class ChatRepositoryImpl @Inject constructor(
                     platform = platform,
                     memoryPrompt = memoryPrompt,
                     reasoningMode = reasoningMode,
-                    extraPrompt = searchDecisionExecution.finalAnswerPrompt
+                    extraPrompt = searchDecisionExecution.finalAnswerPrompt,
+                    conversationSnapshot = conversationSnapshot
                 ),
                 searchDecisionExecution.usage
             )
             return@flow
         }
+        searchDecisionExecution?.usage?.let { usage -> toolUsageRecords += usage }
 
         if (toolScope.definitions.isEmpty()) {
             emitProviderStatesSkippingLoading(
-                completeChatByProvider(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+                completeChatByProvider(
+                    userMessages,
+                    assistantMessages,
+                    platform,
+                    memoryPrompt,
+                    reasoningMode,
+                    conversationSnapshot = conversationSnapshot
+                )
             )
             return@flow
         }
@@ -872,14 +951,17 @@ class ChatRepositoryImpl @Inject constructor(
         var discoveryRounds = 0
         var roundIndex = 0
         while (roundIndex < allowedRounds) {
+            roundStateMachine.updateAvailableDefinitions(toolScope.definitions)
+            val roundState = roundStateMachine.current
+            if (roundState.isFinalOnly) break
             val round = collectOpenAIResponsesNativeRound(
-                request = prepared.toRequest(
+                request = prepared.forPolicy(roundState.reasoningPolicy).toRequest(
                     continuationItems = continuationItems,
-                    tools = openAIResponsesToolAdapter.toResponseTools(toolScope.definitions),
+                    tools = openAIResponsesToolAdapter.toResponseTools(roundState.definitions),
                     toolChoice = ResponseToolChoice.Auto,
                     extraInstruction = mergePromptSections(
-                        nativeToolScopeInstruction(toolScope.definitions),
-                        stickerContinuationInstruction(allResults)
+                        nativeToolScopeInstruction(roundState.definitions),
+                        stickerContinuationInstruction(allResults, roundState.allowedToolNames)
                     )
                 ),
                 timeoutSeconds = platform.timeout,
@@ -893,9 +975,19 @@ class ChatRepositoryImpl @Inject constructor(
             hasToolInteraction = hasToolInteraction || openAIResponsesToolAdapter.hasToolCallIntent(round.events)
             if (round.errorMessage != null) {
                 if (!hasToolInteraction) {
-                    emitProviderStatesSkippingLoading(
-                        completeChatWithOpenAIResponses(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+                    val fallback = completeChatWithOpenAIResponses(
+                        userMessages,
+                        assistantMessages,
+                        platform,
+                        memoryPrompt,
+                        reasoningMode,
+                        conversationSnapshot = conversationSnapshot
                     )
+                    if (searchDecisionExecution?.usage != null) {
+                        emitToolAggregatedProviderStates(fallback, toolUsageRecords)
+                    } else {
+                        emitProviderStatesSkippingLoading(fallback)
+                    }
                 } else {
                     emit(ApiState.Error(round.errorMessage))
                     aggregateToolUsage(currentAnswerUsage = null, toolUsages = toolUsageRecords)?.let { usage ->
@@ -910,7 +1002,7 @@ class ChatRepositoryImpl @Inject constructor(
                 openAIResponsesToolAdapter.toolCallsFromEvents(round.events, config)
             )
             if (calls.isEmpty()) {
-                val usage = if (hasToolInteraction) {
+                val usage = if (hasToolInteraction || searchDecisionExecution?.usage != null) {
                     aggregateToolUsage(round.usage, toolUsageRecords)
                 } else {
                     round.usage
@@ -926,6 +1018,7 @@ class ChatRepositoryImpl @Inject constructor(
             val results = toolLoopOrchestrator.executeScopedToolCalls(
                 calls = calls,
                 scope = toolScope,
+                allowedToolNames = roundState.allowedToolNames,
                 executionSession = toolExecutionSession
             ) { progress -> emit(progress) }
             allResults += results
@@ -935,7 +1028,12 @@ class ChatRepositoryImpl @Inject constructor(
                 .takeIf { it.isNotEmpty() }?.let { sources ->
                     emit(ApiState.SourcesUpdated(sources))
                 }
-            continuationItems += openAIResponsesToolAdapter.continuationInputItems(round.events, calls, results, config)
+            val roundContinuation = openAIResponsesToolAdapter.continuationInputItems(round.events, calls, results, config)
+            roundStateMachine.onToolResults(results)
+            if (roundStateMachine.current.isFinalOnly && results.hasStickerSendResult()) {
+                continuationItems.clear()
+            }
+            continuationItems += roundContinuation
             if (results.hasSuccessfulToolDiscovery() &&
                 discoveryRounds < toolScope.maxDiscoveryRounds
             ) {
@@ -943,17 +1041,25 @@ class ChatRepositoryImpl @Inject constructor(
                 discoveryRounds += 1
             }
             roundIndex += 1
+            if (roundStateMachine.current.isFinalOnly) break
         }
 
         if (continuationItems.isEmpty()) {
             emitProviderStatesSkippingLoading(
-                completeChatWithOpenAIResponses(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+                completeChatWithOpenAIResponses(
+                    userMessages,
+                    assistantMessages,
+                    platform,
+                    memoryPrompt,
+                    reasoningMode,
+                    conversationSnapshot = conversationSnapshot
+                )
             )
             return@flow
         }
 
         val finalRound = collectOpenAIResponsesNativeRound(
-            request = prepared.toRequest(
+            request = prepared.user.toRequest(
                 continuationItems = continuationItems,
                 tools = null,
                 toolChoice = null,
@@ -1079,14 +1185,18 @@ class ChatRepositoryImpl @Inject constructor(
                 openAIChatCompletionsToolAdapter.advertisedToolChars(definitions)
             }
         )
+        val conversationSnapshot = withContext(Dispatchers.Default) {
+            buildProviderConversationSnapshot(userMessages, assistantMessages, platform)
+        }
 
         val searchDecisionExecution = executeSearchDecisionIfNeeded(
             userMessages = userMessages,
             assistantMessages = assistantMessages,
             platform = platform,
-            activeToolDefinitions = activeToolDefinitions
+            activeToolDefinitions = activeToolDefinitions,
+            runtimeContextPrompt = conversationSnapshot.runtimeContextPrompt
         )
-        if (searchDecisionExecution != null) {
+        if (searchDecisionExecution?.finalAnswerPrompt != null) {
             emitSearchDecisionFinalStates(
                 completeChatWithOpenAIChatCompletions(
                     userMessages = userMessages,
@@ -1094,7 +1204,8 @@ class ChatRepositoryImpl @Inject constructor(
                     platform = platform,
                     memoryPrompt = memoryPrompt,
                     reasoningMode = reasoningMode,
-                    extraPrompt = searchDecisionExecution.finalAnswerPrompt
+                    extraPrompt = searchDecisionExecution.finalAnswerPrompt,
+                    conversationSnapshot = conversationSnapshot
                 ),
                 searchDecisionExecution.usage
             )
@@ -1103,35 +1214,47 @@ class ChatRepositoryImpl @Inject constructor(
 
         if (toolScope.definitions.isEmpty()) {
             emitProviderStatesSkippingLoading(
-                completeChatByProvider(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+                completeChatByProvider(
+                    userMessages,
+                    assistantMessages,
+                    platform,
+                    memoryPrompt,
+                    reasoningMode,
+                    conversationSnapshot = conversationSnapshot
+                )
             )
             return@flow
         }
 
         val prepared = withContext(Dispatchers.Default) {
-            val reasoningParameters = mapReasoningMode(platform, reasoningMode)
-            val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
-            validateInlineBudgetIfNeeded(conversationContext.turns, platform)
+            validateInlineBudgetIfNeeded(conversationSnapshot.context.turns, platform)
             val messages = buildOpenAIChatMessages(
-                conversationContext.turns,
+                conversationSnapshot.context.turns,
                 mergePromptSections(
                     platform.systemPrompt,
-                    currentRuntimeContextPrompt(),
+                    conversationSnapshot.runtimeContextPrompt,
                     memoryPrompt,
-                    conversationContext.summary,
+                    conversationSnapshot.context.summary,
                     openAINativeToolInstruction(toolScope.definitions)
                 )
             )
-            val thinking = reasoningParameters.openAICompatibleThinkingType?.let { type ->
-                ChatCompletionThinkingConfig(type)
+            fun requestFor(mode: ReasoningMode): OpenAIChatCompletionsNativeToolRequest {
+                val reasoningParameters = mapReasoningMode(platform, mode)
+                val thinking = reasoningParameters.openAICompatibleThinkingType?.let { type ->
+                    ChatCompletionThinkingConfig(type)
+                }
+                return OpenAIChatCompletionsNativeToolRequest(
+                    model = platform.model,
+                    messages = messages,
+                    temperature = platform.temperature.takeIf { thinking == null },
+                    topP = platform.topP.takeIf { thinking == null },
+                    reasoningEffort = reasoningParameters.openAICompatibleReasoningEffort,
+                    thinking = thinking
+                )
             }
-            OpenAIChatCompletionsNativeToolRequest(
-                model = platform.model,
-                messages = messages,
-                temperature = platform.temperature.takeIf { thinking == null },
-                topP = platform.topP.takeIf { thinking == null },
-                reasoningEffort = reasoningParameters.openAICompatibleReasoningEffort,
-                thinking = thinking
+            NativeToolRequestTemplates(
+                user = requestFor(reasoningMode),
+                low = requestFor(ReasoningMode.LOW)
             )
         }
 
@@ -1139,22 +1262,27 @@ class ChatRepositoryImpl @Inject constructor(
         val continuationMessages = mutableListOf<ChatMessage>()
         val allResults = mutableListOf<ToolResult>()
         val toolUsageRecords = mutableListOf<TokenUsageRecord>()
+        searchDecisionExecution?.usage?.let { usage -> toolUsageRecords += usage }
         var hasToolInteraction = false
         val toolExecutionSession = toolLoopOrchestrator.createExecutionSession()
+        val roundStateMachine = ToolRoundStateMachine(toolScope.definitions)
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)
 
         var allowedRounds = maxRounds
         var discoveryRounds = 0
         var roundIndex = 0
         while (roundIndex < allowedRounds) {
+            roundStateMachine.updateAvailableDefinitions(toolScope.definitions)
+            val roundState = roundStateMachine.current
+            if (roundState.isFinalOnly) break
             val round = collectOpenAIChatCompletionsNativeRound(
-                request = prepared.toRequest(
+                request = prepared.forPolicy(roundState.reasoningPolicy).toRequest(
                     continuationMessages = continuationMessages,
-                    tools = openAIChatCompletionsToolAdapter.toChatCompletionTools(toolScope.definitions),
+                    tools = openAIChatCompletionsToolAdapter.toChatCompletionTools(roundState.definitions),
                     toolChoice = ChatCompletionToolChoice.Auto,
                     extraInstruction = mergePromptSections(
-                        nativeToolScopeInstruction(toolScope.definitions),
-                        stickerContinuationInstruction(allResults)
+                        nativeToolScopeInstruction(roundState.definitions),
+                        stickerContinuationInstruction(allResults, roundState.allowedToolNames)
                     )
                 ),
                 timeoutSeconds = platform.timeout,
@@ -1178,7 +1306,9 @@ class ChatRepositoryImpl @Inject constructor(
                             platform = platform,
                             memoryPrompt = memoryPrompt,
                             reasoningMode = reasoningMode,
-                            activeToolDefinitions = activeToolDefinitions
+                            activeToolDefinitions = activeToolDefinitions,
+                            conversationSnapshot = conversationSnapshot,
+                            priorSearchDecisionExecution = searchDecisionExecution
                         )
                     } else {
                         completeChatWithOpenAIChatCompletions(
@@ -1186,10 +1316,15 @@ class ChatRepositoryImpl @Inject constructor(
                             assistantMessages,
                             platform,
                             memoryPrompt,
-                            reasoningMode
+                            reasoningMode,
+                            conversationSnapshot = conversationSnapshot
                         )
                     }
-                    emitProviderStatesSkippingLoading(fallback)
+                    if (searchDecisionExecution?.usage != null) {
+                        emitToolAggregatedProviderStates(fallback, toolUsageRecords)
+                    } else {
+                        emitProviderStatesSkippingLoading(fallback)
+                    }
                 } else {
                     emit(ApiState.Error(round.errorMessage))
                     aggregateToolUsage(currentAnswerUsage = null, toolUsages = toolUsageRecords)?.let { usage ->
@@ -1204,7 +1339,7 @@ class ChatRepositoryImpl @Inject constructor(
                 openAIChatCompletionsToolAdapter.toolCallsFromChunks(round.chunks, config)
             )
             if (calls.isEmpty()) {
-                val usage = if (hasToolInteraction) {
+                val usage = if (hasToolInteraction || searchDecisionExecution?.usage != null) {
                     aggregateToolUsage(round.usage, toolUsageRecords)
                 } else {
                     round.usage
@@ -1220,6 +1355,7 @@ class ChatRepositoryImpl @Inject constructor(
             val results = toolLoopOrchestrator.executeScopedToolCalls(
                 calls = calls,
                 scope = toolScope,
+                allowedToolNames = roundState.allowedToolNames,
                 executionSession = toolExecutionSession
             ) { progress -> emit(progress) }
             allResults += results
@@ -1229,7 +1365,7 @@ class ChatRepositoryImpl @Inject constructor(
                 .takeIf { it.isNotEmpty() }?.let { sources ->
                     emit(ApiState.SourcesUpdated(sources))
                 }
-            continuationMessages += openAIChatCompletionsToolAdapter.continuationMessages(
+            val roundContinuation = openAIChatCompletionsToolAdapter.continuationMessages(
                 calls = calls,
                 results = results,
                 config = config,
@@ -1237,6 +1373,11 @@ class ChatRepositoryImpl @Inject constructor(
                     platform.usesOfficialDeepSeekApi()
                 }
             )
+            roundStateMachine.onToolResults(results)
+            if (roundStateMachine.current.isFinalOnly && results.hasStickerSendResult()) {
+                continuationMessages.clear()
+            }
+            continuationMessages += roundContinuation
             if (results.hasSuccessfulToolDiscovery() &&
                 discoveryRounds < toolScope.maxDiscoveryRounds
             ) {
@@ -1244,17 +1385,25 @@ class ChatRepositoryImpl @Inject constructor(
                 discoveryRounds += 1
             }
             roundIndex += 1
+            if (roundStateMachine.current.isFinalOnly) break
         }
 
         if (continuationMessages.isEmpty()) {
             emitProviderStatesSkippingLoading(
-                completeChatWithOpenAIChatCompletions(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+                completeChatWithOpenAIChatCompletions(
+                    userMessages,
+                    assistantMessages,
+                    platform,
+                    memoryPrompt,
+                    reasoningMode,
+                    conversationSnapshot = conversationSnapshot
+                )
             )
             return@flow
         }
 
         val finalRound = collectOpenAIChatCompletionsNativeRound(
-            request = prepared.toRequest(
+            request = prepared.user.toRequest(
                 continuationMessages = continuationMessages,
                 tools = null,
                 toolChoice = null,
@@ -1377,14 +1526,18 @@ class ChatRepositoryImpl @Inject constructor(
                 anthropicNativeToolAdapter.advertisedToolChars(definitions)
             }
         )
+        val conversationSnapshot = withContext(Dispatchers.Default) {
+            buildProviderConversationSnapshot(userMessages, assistantMessages, platform)
+        }
 
         val searchDecisionExecution = executeSearchDecisionIfNeeded(
             userMessages = userMessages,
             assistantMessages = assistantMessages,
             platform = platform,
-            activeToolDefinitions = activeToolDefinitions
+            activeToolDefinitions = activeToolDefinitions,
+            runtimeContextPrompt = conversationSnapshot.runtimeContextPrompt
         )
-        if (searchDecisionExecution != null) {
+        if (searchDecisionExecution?.finalAnswerPrompt != null) {
             emitSearchDecisionFinalStates(
                 completeChatWithAnthropic(
                     userMessages = userMessages,
@@ -1392,7 +1545,8 @@ class ChatRepositoryImpl @Inject constructor(
                     platform = platform,
                     memoryPrompt = memoryPrompt,
                     reasoningMode = reasoningMode,
-                    extraPrompt = searchDecisionExecution.finalAnswerPrompt
+                    extraPrompt = searchDecisionExecution.finalAnswerPrompt,
+                    conversationSnapshot = conversationSnapshot
                 ),
                 searchDecisionExecution.usage
             )
@@ -1401,34 +1555,47 @@ class ChatRepositoryImpl @Inject constructor(
 
         if (toolScope.definitions.isEmpty()) {
             emitProviderStatesSkippingLoading(
-                completeChatByProvider(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+                completeChatByProvider(
+                    userMessages,
+                    assistantMessages,
+                    platform,
+                    memoryPrompt,
+                    reasoningMode,
+                    conversationSnapshot = conversationSnapshot
+                )
             )
             return@flow
         }
 
         val prepared = withContext(Dispatchers.Default) {
-            val reasoningParameters = mapReasoningMode(platform, reasoningMode)
-            val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
-            val messages = buildAnthropicInputMessages(conversationContext.turns, platform.uid)
-            AnthropicNativeToolRequest(
-                model = platform.model,
-                messages = messages,
-                maxTokens = reasoningParameters.anthropicMaxTokens ?: 4096,
-                systemPrompt = mergePromptSections(
-                    platform.systemPrompt,
-                    currentRuntimeContextPrompt(),
-                    memoryPrompt,
-                    conversationContext.summary,
-                    openAINativeToolInstruction(toolScope.definitions)
-                ),
-                temperature = if (reasoningParameters.hasExplicitReasoning) null else platform.temperature,
-                topP = if (reasoningParameters.hasExplicitReasoning) null else platform.topP,
-                thinking = reasoningParameters.anthropicBudgetTokens?.let { budgetTokens ->
-                    ThinkingConfig(
-                        type = "enabled",
-                        budgetTokens = budgetTokens
-                    )
-                }
+            val messages = buildAnthropicInputMessages(conversationSnapshot.context.turns, platform.uid)
+            val systemPrompt = mergePromptSections(
+                platform.systemPrompt,
+                conversationSnapshot.runtimeContextPrompt,
+                memoryPrompt,
+                conversationSnapshot.context.summary,
+                openAINativeToolInstruction(toolScope.definitions)
+            )
+            fun requestFor(mode: ReasoningMode): AnthropicNativeToolRequest {
+                val reasoningParameters = mapReasoningMode(platform, mode)
+                return AnthropicNativeToolRequest(
+                    model = platform.model,
+                    messages = messages,
+                    maxTokens = reasoningParameters.anthropicMaxTokens ?: 4096,
+                    systemPrompt = systemPrompt,
+                    temperature = if (reasoningParameters.hasExplicitReasoning) null else platform.temperature,
+                    topP = if (reasoningParameters.hasExplicitReasoning) null else platform.topP,
+                    thinking = reasoningParameters.anthropicBudgetTokens?.let { budgetTokens ->
+                        ThinkingConfig(
+                            type = "enabled",
+                            budgetTokens = budgetTokens
+                        )
+                    }
+                )
+            }
+            NativeToolRequestTemplates(
+                user = requestFor(reasoningMode),
+                low = requestFor(ReasoningMode.LOW)
             )
         }
 
@@ -1436,22 +1603,27 @@ class ChatRepositoryImpl @Inject constructor(
         val continuationMessages = mutableListOf<InputMessage>()
         val allResults = mutableListOf<ToolResult>()
         val toolUsageRecords = mutableListOf<TokenUsageRecord>()
+        searchDecisionExecution?.usage?.let { usage -> toolUsageRecords += usage }
         var hasToolInteraction = false
         val toolExecutionSession = toolLoopOrchestrator.createExecutionSession()
+        val roundStateMachine = ToolRoundStateMachine(toolScope.definitions)
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)
 
         var allowedRounds = maxRounds
         var discoveryRounds = 0
         var roundIndex = 0
         while (roundIndex < allowedRounds) {
+            roundStateMachine.updateAvailableDefinitions(toolScope.definitions)
+            val roundState = roundStateMachine.current
+            if (roundState.isFinalOnly) break
             val round = collectAnthropicNativeRound(
-                request = prepared.toRequest(
+                request = prepared.forPolicy(roundState.reasoningPolicy).toRequest(
                     continuationMessages = continuationMessages,
-                    tools = anthropicNativeToolAdapter.toAnthropicTools(toolScope.definitions),
+                    tools = anthropicNativeToolAdapter.toAnthropicTools(roundState.definitions),
                     toolChoice = AnthropicToolChoice.Auto,
                     extraInstruction = mergePromptSections(
-                        nativeToolScopeInstruction(toolScope.definitions),
-                        stickerContinuationInstruction(allResults)
+                        nativeToolScopeInstruction(roundState.definitions),
+                        stickerContinuationInstruction(allResults, roundState.allowedToolNames)
                     )
                 ),
                 timeoutSeconds = platform.timeout,
@@ -1465,9 +1637,19 @@ class ChatRepositoryImpl @Inject constructor(
             hasToolInteraction = hasToolInteraction || anthropicNativeToolAdapter.hasToolCallIntent(round.chunks)
             if (round.errorMessage != null) {
                 if (!hasToolInteraction) {
-                    emitProviderStatesSkippingLoading(
-                        completeChatWithAnthropic(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+                    val fallback = completeChatWithAnthropic(
+                        userMessages,
+                        assistantMessages,
+                        platform,
+                        memoryPrompt,
+                        reasoningMode,
+                        conversationSnapshot = conversationSnapshot
                     )
+                    if (searchDecisionExecution?.usage != null) {
+                        emitToolAggregatedProviderStates(fallback, toolUsageRecords)
+                    } else {
+                        emitProviderStatesSkippingLoading(fallback)
+                    }
                 } else {
                     emit(ApiState.Error(round.errorMessage))
                     aggregateToolUsage(currentAnswerUsage = null, toolUsages = toolUsageRecords)?.let { usage ->
@@ -1482,7 +1664,7 @@ class ChatRepositoryImpl @Inject constructor(
                 anthropicNativeToolAdapter.toolCallsFromChunks(round.chunks, config)
             )
             if (calls.isEmpty()) {
-                val usage = if (hasToolInteraction) {
+                val usage = if (hasToolInteraction || searchDecisionExecution?.usage != null) {
                     aggregateToolUsage(round.usage, toolUsageRecords)
                 } else {
                     round.usage
@@ -1498,6 +1680,7 @@ class ChatRepositoryImpl @Inject constructor(
             val results = toolLoopOrchestrator.executeScopedToolCalls(
                 calls = calls,
                 scope = toolScope,
+                allowedToolNames = roundState.allowedToolNames,
                 executionSession = toolExecutionSession
             ) { progress -> emit(progress) }
             allResults += results
@@ -1507,7 +1690,12 @@ class ChatRepositoryImpl @Inject constructor(
                 .takeIf { it.isNotEmpty() }?.let { sources ->
                     emit(ApiState.SourcesUpdated(sources))
                 }
-            continuationMessages += anthropicNativeToolAdapter.continuationMessages(calls, results, config)
+            val roundContinuation = anthropicNativeToolAdapter.continuationMessages(calls, results, config)
+            roundStateMachine.onToolResults(results)
+            if (roundStateMachine.current.isFinalOnly && results.hasStickerSendResult()) {
+                continuationMessages.clear()
+            }
+            continuationMessages += roundContinuation
             if (results.hasSuccessfulToolDiscovery() &&
                 discoveryRounds < toolScope.maxDiscoveryRounds
             ) {
@@ -1515,17 +1703,25 @@ class ChatRepositoryImpl @Inject constructor(
                 discoveryRounds += 1
             }
             roundIndex += 1
+            if (roundStateMachine.current.isFinalOnly) break
         }
 
         if (continuationMessages.isEmpty()) {
             emitProviderStatesSkippingLoading(
-                completeChatWithAnthropic(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+                completeChatWithAnthropic(
+                    userMessages,
+                    assistantMessages,
+                    platform,
+                    memoryPrompt,
+                    reasoningMode,
+                    conversationSnapshot = conversationSnapshot
+                )
             )
             return@flow
         }
 
         val finalRound = collectAnthropicNativeRound(
-            request = prepared.toRequest(
+            request = prepared.user.toRequest(
                 continuationMessages = continuationMessages,
                 tools = null,
                 toolChoice = null,
@@ -1649,14 +1845,18 @@ class ChatRepositoryImpl @Inject constructor(
                 googleNativeToolAdapter.advertisedToolChars(definitions)
             }
         )
+        val conversationSnapshot = withContext(Dispatchers.Default) {
+            buildProviderConversationSnapshot(userMessages, assistantMessages, platform)
+        }
 
         val searchDecisionExecution = executeSearchDecisionIfNeeded(
             userMessages = userMessages,
             assistantMessages = assistantMessages,
             platform = platform,
-            activeToolDefinitions = activeToolDefinitions
+            activeToolDefinitions = activeToolDefinitions,
+            runtimeContextPrompt = conversationSnapshot.runtimeContextPrompt
         )
-        if (searchDecisionExecution != null) {
+        if (searchDecisionExecution?.finalAnswerPrompt != null) {
             emitSearchDecisionFinalStates(
                 completeChatWithGoogle(
                     userMessages = userMessages,
@@ -1664,7 +1864,8 @@ class ChatRepositoryImpl @Inject constructor(
                     platform = platform,
                     memoryPrompt = memoryPrompt,
                     reasoningMode = reasoningMode,
-                    extraPrompt = searchDecisionExecution.finalAnswerPrompt
+                    extraPrompt = searchDecisionExecution.finalAnswerPrompt,
+                    conversationSnapshot = conversationSnapshot
                 ),
                 searchDecisionExecution.usage
             )
@@ -1673,38 +1874,49 @@ class ChatRepositoryImpl @Inject constructor(
 
         if (toolScope.definitions.isEmpty()) {
             emitProviderStatesSkippingLoading(
-                completeChatByProvider(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+                completeChatByProvider(
+                    userMessages,
+                    assistantMessages,
+                    platform,
+                    memoryPrompt,
+                    reasoningMode,
+                    conversationSnapshot = conversationSnapshot
+                )
             )
             return@flow
         }
 
         val prepared = withContext(Dispatchers.Default) {
-            val reasoningParameters = mapReasoningMode(platform, reasoningMode)
-            val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
-            val contents = buildGoogleContents(conversationContext.turns, platform.uid)
-            GoogleNativeToolRequest(
-                contents = contents,
-                generationConfig = GenerationConfig(
-                    temperature = platform.temperature,
-                    topP = platform.topP,
-                    thinkingConfig = reasoningParameters.googleThinkingBudget?.let { thinkingBudget ->
-                        cn.nabr.chatwithchat.data.dto.google.request.ThinkingConfig(
-                            thinkingBudget = thinkingBudget,
-                            includeThoughts = reasoningParameters.googleIncludeThoughts ?: false
-                        )
-                    }
-                ),
-                systemInstruction = mergePromptSections(
-                    platform.systemPrompt,
-                    currentRuntimeContextPrompt(),
-                    memoryPrompt,
-                    conversationContext.summary,
-                    openAINativeToolInstruction(toolScope.definitions)
-                )?.let { prompt ->
-                    Content(
-                        parts = listOf(Part.text(prompt))
-                    )
-                }
+            val contents = buildGoogleContents(conversationSnapshot.context.turns, platform.uid)
+            val systemInstruction = mergePromptSections(
+                platform.systemPrompt,
+                conversationSnapshot.runtimeContextPrompt,
+                memoryPrompt,
+                conversationSnapshot.context.summary,
+                openAINativeToolInstruction(toolScope.definitions)
+            )?.let { prompt ->
+                Content(parts = listOf(Part.text(prompt)))
+            }
+            fun requestFor(mode: ReasoningMode): GoogleNativeToolRequest {
+                val reasoningParameters = mapReasoningMode(platform, mode)
+                return GoogleNativeToolRequest(
+                    contents = contents,
+                    generationConfig = GenerationConfig(
+                        temperature = platform.temperature,
+                        topP = platform.topP,
+                        thinkingConfig = reasoningParameters.googleThinkingBudget?.let { thinkingBudget ->
+                            cn.nabr.chatwithchat.data.dto.google.request.ThinkingConfig(
+                                thinkingBudget = thinkingBudget,
+                                includeThoughts = reasoningParameters.googleIncludeThoughts ?: false
+                            )
+                        }
+                    ),
+                    systemInstruction = systemInstruction
+                )
+            }
+            NativeToolRequestTemplates(
+                user = requestFor(reasoningMode),
+                low = requestFor(ReasoningMode.LOW)
             )
         }
 
@@ -1712,22 +1924,27 @@ class ChatRepositoryImpl @Inject constructor(
         val continuationContents = mutableListOf<Content>()
         val allResults = mutableListOf<ToolResult>()
         val toolUsageRecords = mutableListOf<TokenUsageRecord>()
+        searchDecisionExecution?.usage?.let { usage -> toolUsageRecords += usage }
         var hasToolInteraction = false
         val toolExecutionSession = toolLoopOrchestrator.createExecutionSession()
+        val roundStateMachine = ToolRoundStateMachine(toolScope.definitions)
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)
 
         var allowedRounds = maxRounds
         var discoveryRounds = 0
         var roundIndex = 0
         while (roundIndex < allowedRounds) {
+            roundStateMachine.updateAvailableDefinitions(toolScope.definitions)
+            val roundState = roundStateMachine.current
+            if (roundState.isFinalOnly) break
             val round = collectGoogleNativeRound(
-                request = prepared.toRequest(
+                request = prepared.forPolicy(roundState.reasoningPolicy).toRequest(
                     continuationContents = continuationContents,
-                    tools = googleNativeToolAdapter.toGoogleTools(toolScope.definitions),
+                    tools = googleNativeToolAdapter.toGoogleTools(roundState.definitions),
                     toolConfig = GoogleToolConfig.Auto,
                     extraInstruction = mergePromptSections(
-                        nativeToolScopeInstruction(toolScope.definitions),
-                        stickerContinuationInstruction(allResults)
+                        nativeToolScopeInstruction(roundState.definitions),
+                        stickerContinuationInstruction(allResults, roundState.allowedToolNames)
                     )
                 ),
                 model = platform.model,
@@ -1742,9 +1959,19 @@ class ChatRepositoryImpl @Inject constructor(
             hasToolInteraction = hasToolInteraction || googleNativeToolAdapter.hasToolCallIntent(round.responses)
             if (round.errorMessage != null) {
                 if (!hasToolInteraction) {
-                    emitProviderStatesSkippingLoading(
-                        completeChatWithGoogle(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+                    val fallback = completeChatWithGoogle(
+                        userMessages,
+                        assistantMessages,
+                        platform,
+                        memoryPrompt,
+                        reasoningMode,
+                        conversationSnapshot = conversationSnapshot
                     )
+                    if (searchDecisionExecution?.usage != null) {
+                        emitToolAggregatedProviderStates(fallback, toolUsageRecords)
+                    } else {
+                        emitProviderStatesSkippingLoading(fallback)
+                    }
                 } else {
                     emit(ApiState.Error(round.errorMessage))
                     aggregateToolUsage(currentAnswerUsage = null, toolUsages = toolUsageRecords)?.let { usage ->
@@ -1759,7 +1986,7 @@ class ChatRepositoryImpl @Inject constructor(
                 googleNativeToolAdapter.toolCallsFromResponses(round.responses, config)
             )
             if (calls.isEmpty()) {
-                val usage = if (hasToolInteraction) {
+                val usage = if (hasToolInteraction || searchDecisionExecution?.usage != null) {
                     aggregateToolUsage(round.usage, toolUsageRecords)
                 } else {
                     round.usage
@@ -1775,6 +2002,7 @@ class ChatRepositoryImpl @Inject constructor(
             val results = toolLoopOrchestrator.executeScopedToolCalls(
                 calls = calls,
                 scope = toolScope,
+                allowedToolNames = roundState.allowedToolNames,
                 executionSession = toolExecutionSession
             ) { progress -> emit(progress) }
             allResults += results
@@ -1784,7 +2012,12 @@ class ChatRepositoryImpl @Inject constructor(
                 .takeIf { it.isNotEmpty() }?.let { sources ->
                     emit(ApiState.SourcesUpdated(sources))
                 }
-            continuationContents += googleNativeToolAdapter.continuationContents(calls, results, config)
+            val roundContinuation = googleNativeToolAdapter.continuationContents(calls, results, config)
+            roundStateMachine.onToolResults(results)
+            if (roundStateMachine.current.isFinalOnly && results.hasStickerSendResult()) {
+                continuationContents.clear()
+            }
+            continuationContents += roundContinuation
             if (results.hasSuccessfulToolDiscovery() &&
                 discoveryRounds < toolScope.maxDiscoveryRounds
             ) {
@@ -1792,17 +2025,25 @@ class ChatRepositoryImpl @Inject constructor(
                 discoveryRounds += 1
             }
             roundIndex += 1
+            if (roundStateMachine.current.isFinalOnly) break
         }
 
         if (continuationContents.isEmpty()) {
             emitProviderStatesSkippingLoading(
-                completeChatWithGoogle(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+                completeChatWithGoogle(
+                    userMessages,
+                    assistantMessages,
+                    platform,
+                    memoryPrompt,
+                    reasoningMode,
+                    conversationSnapshot = conversationSnapshot
+                )
             )
             return@flow
         }
 
         val finalRound = collectGoogleNativeRound(
-            request = prepared.toRequest(
+            request = prepared.user.toRequest(
                 continuationContents = continuationContents,
                 tools = null,
                 toolConfig = null,
@@ -1907,7 +2148,8 @@ class ChatRepositoryImpl @Inject constructor(
         memoryPrompt: String?,
         reasoningMode: ReasoningMode,
         extraPrompt: String? = null,
-        emitEstimatedUsageWithoutOutput: Boolean = false
+        emitEstimatedUsageWithoutOutput: Boolean = false,
+        conversationSnapshot: ProviderConversationSnapshot? = null
     ): Flow<ApiState> = try {
         openAIAPI.setToken(platform.token)
         openAIAPI.setAPIUrl(platform.apiUrl)
@@ -1916,7 +2158,9 @@ class ChatRepositoryImpl @Inject constructor(
         streamPreparedApiState(
             prepare = {
                 val reasoningParameters = mapReasoningMode(platform, reasoningMode)
-                val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
+                val frozenConversation = conversationSnapshot
+                    ?: buildProviderConversationSnapshot(userMessages, assistantMessages, platform)
+                val conversationContext = frozenConversation.context
                 val inputMessages = buildResponsesInputMessages(conversationContext.turns, platform.uid)
 
                 ProviderRequestWithSources(
@@ -1924,7 +2168,13 @@ class ChatRepositoryImpl @Inject constructor(
                         model = platform.model,
                         input = inputMessages,
                         stream = true,
-                        instructions = mergePromptSections(platform.systemPrompt, currentRuntimeContextPrompt(), memoryPrompt, conversationContext.summary, extraPrompt),
+                        instructions = mergePromptSections(
+                            platform.systemPrompt,
+                            frozenConversation.runtimeContextPrompt,
+                            memoryPrompt,
+                            conversationContext.summary,
+                            extraPrompt
+                        ),
                         temperature = if (reasoningParameters.hasExplicitReasoning) null else platform.temperature,
                         topP = if (reasoningParameters.hasExplicitReasoning) null else platform.topP,
                         reasoning = reasoningParameters.openAIEffort?.let { effort ->
@@ -2006,16 +2256,25 @@ class ChatRepositoryImpl @Inject constructor(
         memoryPrompt: String?,
         reasoningMode: ReasoningMode,
         extraPrompt: String? = null,
-        emitEstimatedUsageWithoutOutput: Boolean = false
+        emitEstimatedUsageWithoutOutput: Boolean = false,
+        conversationSnapshot: ProviderConversationSnapshot? = null
     ): Flow<ApiState> = try {
         val traceContext = promptTraceContext(userMessages, platform)
         streamPreparedApiState(
             prepare = {
-                val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
+                val frozenConversation = conversationSnapshot
+                    ?: buildProviderConversationSnapshot(userMessages, assistantMessages, platform)
+                val conversationContext = frozenConversation.context
                 validateInlineBudgetIfNeeded(conversationContext.turns, platform)
                 val messages = buildOpenAIChatMessages(
                     conversationContext.turns,
-                    mergePromptSections(platform.systemPrompt, currentRuntimeContextPrompt(), memoryPrompt, conversationContext.summary, extraPrompt)
+                    mergePromptSections(
+                        platform.systemPrompt,
+                        frozenConversation.runtimeContextPrompt,
+                        memoryPrompt,
+                        conversationContext.summary,
+                        extraPrompt
+                    )
                 )
 
                 ProviderRequestWithSources(
@@ -2095,7 +2354,8 @@ class ChatRepositoryImpl @Inject constructor(
         memoryPrompt: String?,
         reasoningMode: ReasoningMode,
         extraPrompt: String? = null,
-        emitEstimatedUsageWithoutOutput: Boolean = false
+        emitEstimatedUsageWithoutOutput: Boolean = false,
+        conversationSnapshot: ProviderConversationSnapshot? = null
     ): Flow<ApiState> = try {
         openAIAPI.setToken(platform.token)
         openAIAPI.setAPIUrl(platform.apiUrl)
@@ -2104,11 +2364,19 @@ class ChatRepositoryImpl @Inject constructor(
         streamPreparedApiState(
             prepare = {
                 val reasoningParameters = mapReasoningMode(platform, reasoningMode)
-                val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
+                val frozenConversation = conversationSnapshot
+                    ?: buildProviderConversationSnapshot(userMessages, assistantMessages, platform)
+                val conversationContext = frozenConversation.context
                 validateInlineBudgetIfNeeded(conversationContext.turns, platform)
                 val messages = buildOpenAIChatMessages(
                     conversationContext.turns,
-                    mergePromptSections(platform.systemPrompt, currentRuntimeContextPrompt(), memoryPrompt, conversationContext.summary, extraPrompt)
+                    mergePromptSections(
+                        platform.systemPrompt,
+                        frozenConversation.runtimeContextPrompt,
+                        memoryPrompt,
+                        conversationContext.summary,
+                        extraPrompt
+                    )
                 )
 
                 ProviderRequestWithSources(
@@ -2208,6 +2476,15 @@ class ChatRepositoryImpl @Inject constructor(
             turns = ensureProviderReferencesForTurns(conversationContext.turns, platform)
         )
     }
+
+    private suspend fun buildProviderConversationSnapshot(
+        userMessages: List<MessageV2>,
+        assistantMessages: List<List<MessageV2>>,
+        platform: PlatformV2
+    ): ProviderConversationSnapshot = ProviderConversationSnapshot(
+        context = buildConversationContext(userMessages, assistantMessages, platform),
+        runtimeContextPrompt = currentRuntimeContextPrompt()
+    )
 
     private suspend fun scheduleMemoryConsolidationForCompactionIfNeeded(
         conversationContext: ConversationContext
@@ -2430,7 +2707,8 @@ class ChatRepositoryImpl @Inject constructor(
         memoryPrompt: String?,
         reasoningMode: ReasoningMode,
         extraPrompt: String? = null,
-        emitEstimatedUsageWithoutOutput: Boolean = false
+        emitEstimatedUsageWithoutOutput: Boolean = false,
+        conversationSnapshot: ProviderConversationSnapshot? = null
     ): Flow<ApiState> = try {
         anthropicAPI.setToken(platform.token)
         anthropicAPI.setAPIUrl(platform.apiUrl)
@@ -2439,7 +2717,9 @@ class ChatRepositoryImpl @Inject constructor(
         streamPreparedApiState(
             prepare = {
                 val reasoningParameters = mapReasoningMode(platform, reasoningMode)
-                val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
+                val frozenConversation = conversationSnapshot
+                    ?: buildProviderConversationSnapshot(userMessages, assistantMessages, platform)
+                val conversationContext = frozenConversation.context
                 val messages = buildAnthropicInputMessages(conversationContext.turns, platform.uid)
 
                 ProviderRequestWithSources(
@@ -2448,7 +2728,13 @@ class ChatRepositoryImpl @Inject constructor(
                         messages = messages,
                         maxTokens = reasoningParameters.anthropicMaxTokens ?: 4096,
                         stream = platform.stream,
-                        systemPrompt = mergePromptSections(platform.systemPrompt, currentRuntimeContextPrompt(), memoryPrompt, conversationContext.summary, extraPrompt),
+                        systemPrompt = mergePromptSections(
+                            platform.systemPrompt,
+                            frozenConversation.runtimeContextPrompt,
+                            memoryPrompt,
+                            conversationContext.summary,
+                            extraPrompt
+                        ),
                         temperature = if (reasoningParameters.hasExplicitReasoning) null else platform.temperature,
                         topP = if (reasoningParameters.hasExplicitReasoning) null else platform.topP,
                         thinking = reasoningParameters.anthropicBudgetTokens?.let { budgetTokens ->
@@ -2565,7 +2851,8 @@ class ChatRepositoryImpl @Inject constructor(
         memoryPrompt: String?,
         reasoningMode: ReasoningMode,
         extraPrompt: String? = null,
-        emitEstimatedUsageWithoutOutput: Boolean = false
+        emitEstimatedUsageWithoutOutput: Boolean = false,
+        conversationSnapshot: ProviderConversationSnapshot? = null
     ): Flow<ApiState> = try {
         googleAPI.setToken(platform.token)
         googleAPI.setAPIUrl(platform.apiUrl)
@@ -2574,7 +2861,9 @@ class ChatRepositoryImpl @Inject constructor(
         streamPreparedApiState(
             prepare = {
                 val reasoningParameters = mapReasoningMode(platform, reasoningMode)
-                val conversationContext = buildConversationContext(userMessages, assistantMessages, platform)
+                val frozenConversation = conversationSnapshot
+                    ?: buildProviderConversationSnapshot(userMessages, assistantMessages, platform)
+                val conversationContext = frozenConversation.context
                 val contents = buildGoogleContents(conversationContext.turns, platform.uid)
 
                 ProviderRequestWithSources(
@@ -2590,7 +2879,13 @@ class ChatRepositoryImpl @Inject constructor(
                                 )
                             }
                         ),
-                        systemInstruction = mergePromptSections(platform.systemPrompt, currentRuntimeContextPrompt(), memoryPrompt, conversationContext.summary, extraPrompt)?.let {
+                        systemInstruction = mergePromptSections(
+                            platform.systemPrompt,
+                            frozenConversation.runtimeContextPrompt,
+                            memoryPrompt,
+                            conversationContext.summary,
+                            extraPrompt
+                        )?.let {
                             Content(
                                 parts = listOf(Part.text(it))
                             )
@@ -2995,9 +3290,24 @@ private data class PromptTraceContext(
 )
 
 private data class SearchDecisionExecution(
-    val finalAnswerPrompt: String,
-    val usage: TokenUsageRecord
+    val finalAnswerPrompt: String?,
+    val usage: TokenUsageRecord?
 )
+
+private data class ProviderConversationSnapshot(
+    val context: ConversationContext,
+    val runtimeContextPrompt: String
+)
+
+private data class NativeToolRequestTemplates<T>(
+    val user: T,
+    val low: T
+) {
+    fun forPolicy(policy: ToolRoundReasoningPolicy): T = when (policy) {
+        ToolRoundReasoningPolicy.USER -> user
+        ToolRoundReasoningPolicy.LOW -> low
+    }
+}
 
 private data class OpenAIResponsesNativeToolRequest(
     val model: String,
@@ -3262,6 +3572,15 @@ private fun nativeFinalToolInstruction(results: Collection<ToolResult>): String 
     stickerFinalAnswerInstruction(results)
 ).joinToString(separator = "\n\n")
 
+private fun Collection<ToolResult>.hasStickerSendResult(): Boolean = any { result ->
+    result.name == ToolDefinition.SendSticker.name
+}
+
+private fun ToolRoundReasoningPolicy.resolve(userMode: ReasoningMode): ReasoningMode = when (this) {
+    ToolRoundReasoningPolicy.USER -> userMode
+    ToolRoundReasoningPolicy.LOW -> ReasoningMode.LOW
+}
+
 internal fun mergePromptSections(vararg sections: String?): String? = sections
     .mapNotNull { section -> section?.trim()?.takeIf { it.isNotBlank() } }
     .takeIf { it.isNotEmpty() }
@@ -3446,6 +3765,17 @@ private fun TokenUsageRecord.withToolAggregate(toolUsages: List<TokenUsageRecord
         toolTotalTokens = toolTotalTokens,
         isEstimated = isEstimated || relatedUsages.any { usage -> usage.isEstimated },
         details = relatedUsages.flatMap { usage -> usage.details }
+    )
+}
+
+private fun TokenUsageRecord.withAdditionalToolUsage(toolUsages: List<TokenUsageRecord>): TokenUsageRecord {
+    val relatedUsages = toolUsages.map { usage -> usage.asToolRelated() }
+    return copy(
+        toolInputTokens = relatedUsages.sumOf { usage -> usage.inputTokens },
+        toolOutputTokens = relatedUsages.sumOf { usage -> usage.outputTokens },
+        toolTotalTokens = relatedUsages.sumOf { usage -> usage.totalTokens },
+        isEstimated = isEstimated || relatedUsages.any { usage -> usage.isEstimated },
+        details = relatedUsages.flatMap { usage -> usage.details } + details
     )
 }
 

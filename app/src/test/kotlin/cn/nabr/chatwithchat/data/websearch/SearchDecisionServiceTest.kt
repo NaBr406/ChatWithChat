@@ -59,6 +59,59 @@ class SearchDecisionServiceTest {
     }
 
     @Test
+    fun `false decision preserves the actual request prompt and usage`() = runBlocking {
+        val service = SearchDecisionService(
+            RecordingDecisionClient(
+                Result.success(
+                    response(
+                        content = """{"shouldSearch":false,"queries":[],"reason":"not needed"}""",
+                        usage = ProviderUsage(promptTokens = 11, completionTokens = 3, totalTokens = 14)
+                    )
+                )
+            )
+        )
+
+        val outcome = service.decideWithUsage(
+            platform = platform(),
+            latestUserMessage = "Explain this without current facts.",
+            recentContext = null
+        )
+
+        assertFalse(outcome.decision.shouldSearch)
+        assertTrue(outcome.wasRequested)
+        assertTrue(outcome.requestPrompt.orEmpty().contains("Explain this without current facts."))
+        assertEquals(14, outcome.usage?.totalTokens)
+        assertEquals("搜索决策", outcome.usage?.details?.single()?.label)
+    }
+
+    @Test
+    fun `blank message reports that no decision request was made`() = runBlocking {
+        val client = RecordingDecisionClient(Result.failure(IllegalStateException("must not run")))
+        val service = SearchDecisionService(client)
+
+        val outcome = service.decideWithUsage(platform(), "   ", null)
+
+        assertFalse(outcome.wasRequested)
+        assertNull(outcome.requestPrompt)
+        assertNull(outcome.usage)
+        assertTrue(client.lastPrompt.isEmpty())
+    }
+
+    @Test
+    fun `failed decision request still exposes the attempted prompt`() = runBlocking {
+        val service = SearchDecisionService(
+            RecordingDecisionClient(Result.failure(IllegalStateException("provider failed")))
+        )
+
+        val outcome = service.decideWithUsage(platform(), "What happened today?", null)
+
+        assertFalse(outcome.decision.shouldSearch)
+        assertTrue(outcome.wasRequested)
+        assertTrue(outcome.requestPrompt.orEmpty().contains("What happened today?"))
+        assertNull(outcome.usage)
+    }
+
+    @Test
     fun `invalid json defaults to no search`() = runBlocking {
         val service = SearchDecisionService(RecordingDecisionClient(Result.success(response("not json"))))
 
