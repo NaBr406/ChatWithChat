@@ -60,7 +60,6 @@ internal class CanonicalMemoryMergePolicy(
         val completedIdentities = linkedSetOf<CanonicalMemoryIdentity>()
         var acceptedCandidateCount = 0
         var materialMutationCount = 0
-        var materialEntryMutationCount = 0
         var requiresIndexSync = false
         var hasMoreMutations = false
         var remainingEntryMutations = maxEntryMutations ?: Int.MAX_VALUE
@@ -307,10 +306,16 @@ internal class CanonicalMemoryMergePolicy(
                 }
                 if (selection.materialEntryMutationCount > 0) {
                     materialMutationCount += identityMaterialMutationCount
-                    materialEntryMutationCount += selection.materialEntryMutationCount
                     requiresIndexSync = requiresIndexSync || identityRequiresIndexSync
                 }
             }
+
+        pruneExpandedHistoryAppends(
+            originalEntries = parsed.entries,
+            replacements = replacements,
+            removals = removals,
+            appends = appends
+        )
 
         var markdown = baseMarkdown
         if (replacements.isNotEmpty()) {
@@ -348,7 +353,7 @@ internal class CanonicalMemoryMergePolicy(
             acceptedCandidateCount = acceptedCandidateCount,
             changedEntryCount = changedEntryCount,
             materialMutationCount = materialMutationCount,
-            materialEntryMutationCount = materialEntryMutationCount,
+            materialEntryMutationCount = replacements.size + removals.size + appends.size,
             requiresIndexSync = requiresIndexSync,
             hasMoreMutations = hasMoreMutations
         )

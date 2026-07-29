@@ -335,7 +335,6 @@ class MemoryLongTermConsolidationSchedulerTest {
     fun `recall placeholder excludes observation metadata but includes fact text`() = runBlocking {
         val original = entry(1)
         val metadataOnly = original.copy(
-            updatedAt = NOW_EPOCH_SECONDS,
             lastObservedAt = NOW_EPOCH_SECONDS,
             evidenceRefs = listOf("turn:metadata-only")
         )

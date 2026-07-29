@@ -1495,7 +1495,7 @@ class MemoryBatchConsolidationServiceTest {
                     sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
                     baseContent = currentContent,
                     targetContent = "# ChatWithChat Memory\n\n- Newer canonical generation.\n",
-                    targetIndexFingerprint = "newer-fingerprint"
+                    targetIndexFingerprint = "a".repeat(64)
                 )
             )
         )
