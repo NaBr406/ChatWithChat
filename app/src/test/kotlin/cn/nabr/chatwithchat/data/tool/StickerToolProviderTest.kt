@@ -391,8 +391,10 @@ class StickerToolProviderTest {
             Result.success(responses.removeAt(0))
         }
 
-        assertTrue(result is ToolLoopResult.ToolResults)
-        val toolResults = (result as ToolLoopResult.ToolResults).results
+        assertTrue(result is ToolLoopResult.CompletedWithToolResults)
+        val completed = result as ToolLoopResult.CompletedWithToolResults
+        assertEquals("I understand.", completed.content)
+        val toolResults = completed.results
         assertFalse(toolResults.single { it.name == "search_stickers" }.isError)
         assertFalse(toolResults.single { it.name == "send_sticker" }.isError)
         assertTrue(prompts[1].contains("立即调用 send_sticker"))

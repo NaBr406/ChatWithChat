@@ -155,19 +155,22 @@ class OpenAIResponsesToolAdapter {
         )
     }
 
-    private fun ToolResult.toResponseFunctionCallOutput(config: ToolLoopConfig): ResponseFunctionCallOutputItem = ResponseFunctionCallOutputItem(
-        callId = callId,
-        output = toolProtocolJson.encodeToString(
-            OpenAIToolResultPayload(
-                name = name,
-                ok = !isError,
-                content = content.clip(config.maxToolResultChars),
-                metadata = metadata,
-                structuredContent = structuredContent,
-                sources = sources
+    private fun ToolResult.toResponseFunctionCallOutput(config: ToolLoopConfig): ResponseFunctionCallOutputItem {
+        val projection = toNativeToolResultProjection(config.maxToolResultChars)
+        return ResponseFunctionCallOutputItem(
+            callId = callId,
+            output = toolProtocolJson.encodeToString(
+                OpenAIToolResultPayload(
+                    name = name,
+                    ok = !isError,
+                    content = projection.content,
+                    metadata = projection.metadata,
+                    structuredContent = projection.structuredContent,
+                    sources = projection.sources
+                )
             )
         )
-    )
+    }
 
     private companion object {
         private const val FUNCTION_CALL_OUTPUT_TYPE = "function_call"
@@ -185,12 +188,6 @@ private fun Sequence<ToolCall>.boundedDistinctById(maxCalls: Int): List<ToolCall
         if (calls.size >= limit) break
     }
     return calls
-}
-
-private fun String.clip(maxChars: Int): String {
-    val boundedMax = maxChars.coerceAtLeast(0)
-    if (length <= boundedMax) return this
-    return take(boundedMax).trimEnd()
 }
 
 private const val MAX_PREALLOCATED_TOOL_CALLS = 16

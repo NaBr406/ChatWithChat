@@ -73,6 +73,27 @@ class ToolPromptBuilderTest {
     }
 
     @Test
+    fun `final only json prompt carries only the latest tool outcome`() {
+        val prompt = ToolPromptBuilder().buildJsonFinalAnswerPrompt(
+            scratchpad = listOf(
+                ToolMessage.toolResult(
+                    ToolResult(
+                        callId = "send_1",
+                        name = ToolDefinition.SendSticker.name,
+                        content = "Sticker queued for local rendering."
+                    )
+                )
+            )
+        )
+
+        assertTrue(prompt.contains("\"type\":\"final_answer\",\"content\":\"answer text\""))
+        assertTrue(prompt.contains("The content is the final answer shown to the user."))
+        assertTrue(prompt.contains("Sticker queued for local rendering."))
+        assertFalse(prompt.contains("tool_calls"))
+        assertFalse(prompt.contains("Enabled tool signatures:"))
+    }
+
+    @Test
     fun `fallback prompt discourages web search for local device state`() {
         val prompt = ToolPromptBuilder().buildJsonFallbackPrompt(tools = listOf(ToolDefinition.WebSearch))
 

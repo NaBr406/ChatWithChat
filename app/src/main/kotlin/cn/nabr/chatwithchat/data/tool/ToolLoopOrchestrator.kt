@@ -81,17 +81,26 @@ class ToolLoopOrchestrator(
         val allResults = mutableListOf<ToolResult>()
         var hadToolInteraction = false
         val executionSession = createExecutionSession()
+        val roundStateMachine = ToolRoundStateMachine(scope.definitions)
 
         var allowedRounds = maxRounds
         var discoveryRounds = 0
         var roundIndex = 0
         while (roundIndex < allowedRounds) {
-            val scopedTools = scope.definitions
-            val toolPrompt = adapter.buildToolPrompt(
-                tools = scopedTools,
-                scratchpad = scratchpad,
-                config = config
-            )
+            roundStateMachine.updateAvailableDefinitions(scope.definitions)
+            val roundState = roundStateMachine.current
+            val toolPrompt = if (roundState.isFinalOnly) {
+                adapter.buildFinalAnswerEnvelopePrompt(
+                    scratchpad = scratchpad,
+                    config = config
+                )
+            } else {
+                adapter.buildToolPrompt(
+                    tools = roundState.definitions,
+                    scratchpad = scratchpad,
+                    config = config
+                )
+            }
             val modelText = requestModel(toolPrompt).getOrElse { throwable ->
                 return fallbackOrFailure(
                     adapter = adapter,
@@ -115,15 +124,23 @@ class ToolLoopOrchestrator(
             when (modelOutput) {
                 is JsonToolModelOutput.FinalAnswer -> {
                     return if (allResults.isNotEmpty()) {
-                        ToolLoopResult.ToolResults(
-                            calls = allCalls,
-                            results = allResults,
-                            finalAnswerPrompt = buildFinalAnswerPrompt(
-                                adapter = adapter,
-                                results = allResults,
-                                draftFinalAnswer = modelOutput.content
+                        if (roundState.isFinalOnly) {
+                            ToolLoopResult.CompletedWithToolResults(
+                                content = modelOutput.content,
+                                calls = allCalls,
+                                results = allResults
                             )
-                        )
+                        } else {
+                            ToolLoopResult.ToolResults(
+                                calls = allCalls,
+                                results = allResults,
+                                finalAnswerPrompt = buildFinalAnswerPrompt(
+                                    adapter = adapter,
+                                    results = allResults,
+                                    draftFinalAnswer = modelOutput.content
+                                )
+                            )
+                        }
                     } else {
                         ToolLoopResult.FinalAnswer(modelOutput.content)
                     }
@@ -143,11 +160,16 @@ class ToolLoopOrchestrator(
                     val results = executeScopedToolCalls(
                         calls = calls,
                         scope = scope,
+                        allowedToolNames = roundState.allowedToolNames,
                         executionSession = executionSession,
                         onProgress = onProgress
                     )
                     allCalls += calls
                     allResults += results
+                    roundStateMachine.onToolResults(results)
+                    if (roundStateMachine.current.shouldCompactScratchpad) {
+                        scratchpad.clear()
+                    }
                     calls.forEach { call -> scratchpad += ToolMessage.modelToolCall(call) }
                     results.forEach { result -> scratchpad += ToolMessage.toolResult(result) }
                     if (results.hasSuccessfulToolDiscovery() &&
@@ -190,10 +212,11 @@ class ToolLoopOrchestrator(
     internal suspend fun executeScopedToolCalls(
         calls: List<ToolCall>,
         scope: ToolScope,
+        allowedToolNames: Set<String> = scope.advertisedToolNames,
         executionSession: ToolLoopExecutionSession = createExecutionSession(),
         onProgress: suspend (ApiState) -> Unit = {}
     ): List<ToolResult> {
-        val activeToolNames = scope.advertisedToolNames
+        val activeToolNames = scope.advertisedToolNames.intersect(allowedToolNames)
         val availableCalls = calls.selectAvailable(activeToolNames)
         val (allowedCalls, budgetRejectedCalls) = executionSession.select(availableCalls.allowed)
         val rejectedCalls = availableCalls.rejected + budgetRejectedCalls

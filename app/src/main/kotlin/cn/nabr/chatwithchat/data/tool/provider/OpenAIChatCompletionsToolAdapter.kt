@@ -105,20 +105,23 @@ class OpenAIChatCompletionsToolAdapter {
         )
     )
 
-    private fun ToolResult.toToolMessage(config: ToolLoopConfig): ChatMessage = ChatMessage(
-        role = Role.TOOL,
-        contentText = toolProtocolJson.encodeToString(
-            OpenAIChatToolResultPayload(
-                name = name,
-                ok = !isError,
-                content = content.clip(config.maxToolResultChars),
-                metadata = metadata,
-                structuredContent = structuredContent,
-                sources = sources
-            )
-        ),
-        toolCallId = callId
-    )
+    private fun ToolResult.toToolMessage(config: ToolLoopConfig): ChatMessage {
+        val projection = toNativeToolResultProjection(config.maxToolResultChars)
+        return ChatMessage(
+            role = Role.TOOL,
+            contentText = toolProtocolJson.encodeToString(
+                OpenAIChatToolResultPayload(
+                    name = name,
+                    ok = !isError,
+                    content = projection.content,
+                    metadata = projection.metadata,
+                    structuredContent = projection.structuredContent,
+                    sources = projection.sources
+                )
+            ),
+            toolCallId = callId
+        )
+    }
 
     private data class ToolCallAccumulator(
         val index: Int,
@@ -138,12 +141,6 @@ class OpenAIChatCompletionsToolAdapter {
             )
         }
     }
-}
-
-private fun String.clip(maxChars: Int): String {
-    val boundedMax = maxChars.coerceAtLeast(0)
-    if (length <= boundedMax) return this
-    return take(boundedMax).trimEnd()
 }
 
 @Serializable

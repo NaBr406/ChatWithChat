@@ -127,20 +127,23 @@ class AnthropicNativeToolAdapter {
         buildJsonObject {}
     }
 
-    private fun ToolResult.toToolResultContent(config: ToolLoopConfig): ToolResultContent = ToolResultContent(
-        toolUseId = callId,
-        content = toolProtocolJson.encodeToString(
-            AnthropicToolResultPayload(
-                name = name,
-                ok = !isError,
-                content = content.clip(config.maxToolResultChars),
-                metadata = metadata,
-                structuredContent = structuredContent,
-                sources = sources
-            )
-        ),
-        isError = isError.takeIf { it }
-    )
+    private fun ToolResult.toToolResultContent(config: ToolLoopConfig): ToolResultContent {
+        val projection = toNativeToolResultProjection(config.maxToolResultChars)
+        return ToolResultContent(
+            toolUseId = callId,
+            content = toolProtocolJson.encodeToString(
+                AnthropicToolResultPayload(
+                    name = name,
+                    ok = !isError,
+                    content = projection.content,
+                    metadata = projection.metadata,
+                    structuredContent = projection.structuredContent,
+                    sources = projection.sources
+                )
+            ),
+            isError = isError.takeIf { it }
+        )
+    }
 
     private data class ToolCallAccumulator(
         val index: Int,
@@ -163,12 +166,6 @@ class AnthropicNativeToolAdapter {
             )
         }
     }
-}
-
-private fun String.clip(maxChars: Int): String {
-    val boundedMax = maxChars.coerceAtLeast(0)
-    if (length <= boundedMax) return this
-    return take(boundedMax).trimEnd()
 }
 
 @Serializable

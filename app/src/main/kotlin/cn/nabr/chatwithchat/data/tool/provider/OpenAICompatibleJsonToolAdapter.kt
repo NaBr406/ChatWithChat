@@ -28,6 +28,14 @@ class OpenAICompatibleJsonToolAdapter(
         config = config
     )
 
+    override fun buildFinalAnswerEnvelopePrompt(
+        scratchpad: List<ToolMessage>,
+        config: ToolLoopConfig
+    ): String = toolPromptBuilder.buildJsonFinalAnswerPrompt(
+        scratchpad = scratchpad,
+        config = config
+    )
+
     override fun parseModelOutput(
         rawText: String,
         config: ToolLoopConfig

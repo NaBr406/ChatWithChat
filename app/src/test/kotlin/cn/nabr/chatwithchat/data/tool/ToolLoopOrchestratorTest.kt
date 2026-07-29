@@ -64,6 +64,78 @@ class ToolLoopOrchestratorTest {
     }
 
     @Test
+    fun `sticker json loop narrows tools and completes in three model requests`() = runBlocking {
+        val executedCalls = mutableListOf<ToolCall>()
+        val executor = ToolExecutor(
+            ToolRegistry(
+                definitions = listOf(
+                    ToolDefinition.WebSearch,
+                    ToolDefinition.SearchStickers,
+                    ToolDefinition.SendSticker
+                ),
+                handlers = mapOf(
+                    ToolDefinition.WebSearch.name to ToolHandler { call, _ ->
+                        executedCalls += call
+                        ToolResult(call.id, call.name, "web result")
+                    },
+                    ToolDefinition.SearchStickers.name to ToolHandler { call, _ ->
+                        executedCalls += call
+                        ToolResult(
+                            callId = call.id,
+                            name = call.name,
+                            content = "sticker_id=builtin.reactions.wave; title=Wave",
+                            metadata = mapOf("candidate_count" to "1")
+                        )
+                    },
+                    ToolDefinition.SendSticker.name to ToolHandler { call, _ ->
+                        executedCalls += call
+                        ToolResult(call.id, call.name, "Sticker queued for local rendering.")
+                    }
+                ),
+                securityPolicies = mapOf(
+                    ToolDefinition.WebSearch.name to ToolSecurityPolicy.ReadOnlyPublic,
+                    ToolDefinition.SearchStickers.name to ToolSecurityPolicy.ReadOnlyPrivate,
+                    ToolDefinition.SendSticker.name to ToolSecurityPolicy.ReadOnlyPrivate
+                )
+            )
+        )
+        val orchestrator = ToolLoopOrchestrator(executor)
+        val prompts = mutableListOf<String>()
+        val responses = ArrayDeque(
+            listOf(
+                """{"type":"tool_calls","tool_calls":[{"id":"search_1","name":"search_stickers","arguments":{"query":"wave"}}]}""",
+                """{"type":"tool_calls","tool_calls":[{"id":"send_1","name":"send_sticker","arguments":{"sticker_id":"builtin.reactions.wave"}}]}""",
+                """{"type":"final_answer","content":"Here you go."}"""
+            )
+        )
+
+        val result = orchestrator.runLoop(
+            scope = orchestrator.createToolScope(orchestrator.toolDefinitions)
+        ) { prompt ->
+            prompts += prompt
+            Result.success(responses.removeFirst())
+        }
+
+        assertTrue(result is ToolLoopResult.CompletedWithToolResults)
+        result as ToolLoopResult.CompletedWithToolResults
+        assertEquals("Here you go.", result.content)
+        assertEquals(listOf("search_stickers", "send_sticker"), executedCalls.map(ToolCall::name))
+        assertEquals(3, prompts.size)
+        assertTrue(prompts[0].contains("search_stickers("))
+        assertTrue(prompts[0].contains("send_sticker("))
+        assertTrue(prompts[1].contains("send_sticker("))
+        assertFalse(prompts[1].contains("search_stickers("))
+        assertFalse(prompts[1].contains("web_search("))
+        assertTrue(prompts[1].contains("sticker_id=builtin.reactions.wave"))
+        assertTrue(prompts[2].contains("The content is the final answer shown to the user."))
+        assertTrue(prompts[2].contains("Sticker queued for local rendering."))
+        assertFalse(prompts[2].contains("Enabled tool signatures:"))
+        assertFalse(prompts[2].contains("sticker_id=builtin.reactions.wave"))
+        assertEquals(2, result.calls.size)
+        assertEquals(2, result.results.size)
+    }
+
+    @Test
     fun `malformed tool envelope preserves tool interaction intent`() = runBlocking {
         val orchestrator = ToolLoopOrchestrator(recordingExecutor(mutableListOf()))
 

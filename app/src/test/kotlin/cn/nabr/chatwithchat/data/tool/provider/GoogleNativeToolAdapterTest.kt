@@ -244,4 +244,14 @@ class GoogleNativeToolAdapterTest {
         assertTrue(payload.contains("structured_content"))
         assertTrue(payload.contains("public_url"))
     }
+
+    @Test
+    fun `sticker search result serializes one compact candidate projection`() {
+        val result = nativeStickerSearchResult(callId = "func_sticker_search")
+
+        val response = adapter.toolResultToFunctionResponse(result)
+        val payload = NetworkClient.json.encodeToString(response)
+
+        assertCompactNativeStickerProjection(payload, result)
+    }
 }

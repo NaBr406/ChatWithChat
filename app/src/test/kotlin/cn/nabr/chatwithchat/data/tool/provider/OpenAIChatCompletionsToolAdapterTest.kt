@@ -296,4 +296,14 @@ class OpenAIChatCompletionsToolAdapterTest {
         assertTrue(payload.contains("structured_content"))
         assertTrue(payload.contains("public_url"))
     }
+
+    @Test
+    fun `sticker search result serializes one compact candidate projection`() {
+        val result = nativeStickerSearchResult(callId = "call_sticker_search")
+
+        val message = adapter.toolResultToChatMessage(result)
+        val payload = NetworkClient.openAIJson.encodeToString(message)
+
+        assertCompactNativeStickerProjection(payload, result)
+    }
 }

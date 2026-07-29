@@ -570,6 +570,23 @@ class ChatRepositoryImpl @Inject constructor(
                 )?.let { usage -> emit(ApiState.UsageUpdated(usage)) }
                 if (isDone) emit(ApiState.Done)
             }
+            is ToolLoopResult.CompletedWithToolResults -> {
+                emitPresentationArtifacts(loopResult.results)
+                toolLoopOrchestrator.sourceMetadata(loopResult.results)
+                    .dedupeMessageSources()
+                    .takeIf { it.isNotEmpty() }?.let { sources ->
+                        emit(ApiState.SourcesUpdated(sources))
+                    }
+                val hasVisibleFinalAnswer = loopResult.content.isNotBlank()
+                if (hasVisibleFinalAnswer) {
+                    emit(ApiState.Success(loopResult.content))
+                }
+                aggregateToolUsage(
+                    currentAnswerUsage = toolUsageRecords.lastOrNull().takeIf { hasVisibleFinalAnswer },
+                    toolUsages = toolUsageRecords
+                )?.let { usage -> emit(ApiState.UsageUpdated(usage)) }
+                emit(ApiState.Done)
+            }
             is ToolLoopResult.Failed -> {
                 val limitErrorCode = loopResult.message.toolLimitErrorCodeOrNull()
                 if (limitErrorCode != null) {

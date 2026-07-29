@@ -255,4 +255,14 @@ class AnthropicNativeToolAdapterTest {
         assertTrue(payload.contains("structured_content"))
         assertTrue(payload.contains("public_url"))
     }
+
+    @Test
+    fun `sticker search result serializes one compact candidate projection`() {
+        val result = nativeStickerSearchResult(callId = "toolu_sticker_search")
+
+        val content = adapter.toolResultToMessageContent(result)
+        val payload = json.encodeToString(content)
+
+        assertCompactNativeStickerProjection(payload, result)
+    }
 }

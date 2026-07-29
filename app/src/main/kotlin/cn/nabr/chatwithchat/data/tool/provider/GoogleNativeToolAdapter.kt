@@ -112,27 +112,24 @@ class GoogleNativeToolAdapter {
         buildJsonObject {}
     }
 
-    private fun ToolResult.toFunctionResponse(config: ToolLoopConfig): JsonObject = buildJsonObject {
-        put("name", JsonPrimitive(name))
-        put("ok", JsonPrimitive(!isError))
-        put("content", JsonPrimitive(content.clip(config.maxToolResultChars)))
-        put(
-            "metadata",
-            buildJsonObject {
-                metadata.forEach { (key, value) ->
-                    put(key, JsonPrimitive(value))
+    private fun ToolResult.toFunctionResponse(config: ToolLoopConfig): JsonObject {
+        val projection = toNativeToolResultProjection(config.maxToolResultChars)
+        return buildJsonObject {
+            put("name", JsonPrimitive(name))
+            put("ok", JsonPrimitive(!isError))
+            put("content", JsonPrimitive(projection.content))
+            put(
+                "metadata",
+                buildJsonObject {
+                    projection.metadata.forEach { (key, value) ->
+                        put(key, JsonPrimitive(value))
+                    }
                 }
+            )
+            projection.structuredContent?.let { value -> put("structured_content", value) }
+            if (projection.sources.isNotEmpty()) {
+                put("sources", toolProtocolJson.encodeToJsonElement(projection.sources))
             }
-        )
-        structuredContent?.let { value -> put("structured_content", value) }
-        if (sources.isNotEmpty()) {
-            put("sources", toolProtocolJson.encodeToJsonElement(sources))
         }
     }
-}
-
-private fun String.clip(maxChars: Int): String {
-    val boundedMax = maxChars.coerceAtLeast(0)
-    if (length <= boundedMax) return this
-    return take(boundedMax).trimEnd()
 }

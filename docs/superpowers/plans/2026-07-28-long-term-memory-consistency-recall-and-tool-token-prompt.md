@@ -934,15 +934,15 @@ git diff --check
 
 **Implementation requirements:**
 
-- [ ] 把 sticker flow 表达为显式 state transition，而不是每轮始终复用初始 full tool scope。
-- [ ] 初始请求按现有 enablement/scope 选择工具；成功、非空 `search_stickers` 后只暴露 `send_sticker`。空候选可以保留一次 bounded re-search，但不能重新暴露无关工具。
+- [x] 把 sticker flow 表达为显式 state transition，而不是每轮始终复用初始 full tool scope。
+- [x] 初始请求按现有 enablement/scope 选择工具；成功、非空 `search_stickers` 后只暴露 `send_sticker`。空候选可以保留一次 bounded re-search，但不能重新暴露无关工具。
 - [ ] `send_sticker` 成功后立即进入 final-only state，不再发一个仍带工具 schema 的“看看模型是否 final”请求。
-- [ ] JSON fallback 的 final-only round 可以要求合法 `final_answer` envelope，但该 content 本身就是正式用户回答；不得再把它作为 draft 发给同一 provider 请求一次。
+- [x] JSON fallback 的 final-only round 可以要求合法 `final_answer` envelope，但该 content 本身就是正式用户回答；不得再把它作为 draft 发给同一 provider 请求一次。
 - [ ] native final-only request 的 `tools` / `toolChoice` 必须为空；所有 provider adapter 有 serialized DTO assertion。
-- [ ] `ToolResult` 保留 canonical candidate data供 session validation。JSON prompt 使用 bounded textual representation；native adapters 只序列化一份 compact structured representation，不能重复发送等价 content。
-- [ ] candidate projection 仍包含 stable `sticker_id`、bounded title/alt/tags；不包含 path、URI、asset hash、bytes 或完整 catalog。
+- [x] `ToolResult` 保留 canonical candidate data供 session validation。JSON prompt 使用 bounded textual representation；native adapters 只序列化一份 compact structured representation，不能重复发送等价 content。
+- [x] candidate projection 仍包含 stable `sticker_id`、bounded title/alt/tags；不包含 path、URI、asset hash、bytes 或完整 catalog。
 - [ ] post-search mechanical round 使用 `ToolRoundReasoningPolicy.LOW` 或等价 provider-aware mapping；initial/final 使用用户 reasoning。unsupported provider 不发送伪参数。
-- [ ] JSON scratchpad 只保留下一轮所需 calls/results；已被 compact summary覆盖的候选不得全文重复累积到 8000 chars。
+- [x] JSON scratchpad 只保留下一轮所需 calls/results；已被 compact summary覆盖的候选不得全文重复累积到 8000 chars。
 - [ ] system/history/memory snapshot 在同一 turn 不重新计算。对必须重发的 stateless provider 保持 compact；支持 continuation 的 provider 不应重建重复 tool result。
 - [ ] direct answer with tools available 仍为一次模型请求；failed/malformed/stale sticker ID 路径 bounded 且能生成最终文本或清晰错误。
 - [ ] auto web-search decision 的额外调用在 request trace 和 usage aggregation 中可见；decision=false 不得静默丢失 usage。
@@ -950,7 +950,7 @@ git diff --check
 
 **Acceptance criteria:**
 
-- [ ] JSON fallback sticker happy path：恰好 3 model requests、2 local tool executions、1 persisted sticker presentation、1 final answer。
+- [x] JSON fallback sticker happy path：恰好 3 model requests、2 local tool executions、1 persisted sticker presentation、1 final answer。
 - [ ] native sticker happy path：最多 3 model requests；第二轮 schema 只含 companion tool，最后一轮 tools 为空。
 - [ ] JSON fallback textual IDs 和 native structured candidates 均能成功 `send_sticker`，但每个 transport 的 serialized payload 只有一份 candidate list。
 - [ ] formal final reasoning 与用户设置一致；只有 send-selection mechanical round 被降低。
@@ -964,6 +964,15 @@ git diff --check
 ./gradlew.bat :app:compileDebugKotlin
 git diff --check
 ```
+
+#### Task 7 JSON State And Native Projection Slice Record (2026-07-29)
+
+- Added a shared `ToolRoundStateMachine` whose current definitions are also the execution allowlist. A non-empty sticker search narrows the next JSON round to `send_sticker`; the first empty search exposes only `search_stickers`, and the second empty search or any send result enters final-only state.
+- JSON fallback now treats the third-round `final_answer.content` as the formal user answer while preserving all canonical calls/results for sticker presentation, sources, and usage aggregation. The final-only prompt has no tool schema, and sticker scratchpad compaction removes the consumed candidate list before that request.
+- All four native result adapters now keep canonical `ToolResult` data untouched but project sticker search results as one compact structured candidate representation. Focused assertions cover stable ID/title/alt/tags and prove path, URI, hash, bytes, catalog extras, and equivalent textual candidates are absent from the serialized DTO.
+- State-machine tests passed 7/7. The combined state/orchestrator/prompt/provider adapter gate passed, the deterministic repository baseline passed, `:app:compileDebugKotlin` passed, and `git diff --check` passed.
+- Frozen JSON measurements now show exactly 3 model requests, 2 local executions, 1 presentation, 1 final answer, and 3 usage details. Estimated input tokens fell from `2771 -> 1394` for Custom, `2783 -> 1403` for Ollama, and `2839 -> 1445` for Groq; candidate ID occurrences fell from 5 to 1 for each JSON transport.
+- Native projection alone reduced candidate ID occurrences from 5 to 3 and modestly reduced payloads, but native final-only schemas, mechanical LOW reasoning, consumed-result compaction, and the 20% native token target remain open for the next slice.
 
 ### Task 8: Integrate, Migrate, Prove Runtime Behavior, And Document Evidence
 

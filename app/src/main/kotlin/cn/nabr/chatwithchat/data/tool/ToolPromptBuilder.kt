@@ -33,7 +33,10 @@ class ToolPromptBuilder(
                 appendLine("- fetch_url：只读取对回答有帮助的网页。")
             }
             fallbackStickerToolUsageRules(tools).forEach { rule -> appendLine("- $rule") }
-            stickerContinuationInstruction(priorResults)?.let { instruction ->
+            stickerContinuationInstruction(
+                results = priorResults,
+                allowedToolNames = tools.mapTo(linkedSetOf(), ToolDefinition::name)
+            )?.let { instruction ->
                 appendLine("- 贴图下一步：$instruction")
             }
             appendLine()
@@ -56,6 +59,24 @@ class ToolPromptBuilder(
                 append(value)
             }
         }
+    }
+
+    fun buildJsonFinalAnswerPrompt(
+        scratchpad: List<ToolMessage>,
+        config: ToolLoopConfig = ToolLoopConfig.Default
+    ): String {
+        val latestResult = scratchpad.mapNotNull(ToolMessage::toolResult).lastOrNull()
+        return buildString {
+            appendLine("Return exactly one JSON object. Never use Markdown, XML, tool tags, or bare IDs.")
+            appendLine("Keep every JSON key and type value exactly as shown; never translate them.")
+            appendLine("{\"type\":\"final_answer\",\"content\":\"answer text\"}")
+            appendLine("Do not call any tool. The content is the final answer shown to the user.")
+            latestResult?.let { result ->
+                appendLine()
+                appendLine("Latest tool outcome: ${result.name} - ${if (result.isError) "ERROR" else "OK"}")
+                append(result.content.trim().clip(config.maxToolResultChars))
+            }
+        }.trim()
     }
 
     fun formatToolDefinitions(tools: List<ToolDefinition>): String = tools.joinToString(separator = "\n\n") { tool ->
@@ -227,7 +248,10 @@ internal fun stickerToolUsageRules(tools: Collection<ToolDefinition>): List<Stri
     }
 }
 
-internal fun stickerContinuationInstruction(results: Collection<ToolResult>): String? {
+internal fun stickerContinuationInstruction(
+    results: Collection<ToolResult>,
+    allowedToolNames: Set<String>? = null
+): String? {
     val stickerResults = results.filter { result ->
         result.name == ToolDefinition.SearchStickers.name || result.name == ToolDefinition.SendSticker.name
     }
@@ -239,7 +263,15 @@ internal fun stickerContinuationInstruction(results: Collection<ToolResult>): St
 
     val latestResult = stickerResults.last()
     val searchCount = stickerResults.count { result -> result.name == ToolDefinition.SearchStickers.name }
+    val canSearch = allowedToolNames?.contains(ToolDefinition.SearchStickers.name) != false
+    val canSend = allowedToolNames?.contains(ToolDefinition.SendSticker.name) != false
     return when {
+        latestResult.name == ToolDefinition.SearchStickers.name &&
+            !latestResult.isError &&
+            latestResult.hasStickerCandidates() &&
+            canSend &&
+            !canSearch ->
+            "从返回候选中选择最能表达你自身反应的一张，立即调用 send_sticker；不要再次搜索，也不要在调用前直接回答。"
         latestResult.name == ToolDefinition.SearchStickers.name &&
             !latestResult.isError &&
             latestResult.hasStickerCandidates() &&
@@ -248,6 +280,7 @@ internal fun stickerContinuationInstruction(results: Collection<ToolResult>): St
         latestResult.name == ToolDefinition.SearchStickers.name && latestResult.hasStickerCandidates() ->
             "从返回候选中选择最能表达你自身反应的一张，立即调用 send_sticker；不要再次搜索，也不要在调用前直接回答。"
         latestResult.name == ToolDefinition.SearchStickers.name &&
+            canSearch &&
             searchCount < MAX_STICKER_SEARCH_CALLS_PER_REQUEST ->
             "当前没有候选能表达你的反应。可以换一种方式描述你想表达的感觉，再调用一次 search_stickers；不要重复同一 query。"
         latestResult.name == ToolDefinition.SearchStickers.name ->
@@ -280,7 +313,3 @@ internal fun String.substringBeforeSentenceEnd(): String {
         ?: return this
     return substring(0, sentenceEnd)
 }
-
-private fun ToolResult.hasStickerCandidates(): Boolean =
-    metadata["candidate_count"]?.toIntOrNull()?.let { count -> count > 0 }
-        ?: content.contains("sticker_id=")

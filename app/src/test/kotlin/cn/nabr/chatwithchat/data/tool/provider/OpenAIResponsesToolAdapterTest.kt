@@ -262,4 +262,14 @@ class OpenAIResponsesToolAdapterTest {
         assertTrue(decoded.output.contains(""""ok":false"""))
         assertFalse(decoded.output.contains("function_call_output"))
     }
+
+    @Test
+    fun `sticker search result serializes one compact candidate projection`() {
+        val result = nativeStickerSearchResult(callId = "call_sticker_search")
+
+        val output = adapter.toolResultToResponseInput(result)
+        val payload = NetworkClient.openAIJson.encodeToString(output)
+
+        assertCompactNativeStickerProjection(payload, result)
+    }
 }

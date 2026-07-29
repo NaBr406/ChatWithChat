@@ -18,6 +18,15 @@ interface ToolCallingAdapter {
         config: ToolLoopConfig
     ): String
 
+    fun buildFinalAnswerEnvelopePrompt(
+        scratchpad: List<ToolMessage>,
+        config: ToolLoopConfig
+    ): String = buildToolPrompt(
+        tools = emptyList(),
+        scratchpad = scratchpad,
+        config = config
+    )
+
     fun advertisedToolChars(tools: List<ToolDefinition>): Int = buildToolPrompt(
         tools = tools,
         scratchpad = emptyList(),

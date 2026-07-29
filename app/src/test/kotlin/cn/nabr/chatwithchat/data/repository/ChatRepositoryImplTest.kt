@@ -1560,14 +1560,20 @@ class ChatRepositoryImplTest {
         assertEquals(EXPECTED_STICKER_BASELINE_ROWS, rows.map(ToolRequestBaselineRow::tableRow))
 
         rows.filter { row -> row.name.endsWith("_json") }.forEach { row ->
-            assertEquals("${row.name} model request baseline", 4, row.modelRequests)
+            assertEquals("${row.name} model request baseline", 3, row.modelRequests)
             assertEquals("${row.name} local execution baseline", 2, row.toolExecutions)
             assertTrue(row.advertisedToolCounts.all { count -> count == 0 })
+            assertEquals("${row.name} candidate projection", 1, row.candidateOccurrences)
+            assertTrue(
+                "${row.name} should reduce estimated input tokens by at least 30%",
+                row.estimatedInputTokens.sum() <= JSON_STICKER_TOKEN_CEILINGS.getValue(row.name)
+            )
         }
         rows.filterNot { row -> row.name.endsWith("_json") }.forEach { row ->
             assertEquals("${row.name} model request baseline", 3, row.modelRequests)
             assertEquals("${row.name} local execution baseline", 2, row.toolExecutions)
             assertTrue("${row.name} currently repeats tools in the final request", row.advertisedToolCounts.last() > 0)
+            assertEquals("${row.name} compact candidate projection baseline", 3, row.candidateOccurrences)
         }
         assertTrue(rows.all { row -> !row.usage.isEstimated })
         assertTrue(rows.all { row -> row.usage.details > 0 })
@@ -1594,8 +1600,7 @@ class ChatRepositoryImplTest {
                 chatCompletionFlow(
                     "{\"type\":\"final_answer\",\"content\":\"Baseline draft\"}",
                     baselineProviderUsage(3)
-                ),
-                chatCompletionFlow("Baseline formal final", baselineProviderUsage(4))
+                )
             )
         )
         val searchDecisionService = SearchDecisionService(
@@ -1631,16 +1636,16 @@ class ChatRepositoryImplTest {
         )
 
         assertEquals(1, decisionRequests)
-        assertEquals(4, openAIAPI.chatCompletionRequests.size)
+        assertEquals(3, openAIAPI.chatCompletionRequests.size)
         assertEquals(2, executions.single())
         assertEquals(1, states.filterIsInstance<ApiState.StickerAdded>().size)
-        assertEquals(40, visibleUsage.inputTokens)
-        assertEquals(4, visibleUsage.outputTokens)
-        assertEquals(44, visibleUsage.totalTokens)
-        assertEquals(100, visibleUsage.toolInputTokens)
-        assertEquals(10, visibleUsage.toolOutputTokens)
-        assertEquals(110, visibleUsage.toolTotalTokens)
-        assertEquals(4, visibleUsage.details.size)
+        assertEquals(30, visibleUsage.inputTokens)
+        assertEquals(3, visibleUsage.outputTokens)
+        assertEquals(33, visibleUsage.totalTokens)
+        assertEquals(60, visibleUsage.toolInputTokens)
+        assertEquals(6, visibleUsage.toolOutputTokens)
+        assertEquals(66, visibleUsage.toolTotalTokens)
+        assertEquals(3, visibleUsage.details.size)
         assertFalse(visibleUsage.details.any { detail -> detail.label == "\u641c\u7d22\u51b3\u7b56" })
     }
 
@@ -3706,13 +3711,18 @@ class ChatRepositoryImplTest {
         const val FALLBACK_TOOL_SCRATCHPAD_MARKER = "Tool scratchpad:"
         val BASELINE_RUNTIME_DATE_TIME_REGEX = Regex("\\d{4}-\\d{2}-\\d{2}T[^ ]+ \\([^)]*\\)")
         val EXPECTED_STICKER_BASELINE_ROWS = listOf(
-            "sticker-request-baseline|custom_json|4|2|1371,1748,1928,1069|614,778,866,513|1155,1517,1686,849|67,67,67,67|54,54,54,54|159,159,159,0|0,247,447,0|0,0,0,0|5|40/4/44|100/10/110|4|1",
-            "sticker-request-baseline|ollama_json|4|2|1367,1744,1924,1065|617,781,869,516|1155,1517,1686,849|67,67,67,67|54,54,54,54|159,159,159,0|0,247,447,0|0,0,0,0|5|40/4/44|100/10/110|4|1",
-            "sticker-request-baseline|groq_json|4|2|1422,1799,1979,1120|631,795,883,530|1155,1517,1686,849|67,67,67,67|54,54,54,54|159,159,159,0|0,247,447,0|0,0,0,0|5|40/4/44|100/10/110|4|1",
-            "sticker-request-baseline|openai_responses|3|2|1529,2208,2513|648,850,949|586,675,644|42,42,42|54,54,54|803,803,803|0,586,920|2,2,2|5|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|openrouter_native|3|2|1672,2403,2740|852,1081,1196|586,674,643|67,67,67|54,54,54|829,829,829|0,616,982|2,2,2|5|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|anthropic_native|3|2|1525,2227,2557|825,1048,1163|586,675,644|67,67,67|54,54,54|742,742,742|0,609,968|2,2,2|5|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|google_native|3|2|1497,2160,2465|814,1027,1138|586,674,643|51,51,51|54,54,54|707,707,707|0,562,896|2,2,2|5|30/3/33|60/6/66|3|1"
+            "sticker-request-baseline|custom_json|3|2|1371,1430,719|614,526,254|1155,1202,524|67,67,67|54,54,54|159,73,0|0,247,0|0,0,0|1|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|ollama_json|3|2|1367,1426,715|617,529,257|1155,1202,524|67,67,67|54,54,54|159,73,0|0,247,0|0,0,0|1|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|groq_json|3|2|1422,1481,770|631,543,271|1155,1202,524|67,67,67|54,54,54|159,73,0|0,247,0|0,0,0|1|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|openai_responses|3|2|1529,2101,2406|648,820,919|586,675,644|42,42,42|54,54,54|803,803,803|0,479,813|2,2,2|3|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|openrouter_native|3|2|1672,2296,2633|852,1052,1167|586,674,643|67,67,67|54,54,54|829,829,829|0,509,875|2,2,2|3|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|anthropic_native|3|2|1525,2120,2450|825,1019,1134|586,675,644|67,67,67|54,54,54|742,742,742|0,502,861|2,2,2|3|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|google_native|3|2|1497,2058,2363|814,1000,1111|586,674,643|51,51,51|54,54,54|707,707,707|0,460,794|2,2,2|3|30/3/33|60/6/66|3|1"
+        )
+        val JSON_STICKER_TOKEN_CEILINGS = mapOf(
+            "custom_json" to 1_939,
+            "ollama_json" to 1_948,
+            "groq_json" to 1_987
         )
     }
 
@@ -3825,6 +3835,8 @@ class ChatRepositoryImplTest {
             memoryPrompt = BASELINE_MEMORY_PROMPT
         ).toList()
 
+        assertEquals("Baseline draft", states.filterIsInstance<ApiState.Success>().joinToString("") { it.textChunk })
+
         return toolRequestBaselineRow(
             name = name,
             platform = platform,
@@ -3853,8 +3865,7 @@ class ChatRepositoryImplTest {
                 groqCompletionFlow(
                     "{\"type\":\"final_answer\",\"content\":\"Baseline draft\"}",
                     baselineProviderUsage(3)
-                ),
-                groqCompletionFlow("Baseline formal final", baselineProviderUsage(4))
+                )
             )
         )
         val platform = groqPlatform(reasoning = false, model = "llama-3.3-70b-versatile")
@@ -3868,6 +3879,8 @@ class ChatRepositoryImplTest {
             platform = platform,
             memoryPrompt = BASELINE_MEMORY_PROMPT
         ).toList()
+
+        assertEquals("Baseline draft", states.filterIsInstance<ApiState.Success>().joinToString("") { it.textChunk })
 
         return toolRequestBaselineRow(
             name = "groq_json",

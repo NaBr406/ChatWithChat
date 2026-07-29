@@ -11,6 +11,12 @@ sealed class ToolLoopResult {
         val finalAnswerPrompt: String?
     ) : ToolLoopResult()
 
+    data class CompletedWithToolResults(
+        val content: String,
+        val calls: List<ToolCall>,
+        val results: List<ToolResult>
+    ) : ToolLoopResult()
+
     data class Failed(
         val message: String,
         val hadToolInteraction: Boolean = false
