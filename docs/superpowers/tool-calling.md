@@ -150,6 +150,24 @@ Future write providers must return a bounded human-readable `approvalArgumentSum
 
 Budget and execution failures are recoverable `ToolResult(isError = true)` values. Unknown or inactive calls are rejected before handler execution.
 
+## Round Scoping, Final Answers, And Usage
+
+`ToolRoundStateMachine` keeps the model-visible schemas and the execution allowlist aligned for every JSON fallback and native tool round. For the canonical sticker-only happy path, scope and reasoning move as follows:
+
+| Phase | Model-visible tools | Reasoning policy |
+|---|---|---|
+| Initial request | `search_stickers`, `send_sticker` | User-selected mode |
+| Successful search with candidates | `send_sticker` only | `LOW` |
+| Successful or failed send | None; final answer only | User-selected mode |
+
+This is the canonical `2 -> 1 -> 0` sticker scope. An initial scope that also contains unrelated enabled tools can start above two, but after a successful sticker search all unrelated schemas disappear and only `send_sticker` remains. A failed search also enters the final-only phase; a successful empty search may retry only `search_stickers` within its call budget. The canonical reasoning transition is therefore `USER -> LOW -> USER`.
+
+In the JSON fallback path, `final_answer.content` returned during the final-only phase is the actual user-visible answer. `ToolLoopOrchestrator` returns it as `CompletedWithToolResults`; it is not a draft followed by another provider request. Native provider paths issue a distinct final request with no tools: OpenAI Responses, Chat Completions, and Anthropic set both tools and tool choice to `null`, while Google sets tools and tool config to `null`.
+
+Native serialization of a successful `search_stickers` result uses a bounded projection of at most six candidates. Each projected candidate contains only bounded `sticker_id`, `title`, `alt_text`, and `tags` fields; metadata, sources, paths, URIs, hashes, and asset bytes are not sent back to the provider. The canonical `ToolResult` remains intact for validation and presentation. Only the provider-facing continuation payload is compacted.
+
+Search-decision provider requests are recorded with `PromptTraceStage.SEARCH_DECISION`. Their provider usage is retained even when `shouldSearch=false`, and is included in aggregate tool token totals and usage details.
+
 ## Structured Sources
 
 Use `ToolSource.PublicUrl` for public `http`/`https` citations and `ToolSource.LocalApp` for app-owned entities. Local sources carry an `AppSourceNavigationTarget` enum plus a stable entity ID, never a filesystem path or arbitrary URI.

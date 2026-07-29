@@ -1,5 +1,88 @@
 # On-Device Vector Memory Readiness
 
+## Schema 19 Current Status
+
+Status updated on 2026-07-29 for
+`codex/long-term-memory-consistency-recall-tool-token-prompt`, with implementation
+through `2cd71e9`. `ChatDatabaseV2` is now schema 19. `MEMORY.md` remains the
+canonical memory source; Room stores durable coordination and recovery state,
+and ObjectBox remains a rebuildable derived index.
+
+### Active Contracts
+
+- Managed long-term entries now carry bounded canonical and lifecycle metadata.
+  `(canonicalKey, scope)` is the single-value identity: turn-batch and daily
+  writes share one deterministic full-file merge policy, keep the active ID
+  stable, prefer stronger/newer evidence, and retain displaced values only as
+  maintenance-only history.
+- `CONSOLIDATE_LONG_TERM_MEMORY` is a durable semantic job, backed by a Room
+  checkpoint with a frozen entry order, partition cursor, persisted proposals,
+  row-version CAS, continuation state, and mutation receipts. Scheduling occurs
+  after 20 material mutations or a seven-day fallback. Clean passes make no LLM
+  call and do not change canonical bytes, corpus generation, or vector work.
+- Projection is explicit before chunking or indexing. `MAINTENANCE_FULL` retains
+  managed metadata, history, and daily material; `CHAT_ACTIVE_ONLY` admits only
+  current core/query entries. Canonical byte hashes remain the file CAS
+  identity, while recall-projection and embedding identities exclude hidden
+  metadata. Observation/evidence-only updates therefore leave vector state
+  current; active text or membership changes require reconciliation.
+- Every nonblank chat turn builds one immutable tiered-recall snapshot. Core is
+  capped at four facts and 150 fact tokens; query recall is capped at three
+  facts and 300 retrieval tokens; the rendered section is hard-capped at 500
+  tokens. Lexical `1.25f` and vector cosine `0.45f` are absolute gates before
+  relative ranking, so greetings and unrelated prompts remain core-only.
+- Memory model selection is independent of chat model selection. DataStore
+  represents `Auto` or an exact fixed `(platformUid, modelId)` pair; Auto keeps
+  eligible platform order, while an unavailable fixed pair becomes
+  `BLOCKED_DEPENDENCY` with no silent fallback. Turn-batch, daily, and
+  whole-corpus semantic work share the resolver and freeze the resolved pair on
+  the claimed job before provider work.
+- Activity logging uses one logical row per `(jobId, retryCycle, attempt)` and
+  advances it through `model_resolution`, `model_call`, `generation`, and
+  `organization`. Planner activity remains a separate model-free run, terminal
+  rows are protected by CAS, and schema 18 legacy stage rows remain readable.
+
+### Schema And Verification Evidence
+
+- Exported `19.json` contains 17 entities and Room identity hash
+  `8e3f266bd8eaff91d17e88a6ab908196`. `MIGRATION_18_19` adds frozen model,
+  structured activity-run, retry-cycle, and material-mutation columns plus the
+  long-term consolidation checkpoint table and indexes; it does not drop or
+  rewrite retained tables.
+- The populated migration fixture seeds every one of schema 18's 16 tables,
+  including two valid maintenance jobs and three legacy activity categories.
+  The real migration preserves their rows, validates the new defaults and
+  uniqueness constraints, passes foreign-key and integrity checks, then closes
+  and reopens through the production Room database and DAOs. Fresh schema 19
+  open/reopen and startup receipt recovery are also covered.
+- The final branch gates passed 123 JVM suites with 1,094/1,094 tests,
+  `compileDebugKotlin`, `assembleDebug`, `compileDebugAndroidTestKotlin`, and
+  ktlint 1.3.1. Connected memory/migration runs passed 18/18 on
+  `emulator-5556` (API 35, x86_64, 16 KB pages). The tested debug APK is
+  236,638,697 bytes with SHA-256
+  `75CCDAA538932E9207FAF9831BF7326E56911E0E8C4E1F6BF18D0F623F7F4529`.
+
+### Runtime Boundaries Still OPEN
+
+- The connected run started without `cn.nabr.chatwithchat` installed. The
+  populated Room 18 -> 19 test is real migration SQL and reopen evidence, but
+  it is not an in-place `adb install -r` upgrade of existing user app data.
+- One migration scenario has not yet combined canonical duplicates, scope and
+  trust conflicts, obsolete history, pending maintenance state, and the
+  ObjectBox v1 -> v2 compatibility rebuild.
+- Real-provider greeting/sticker request counts and token traces remain open,
+  as do real provider/model/activity proof for turn-batch, daily, and
+  whole-corpus semantic attempts.
+- The complete model-picker Compose surface, long-name behavior, DataStore
+  survival across process restart, and natural wall-clock/WorkManager weekly
+  execution remain open. JVM fake-clock threshold and weekly policy tests are
+  not reported as runtime proof.
+
+The schema 17 material below is preserved as historical evidence. Its uses of
+"current" describe that earlier baseline, not the schema 19 branch state above.
+
+---
+
 Status updated on 2026-07-15 for schema 17 on branch
 `codex/memory-consistency-risk-closure`. The schema 17 implementation baseline
 is `6e2f0c92f9afa43a05b420b765af61b85e79a097`. Historical Task 8/schema 16,

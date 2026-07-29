@@ -998,27 +998,27 @@ git diff --check
 
 **Implementation requirements:**
 
-- [ ] 跑全部 memory-focused JVM tests、tool/provider tests、compile 和 debug assembly。
-- [ ] 导出并检查 schema 19；做 fresh open、populated 18 -> 19、restart、FK 和 integrity proof。
-- [ ] 在 connected device/emulator 上保留 app data 升级，不使用 clear data 代替 migration；安装/替换前记录设备和 APK identity。
-- [ ] seed legacy duplicates、scope variants、trust conflicts、obsolete history 和 pending maintenance job，升级后验证 canonical file、Room checkpoint、activity log 和 vector rebuild。
-- [ ] 在 Memory 页面验证 `Auto`、fixed model、重复 model ID、不可用 fixed selection、长名称和返回前台刷新；重启应用后 preference 必须保持。
-- [ ] 对 turn batch、daily distillation 和 whole-corpus 各触发一个 semantic attempt，核对实际 provider/model、frozen job identity，并确认每个 attempt 在数据库和 UI 中都只有一个 activity run。
-- [ ] 真实发送“你好”并走一次 sticker flow：确认 recall exactly once、core-only、query layer empty、请求数/token、final tools empty、`StickerRef` 持久化并渲染。
-- [ ] 再发送称呼问题和无关问题，确认唯一 active scoped称呼命中、旧称呼/无关事件不进入 prompt。
-- [ ] 触发 mutation threshold 与 weekly-due simulation；验证 whole-corpus job、checkpoint resume、no-op、frozen model 和单行 activity phase progression。
-- [ ] 检查 prompt trace/provider DTO 中不存在 maintenance metadata、obsolete text、重复 candidates 或 final tools。
-- [ ] 运行 `git diff --check`、检查 status，只 stage 本任务文件；更新本文 checklist 和完成报告真实值。
-- [ ] 没有设备、真实 provider usage 或 weekly clock runtime 时明确标记 `OPEN`，不得用 JVM fake 冒充。
+- [x] 跑全部 memory-focused JVM tests、tool/provider tests、compile 和 debug assembly。
+- [x] 导出并检查 schema 19；做 fresh open、populated 18 -> 19、restart、FK 和 integrity proof。
+- [ ] **OPEN:** 在 connected device/emulator 上保留 app data 升级，不使用 clear data 代替 migration；安装/替换前记录设备和 APK identity。测试前设备没有目标 package，只完成 fresh-install fixture migration，不能宣称真实已有 app data 原地升级。
+- [ ] **OPEN:** seed legacy duplicates、scope variants、trust conflicts、obsolete history 和 pending maintenance job，升级后验证 canonical file、Room checkpoint、activity log 和 vector rebuild。现有 populated fixture 覆盖全部 schema-18 表、两个可存在 job 和三类 legacy activity，但未在同一迁移场景覆盖 canonical duplicate/scope/trust/history 整理及 ObjectBox v1 -> v2 rebuild。
+- [ ] **OPEN:** 在 Memory 页面验证 `Auto`、fixed model、重复 model ID、不可用 fixed selection、长名称和返回前台刷新；重启应用后 preference 必须保持。4 个 `MemoryViewModelInstrumentedTest` 已覆盖 exact pair、不可用项、凭据过滤、refresh 和保存失败，但未完成完整 picker Compose、长名称及 DataStore 进程重启证明。
+- [ ] **OPEN:** 对 turn batch、daily distillation 和 whole-corpus 各触发一个 semantic attempt，核对实际 provider/model、frozen job identity，并确认每个 attempt 在数据库和 UI 中都只有一个 activity run。自动化证明了路由、冻结和单行状态机，未执行三类真实 provider/model runtime attempt。
+- [ ] **OPEN:** 真实发送“你好”并走一次 sticker flow：确认 recall exactly once、core-only、query layer empty、请求数/token、final tools empty、`StickerRef` 持久化并渲染。JVM/DTO、非空 `StickerRef` Room 关闭重开和独立位图渲染均通过，但没有真实 provider greeting/sticker token trace。
+- [ ] **OPEN:** 再发送称呼问题和无关问题，确认唯一 active scoped称呼命中、旧称呼/无关事件不进入 prompt。仅有固定 JVM recall/negative fixtures，没有真实聊天运行证据。
+- [x] 触发 mutation threshold 与 weekly-due simulation；验证 whole-corpus job、checkpoint resume、no-op、frozen model 和单行 activity phase progression。该项由 deterministic/fake-clock JVM fixture 覆盖；自然墙钟与 WorkManager weekly runtime 仍在下项保持 `OPEN`。
+- [x] 检查 prompt trace/provider DTO 中不存在 maintenance metadata、obsolete text、重复 candidates 或 final tools。
+- [x] 运行 `git diff --check`、检查 status，只 stage 本任务文件；更新本文 checklist 和完成报告真实值。
+- [x] 没有设备、真实 provider usage 或 weekly clock runtime 时明确标记 `OPEN`，不得用 JVM fake 冒充。设备可用且完成 25 个 focused connected tests，但真实 provider usage、真实已有数据升级和 weekly 自然墙钟 runtime 仍为 `OPEN`。
 
 **Acceptance criteria:**
 
-- [ ] 所有 hard contracts 有自动化测试或明确 runtime evidence。
-- [ ] `MEMORY.md` remains canonical；metadata-only update、semantic update 和 no-op 的 file/index 行为分别正确。
-- [ ] Room 18 -> 19、process restart、vector fallback 和 activity UI 均有证据。
-- [ ] 默认/fixed/unavailable memory-model 路由、retry freeze 和 single-run row counts 均有自动化及至少一次 UI/runtime 证据。
-- [ ] sticker request/token target 在至少一个 JSON fallback 和一个 native provider path 上达到。
-- [ ] app 的 attachment、edit、retry、export、multi-provider、reasoning、web search、memory toggle 和普通无工具聊天没有回归。
+- [ ] **OPEN:** 所有 hard contracts 有自动化测试或明确 runtime evidence。真实已有数据升级、真实 provider semantic/greeting 路径、完整 model-picker/DataStore 重启和 weekly 自然墙钟仍缺 runtime evidence。
+- [x] `MEMORY.md` remains canonical；metadata-only update、semantic update 和 no-op 的 file/index 行为分别正确。
+- [x] Room 18 -> 19、process restart、vector fallback 和 activity UI 均有证据。
+- [ ] **OPEN:** 默认/fixed/unavailable memory-model 路由、retry freeze 和 single-run row counts 均有自动化及至少一次 UI/runtime 证据。ViewModel 与 activity row 的 device evidence 已有，但三类 semantic job 的实际 provider/model runtime 与 DataStore 进程重启未完成。
+- [x] sticker request/token target 在至少一个 JSON fallback 和一个 native provider path 上达到。
+- [ ] **OPEN:** app 的 attachment、edit、retry、export、multi-provider、reasoning、web search、memory toggle 和普通无工具聊天没有回归。全量 1094/1094 JVM 与 build 提供广泛回归覆盖，但未做这些用户流程的统一端到端 runtime smoke，不能把 focused memory/sticker connected tests 扩大解释为完整 app runtime 证明。
 
 ## Required Verification Commands
 
@@ -1159,38 +1159,38 @@ git status --short --branch
 
 ```text
 Baseline and isolation:
-- source branch / HEAD / origin divergence:
-- implementation branch/worktree:
-- pre-existing dirty files preserved:
-- Room baseline schema:
-- device/emulator and APK identity:
+- source branch / HEAD / origin divergence: main ff04c1b6d0dde699b35018ebb08f19d0d67da9f6; implementation evidence snapshot 2cd71e9ef7d9b9d54b6999f6c2ab0e89ef1885ec; that snapshot was 17 ahead / 0 behind origin/main. This report is committed afterward, so its own commit SHA and resulting divergence are reported in branch history rather than self-referenced here.
+- implementation branch/worktree: codex/long-term-memory-consistency-recall-tool-token-prompt in the primary checkout; the existing codex/chatwithchat-identity-migration worktree and stash@{0} were left untouched.
+- pre-existing dirty files preserved: MemoryRepository.kt and SettingViewModelV2.kt remain unstaged line-ending-only worktree changes and are not part of this implementation.
+- Room baseline schema: 18, identity hash 196bf38988a82cad2e137b094552173d; final schema 19 has 17 entities and identity hash 8e3f266bd8eaff91d17e88a6ab908196.
+- device/emulator and APK identity: emulator-5556, API 35, x86_64, page size 16384; app-debug.apk 236,638,697 bytes, SHA-256 75CCDAA538932E9207FAF9831BF7326E56911E0E8C4E1F6BF18D0F623F7F4529; cn.nabr.chatwithchat 1.0.0 (23). The target package was absent before testing, so this proves fresh install only, not preservation of real app data.
 
 Canonical metadata:
-- final fields and Markdown keys:
-- legacy defaults and unknown metadata policy:
-- createdAt / updatedAt / lastObservedAt proof:
-- codec round-trip and malformed-input results:
+- final fields and Markdown keys: canonicalKey/canonical_key, scope/scope, lastObservedAt/observed, validity/validity, supersededBy/superseded_by, recallState/recall, bounded evidenceRefs/evidence, plus syntax-safe extra metadata; createdAt/created and updatedAt/updated remain canonical timestamps.
+- legacy defaults and unknown metadata policy: valid legacy entries remain readable without byte rewrite and default to general/current/query; observation time falls back updated -> created -> 0. Syntax-safe unknown metadata round-trips; duplicate, unsafe, oversized, unterminated or invalid lifecycle metadata fails closed instead of receiving permissive defaults.
+- createdAt / updatedAt / lastObservedAt proof: same-fact observation keeps ID/text/createdAt/updatedAt and changes only lastObservedAt plus bounded evidence; semantic replacement keeps active ID/createdAt and advances updatedAt/lastObservedAt; equal/older/replayed evidence is byte-identical.
+- codec round-trip and malformed-input results: multilingual bodies, CRLF/manual sections/footer and future metadata round-trip; duplicate IDs, dangling/self/identity-mismatched supersession and malformed-only chat projection are rejected or skipped. Focused and full JVM gates pass.
 
 Write-time merge:
-- canonical identity and scope rules:
-- trust/time resolution proof:
-- stable active ID and history behavior:
-- full-file collision guard evidence:
-- replay/concurrency results:
+- canonical identity and scope rules: CanonicalMemoryIdentity = (canonicalKey, scope); one current active value per identity, while different keys/scopes and valid multi-valued events coexist. Turn-batch and daily-distillation use the same local merge policy.
+- trust/time resolution proof: user_confirmed outranks assistant_inferred; equal trust uses immutable evidence time and then a stable hash tie-break. Weaker evidence cannot create a parallel active candidate.
+- stable active ID and history behavior: same-fact observations and semantic replacement retain the active ID; displaced values become deterministic mem_hist_* obsolete/maintenance-only entries with valid supersededBy. df86e62 additionally proves canonical relocation/swap counts do not manufacture obsolete copies.
+- full-file collision guard evidence: every commit reparses complete current MEMORY.md before applying bounded model proposals; hidden collisions outside the model working set are covered, and exact-text multiplicity remains a postcondition.
+- replay/concurrency results: repeated LLM output, process replay and committed-file recovery are idempotent; stale canonical revision/hash discards and replans through MemoryMutationCoordinator CAS without losing a concurrent foreground write.
 
 Whole-corpus consolidation:
-- job/checkpoint schema and trigger defaults:
-- corpus/partition sizes and LLM call counts:
-- no-op result:
-- crash resume and CAS conflict result:
-- memory-disabled/re-enabled result:
+- job/checkpoint schema and trigger defaults: schema 19 adds durable CONSOLIDATE_LONG_TERM_MEMORY checkpoints with one active checkpoint; trigger at 20 material mutations or 7 days since completion, plus explicit continuation.
+- corpus/partition sizes and LLM call counts: frozen IDs are partitioned at <=24 entries / <=12,000 chars, <=16 semantic decisions, <=32 actual entry edits, and <=4 partitions per invocation. Forty-entry collision and repair fixtures converge 32 + 8; clean/local-repair passes use zero LLM calls, and semantic partitions allow at most one call each.
+- no-op result: clean corpus is byte-identical, makes zero LLM calls and zero file/index mutations, does not advance material generation, and records a no-op/checkpoint completion.
+- crash resume and CAS conflict result: persisted frozen order/cursor resumes after process-death crash windows without replaying completed partitions; stale source hash terminates the checkpoint and deterministically replans against new canonical bytes.
+- memory-disabled/re-enabled result: disable dismisses/cancels future work without retry churn; re-enable creates one valid planner/continuation path.
 
 Projection and index:
-- maintenance vs chat projection proof:
-- metadata/history leakage checks:
-- full-file hash vs projection/embedding hash behavior:
-- one-time vector compatibility rebuild:
-- vector failure fallback:
+- maintenance vs chat projection proof: MAINTENANCE_FULL retains managed metadata/history/daily content; CHAT_ACTIVE_ONLY filters to current core/query entries before split, chunk, vector publication, Hybrid and lexical fallback.
+- metadata/history leakage checks: obsolete, contested, maintenance-only, daily, IDs, paths, lifecycle labels, hashes and diagnostic fields are absent from recall candidates, embedding text and every tested provider DTO; unsafe prompt assembly fails before network dispatch.
+- full-file hash vs projection/embedding hash behavior: exact canonical bytes remain the CAS/receipt identity; recallProjectionHash tracks active membership/ranking inputs; embedding hash depends only on normalized active natural-language text. Observation/evidence-only changes leave projection/embedding current, while active text/membership schedules one reconciliation.
+- one-time vector compatibility rebuild: projection/chunker/vector fingerprint moved to v2 and automated bootstrap/recovery tests prove a controlled rebuild; OPEN: the populated 18 -> 19 connected fixture did not carry a real pre-existing ObjectBox v1 store through this rebuild.
+- vector failure fallback: missing/stale/corrupt vectors fall back to lexical over the same active-only projection; JVM fixtures and the device production Hybrid shadow path pass without maintenance/daily leakage.
 
 Tiered recall:
 - core/query token budgets: core <= 4 facts / 150 fact tokens; query <= 3 facts / 300 retrieval tokens; full rendered prompt hard-capped at 500 tokens.
@@ -1200,41 +1200,41 @@ Tiered recall:
 - exactly-once per-turn snapshot proof: repository invocation count 1; initial provider fan-out/tool rounds share one value; same-turn manual retry cache returns the same prompt/projection snapshot without another retrieval.
 
 Memory model routing:
-- DataStore Auto/fixed representation and atomicity:
-- available/unavailable picker behavior:
-- resolved platformUid/modelId for turn/daily/whole-corpus jobs:
-- first-claim freeze and retry result:
-- blocked dependency and no-fallback proof:
+- DataStore Auto/fixed representation and atomicity: no keys = Auto; Fixed writes memory_model_platform_uid + memory_model_id in one edit; clearing removes both in one edit; partial/blank pairs are typed Invalid, never Auto.
+- available/unavailable picker behavior: exact platformUid/modelId disambiguates duplicate model IDs; unusable candidates are filtered and an unavailable stored pair remains visible. Four device ViewModel tests cover exact pair, unavailable state, credential filtering, refresh and save failure. OPEN: full Compose picker, long label and DataStore process-restart proof.
+- resolved platformUid/modelId for turn/daily/whole-corpus jobs: all three services share MemoryModelResolver; deterministic tests select the exact pair and never follow the last chat model. No real provider semantic runtime was executed.
+- first-claim freeze and retry result: expected-row-version CAS freezes the pair before the first provider-bound call; lease refresh/retry keeps it, while only a later unresolved job reads a changed preference.
+- blocked dependency and no-fallback proof: missing/disabled/uncredentialed fixed pair persists BLOCKED_DEPENDENCY, produces zero provider requests, retains the preference, and reopens only eligible unbound jobs after dependency change.
 
 Observability:
-- semantic activity rows per attempt before -> after:
-- model_call/generation/organization phase progression on one run:
-- PLAN_DAILY_DISTILLATION independent lifecycle run:
-- whole-corpus lifecycle run:
-- startup failure/disabled/no-op rows:
-- legacy activity-row preservation/read behavior:
-- sensitive-content absence proof:
+- semantic activity rows per attempt before -> after: turn-batch baseline 3 top-level rows -> one deterministic (jobId, retryCycle, attempt) run; success, model-call failure, invalid JSON and organization failure each remain one DAO row and one UI-source row.
+- model_call/generation/organization phase progression on one run: CAS-backed startRun -> model_resolution -> model_call -> generation -> organization -> finishRun is monotonic, replay-idempotent and terminal-safe; two device Compose tests prove four inline phases render as one top-level row.
+- PLAN_DAILY_DISTILLATION independent lifecycle run: enqueue/claim/process/terminal updates one maintenance_planning row with null model fields and remains separate from DISTILL_DAILY_NOTES.
+- whole-corpus lifecycle run: scheduled/running/model phases/no-op/terminal progression stays on one long_term_consolidation row with bounded counts/cursor/hash prefixes.
+- startup failure/disabled/no-op rows: bounded persisted reasons distinguish startup planning failure, memory_disabled, no_eligible_daily_file, not_due, already_active and clean no_op instead of silent zero state.
+- legacy activity-row preservation/read behavior: populated 18 -> 19 retains all three legacy categories/details/batch/turn counts with retry_cycle=0; UI uses legacy fallback and performs no timestamp-based history rewrite.
+- sensitive-content absence proof: full-row scans find no fixture memory/prompt/user/assistant/provider body or credential; activity detail permits only bounded opaque identity, model snapshot, counts, cursor/hash prefix, duration, status and error codes.
 
 Tool/token optimization:
-- JSON request/tool counts before -> after:
-- native request/tool counts before -> after:
-- per-round serialized chars/tokens before -> after:
-- tool schema, candidate, memory and history repetition deltas:
-- reasoning policy by round/provider:
-- usage aggregation/search-decision result:
-- persisted StickerRef/render proof:
+- JSON request/tool counts before -> after: canonical Custom sticker fixture 4 model requests / 2 local executions -> 3 / 2, with one persisted presentation and one formal final answer.
+- native request/tool counts before -> after: 3 / 2 -> 3 / 2 for OpenAI Responses, OpenRouter, Anthropic and Google, while advertised tool counts narrow 2 -> 1 -> 0 and final tools are empty.
+- per-round serialized chars/tokens before -> after: Custom chars [1371,1748,1928,1069] -> [1371,1430,719], estimated tokens [614,778,866,513] -> [614,526,254], total 2771 -> 1394. OpenAI Responses chars [1529,2208,2513] -> [1529,1676,1187], tokens [648,850,949] -> [648,650,565], total 2447 -> 1863. Other totals: Ollama 2783 -> 1403, Groq 2839 -> 1445, OpenRouter 3129 -> 2456, Anthropic 3036 -> 2386, Google 2979 -> 2349.
+- tool schema, candidate, memory and history repetition deltas: final round schema is empty; JSON candidate ID occurrences fall 5 -> 1 and native 5 -> 2, with one compact transport representation plus selected send argument. One frozen ConversationContext/memory prompt is reused and consumed search candidates are removed before final.
+- reasoning policy by round/provider: USER -> LOW -> USER; OpenAI Responses, Anthropic, Google and Groq serialize supported mechanical LOW and restore user HIGH for formal final, while unsupported OpenRouter sends no invented reasoning field.
+- usage aggregation/search-decision result: decision=false records one search-decision request plus three answer requests; visible answer usage 30/3/33, tool aggregate 71/9/80, four tool-related details, exactly one labeled 搜索决策, with each real request aggregated once.
+- persisted StickerRef/render proof: non-empty StickerRef survives real Room close/reopen; separate bundled asset/repository/Compose rendering suites pass 7/7. OPEN: no real provider greeting/sticker trace joins request usage, persistence and rendering in one flow.
 
 Migration/runtime:
-- exact migration direction and schema export:
-- populated upgrade/FK/integrity/restart result:
-- actual greeting sticker trace:
-- exact JVM/build/connected commands and results:
-- remaining OPEN gates:
+- exact migration direction and schema export: Room 18 -> 19; exported 19.json has 17 entities and identity hash 8e3f266bd8eaff91d17e88a6ab908196.
+- populated upgrade/FK/integrity/restart result: a schema-18 fixture populates all 16 existing tables, including two valid legacy maintenance jobs and three legacy activity categories; migration preserves every row, creates schema-19 state, passes foreign_key_check/integrity_check and closes/reopens through Room. This is fixture migration on a fresh test install, not real user-data install -r proof.
+- actual greeting sticker trace: OPEN; no real provider request was sent. Deterministic JVM/serialized DTO recall and token evidence plus separate device StickerRef persistence/render evidence must not be combined into a claimed live trace.
+- exact JVM/build/connected commands and results: seven required focused :app:testDebugUnitTest --tests groups passed 485/485; full :app:testDebugUnitTest passed 123 suites / 1094 tests; :app:compileDebugKotlin, :app:assembleDebug and :app:compileDebugAndroidTestKotlin passed; connected memory/migration groups passed 6/6 + 4/4 + 8/8 and sticker asset/render passed 7/7, total 25/25. One combined run was killed by the 2 GB emulator low-memory killer at about 304 MB instrumentation RSS; splitting the same coverage into three bounded groups passed and produced no code crash.
+- remaining OPEN gates: real existing-app-data install -r migration; same-scenario canonical duplicate/scope/trust/history consolidation and ObjectBox v1 -> v2 rebuild; complete Memory picker/long-name/DataStore process restart; actual provider/model runtime for turn batch/daily/whole corpus; real greeting, scoped-name and unrelated chat traces with provider tokens; weekly natural wall-clock/WorkManager execution; broad attachment/edit/retry/export/multi-provider/reasoning/web-search/memory-toggle/no-tool end-to-end runtime smoke.
 
 Git:
-- diff/check/status:
-- topical commit hashes:
-- pushed remote ref/parity, if requested:
+- diff/check/status: pre-commit git diff --check passes; the explicit documentation stage contains only this plan, on-device-vector-memory-readiness.md and tool-calling.md. After that commit, status retains only the two preserved line-ending-only files above.
+- topical commit hashes: 04361d3, b34ceaa, 1562444, 2eccaf2, 05dcff4, 2a41e15, e3dd791, 7bcd77c, 0b50239, 5ed28c0, 4115e8d, d79f071, e675dc6, c311604, 30008a3, df86e62, 2cd71e9.
+- pushed remote ref/parity, if requested: not requested and not pushed; origin/main remains ff04c1b6d0dde699b35018ebb08f19d0d67da9f6. Final local divergence is reported after the non-self-referential documentation commit.
 ```
 
 ## Copy-Paste Handoff For A Fresh Implementation Conversation
