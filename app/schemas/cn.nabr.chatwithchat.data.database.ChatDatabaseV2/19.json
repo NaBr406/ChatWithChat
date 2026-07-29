@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 19,
-    "identityHash": "dfd4f269a66cefc86f18ce7cc658724d",
+    "identityHash": "8e3f266bd8eaff91d17e88a6ab908196",
     "entities": [
       {
         "tableName": "chats_v2",
@@ -941,7 +941,7 @@
             "notNull": true
           },
           {
-            "fieldPath": "sourceHash",
+            "fieldPath": "recallProjectionHash",
             "columnName": "source_hash",
             "affinity": "TEXT",
             "notNull": true
@@ -969,7 +969,7 @@
             "affinity": "INTEGER"
           },
           {
-            "fieldPath": "indexedSourceHash",
+            "fieldPath": "indexedRecallProjectionHash",
             "columnName": "indexed_source_hash",
             "affinity": "TEXT"
           },
@@ -1618,7 +1618,7 @@
       },
       {
         "tableName": "memory_activity_log",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`log_id` TEXT NOT NULL, `batch_id` TEXT NOT NULL, `category` TEXT NOT NULL, `status` TEXT NOT NULL, `platform_name` TEXT, `model_name` TEXT, `attempt` INTEGER, `turn_count` INTEGER, `operation_count` INTEGER, `detail` TEXT, `started_at` INTEGER NOT NULL, `completed_at` INTEGER, `updated_at` INTEGER NOT NULL, `job_id` TEXT, `job_type` TEXT, `phase` TEXT, `trigger_reason` TEXT, `platform_uid` TEXT, `model_id` TEXT, `input_count` INTEGER, `error_code` TEXT, `phase_summary_json` TEXT, `row_version` INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(`log_id`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`log_id` TEXT NOT NULL, `batch_id` TEXT NOT NULL, `category` TEXT NOT NULL, `status` TEXT NOT NULL, `platform_name` TEXT, `model_name` TEXT, `attempt` INTEGER, `retry_cycle` INTEGER NOT NULL DEFAULT 0, `turn_count` INTEGER, `operation_count` INTEGER, `detail` TEXT, `started_at` INTEGER NOT NULL, `completed_at` INTEGER, `updated_at` INTEGER NOT NULL, `job_id` TEXT, `job_type` TEXT, `phase` TEXT, `trigger_reason` TEXT, `platform_uid` TEXT, `model_id` TEXT, `input_count` INTEGER, `error_code` TEXT, `phase_summary_json` TEXT, `row_version` INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(`log_id`))",
         "fields": [
           {
             "fieldPath": "logId",
@@ -1658,6 +1658,13 @@
             "fieldPath": "attempt",
             "columnName": "attempt",
             "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "retryCycle",
+            "columnName": "retry_cycle",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
           },
           {
             "fieldPath": "turnCount",
@@ -1788,14 +1795,15 @@
             "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_activity_log_started_at` ON `${TABLE_NAME}` (`started_at`)"
           },
           {
-            "name": "index_memory_activity_log_job_id_attempt",
+            "name": "index_memory_activity_log_job_id_retry_cycle_attempt",
             "unique": true,
             "columnNames": [
               "job_id",
+              "retry_cycle",
               "attempt"
             ],
             "orders": [],
-            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_memory_activity_log_job_id_attempt` ON `${TABLE_NAME}` (`job_id`, `attempt`)"
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_memory_activity_log_job_id_retry_cycle_attempt` ON `${TABLE_NAME}` (`job_id`, `retry_cycle`, `attempt`)"
           }
         ]
       },
@@ -2050,7 +2058,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'dfd4f269a66cefc86f18ce7cc658724d')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '8e3f266bd8eaff91d17e88a6ab908196')"
     ]
   }
 }

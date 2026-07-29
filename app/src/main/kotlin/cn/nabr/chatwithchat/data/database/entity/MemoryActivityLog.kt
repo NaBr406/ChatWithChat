@@ -12,7 +12,7 @@ import androidx.room.PrimaryKey
         Index(value = ["category"]),
         Index(value = ["status"]),
         Index(value = ["started_at"]),
-        Index(value = ["job_id", "attempt"], unique = true)
+        Index(value = ["job_id", "retry_cycle", "attempt"], unique = true)
     ]
 )
 data class MemoryActivityLog(
@@ -31,6 +31,8 @@ data class MemoryActivityLog(
     val modelName: String?,
     @ColumnInfo(name = "attempt")
     val attempt: Int?,
+    @ColumnInfo(name = "retry_cycle", defaultValue = "0")
+    val retryCycle: Int = 0,
     @ColumnInfo(name = "turn_count")
     val turnCount: Int?,
     @ColumnInfo(name = "operation_count")

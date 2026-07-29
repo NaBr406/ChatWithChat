@@ -890,6 +890,12 @@ git diff --check
 - The Memory content tab now has a compact model row and local radio picker. It filters unusable candidates, preserves unavailable fixed selections, distinguishes duplicate model IDs by platform, refreshes the catalog on resume, truncates long labels, and retains the prior selection when persistence fails.
 - Focused JVM verification passed `SettingDataSourceImplTest` and `MemoryModelResolverTest`; main and AndroidTest Kotlin compilation and ktlint 1.3.1 passed. On `emulator-5556`, all 4 `MemoryViewModelInstrumentedTest` cases passed without clearing app data, including exact-pair selection, unavailable fixed state, credential filtering, refresh, and save failure behavior.
 
+#### Task 6 Activity Identity Groundwork (2026-07-29)
+
+- Activity identity now reserves `retry_cycle` and enforces the unique key `(job_id, retry_cycle, attempt)`. This preserves one row for same-attempt replay while allowing an explicit manual retry cycle to restart its attempt counter without colliding with an earlier run.
+- The change remains inside the existing unreleased 18 -> 19 migration. Populated legacy activity rows retain their values and receive `retry_cycle = 0`; the exported schema, migration SQL test, populated migration assertions, main compilation, and AndroidTest compilation were updated together.
+- Unified logger transitions and semantic/planner consumers are not yet complete, so the corresponding implementation and acceptance checkboxes remain open.
+
 ### Task 7: Reduce Sticker Tool-Loop Requests And Repeated Payloads
 
 **Goal:** 保留完整 sticker 功能和长期记忆召回，同时消除重复 final request、重复 candidate representation、无关工具 schema 和机械 reasoning 成本。

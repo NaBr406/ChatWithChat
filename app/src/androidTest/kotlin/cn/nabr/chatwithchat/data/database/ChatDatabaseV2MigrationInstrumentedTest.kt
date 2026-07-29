@@ -514,7 +514,7 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 """
                 SELECT batch_id, category, status, attempt, detail, updated_at,
                     job_id, job_type, phase, trigger_reason, platform_uid, model_id,
-                    input_count, error_code, phase_summary_json, row_version
+                    input_count, error_code, phase_summary_json, row_version, retry_cycle
                 FROM memory_activity_log
                 WHERE log_id = 'activity-18'
                 """.trimIndent()
@@ -528,6 +528,7 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 assertEquals(306L, cursor.getLong(5))
                 (6..14).forEach { columnIndex -> assertTrue(cursor.isNull(columnIndex)) }
                 assertEquals(0L, cursor.getLong(15))
+                assertEquals(0, cursor.getInt(16))
             }
             assertEquals(
                 2L,
@@ -564,6 +565,12 @@ class ChatDatabaseV2MigrationInstrumentedTest {
             assertEquals(
                 "0",
                 database.singleString(
+                    "SELECT dflt_value FROM pragma_table_info('memory_activity_log') WHERE name = 'retry_cycle'"
+                )
+            )
+            assertEquals(
+                "0",
+                database.singleString(
                     "SELECT dflt_value FROM pragma_table_info('memory_mutation_receipt') WHERE name = 'material_mutation_count'"
                 )
             )
@@ -582,7 +589,7 @@ class ChatDatabaseV2MigrationInstrumentedTest {
             assertEquals(
                 1L,
                 database.singleLong(
-                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'index_memory_activity_log_job_id_attempt' AND sql LIKE 'CREATE UNIQUE INDEX%'"
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'index_memory_activity_log_job_id_retry_cycle_attempt' AND sql LIKE 'CREATE UNIQUE INDEX%'"
                 )
             )
 

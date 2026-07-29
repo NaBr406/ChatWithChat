@@ -326,10 +326,11 @@ class ChatDatabaseV2MigrationsTest {
                 "ALTER TABLE memory_activity_log ADD COLUMN error_code TEXT",
                 "ALTER TABLE memory_activity_log ADD COLUMN phase_summary_json TEXT",
                 "ALTER TABLE memory_activity_log ADD COLUMN row_version INTEGER NOT NULL DEFAULT 0",
-                "CREATE UNIQUE INDEX IF NOT EXISTS `index_memory_activity_log_job_id_attempt` ON `memory_activity_log` (`job_id`, `attempt`)",
+                "ALTER TABLE memory_activity_log ADD COLUMN retry_cycle INTEGER NOT NULL DEFAULT 0",
+                "CREATE UNIQUE INDEX IF NOT EXISTS `index_memory_activity_log_job_id_retry_cycle_attempt` ON `memory_activity_log` (`job_id`, `retry_cycle`, `attempt`)",
                 "ALTER TABLE memory_mutation_receipt ADD COLUMN material_mutation_count INTEGER NOT NULL DEFAULT 0"
             ),
-            executedSql.take(15)
+            executedSql.take(16)
         )
 
         val migrationSql = executedSql.joinToString(separator = "\n")
