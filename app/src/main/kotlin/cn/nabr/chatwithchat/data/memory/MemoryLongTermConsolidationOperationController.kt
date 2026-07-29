@@ -39,7 +39,7 @@ class MemoryLongTermConsolidationOperationController(
                     sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
                     baseContent = baseMarkdown,
                     targetContent = merge.markdown,
-                    targetIndexFingerprint = targetIndexFingerprint.takeIf { merge.requiresIndexSync },
+                    targetIndexFingerprint = targetIndexFingerprint,
                     materialMutationCount = merge.materialEntryMutationCount
                 )
             )

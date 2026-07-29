@@ -72,16 +72,24 @@ class MemoryMaintenanceScheduler(
         now: Long = now()
     ): MemoryMaintenanceJob {
         val leaseOwner = job.leaseOwner ?: throw MemoryMaintenanceLeaseLostException(job.jobId)
-        val leaseExpiresAt = now + leaseDurationSeconds(job.family)
-        val changed = jobDao.renewClaimedLease(
-            jobId = job.jobId,
+        val current = getLatestClaimedJob(job.jobId, leaseOwner)
+            ?: throw MemoryMaintenanceLeaseLostException(job.jobId)
+        val leaseExpiresAt = now + leaseDurationSeconds(current.family)
+        return jobDao.renewLatestClaimedLease(
+            jobId = current.jobId,
             leaseOwner = leaseOwner,
-            expectedRowVersion = job.rowVersion,
             now = now,
             leaseExpiresAt = leaseExpiresAt
-        )
-        if (changed != 1) throw MemoryMaintenanceLeaseLostException(job.jobId)
-        return job.copy(leaseExpiresAt = maxOf(checkNotNull(job.leaseExpiresAt), leaseExpiresAt))
+        ) ?: throw MemoryMaintenanceLeaseLostException(current.jobId)
+    }
+
+    suspend fun getLatestClaimedJob(
+        jobId: String,
+        leaseOwner: String
+    ): MemoryMaintenanceJob? {
+        require(jobId.isNotBlank()) { "Memory maintenance job ID must not be blank" }
+        require(leaseOwner.isNotBlank()) { "Memory maintenance lease owner must not be blank" }
+        return jobDao.getClaimedByIdAndLeaseOwner(jobId, leaseOwner)
     }
 
     suspend fun bindResolvedModel(
@@ -191,24 +199,26 @@ class MemoryMaintenanceScheduler(
         job: MemoryMaintenanceJob,
         nextRunAt: Long? = null
     ): MemoryMaintenanceJob {
-        require(job.attempts > 0) { "A claimed memory maintenance job must have a positive attempt" }
         val leaseOwner = job.leaseOwner ?: throw MemoryMaintenanceLeaseLostException(job.jobId)
+        val current = getLatestClaimedJob(job.jobId, leaseOwner)
+            ?: throw MemoryMaintenanceLeaseLostException(job.jobId)
+        require(current.attempts > 0) { "A claimed memory maintenance job must have a positive attempt" }
         val timestamp = now()
         val resolvedNextRunAt = nextRunAt ?: timestamp
         require(resolvedNextRunAt >= timestamp) { "Deferred memory maintenance work cannot run in the past" }
         val changed = jobDao.deferClaimedJobWithoutRetry(
-            jobId = job.jobId,
+            jobId = current.jobId,
             leaseOwner = leaseOwner,
-            expectedRowVersion = job.rowVersion,
+            expectedRowVersion = current.rowVersion,
             updatedAt = timestamp,
             nextRunAt = resolvedNextRunAt
         )
-        if (changed != 1) throw MemoryMaintenanceLeaseLostException(job.jobId)
-        val updated = checkNotNull(jobDao.getById(job.jobId))
-        check(updated.attempts == job.attempts - 1) {
+        if (changed != 1) throw MemoryMaintenanceLeaseLostException(current.jobId)
+        val updated = checkNotNull(jobDao.getById(current.jobId))
+        check(updated.attempts == current.attempts - 1) {
             "Deferred memory maintenance work consumed an automatic retry attempt"
         }
-        emitStatusChanged(job, updated, timestamp)
+        emitStatusChanged(current, updated, timestamp)
         return updated
     }
 
@@ -444,6 +454,32 @@ class MemoryMaintenanceScheduler(
 
     suspend fun reopenWaitingRepairJobs(limit: Int = DEFAULT_VISIBLE_LIMIT): Int = jobDao.getReopenableLocalJobs(limit).count { job -> retryManually(job.jobId) != null }
 
+    suspend fun reopenMemoryModelBlockedJobs(limit: Int = DEFAULT_VISIBLE_LIMIT): Int {
+        val now = now()
+        val failureReasons = MemoryModelUnavailableReason.entries.map(MemoryModelUnavailableReason::code)
+        return jobDao.getReopenableMemoryModelBlockedJobs(failureReasons, limit).count { job ->
+            val changed = jobDao.transitionUnclaimedJob(
+                jobId = job.jobId,
+                expectedStatus = job.status,
+                expectedRowVersion = job.rowVersion,
+                newStatus = MemoryMaintenanceJobStatus.PENDING,
+                attempts = 0,
+                retryCycle = job.retryCycle + 1,
+                lastError = null,
+                blockedReason = null,
+                updatedAt = now,
+                nextRunAt = now
+            )
+            if (changed == 1) {
+                val updated = checkNotNull(jobDao.getById(job.jobId))
+                emitStatusChanged(job, updated, now)
+                true
+            } else {
+                false
+            }
+        }
+    }
+
     suspend fun reviveLocalJob(jobId: String): MemoryMaintenanceJob? {
         val job = jobDao.getById(jobId) ?: return null
         if (job.family !in setOf(MemoryMaintenanceJobFamily.INDEX, MemoryMaintenanceJobFamily.REPAIR)) return null
@@ -535,20 +571,22 @@ class MemoryMaintenanceScheduler(
         nextRunAt: Long?
     ): MemoryMaintenanceJob {
         val leaseOwner = job.leaseOwner ?: throw MemoryMaintenanceLeaseLostException(job.jobId)
+        val current = getLatestClaimedJob(job.jobId, leaseOwner)
+            ?: throw MemoryMaintenanceLeaseLostException(job.jobId)
         val now = now()
         val changed = jobDao.transitionClaimedJob(
-            jobId = job.jobId,
+            jobId = current.jobId,
             leaseOwner = leaseOwner,
-            expectedRowVersion = job.rowVersion,
+            expectedRowVersion = current.rowVersion,
             newStatus = status,
             lastError = lastError?.take(MAX_ERROR_LENGTH),
             blockedReason = blockedReason?.take(MAX_ERROR_LENGTH),
             updatedAt = now,
             nextRunAt = nextRunAt
         )
-        if (changed != 1) throw MemoryMaintenanceLeaseLostException(job.jobId)
-        val updated = checkNotNull(jobDao.getById(job.jobId))
-        emitStatusChanged(job, updated, now)
+        if (changed != 1) throw MemoryMaintenanceLeaseLostException(current.jobId)
+        val updated = checkNotNull(jobDao.getById(current.jobId))
+        emitStatusChanged(current, updated, now)
         return updated
     }
 

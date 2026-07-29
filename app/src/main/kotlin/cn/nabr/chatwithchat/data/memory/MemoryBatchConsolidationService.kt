@@ -19,6 +19,7 @@ class MemoryBatchConsolidationService(
     private val maintenanceScheduler: MemoryMaintenanceScheduler,
     private val turnBatchScheduler: MemoryTurnBatchScheduler,
     private val settingRepository: SettingRepository,
+    private val modelResolver: MemoryModelResolver,
     private val memoryIntelligence: MemoryIntelligence,
     private val memoryFileStore: MemoryFileStore,
     private val markdownMemoryCodec: MarkdownMemoryCodec,
@@ -105,9 +106,8 @@ class MemoryBatchConsolidationService(
 
         check(job.status == MemoryMaintenanceJobStatus.RUNNING) { "memory_job_not_claimed" }
         check(!job.leaseOwner.isNullOrBlank()) { "memory_job_missing_lease" }
-        val preferredPlatform = preferredMemoryPlatform()
-        val runningJob = job
-        maintenanceScheduler.renewClaimedLease(runningJob)
+        var runningJob = job
+        runningJob = maintenanceScheduler.renewClaimedLease(runningJob)
         val startedAt = System.currentTimeMillis()
         logBatch(runningJob, request, "started", proposalCount = null, elapsedMs = null)
 
@@ -118,13 +118,35 @@ class MemoryBatchConsolidationService(
         val preparedMutation: MemoryPreparedMutation?
 
         if (existingMutation != null || batchAlreadyComplete) {
-            organizationLogId = startOrganizationActivity(runningJob, request, preferredPlatform)
+            organizationLogId = startOrganizationActivity(runningJob, request, platform = null)
             preparedMutation = existingMutation
         } else {
-            val proposal = memoryIntelligence.consolidateMemoryBatch(request, preferredPlatform)
-            maintenanceScheduler.renewClaimedLease(runningJob)
+            val binding = resolveClaimedMemoryModel(
+                job = runningJob,
+                settingRepository = settingRepository,
+                modelResolver = modelResolver,
+                maintenanceScheduler = maintenanceScheduler
+            )
+            val resolvedPlatform = when (binding) {
+                is ClaimedMemoryModelBinding.Unavailable -> {
+                    val reason = binding.reason.code
+                    maintenanceScheduler.markBlockedDependency(runningJob, reason)
+                    turnBatchScheduler.scheduleNextWake()
+                    return MemoryBatchProcessResult(
+                        status = MemoryBatchProcessResult.STATUS_BLOCKED,
+                        jobId = runningJob.jobId,
+                        reason = reason
+                    )
+                }
+                is ClaimedMemoryModelBinding.Resolved -> {
+                    runningJob = binding.job
+                    binding.platform
+                }
+            }
+            val proposal = memoryIntelligence.consolidateMemoryBatch(request, resolvedPlatform)
+            runningJob = maintenanceScheduler.renewClaimedLease(runningJob)
             if (proposal == null) {
-                val failedLogId = startOrganizationActivity(runningJob, request, preferredPlatform)
+                val failedLogId = startOrganizationActivity(runningJob, request, resolvedPlatform)
                 finishOrganizationActivity(
                     failedLogId,
                     MemoryActivityStatus.FAILED,
@@ -132,7 +154,7 @@ class MemoryBatchConsolidationService(
                 )
                 return retryable(runningJob, request, "consolidation_unavailable_or_invalid", startedAt, null)
             }
-            organizationLogId = startOrganizationActivity(runningJob, request, preferredPlatform)
+            organizationLogId = startOrganizationActivity(runningJob, request, resolvedPlatform)
             val validatedOperations = runCatching { validateOperations(request, proposal.operations) }
                 .getOrElse { throwable ->
                     finishOrganizationActivity(
@@ -176,7 +198,7 @@ class MemoryBatchConsolidationService(
             dailyWriteCount = renderedBatch.dailyWriteCount
             longTermWriteCount = renderedBatch.longTermWriteCount
             preparedMutation = runCatching {
-                maintenanceScheduler.renewClaimedLease(runningJob)
+                runningJob = maintenanceScheduler.renewClaimedLease(runningJob)
                 memoryMutationCoordinator.prepare(
                     semanticJobId = runningJob.jobId,
                     semanticBatchId = request.batchId,
@@ -202,7 +224,7 @@ class MemoryBatchConsolidationService(
 
         if (preparedMutation != null) {
             val commitResult = runCatching {
-                maintenanceScheduler.renewClaimedLease(runningJob)
+                runningJob = maintenanceScheduler.renewClaimedLease(runningJob)
                 memoryMutationCoordinator.reconcile(preparedMutation).also { result ->
                     if (result is MemoryMutationCommitResult.CanonicalCommitted) {
                         commitObserver.afterCanonicalFileCommit(result.mutation)
@@ -255,7 +277,7 @@ class MemoryBatchConsolidationService(
             }
         }
 
-        maintenanceScheduler.renewClaimedLease(runningJob)
+        runningJob = maintenanceScheduler.renewClaimedLease(runningJob)
         val batchCompleted = runCatching { complete() || isComplete() }.getOrElse { throwable ->
             rethrowCommitInterruption(throwable)
             finishOrganizationActivity(
@@ -319,6 +341,11 @@ class MemoryBatchConsolidationService(
     private fun terminalResultOrNull(job: MemoryMaintenanceJob): MemoryBatchProcessResult? = when (job.status) {
         MemoryMaintenanceJobStatus.SUCCEEDED ->
             MemoryBatchProcessResult(MemoryBatchProcessResult.STATUS_DUPLICATE, job.jobId)
+        MemoryMaintenanceJobStatus.BLOCKED_DEPENDENCY -> MemoryBatchProcessResult(
+            status = MemoryBatchProcessResult.STATUS_BLOCKED,
+            jobId = job.jobId,
+            reason = job.blockedReason ?: job.lastError
+        )
         MemoryMaintenanceJobStatus.FAILED_TERMINAL,
         MemoryMaintenanceJobStatus.DISMISSED -> MemoryBatchProcessResult(
             status = MemoryBatchProcessResult.STATUS_TERMINAL,
@@ -902,9 +929,6 @@ class MemoryBatchConsolidationService(
         val prefix = if (destination == MemoryBatchDestination.LONG_TERM) "mem" else "day"
         return "${prefix}_${sha256("$batchId|$operationIndex|$destination").take(24)}"
     }
-
-    private suspend fun preferredMemoryPlatform(): PlatformV2? = settingRepository.fetchPlatformV2s()
-        .firstOrNull { platform -> platform.enabled && platform.model.isNotBlank() }
 
     private suspend fun startOrganizationActivity(
         job: MemoryMaintenanceJob,

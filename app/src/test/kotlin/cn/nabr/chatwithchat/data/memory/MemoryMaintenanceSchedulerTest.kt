@@ -121,6 +121,8 @@ class MemoryMaintenanceSchedulerTest {
         assertEquals(bound, dao.getById(bound.jobId))
         assertEquals(claimed.leaseOwner, bound.leaseOwner)
         assertEquals(claimed.leaseExpiresAt, bound.leaseExpiresAt)
+        assertEquals(bound, scheduler.getLatestClaimedJob(bound.jobId, "owner-1"))
+        assertNull(scheduler.getLatestClaimedJob(bound.jobId, "owner-2"))
     }
 
     @Test
@@ -438,6 +440,95 @@ class MemoryMaintenanceSchedulerTest {
     }
 
     @Test
+    fun `model dependency change reopens only unbound semantic jobs with known reasons`() = runBlocking {
+        val reopenable = MemoryModelUnavailableReason.entries.mapIndexed { index, reason ->
+            job(
+                jobId = "model-blocked-$index",
+                type = MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH,
+                status = MemoryMaintenanceJobStatus.BLOCKED_DEPENDENCY,
+                attempts = 2,
+                retryCycle = 3
+            ).copy(lastError = reason.code, blockedReason = reason.code)
+        }
+        val excluded = listOf(
+            job(
+                jobId = "unknown-reason",
+                type = MemoryMaintenanceJobType.DISTILL_DAILY_NOTES,
+                status = MemoryMaintenanceJobStatus.BLOCKED_DEPENDENCY
+            ).copy(lastError = "other_dependency", blockedReason = "other_dependency"),
+            job(
+                jobId = "local-family",
+                type = MemoryMaintenanceJobType.SYNC_VECTOR_INDEX,
+                status = MemoryMaintenanceJobStatus.BLOCKED_DEPENDENCY
+            ).copy(
+                lastError = MemoryModelUnavailableReason.NO_ELIGIBLE_MODEL.code,
+                blockedReason = MemoryModelUnavailableReason.NO_ELIGIBLE_MODEL.code
+            ),
+            job(
+                jobId = "wrong-status",
+                type = MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH,
+                status = MemoryMaintenanceJobStatus.FAILED_TERMINAL
+            ).copy(
+                lastError = MemoryModelUnavailableReason.NO_ELIGIBLE_MODEL.code,
+                blockedReason = MemoryModelUnavailableReason.NO_ELIGIBLE_MODEL.code
+            ),
+            job(
+                jobId = "bound-platform",
+                type = MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH,
+                status = MemoryMaintenanceJobStatus.BLOCKED_DEPENDENCY
+            ).copy(
+                lastError = MemoryModelUnavailableReason.FROZEN_MODEL_UNAVAILABLE.code,
+                blockedReason = MemoryModelUnavailableReason.FROZEN_MODEL_UNAVAILABLE.code,
+                resolvedPlatformUid = "platform-1"
+            ),
+            job(
+                jobId = "bound-model",
+                type = MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH,
+                status = MemoryMaintenanceJobStatus.BLOCKED_DEPENDENCY
+            ).copy(
+                lastError = MemoryModelUnavailableReason.FROZEN_MODEL_UNAVAILABLE.code,
+                blockedReason = MemoryModelUnavailableReason.FROZEN_MODEL_UNAVAILABLE.code,
+                resolvedModelId = "model-1"
+            ),
+            job(
+                jobId = "bound-at",
+                type = MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH,
+                status = MemoryMaintenanceJobStatus.BLOCKED_DEPENDENCY
+            ).copy(
+                lastError = MemoryModelUnavailableReason.FROZEN_MODEL_UNAVAILABLE.code,
+                blockedReason = MemoryModelUnavailableReason.FROZEN_MODEL_UNAVAILABLE.code,
+                resolvedAt = 50L
+            ),
+            job(
+                jobId = "mismatched-error",
+                type = MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH,
+                status = MemoryMaintenanceJobStatus.BLOCKED_DEPENDENCY
+            ).copy(
+                lastError = "other_dependency",
+                blockedReason = MemoryModelUnavailableReason.NO_ELIGIBLE_MODEL.code
+            )
+        )
+        val dao = InMemoryMaintenanceJobDao(reopenable + excluded)
+        val eventSink = RecordingMemoryMaintenanceEventSink()
+
+        val reopenedCount = createScheduler(dao, eventSink).reopenMemoryModelBlockedJobs()
+
+        assertEquals(reopenable.size, reopenedCount)
+        reopenable.forEach { original ->
+            val reopened = checkNotNull(dao.getById(original.jobId))
+            assertEquals(MemoryMaintenanceJobStatus.PENDING, reopened.status)
+            assertEquals(0, reopened.attempts)
+            assertEquals(original.retryCycle + 1, reopened.retryCycle)
+            assertNull(reopened.lastError)
+            assertNull(reopened.blockedReason)
+            assertEquals(100L, reopened.nextRunAt)
+            assertEquals(original.rowVersion + 1, reopened.rowVersion)
+        }
+        excluded.forEach { original -> assertEquals(original, dao.getById(original.jobId)) }
+        assertEquals(reopenable.size, eventSink.events.size)
+    }
+
+    @Test
     fun `semantic exhausts at three attempts while local work waits after five`() = runBlocking {
         val semanticDao = InMemoryMaintenanceJobDao(
             listOf(job("semantic", MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH))
@@ -579,6 +670,46 @@ class MemoryMaintenanceSchedulerTest {
         assertEquals(claimed.rowVersion, renewed.rowVersion)
         assertTrue(checkNotNull(renewed.leaseExpiresAt) > originalLeaseExpiry)
         assertEquals(MemoryMaintenanceJobStatus.SUCCEEDED, scheduler.markSucceeded(claimed).status)
+    }
+
+    @Test
+    fun `heartbeat renews the latest row version after model binding`() = runBlocking {
+        val clock = MutableMemoryMaintenanceClock(1_000L)
+        val dao = InMemoryMaintenanceJobDao(
+            listOf(job("semantic-bound-heartbeat", MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH))
+        )
+        val scheduler = MemoryMaintenanceScheduler(jobDao = dao, clock = clock)
+        val claimed = checkNotNull(
+            scheduler.claimNextRunnable(
+                family = MemoryMaintenanceJobFamily.SEMANTIC,
+                leaseOwner = "heartbeat-owner"
+            )
+        )
+        val originalLeaseExpiry = checkNotNull(claimed.leaseExpiresAt)
+
+        runWithMemoryMaintenanceLeaseHeartbeat(
+            job = claimed,
+            maintenanceScheduler = scheduler,
+            heartbeatIntervalMillis = 1L
+        ) {
+            val bound = scheduler.bindResolvedModel(
+                job = claimed,
+                platformUid = "platform-1",
+                modelId = "model-1"
+            )
+            assertEquals(claimed.rowVersion + 1, bound.rowVersion)
+            clock.setEpochSecond(originalLeaseExpiry - 100L)
+            withTimeout(1_000L) {
+                while (checkNotNull(dao.getById(claimed.jobId)).leaseExpiresAt == originalLeaseExpiry) {
+                    yield()
+                }
+            }
+        }
+
+        val renewed = checkNotNull(dao.getById(claimed.jobId))
+        assertEquals(claimed.rowVersion + 1, renewed.rowVersion)
+        assertTrue(checkNotNull(renewed.leaseExpiresAt) > originalLeaseExpiry)
+        assertEquals(MemoryMaintenanceJobStatus.SUCCEEDED, scheduler.markSucceeded(renewed).status)
     }
 
     private fun job(

@@ -847,9 +847,9 @@ git diff --check
 - [x] Memory ViewModel 用 `fetchEnabledChatModels()` 构建 picker options，首项 `Auto`，其余按 exact pair 选择并显示“平台 / 模型”。重复 model ID 必须正确消歧；已存 fixed pair 失效时保留并明确显示“原选择已不可用”，不能伪装成 Auto。
 - [x] 在 Memory content tab 顶部增加一条紧凑 settings row，点击后打开适合该页面的单选列表；不直接复用强绑定 reasoning 控件的聊天 `ModelSelectionMenu`。页面恢复前台时刷新 catalog，长名称截断，无可用模型与保存失败有稳定状态。
 - [x] 新建共享 `MemoryModelResolver`：Auto 保持当前 platform ordering，按顺序选择第一个通过 enabled model、provider support、required credential 与 nonblank model 校验的候选；Fixed 必须精确匹配 enabled platform 与 enabled model，并返回 `PlatformV2.copy(model = modelId)` 或 typed unavailable reason。只有 Auto 可以继续检查下一候选。
-- [ ] turn-batch、daily distillation、whole-corpus consolidation 全部只使用该 resolver。移除 service 内重复的 `preferredMemoryPlatform()` 和 `LlmMemoryIntelligence.resolveMemoryPlatform()` 静默 fallback；intelligence 只接受已解析的 model snapshot。
-- [ ] semantic job 在首次 claim 后、provider request 前，通过 expected-row-version/CAS 持久化 `resolvedPlatformUid/resolvedModelId`；retry 读取 frozen pair，未解析的未来 job 才读取新 preference。resolution failure 使用现有 `BLOCKED_DEPENDENCY`，不消耗无意义 provider call 或形成自动 retry storm。
-- [ ] preference/platform/model 状态变化后，只重新评估未解析且因记忆模型依赖被 blocked 的 job；已有 durable proposal 或 frozen in-flight attempt 不得被悄悄 rebind。manual retry 如允许清除 binding，必须是显式动作并有测试。
+- [x] turn-batch、daily distillation、whole-corpus consolidation 全部只使用该 resolver。移除 service 内重复的 `preferredMemoryPlatform()` 和 `LlmMemoryIntelligence.resolveMemoryPlatform()` 静默 fallback；intelligence 只接受已解析的 model snapshot。
+- [x] semantic job 在首次 claim 后、provider request 前，通过 expected-row-version/CAS 持久化 `resolvedPlatformUid/resolvedModelId`；retry 读取 frozen pair，未解析的未来 job 才读取新 preference。resolution failure 使用现有 `BLOCKED_DEPENDENCY`，不消耗无意义 provider call 或形成自动 retry storm。
+- [x] preference/platform/model 状态变化后，只重新评估未解析且因记忆模型依赖被 blocked 的 job；已有 durable proposal 或 frozen in-flight attempt 不得被悄悄 rebind。manual retry 如允许清除 binding，必须是显式动作并有测试。
 - [ ] 将现有 `logId` 作为新 `activityRunId`，或引入等价稳定列；每个 `jobId + attempt` 通过 deterministic identity/unique index 只 upsert 一个 top-level run。enqueue 如需先显示 scheduled，使用确定的 next-attempt identity，claim 必须更新同一 run 而不是另建一行。activity record 增加 nullable `jobId`、`jobType`、`phase`、`triggerReason`、`platformUid`、`modelId` 及通用 input count；使用 Task 3 的同一个 18 -> 19 migration。
 - [ ] logger API 改为 `startRun/advancePhase/finishRun` 或等价状态机。semantic service 在 model resolution 前创建 run；resolver 写入/结束 `model_resolution` phase，`LlmMemoryIntelligence` 只能推进同一 run 的 `model_call -> generation`，organization path 再推进到 `organization`，任何阶段都不得 `start()` 新行。
 - [ ] phase transition 使用 expected phase/status 或 row version，必须单调、幂等且 terminal 不可被晚到更新覆盖。retry 是新的 attempt run；同一 attempt 的 process replay 仍更新同一 row。
@@ -895,6 +895,14 @@ git diff --check
 - Activity identity now reserves `retry_cycle` and enforces the unique key `(job_id, retry_cycle, attempt)`. This preserves one row for same-attempt replay while allowing an explicit manual retry cycle to restart its attempt counter without colliding with an earlier run.
 - The change remains inside the existing unreleased 18 -> 19 migration. Populated legacy activity rows retain their values and receive `retry_cycle = 0`; the exported schema, migration SQL test, populated migration assertions, main compilation, and AndroidTest compilation were updated together.
 - Unified logger transitions and semantic/planner consumers are not yet complete, so the corresponding implementation and acceptance checkboxes remain open.
+
+#### Task 6 Model Routing Backend Slice Record (2026-07-29)
+
+- Turn-batch, daily-distillation, and whole-corpus semantic jobs now share `MemoryModelResolver`; `LlmMemoryIntelligence` accepts only the already-resolved non-null platform snapshot and no longer performs an internal fallback.
+- The first provider-bound path freezes `platformUid + modelId` through the maintenance-job row-version CAS. Lease renewal rereads the latest owned claim, retry keeps the frozen pair, and a binding followed by an escaping exception can still reach a terminal/retryable job state instead of remaining `RUNNING`.
+- Model dependency failures use `BLOCKED_DEPENDENCY`. Preference and provider/model mutations reopen only unbound semantic jobs with known memory-model reasons, increment `retryCycle`, reset attempts, and enqueue semantic work; jobs with a frozen pair or durable semantic mutation are not rebound.
+- Focused backend verification executed 134 tests across resolver, notifier, scheduler, processor, intelligence, batch, daily, and whole-corpus suites: 130 passed. The only four failures are the Task 5 projection/relocation baseline failures already reproduced at `7bcd77c`; the new whole-corpus frozen-model retry passed after changed targets were given a projection-aware index fingerprint.
+- `:app:compileDebugKotlin`, `:app:compileDebugAndroidTestKotlin`, ktlint 1.3.1 over the slice, staged `git diff --check`, and targeted notifier/resolver/scheduler/processor tests passed.
 
 ### Task 7: Reduce Sticker Tool-Loop Requests And Repeated Payloads
 

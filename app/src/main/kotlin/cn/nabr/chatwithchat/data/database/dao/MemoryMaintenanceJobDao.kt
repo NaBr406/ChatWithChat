@@ -13,6 +13,20 @@ interface MemoryMaintenanceJobDao {
     @Query("SELECT * FROM memory_maintenance_job WHERE job_id = :jobId LIMIT 1")
     suspend fun getById(jobId: String): MemoryMaintenanceJob?
 
+    @Query(
+        """
+        SELECT * FROM memory_maintenance_job
+        WHERE job_id = :jobId
+            AND status = 'running'
+            AND lease_owner = :leaseOwner
+        LIMIT 1
+        """
+    )
+    suspend fun getClaimedByIdAndLeaseOwner(
+        jobId: String,
+        leaseOwner: String
+    ): MemoryMaintenanceJob?
+
     @Query("SELECT * FROM memory_maintenance_job WHERE idempotency_key = :idempotencyKey LIMIT 1")
     suspend fun getByIdempotencyKey(idempotencyKey: String): MemoryMaintenanceJob?
 
@@ -52,6 +66,25 @@ interface MemoryMaintenanceJobDao {
         """
     )
     suspend fun getReopenableLocalJobs(limit: Int): List<MemoryMaintenanceJob>
+
+    @Query(
+        """
+        SELECT * FROM memory_maintenance_job
+        WHERE family = 'semantic'
+            AND status = 'blocked_dependency'
+            AND resolved_platform_uid IS NULL
+            AND resolved_model_id IS NULL
+            AND resolved_at IS NULL
+            AND blocked_reason IN (:failureReasons)
+            AND last_error = blocked_reason
+        ORDER BY updated_at ASC, job_id ASC
+        LIMIT :limit
+        """
+    )
+    suspend fun getReopenableMemoryModelBlockedJobs(
+        failureReasons: List<String>,
+        limit: Int
+    ): List<MemoryMaintenanceJob>
 
     @Query(
         """
@@ -148,6 +181,25 @@ interface MemoryMaintenanceJobDao {
         now: Long,
         leaseExpiresAt: Long
     ): Int
+
+    @Transaction
+    suspend fun renewLatestClaimedLease(
+        jobId: String,
+        leaseOwner: String,
+        now: Long,
+        leaseExpiresAt: Long
+    ): MemoryMaintenanceJob? {
+        val current = getClaimedByIdAndLeaseOwner(jobId, leaseOwner) ?: return null
+        val renewed = renewClaimedLease(
+            jobId = current.jobId,
+            leaseOwner = leaseOwner,
+            expectedRowVersion = current.rowVersion,
+            now = now,
+            leaseExpiresAt = leaseExpiresAt
+        )
+        if (renewed != 1) return null
+        return getClaimedByIdAndLeaseOwner(jobId, leaseOwner)
+    }
 
     @Query(
         """

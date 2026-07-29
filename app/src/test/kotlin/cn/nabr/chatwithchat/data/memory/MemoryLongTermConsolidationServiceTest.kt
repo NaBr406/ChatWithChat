@@ -264,7 +264,7 @@ class MemoryLongTermConsolidationServiceTest {
 
         val retried = fixture.service().process(retryJob)
 
-        assertEquals(MemoryLongTermProcessResult.STATUS_SUCCEEDED, retried.status)
+        assertEquals(retried.reason, MemoryLongTermProcessResult.STATUS_SUCCEEDED, retried.status)
         assertEquals(listOf(PLATFORM.uid, PLATFORM.uid), intelligence.resolvedPlatforms.map(PlatformV2::uid))
         assertEquals(listOf(PLATFORM.model, PLATFORM.model), intelligence.resolvedPlatforms.map(PlatformV2::model))
         val completed = checkNotNull(fixture.checkpointDao.getByJobId(fixture.claimedJob.jobId))
@@ -748,6 +748,7 @@ class MemoryLongTermConsolidationServiceTest {
         val handler = java.lang.reflect.InvocationHandler { _, method, arguments ->
             when (method.name) {
                 "fetchMemoryEnabled" -> true
+                "fetchMemoryModelPreference" -> MemoryModelPreference.Auto
                 "fetchPlatformV2s" -> platformCatalog.toList()
                 "fetchPlatformModels" -> if (method.parameterCount == 1) {
                     modelCatalog.toList()
@@ -868,12 +869,12 @@ private class RecordingLongTermMemoryIntelligence(
 
     override suspend fun consolidateMemoryBatch(
         request: MemoryBatchConsolidationRequest,
-        preferredPlatform: PlatformV2?
+        resolvedPlatform: PlatformV2
     ): MemoryBatchConsolidationProposal? = error("Batch consolidation was not expected")
 
     override suspend fun distillDailyMemory(
         request: MemoryDailyDistillationFrozenInput,
-        preferredPlatform: PlatformV2?
+        resolvedPlatform: PlatformV2
     ): MemoryDailyDistillationProposal? = error("Daily distillation was not expected")
 
     override suspend fun consolidateLongTermMemory(

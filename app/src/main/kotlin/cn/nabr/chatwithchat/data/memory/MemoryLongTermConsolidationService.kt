@@ -115,7 +115,7 @@ class MemoryLongTermConsolidationService(
             if (processedPartitions >= maxPartitionsPerInvocation) {
                 return deferForInvocationBudget(currentJob, checkpoint)
             }
-            maintenanceScheduler.renewClaimedLease(currentJob)
+            currentJob = maintenanceScheduler.renewClaimedLease(currentJob)
             val assignedIds = persistedProposal.decisions.flatMap(MemoryLongTermCanonicalDecision::memoryIds).toSet()
             val boundedRequest = policy.nextBoundedRequest(
                 checkpointId = checkpoint.checkpointId,
@@ -385,30 +385,17 @@ class MemoryLongTermConsolidationService(
         job: MemoryMaintenanceJob,
         checkpoint: MemoryLongTermConsolidationCheckpoint
     ): ModelBindingResult {
-        require(
-            listOf(job.resolvedPlatformUid, job.resolvedModelId, job.resolvedAt).all { value -> value == null } ||
-                (job.resolvedPlatformUid != null && job.resolvedModelId != null && job.resolvedAt != null)
-        ) { "partial long-term job model binding" }
-        var boundJob = job
-        val initialResolution = if (job.resolvedPlatformUid == null) {
-            modelResolver.resolveAuto()
-        } else {
-            modelResolver.resolveFrozen(
-                platformUid = checkNotNull(job.resolvedPlatformUid),
-                modelId = checkNotNull(job.resolvedModelId)
-            )
+        val binding = resolveClaimedMemoryModel(
+            job = job,
+            settingRepository = settingRepository,
+            modelResolver = modelResolver,
+            maintenanceScheduler = maintenanceScheduler
+        )
+        val resolved = when (binding) {
+            is ClaimedMemoryModelBinding.Unavailable -> return ModelBindingResult.Unavailable(binding.reason.code)
+            is ClaimedMemoryModelBinding.Resolved -> binding
         }
-        val platform = when (initialResolution) {
-            is MemoryModelResolution.Resolved -> initialResolution.platform
-            is MemoryModelResolution.Unavailable -> return ModelBindingResult.Unavailable(initialResolution.reason.code)
-        }
-        if (boundJob.resolvedPlatformUid == null) {
-            boundJob = maintenanceScheduler.bindResolvedModel(
-                job = boundJob,
-                platformUid = platform.uid,
-                modelId = platform.model
-            )
-        }
+        val boundJob = resolved.job
         var boundCheckpoint = checkpoint
         val checkpointBinding = listOf(
             checkpoint.resolvedPlatformUid,
@@ -443,14 +430,7 @@ class MemoryLongTermConsolidationService(
                 boundCheckpoint.resolvedModelId == boundJob.resolvedModelId &&
                 boundCheckpoint.resolvedAt == boundJob.resolvedAt
         ) { "long-term job and checkpoint model bindings differ" }
-        val frozen = modelResolver.resolveFrozen(
-            platformUid = checkNotNull(boundJob.resolvedPlatformUid),
-            modelId = checkNotNull(boundJob.resolvedModelId)
-        )
-        return when (frozen) {
-            is MemoryModelResolution.Resolved -> ModelBindingResult.Resolved(boundJob, boundCheckpoint, frozen.platform)
-            is MemoryModelResolution.Unavailable -> ModelBindingResult.Unavailable(frozen.reason.code)
-        }
+        return ModelBindingResult.Resolved(boundJob, boundCheckpoint, resolved.platform)
     }
 
     private fun readFrozenSnapshot(checkpoint: MemoryLongTermConsolidationCheckpoint): FrozenSnapshot? {

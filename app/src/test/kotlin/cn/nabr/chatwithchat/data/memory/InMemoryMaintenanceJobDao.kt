@@ -11,6 +11,15 @@ internal class InMemoryMaintenanceJobDao(
     override suspend fun getById(jobId: String): MemoryMaintenanceJob? =
         jobs.firstOrNull { it.jobId == jobId }
 
+    override suspend fun getClaimedByIdAndLeaseOwner(
+        jobId: String,
+        leaseOwner: String
+    ): MemoryMaintenanceJob? = jobs.firstOrNull { job ->
+        job.jobId == jobId &&
+            job.status == MemoryMaintenanceJobStatus.RUNNING &&
+            job.leaseOwner == leaseOwner
+    }
+
     override suspend fun getByIdempotencyKey(idempotencyKey: String): MemoryMaintenanceJob? =
         jobs.firstOrNull { it.idempotencyKey == idempotencyKey }
 
@@ -31,6 +40,22 @@ internal class InMemoryMaintenanceJobDao(
             }
             .sortedWith(compareBy<MemoryMaintenanceJob> { it.updatedAt }.thenBy { it.jobId })
             .take(limit)
+
+    override suspend fun getReopenableMemoryModelBlockedJobs(
+        failureReasons: List<String>,
+        limit: Int
+    ): List<MemoryMaintenanceJob> = jobs
+        .filter { job ->
+            job.family == MemoryMaintenanceJobFamily.SEMANTIC &&
+                job.status == MemoryMaintenanceJobStatus.BLOCKED_DEPENDENCY &&
+                job.resolvedPlatformUid == null &&
+                job.resolvedModelId == null &&
+                job.resolvedAt == null &&
+                job.blockedReason in failureReasons &&
+                job.lastError == job.blockedReason
+        }
+        .sortedWith(compareBy<MemoryMaintenanceJob> { it.updatedAt }.thenBy { it.jobId })
+        .take(limit)
 
     override suspend fun hasRunnableJob(family: String, now: Long): Boolean =
         (

@@ -218,6 +218,7 @@ class MemoryLongTermConsolidationInvocationTest {
         val handler = java.lang.reflect.InvocationHandler { _, method, arguments ->
             when (method.name) {
                 "fetchMemoryEnabled" -> true
+                "fetchMemoryModelPreference" -> MemoryModelPreference.Auto
                 "fetchPlatformV2s" -> listOf(PLATFORM)
                 "fetchPlatformModels" -> if (method.parameterCount == 1) {
                     listOf(PLATFORM_MODEL)
@@ -323,12 +324,12 @@ private class InvocationRecordingIntelligence(
 
     override suspend fun consolidateMemoryBatch(
         request: MemoryBatchConsolidationRequest,
-        preferredPlatform: PlatformV2?
+        resolvedPlatform: PlatformV2
     ): MemoryBatchConsolidationProposal? = error("Batch consolidation was not expected")
 
     override suspend fun distillDailyMemory(
         request: MemoryDailyDistillationFrozenInput,
-        preferredPlatform: PlatformV2?
+        resolvedPlatform: PlatformV2
     ): MemoryDailyDistillationProposal? = error("Daily distillation was not expected")
 
     override suspend fun consolidateLongTermMemory(

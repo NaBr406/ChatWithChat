@@ -381,6 +381,7 @@ object MemoryRepositoryModule {
         memoryRecoveryDao: MemoryRecoveryDao,
         memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
         settingRepository: SettingRepository,
+        memoryModelResolver: MemoryModelResolver,
         memoryIntelligence: MemoryIntelligence,
         memoryFileStore: MemoryFileStore,
         memoryDailyDistillationOperationController: MemoryDailyDistillationOperationController,
@@ -390,6 +391,7 @@ object MemoryRepositoryModule {
         recoveryDao = memoryRecoveryDao,
         maintenanceScheduler = memoryMaintenanceScheduler,
         settingRepository = settingRepository,
+        modelResolver = memoryModelResolver,
         memoryIntelligence = memoryIntelligence,
         memoryFileStore = memoryFileStore,
         operationController = memoryDailyDistillationOperationController,
@@ -455,6 +457,7 @@ object MemoryRepositoryModule {
         memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
         memoryTurnBatchScheduler: MemoryTurnBatchScheduler,
         settingRepository: SettingRepository,
+        memoryModelResolver: MemoryModelResolver,
         memoryIntelligence: MemoryIntelligence,
         memoryFileStore: MemoryFileStore,
         markdownMemoryCodec: MarkdownMemoryCodec,
@@ -466,6 +469,7 @@ object MemoryRepositoryModule {
         maintenanceScheduler = memoryMaintenanceScheduler,
         turnBatchScheduler = memoryTurnBatchScheduler,
         settingRepository = settingRepository,
+        modelResolver = memoryModelResolver,
         memoryIntelligence = memoryIntelligence,
         memoryFileStore = memoryFileStore,
         markdownMemoryCodec = markdownMemoryCodec,
@@ -477,12 +481,11 @@ object MemoryRepositoryModule {
     @Provides
     @Singleton
     fun provideMemoryIntelligence(
-        settingRepository: SettingRepository,
         openAIAPI: OpenAIAPI,
         anthropicAPI: AnthropicAPI,
         googleAPI: GoogleAPI,
         memoryActivityLogger: MemoryActivityLogger
-    ): MemoryIntelligence = LlmMemoryIntelligence(settingRepository, openAIAPI, anthropicAPI, googleAPI, memoryActivityLogger)
+    ): MemoryIntelligence = LlmMemoryIntelligence(openAIAPI, anthropicAPI, googleAPI, memoryActivityLogger)
 
     @Provides
     @Singleton

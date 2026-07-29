@@ -18,21 +18,21 @@ class FakeMemoryIntelligence(
 
     override suspend fun consolidateMemoryBatch(
         request: MemoryBatchConsolidationRequest,
-        preferredPlatform: PlatformV2?
+        resolvedPlatform: PlatformV2
     ): MemoryBatchConsolidationProposal? {
         consolidateCalls += 1
         lastBatchRequest = request
-        lastPreferredPlatform = preferredPlatform
+        lastPreferredPlatform = resolvedPlatform
         onConsolidate()
         return batchProposal
     }
 
     override suspend fun distillDailyMemory(
         request: MemoryDailyDistillationFrozenInput,
-        preferredPlatform: PlatformV2?
+        resolvedPlatform: PlatformV2
     ): MemoryDailyDistillationProposal? {
         distillationCalls += 1
-        lastPreferredPlatform = preferredPlatform
+        lastPreferredPlatform = resolvedPlatform
         return distillationProposal
     }
 

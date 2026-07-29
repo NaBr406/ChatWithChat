@@ -76,6 +76,7 @@ data class MemoryBatchProcessResult(
     companion object {
         const val STATUS_SUCCEEDED = "succeeded"
         const val STATUS_RETRYABLE = "retryable"
+        const val STATUS_BLOCKED = "blocked"
         const val STATUS_TERMINAL = "terminal"
         const val STATUS_DUPLICATE = "duplicate"
     }

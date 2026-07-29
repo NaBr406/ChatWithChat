@@ -5,6 +5,8 @@ import cn.nabr.chatwithchat.data.database.InMemoryMemoryTurnBatchDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryTurnBatchDao
 import cn.nabr.chatwithchat.data.database.entity.MemoryDistillationCheckpoint
 import cn.nabr.chatwithchat.data.database.entity.MemoryMaintenanceJob
+import cn.nabr.chatwithchat.data.database.entity.PlatformV2
+import cn.nabr.chatwithchat.data.model.ClientType
 import java.nio.file.Files
 import java.time.Clock
 import java.time.Instant
@@ -475,7 +477,19 @@ class MemoryDailyDistillationServiceTest {
         val recoveryDao = InMemoryMemoryRecoveryDao()
         val jobDao = InMemoryMaintenanceJobDao()
         val workEnqueuer = RecordingWorkEnqueuer()
-        val settings = FakeMaintenanceSettingRepository(memoryEnabled = true)
+        val platform = PlatformV2(
+            uid = "memory-daily-platform",
+            name = "Memory daily",
+            compatibleType = ClientType.CUSTOM,
+            apiUrl = "https://memory-daily.invalid",
+            token = "token",
+            model = "memory-daily-model",
+            enabled = true
+        )
+        val settings = FakeMaintenanceSettingRepository(
+            memoryEnabled = true,
+            platforms = listOf(platform)
+        )
         val maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, clock)
         val dailyScheduler = MemoryDailyDistillationScheduler(
             memoryFileStore = fileStore,
@@ -515,6 +529,7 @@ class MemoryDailyDistillationServiceTest {
             recoveryDao = recoveryDao,
             maintenanceScheduler = maintenanceScheduler,
             settingRepository = settings,
+            modelResolver = MemoryModelResolver(settings),
             memoryIntelligence = intelligence,
             memoryFileStore = fileStore,
             operationController = controller,

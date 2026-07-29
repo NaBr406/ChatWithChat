@@ -11,6 +11,7 @@ import cn.nabr.chatwithchat.data.datastore.SettingDataSource
 import cn.nabr.chatwithchat.data.dto.APIModel
 import cn.nabr.chatwithchat.data.dto.Platform
 import cn.nabr.chatwithchat.data.dto.ThemeSetting
+import cn.nabr.chatwithchat.data.memory.MemoryModelDependencyNotifier
 import cn.nabr.chatwithchat.data.memory.MemoryModelPreference
 import cn.nabr.chatwithchat.data.model.ApiType
 import cn.nabr.chatwithchat.data.model.AvailableChatModel
@@ -31,7 +32,8 @@ class SettingRepositoryImpl @Inject constructor(
     private val platformV2Dao: PlatformV2Dao,
     private val platformModelV2Dao: PlatformModelV2Dao,
     private val chatPlatformModelV2Dao: ChatPlatformModelV2Dao,
-    private val modelDiscoveryRepository: ModelDiscoveryRepository
+    private val modelDiscoveryRepository: ModelDiscoveryRepository,
+    private val memoryModelDependencyNotifier: MemoryModelDependencyNotifier = MemoryModelDependencyNotifier.None
 ) : SettingRepository {
 
     override suspend fun fetchPlatforms(): List<Platform> = ApiType.entries.map { apiType ->
@@ -240,6 +242,7 @@ class SettingRepositoryImpl @Inject constructor(
             is MemoryModelPreference.Invalid -> error("Invalid memory model preference cannot be selected")
         }
         settingDataSource.updateMemoryModelPreference(normalized)
+        memoryModelDependencyNotifier.onDependenciesChanged()
     }
 
     override suspend fun updateMemoryMaintenanceNotificationsEnabled(enabled: Boolean) {
@@ -282,7 +285,7 @@ class SettingRepositoryImpl @Inject constructor(
             )
 
         val refreshedAt = System.currentTimeMillis() / 1000
-        return runCatching {
+        val result = runCatching {
             val fetchedModels = modelDiscoveryRepository.fetchModels(
                 clientType = platform.compatibleType,
                 apiUrl = platform.apiUrl,
@@ -315,6 +318,8 @@ class SettingRepositoryImpl @Inject constructor(
                 errorMessage = errorMessage
             )
         }
+        memoryModelDependencyNotifier.onDependenciesChanged()
+        return result
     }
 
     override suspend fun updatePlatformModelEnabled(platformUid: String, modelId: String, enabled: Boolean) {
@@ -336,6 +341,7 @@ class SettingRepositoryImpl @Inject constructor(
                 setPlatformDefaultModel(platformUid, nextDefault.modelId)
             }
         }
+        memoryModelDependencyNotifier.onDependenciesChanged()
     }
 
     override suspend fun setPlatformDefaultModel(platformUid: String, modelId: String) {
@@ -347,11 +353,13 @@ class SettingRepositoryImpl @Inject constructor(
         platformV2Dao.getPlatforms().firstOrNull { it.uid == platformUid }?.let { platform ->
             platformV2Dao.editPlatform(platform.copy(model = sanitizedModelId))
         }
+        memoryModelDependencyNotifier.onDependenciesChanged()
     }
 
     override suspend fun addPlatformV2(platform: PlatformV2) {
         platformV2Dao.addPlatform(platform)
         persistLegacyModelIfPresent(platform)
+        memoryModelDependencyNotifier.onDependenciesChanged()
     }
 
     override suspend fun updatePlatformV2(platform: PlatformV2) {
@@ -370,12 +378,14 @@ class SettingRepositoryImpl @Inject constructor(
 
         platformV2Dao.editPlatform(updatedPlatform)
         persistLegacyModelIfPresent(updatedPlatform)
+        memoryModelDependencyNotifier.onDependenciesChanged()
     }
 
     override suspend fun deletePlatformV2(platform: PlatformV2) {
         platformModelV2Dao.deleteByPlatformUid(platform.uid)
         chatPlatformModelV2Dao.deleteByPlatformUid(platform.uid)
         platformV2Dao.deletePlatform(platform)
+        memoryModelDependencyNotifier.onDependenciesChanged()
     }
 
     private suspend fun mergeFetchedModels(

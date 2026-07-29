@@ -235,8 +235,11 @@ class MemoryMaintenanceProcessor @Inject constructor(
         job: MemoryMaintenanceJob,
         throwable: Throwable
     ): MemoryMaintenanceOutcome = try {
+        val leaseOwner = job.leaseOwner ?: throw MemoryMaintenanceLeaseLostException(job.jobId)
+        val current = maintenanceScheduler.getLatestClaimedJob(job.jobId, leaseOwner)
+            ?: throw MemoryMaintenanceLeaseLostException(job.jobId)
         maintenanceScheduler.markFailedRetryable(
-            job = job,
+            job = current,
             error = throwable.message ?: throwable.javaClass.simpleName
         ).toFailureOutcome()
     } catch (_: MemoryMaintenanceLeaseLostException) {
@@ -251,6 +254,7 @@ class MemoryMaintenanceProcessor @Inject constructor(
     private fun MemoryBatchProcessResult.toOutcome(): MemoryMaintenanceOutcome = when (status) {
         MemoryBatchProcessResult.STATUS_SUCCEEDED,
         MemoryBatchProcessResult.STATUS_DUPLICATE -> MemoryMaintenanceOutcome.SUCCEEDED
+        MemoryBatchProcessResult.STATUS_BLOCKED -> MemoryMaintenanceOutcome.BLOCKED
         MemoryBatchProcessResult.STATUS_TERMINAL -> MemoryMaintenanceOutcome.TERMINAL
         else -> MemoryMaintenanceOutcome.RETRYABLE
     }
@@ -258,6 +262,7 @@ class MemoryMaintenanceProcessor @Inject constructor(
     private fun MemoryDailyDistillationProcessResult.toOutcome(): MemoryMaintenanceOutcome = when (status) {
         MemoryDailyDistillationProcessResult.STATUS_SUCCEEDED,
         MemoryDailyDistillationProcessResult.STATUS_DUPLICATE -> MemoryMaintenanceOutcome.SUCCEEDED
+        MemoryDailyDistillationProcessResult.STATUS_BLOCKED -> MemoryMaintenanceOutcome.BLOCKED
         MemoryDailyDistillationProcessResult.STATUS_TERMINAL -> MemoryMaintenanceOutcome.TERMINAL
         else -> MemoryMaintenanceOutcome.RETRYABLE
     }

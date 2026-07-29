@@ -32,7 +32,6 @@ import cn.nabr.chatwithchat.data.model.ClientType
 import cn.nabr.chatwithchat.data.network.AnthropicAPI
 import cn.nabr.chatwithchat.data.network.GoogleAPI
 import cn.nabr.chatwithchat.data.network.OpenAIAPI
-import cn.nabr.chatwithchat.data.repository.SettingRepository
 import javax.inject.Inject
 import kotlinx.coroutines.flow.toList
 import kotlinx.serialization.SerializationException
@@ -40,7 +39,6 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 class LlmMemoryIntelligence @Inject constructor(
-    private val settingRepository: SettingRepository,
     private val openAIAPI: OpenAIAPI,
     private val anthropicAPI: AnthropicAPI,
     private val googleAPI: GoogleAPI,
@@ -56,9 +54,9 @@ class LlmMemoryIntelligence @Inject constructor(
 
     override suspend fun consolidateMemoryBatch(
         request: MemoryBatchConsolidationRequest,
-        preferredPlatform: PlatformV2?
+        resolvedPlatform: PlatformV2
     ): MemoryBatchConsolidationProposal? {
-        val platform = resolveMemoryPlatform(preferredPlatform)
+        val platform = resolvedPlatform
         val modelCallLogId = startActivity(
             batchId = request.batchId,
             itemCount = request.turns.size,
@@ -75,7 +73,7 @@ class LlmMemoryIntelligence @Inject constructor(
             operation = OPERATION_CONSOLIDATE_BATCH,
             systemPrompt = BATCH_CONSOLIDATION_PROMPT,
             userJson = strictJson.encodeToString(request),
-            preferredPlatform = platform
+            resolvedPlatform = platform
         )
         if (response == null) {
             finishActivity(modelCallLogId, MemoryActivityStatus.FAILED, "模型未返回可用响应")
@@ -104,9 +102,9 @@ class LlmMemoryIntelligence @Inject constructor(
 
     override suspend fun distillDailyMemory(
         request: MemoryDailyDistillationFrozenInput,
-        preferredPlatform: PlatformV2?
+        resolvedPlatform: PlatformV2
     ): MemoryDailyDistillationProposal? {
-        val platform = resolveMemoryPlatform(preferredPlatform)
+        val platform = resolvedPlatform
         val modelCallLogId = startActivity(
             batchId = request.batchId,
             itemCount = request.dailyEvidence.size,
@@ -123,7 +121,7 @@ class LlmMemoryIntelligence @Inject constructor(
             operation = OPERATION_DISTILL_DAILY,
             systemPrompt = DAILY_DISTILLATION_PROMPT,
             userJson = strictJson.encodeToString(request),
-            preferredPlatform = platform
+            resolvedPlatform = platform
         )
         if (response == null) {
             finishActivity(modelCallLogId, MemoryActivityStatus.FAILED, "模型未返回可用响应")
@@ -162,8 +160,7 @@ class LlmMemoryIntelligence @Inject constructor(
             operation = OPERATION_CONSOLIDATE_LONG_TERM,
             systemPrompt = LONG_TERM_CONSOLIDATION_PROMPT,
             userJson = userJson,
-            preferredPlatform = resolvedPlatform,
-            allowFallback = false
+            resolvedPlatform = resolvedPlatform
         ) ?: return null
         return try {
             strictJson.decodeFromString<MemoryLongTermConsolidationProposal>(extractJsonObject(response))
@@ -204,16 +201,11 @@ class LlmMemoryIntelligence @Inject constructor(
         operation: String,
         systemPrompt: String,
         userJson: String,
-        preferredPlatform: PlatformV2?,
-        allowFallback: Boolean = true
+        resolvedPlatform: PlatformV2
     ): String? {
-        val platform = if (allowFallback) {
-            resolveMemoryPlatform(preferredPlatform)
-        } else {
-            preferredPlatform?.takeIf { candidate -> candidate.isSupportedMemoryPlatform() }
-        }
+        val platform = resolvedPlatform.takeIf { candidate -> candidate.isSupportedMemoryPlatform() }
         if (platform == null) {
-            logWarning("Memory $operation skipped: no enabled OpenAI-compatible memory platform")
+            logWarning("Memory $operation skipped: resolved memory platform is unavailable")
             return null
         }
         if (platform.model.isBlank()) {
@@ -459,15 +451,6 @@ class LlmMemoryIntelligence @Inject constructor(
                 logWarning("Memory $operation Google request returned blank content from ${platform.name}")
                 null
             }
-    }
-
-    private suspend fun resolveMemoryPlatform(preferredPlatform: PlatformV2?): PlatformV2? {
-        if (preferredPlatform?.isSupportedMemoryPlatform() == true) {
-            return preferredPlatform
-        }
-
-        return settingRepository.fetchPlatformV2s()
-            .firstOrNull { platform -> platform.isSupportedMemoryPlatform() }
     }
 
     private fun collectContent(chunks: List<ChatCompletionChunk>): String = chunks

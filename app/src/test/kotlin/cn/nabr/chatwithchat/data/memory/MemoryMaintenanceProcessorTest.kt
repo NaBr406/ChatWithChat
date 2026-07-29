@@ -91,6 +91,35 @@ class MemoryMaintenanceProcessorTest {
     }
 
     @Test
+    fun `unexpected failure after model binding persists against the latest row version`() = runBlocking {
+        val jobDao = InMemoryMaintenanceJobDao(listOf(job(MemoryMaintenanceJobType.SYNC_VECTOR_INDEX)))
+        val scheduler = MemoryMaintenanceScheduler(jobDao, FIXED_CLOCK)
+        val processor = MemoryMaintenanceProcessor(
+            maintenanceScheduler = scheduler,
+            settingRepository = FakeMaintenanceSettingRepository(memoryEnabled = true),
+            leaseWatchdog = NoOpLeaseWatchdog,
+            memoryIndexSyncService = MemoryIndexSyncService { claimed ->
+                scheduler.bindResolvedModel(
+                    job = claimed,
+                    platformUid = "platform-1",
+                    modelId = "model-1"
+                )
+                error("failure_after_model_binding")
+            }
+        )
+
+        val result = processor.processRunnableJobs(MemoryMaintenanceJobFamily.INDEX)
+
+        val failed = jobDao.jobs.single()
+        assertEquals(1, result.retryableCount)
+        assertEquals(MemoryMaintenanceJobStatus.FAILED_RETRYABLE, failed.status)
+        assertEquals("failure_after_model_binding", failed.lastError)
+        assertEquals("platform-1", failed.resolvedPlatformUid)
+        assertEquals("model-1", failed.resolvedModelId)
+        assertEquals(3L, failed.rowVersion)
+    }
+
+    @Test
     fun `blocked vector index sync marks dependency blocked`() = runBlocking {
         val jobDao = InMemoryMaintenanceJobDao(listOf(job(MemoryMaintenanceJobType.SYNC_VECTOR_INDEX)))
         val processor = createProcessor(
@@ -610,14 +639,23 @@ private data object FailingRepairWorkEnqueuer : MemoryMaintenanceWorkEnqueuer {
 
 internal class FakeMaintenanceSettingRepository(
     var memoryEnabled: Boolean,
-    private val platforms: List<PlatformV2> = emptyList()
+    private val platforms: List<PlatformV2> = emptyList(),
+    private val platformModels: List<PlatformModelV2> = platforms.map { platform ->
+        PlatformModelV2(
+            platformUid = platform.uid,
+            modelId = platform.model,
+            displayName = platform.model,
+            enabled = true
+        )
+    }
 ) : SettingRepository {
     override suspend fun fetchMemoryEnabled(): Boolean = memoryEnabled
     override suspend fun fetchMemoryModelPreference(): MemoryModelPreference = MemoryModelPreference.Auto
     override suspend fun fetchPlatforms(): List<Platform> = emptyList()
     override suspend fun fetchPlatformV2s(): List<PlatformV2> = platforms
-    override suspend fun fetchPlatformModels(): List<PlatformModelV2> = emptyList()
-    override suspend fun fetchPlatformModels(platformUid: String): List<PlatformModelV2> = emptyList()
+    override suspend fun fetchPlatformModels(): List<PlatformModelV2> = platformModels
+    override suspend fun fetchPlatformModels(platformUid: String): List<PlatformModelV2> =
+        platformModels.filter { model -> model.platformUid == platformUid }
     override suspend fun fetchEnabledChatModels(): List<AvailableChatModel> = emptyList()
     override suspend fun resolveDefaultChatModel(): AvailableChatModel? = null
     override suspend fun fetchThemes(): ThemeSetting = ThemeSetting()

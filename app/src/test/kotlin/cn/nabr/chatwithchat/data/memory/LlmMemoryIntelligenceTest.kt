@@ -1,9 +1,6 @@
 package cn.nabr.chatwithchat.data.memory
 
-import cn.nabr.chatwithchat.data.database.entity.PlatformModelV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
-import cn.nabr.chatwithchat.data.dto.Platform
-import cn.nabr.chatwithchat.data.dto.ThemeSetting
 import cn.nabr.chatwithchat.data.dto.anthropic.response.ContentBlock
 import cn.nabr.chatwithchat.data.dto.anthropic.response.ContentBlockType
 import cn.nabr.chatwithchat.data.dto.anthropic.response.ContentDeltaResponseChunk
@@ -18,18 +15,11 @@ import cn.nabr.chatwithchat.data.dto.openai.response.Choice
 import cn.nabr.chatwithchat.data.dto.openai.response.Delta
 import cn.nabr.chatwithchat.data.dto.openai.response.OutputTextDeltaEvent
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponsesStreamEvent
-import cn.nabr.chatwithchat.data.model.AvailableChatModel
 import cn.nabr.chatwithchat.data.model.ClientType
-import cn.nabr.chatwithchat.data.model.LastSelectedModel
-import cn.nabr.chatwithchat.data.model.ModelRefreshResult
-import cn.nabr.chatwithchat.data.model.ReasoningMode
 import cn.nabr.chatwithchat.data.network.AnthropicAPI
 import cn.nabr.chatwithchat.data.network.GoogleAPI
 import cn.nabr.chatwithchat.data.network.OpenAIAPI
 import cn.nabr.chatwithchat.data.network.UploadedProviderFile
-import cn.nabr.chatwithchat.data.repository.SettingRepository
-import cn.nabr.chatwithchat.data.tool.ToolCallingMode
-import cn.nabr.chatwithchat.data.websearch.WebSearchMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
@@ -43,6 +33,7 @@ class LlmMemoryIntelligenceTest {
 
     @Test
     fun `openai memory platform uses responses api for batch consolidation`() = runBlocking {
+        val resolvedPlatform = platform(ClientType.OPENAI, "gpt-5", reasoning = true)
         val openAIAPI = RecordingOpenAIAPI(
             responseEvents = flowOf(
                 OutputTextDeltaEvent(
@@ -54,11 +45,10 @@ class LlmMemoryIntelligenceTest {
             )
         )
         val intelligence = intelligence(
-            platforms = listOf(platform(ClientType.OPENAI, "gpt-5", reasoning = true)),
             openAIAPI = openAIAPI
         )
 
-        val result = intelligence.consolidateMemoryBatch(batchRequest())
+        val result = intelligence.consolidateMemoryBatch(batchRequest(), resolvedPlatform)
 
         assertEquals(0, result?.operations?.size)
         assertEquals(1, openAIAPI.streamResponsesCalls)
@@ -72,13 +62,13 @@ class LlmMemoryIntelligenceTest {
 
     @Test
     fun `openai compatible platform uses deterministic batch sampling`() = runBlocking {
+        val resolvedPlatform = platform(ClientType.OPENROUTER, "openai/gpt-4o")
         val openAIAPI = RecordingOpenAIAPI(chatChunks = chatChunks(EMPTY_PROPOSAL_JSON))
         val intelligence = intelligence(
-            platforms = listOf(platform(ClientType.OPENROUTER, "openai/gpt-4o")),
             openAIAPI = openAIAPI
         )
 
-        intelligence.consolidateMemoryBatch(batchRequest())
+        intelligence.consolidateMemoryBatch(batchRequest(), resolvedPlatform)
 
         assertEquals(1, openAIAPI.streamChatCompletionCalls)
         assertEquals(0f, openAIAPI.lastChatRequest?.temperature)
@@ -88,23 +78,20 @@ class LlmMemoryIntelligenceTest {
     }
 
     @Test
-    fun `preferred batch platform overrides fallback platform`() = runBlocking {
+    fun `batch uses the exact resolved platform snapshot`() = runBlocking {
         val openAIAPI = RecordingOpenAIAPI(chatChunks = chatChunks(EMPTY_PROPOSAL_JSON))
-        val intelligence = intelligence(
-            platforms = listOf(platform(ClientType.OPENROUTER, "fallback-model")),
-            openAIAPI = openAIAPI
-        )
+        val intelligence = intelligence(openAIAPI = openAIAPI)
 
         intelligence.consolidateMemoryBatch(
             batchRequest(),
-            preferredPlatform = platform(ClientType.CUSTOM, "current-chat-model")
+            resolvedPlatform = platform(ClientType.CUSTOM, "resolved-model")
         )
 
-        assertEquals("current-chat-model", openAIAPI.lastChatRequest?.model)
+        assertEquals("resolved-model", openAIAPI.lastChatRequest?.model)
     }
 
     @Test
-    fun `preferred anthropic platform executes the same batch contract`() = runBlocking {
+    fun `resolved anthropic platform executes the same batch contract`() = runBlocking {
         val anthropicAPI = RecordingAnthropicAPI(
             chunks = flowOf(
                 ContentDeltaResponseChunk(
@@ -113,14 +100,11 @@ class LlmMemoryIntelligenceTest {
                 )
             )
         )
-        val intelligence = intelligence(
-            platforms = listOf(platform(ClientType.OPENROUTER, "fallback-model")),
-            anthropicAPI = anthropicAPI
-        )
+        val intelligence = intelligence(anthropicAPI = anthropicAPI)
 
         val result = intelligence.consolidateMemoryBatch(
             batchRequest(),
-            preferredPlatform = platform(ClientType.ANTHROPIC, "claude-current")
+            resolvedPlatform = platform(ClientType.ANTHROPIC, "claude-current")
         )
 
         assertEquals(0, result?.operations?.size)
@@ -131,7 +115,7 @@ class LlmMemoryIntelligenceTest {
     }
 
     @Test
-    fun `preferred google platform executes the same batch contract`() = runBlocking {
+    fun `resolved google platform executes the same batch contract`() = runBlocking {
         val googleAPI = RecordingGoogleAPI(
             responses = flowOf(
                 GenerateContentResponse(
@@ -139,14 +123,11 @@ class LlmMemoryIntelligenceTest {
                 )
             )
         )
-        val intelligence = intelligence(
-            platforms = listOf(platform(ClientType.OPENROUTER, "fallback-model")),
-            googleAPI = googleAPI
-        )
+        val intelligence = intelligence(googleAPI = googleAPI)
 
         val result = intelligence.consolidateMemoryBatch(
             batchRequest(),
-            preferredPlatform = platform(ClientType.GOOGLE, "gemini-current")
+            resolvedPlatform = platform(ClientType.GOOGLE, "gemini-current")
         )
 
         assertEquals(0, result?.operations?.size)
@@ -158,43 +139,39 @@ class LlmMemoryIntelligenceTest {
 
     @Test
     fun `batch timeout preserves disabled timeout setting`() = runBlocking {
+        val resolvedPlatform = platform(ClientType.OPENROUTER, "model", timeout = 0)
         val openAIAPI = RecordingOpenAIAPI(chatChunks = chatChunks(EMPTY_PROPOSAL_JSON))
-        val intelligence = intelligence(
-            platforms = listOf(platform(ClientType.OPENROUTER, "model", timeout = 0)),
-            openAIAPI = openAIAPI
-        )
+        val intelligence = intelligence(openAIAPI = openAIAPI)
 
-        intelligence.consolidateMemoryBatch(batchRequest())
+        intelligence.consolidateMemoryBatch(batchRequest(), resolvedPlatform)
 
         assertEquals(0, openAIAPI.lastChatTimeoutSeconds)
     }
 
     @Test
     fun `batch timeout preserves larger user timeout`() = runBlocking {
+        val resolvedPlatform = platform(ClientType.OPENROUTER, "model", timeout = 180)
         val openAIAPI = RecordingOpenAIAPI(chatChunks = chatChunks(EMPTY_PROPOSAL_JSON))
-        val intelligence = intelligence(
-            platforms = listOf(platform(ClientType.OPENROUTER, "model", timeout = 180)),
-            openAIAPI = openAIAPI
-        )
+        val intelligence = intelligence(openAIAPI = openAIAPI)
 
-        intelligence.consolidateMemoryBatch(batchRequest())
+        intelligence.consolidateMemoryBatch(batchRequest(), resolvedPlatform)
 
         assertEquals(180, openAIAPI.lastChatTimeoutSeconds)
     }
 
     @Test
     fun `batch consolidation rejects non strict json with one provider call`() = runBlocking {
+        val resolvedPlatform = platform(ClientType.OPENROUTER, "model")
         val openAIAPI = RecordingOpenAIAPI(
             chatChunks = chatChunks("""{"operations":[],"unexpected":true}""")
         )
         val activityLogger = RecordingMemoryActivityLogger()
         val intelligence = intelligence(
-            platforms = listOf(platform(ClientType.OPENROUTER, "model")),
             openAIAPI = openAIAPI,
             activityLogger = activityLogger
         )
 
-        val result = intelligence.consolidateMemoryBatch(batchRequest())
+        val result = intelligence.consolidateMemoryBatch(batchRequest(), resolvedPlatform)
 
         assertNull(result)
         assertEquals(1, openAIAPI.streamChatCompletionCalls)
@@ -203,14 +180,14 @@ class LlmMemoryIntelligenceTest {
     }
 
     @Test
-    fun `missing memory platform records model call and generation failures`() = runBlocking {
+    fun `unavailable resolved platform records model call and generation failures`() = runBlocking {
         val activityLogger = RecordingMemoryActivityLogger()
-        val intelligence = intelligence(
-            platforms = emptyList(),
-            activityLogger = activityLogger
-        )
+        val intelligence = intelligence(activityLogger = activityLogger)
 
-        val result = intelligence.consolidateMemoryBatch(batchRequest())
+        val result = intelligence.consolidateMemoryBatch(
+            batchRequest(),
+            platform(ClientType.OPENROUTER, "model").copy(enabled = false)
+        )
 
         assertNull(result)
         assertEquals(MemoryActivityStatus.FAILED, activityLogger.finishedStatus(MemoryActivityCategory.MODEL_CALL))
@@ -219,15 +196,13 @@ class LlmMemoryIntelligenceTest {
 
     @Test
     fun `daily distillation uses one strict provider request`() = runBlocking {
+        val resolvedPlatform = platform(ClientType.OPENROUTER, "model")
         val response =
             """{"operations":[{"action":"create","text":"Prefers concise answers.","type":"communication_style","sensitivity":"normal","source":"explicit_user_statement","evidenceKeys":["evidence-1"],"canonicalKey":"communication.response_style","scope":"general","evidenceAt":2,"recallState":"core","reason":"stable preference"}]}"""
         val openAIAPI = RecordingOpenAIAPI(chatChunks = chatChunks(response))
-        val intelligence = intelligence(
-            platforms = listOf(platform(ClientType.OPENROUTER, "model")),
-            openAIAPI = openAIAPI
-        )
+        val intelligence = intelligence(openAIAPI = openAIAPI)
 
-        val result = intelligence.distillDailyMemory(dailyRequest())
+        val result = intelligence.distillDailyMemory(dailyRequest(), resolvedPlatform)
 
         assertEquals(1, result?.operations?.size)
         assertEquals(MemoryDailyDistillationAction.CREATE, result?.operations?.single()?.action)
@@ -241,15 +216,13 @@ class LlmMemoryIntelligenceTest {
 
     @Test
     fun `daily distillation rejects non strict json after one call`() = runBlocking {
+        val resolvedPlatform = platform(ClientType.OPENROUTER, "model")
         val openAIAPI = RecordingOpenAIAPI(
             chatChunks = chatChunks("""{"operations":[],"unexpected":true}""")
         )
-        val intelligence = intelligence(
-            platforms = listOf(platform(ClientType.OPENROUTER, "model")),
-            openAIAPI = openAIAPI
-        )
+        val intelligence = intelligence(openAIAPI = openAIAPI)
 
-        val result = intelligence.distillDailyMemory(dailyRequest())
+        val result = intelligence.distillDailyMemory(dailyRequest(), resolvedPlatform)
 
         assertNull(result)
         assertEquals(1, openAIAPI.streamChatCompletionCalls)
@@ -258,10 +231,7 @@ class LlmMemoryIntelligenceTest {
     @Test
     fun `long term consolidation uses the exact frozen platform`() = runBlocking {
         val openAIAPI = RecordingOpenAIAPI(chatChunks = chatChunks(EMPTY_LONG_TERM_PROPOSAL_JSON))
-        val intelligence = intelligence(
-            platforms = listOf(platform(ClientType.OPENROUTER, "fallback-model")),
-            openAIAPI = openAIAPI
-        )
+        val intelligence = intelligence(openAIAPI = openAIAPI)
 
         val result = intelligence.consolidateLongTermMemory(
             request = longTermRequest(),
@@ -276,10 +246,7 @@ class LlmMemoryIntelligenceTest {
     @Test
     fun `long term consolidation rejects an oversized serialized request before provider call`() = runBlocking {
         val openAIAPI = RecordingOpenAIAPI(chatChunks = chatChunks(EMPTY_LONG_TERM_PROPOSAL_JSON))
-        val intelligence = intelligence(
-            platforms = emptyList(),
-            openAIAPI = openAIAPI
-        )
+        val intelligence = intelligence(openAIAPI = openAIAPI)
         val request = longTermRequest().copy(
             candidateGroups = longTermRequest().candidateGroups.map { group ->
                 group.copy(
@@ -304,10 +271,7 @@ class LlmMemoryIntelligenceTest {
     @Test
     fun `unavailable frozen long term platform never falls back`() = runBlocking {
         val openAIAPI = RecordingOpenAIAPI(chatChunks = chatChunks(EMPTY_LONG_TERM_PROPOSAL_JSON))
-        val intelligence = intelligence(
-            platforms = listOf(platform(ClientType.OPENROUTER, "fallback-model")),
-            openAIAPI = openAIAPI
-        )
+        val intelligence = intelligence(openAIAPI = openAIAPI)
 
         val result = intelligence.consolidateLongTermMemory(
             request = longTermRequest(),
@@ -323,10 +287,7 @@ class LlmMemoryIntelligenceTest {
         val openAIAPI = RecordingOpenAIAPI(
             chatChunks = chatChunks("""{"decisions":[],"unexpected":true}""")
         )
-        val intelligence = intelligence(
-            platforms = emptyList(),
-            openAIAPI = openAIAPI
-        )
+        val intelligence = intelligence(openAIAPI = openAIAPI)
 
         val result = intelligence.consolidateLongTermMemory(
             request = longTermRequest(),
@@ -338,13 +299,11 @@ class LlmMemoryIntelligenceTest {
     }
 
     private fun intelligence(
-        platforms: List<PlatformV2>,
         openAIAPI: RecordingOpenAIAPI = RecordingOpenAIAPI(),
         anthropicAPI: RecordingAnthropicAPI = RecordingAnthropicAPI(),
         googleAPI: RecordingGoogleAPI = RecordingGoogleAPI(),
         activityLogger: MemoryActivityLogger = MemoryActivityLogger.None
     ) = LlmMemoryIntelligence(
-        settingRepository = FakeSettingRepository(platforms),
         openAIAPI = openAIAPI,
         anthropicAPI = anthropicAPI,
         googleAPI = googleAPI,
@@ -444,44 +403,6 @@ class LlmMemoryIntelligenceTest {
         const val EMPTY_PROPOSAL_JSON = """{"operations":[]}"""
         const val EMPTY_LONG_TERM_PROPOSAL_JSON = """{"decisions":[]}"""
     }
-}
-
-private class FakeSettingRepository(
-    private val platforms: List<PlatformV2>
-) : SettingRepository {
-    override suspend fun fetchPlatforms(): List<Platform> = emptyList()
-    override suspend fun fetchPlatformV2s(): List<PlatformV2> = platforms
-    override suspend fun fetchPlatformModels(): List<PlatformModelV2> = emptyList()
-    override suspend fun fetchPlatformModels(platformUid: String): List<PlatformModelV2> = emptyList()
-    override suspend fun fetchEnabledChatModels(): List<AvailableChatModel> = emptyList()
-    override suspend fun resolveDefaultChatModel(): AvailableChatModel? = null
-    override suspend fun fetchThemes(): ThemeSetting = ThemeSetting()
-    override suspend fun fetchLastSelectedModel(): LastSelectedModel? = null
-    override suspend fun fetchMemoryEnabled(): Boolean = false
-    override suspend fun fetchMemoryModelPreference(): MemoryModelPreference = MemoryModelPreference.Auto
-    override suspend fun fetchMemoryMaintenanceNotificationsEnabled(): Boolean = true
-    override suspend fun fetchToolCallingMode(): ToolCallingMode = ToolCallingMode.Off
-    override suspend fun fetchDisabledToolNames(): Set<String> = emptySet()
-    override suspend fun fetchWebSearchMode(): WebSearchMode = WebSearchMode.Off
-    override suspend fun fetchWebSearchSearxngBaseUrl(): String = ""
-    override suspend fun migrateToPlatformV2() = Unit
-    override suspend fun updatePlatforms(platforms: List<Platform>) = Unit
-    override suspend fun updateThemes(themeSetting: ThemeSetting) = Unit
-    override suspend fun updateLastSelectedModel(platformUid: String, model: String, reasoningMode: ReasoningMode) = Unit
-    override suspend fun updateMemoryEnabled(enabled: Boolean) = Unit
-    override suspend fun updateMemoryModelPreference(preference: MemoryModelPreference) = Unit
-    override suspend fun updateMemoryMaintenanceNotificationsEnabled(enabled: Boolean) = Unit
-    override suspend fun updateToolCallingMode(mode: ToolCallingMode) = Unit
-    override suspend fun updateToolEnabled(toolName: String, enabled: Boolean) = Unit
-    override suspend fun updateWebSearchMode(mode: WebSearchMode) = Unit
-    override suspend fun updateWebSearchSearxngBaseUrl(baseUrl: String) = Unit
-    override suspend fun refreshPlatformModels(platformUid: String): ModelRefreshResult = ModelRefreshResult(platforms.first(), emptyList())
-    override suspend fun updatePlatformModelEnabled(platformUid: String, modelId: String, enabled: Boolean) = Unit
-    override suspend fun setPlatformDefaultModel(platformUid: String, modelId: String) = Unit
-    override suspend fun addPlatformV2(platform: PlatformV2) = Unit
-    override suspend fun updatePlatformV2(platform: PlatformV2) = Unit
-    override suspend fun deletePlatformV2(platform: PlatformV2) = Unit
-    override suspend fun getPlatformV2ById(id: Int): PlatformV2? = platforms.firstOrNull { it.id == id }
 }
 
 private class RecordingOpenAIAPI(

@@ -137,7 +137,7 @@ class MemoryBatchConsolidationServiceTest {
 
         val result = fixture.service.process(job)
 
-        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(result.reason, MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
         assertEquals(1, fixture.intelligence.consolidateCalls)
         assertTrue(fixture.fileStore.readDailyMemory().getOrThrow().contains("testing daily batch consolidation"))
         assertTrue(fixture.fileStore.readLongTermMemory().getOrThrow().contains("durable batch-based memory updates"))
@@ -230,7 +230,7 @@ class MemoryBatchConsolidationServiceTest {
         val result = fixture.service.process(job)
         val markdown = fixture.fileStore.readDailyMemory().getOrThrow()
 
-        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(result.reason, MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
         assertEquals(1, markdown.split(memoryText).size - 1)
         assertEquals(5, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
     }
@@ -367,7 +367,7 @@ class MemoryBatchConsolidationServiceTest {
         val active = entries.single { entry -> entry.validity == MemoryValidity.CURRENT }
         val history = entries.single { entry -> entry.id == replacementTarget.id }
 
-        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(result.reason, MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
         assertEquals(canonicalOnlyEntry.id, active.id)
         assertEquals(replacement.canonicalKey, active.canonicalKey)
         assertEquals(replacement.scope, active.scope)
@@ -669,7 +669,7 @@ class MemoryBatchConsolidationServiceTest {
             normalizeExactMemoryText(entry.text) == normalizeExactMemoryText(original.text)
         }
 
-        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(result.reason, MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
         assertEquals(2, result.longTermWriteCount)
         assertTrue(relocated.id.startsWith("mem_can_"))
         assertEquals(create.canonicalKey, relocated.canonicalKey)
@@ -712,7 +712,7 @@ class MemoryBatchConsolidationServiceTest {
             normalizeExactMemoryText(entry.text) == normalizeExactMemoryText(original.text)
         }
 
-        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(result.reason, MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
         assertEquals(2, result.longTermWriteCount)
         assertTrue(relocated.id.startsWith("mem_can_"))
         assertEquals(create.canonicalKey, relocated.canonicalKey)
@@ -806,7 +806,7 @@ class MemoryBatchConsolidationServiceTest {
             .entries
             .associateBy { entry -> entry.id }
 
-        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(result.reason, MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
         assertEquals(2, result.longTermWriteCount)
         assertEquals(second.text, entriesById.getValue(first.id).text)
         assertEquals(first.text, entriesById.getValue(second.id).text)
@@ -1570,7 +1570,6 @@ class MemoryBatchConsolidationServiceTest {
         val activityLogDao = BaselineMemoryActivityLogDao()
         val activityLogger = RoomMemoryActivityLogger(activityLogDao, FIXED_CLOCK)
         val intelligence = LlmMemoryIntelligence(
-            settingRepository = settingRepository,
             openAIAPI = BaselineMemoryOpenAIAPI(response),
             anthropicAPI = testProxy<AnthropicAPI>(),
             googleAPI = testProxy<GoogleAPI>(),
@@ -1593,6 +1592,7 @@ class MemoryBatchConsolidationServiceTest {
                 maintenanceScheduler = maintenanceScheduler,
                 turnBatchScheduler = turnBatchScheduler,
                 settingRepository = settingRepository,
+                modelResolver = MemoryModelResolver(settingRepository),
                 memoryIntelligence = intelligence,
                 memoryFileStore = fileStore,
                 markdownMemoryCodec = MarkdownMemoryCodec(),
@@ -1630,7 +1630,19 @@ class MemoryBatchConsolidationServiceTest {
         } else {
             RecordingWorkEnqueuer()
         }
-        val settingRepository = FakeMaintenanceSettingRepository(memoryEnabled = true)
+        val platform = PlatformV2(
+            uid = "memory-batch-platform",
+            name = "Memory batch",
+            compatibleType = ClientType.CUSTOM,
+            apiUrl = "https://memory-batch.invalid",
+            token = "token",
+            model = "memory-batch-model",
+            enabled = true
+        )
+        val settingRepository = FakeMaintenanceSettingRepository(
+            memoryEnabled = true,
+            platforms = listOf(platform)
+        )
         val maintenanceScheduler = MemoryMaintenanceScheduler(jobDao, clock)
         val turnBatchScheduler = MemoryTurnBatchScheduler(
             turnBatchDao = turnDao,
@@ -1680,6 +1692,7 @@ class MemoryBatchConsolidationServiceTest {
                 maintenanceScheduler = maintenanceScheduler,
                 turnBatchScheduler = turnBatchScheduler,
                 settingRepository = settingRepository,
+                modelResolver = MemoryModelResolver(settingRepository),
                 memoryIntelligence = intelligence,
                 memoryFileStore = fileStore,
                 markdownMemoryCodec = MarkdownMemoryCodec(),

@@ -4,7 +4,6 @@ import cn.nabr.chatwithchat.BuildConfig
 import cn.nabr.chatwithchat.data.database.dao.MemoryRecoveryDao
 import cn.nabr.chatwithchat.data.database.entity.MemoryDistillationCheckpoint
 import cn.nabr.chatwithchat.data.database.entity.MemoryMaintenanceJob
-import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.repository.SettingRepository
 import java.time.Clock
 import java.time.LocalDate
@@ -19,6 +18,7 @@ class MemoryDailyDistillationService(
     private val recoveryDao: MemoryRecoveryDao,
     private val maintenanceScheduler: MemoryMaintenanceScheduler,
     private val settingRepository: SettingRepository,
+    private val modelResolver: MemoryModelResolver,
     private val memoryIntelligence: MemoryIntelligence,
     private val memoryFileStore: MemoryFileStore,
     private val operationController: MemoryDailyDistillationOperationController,
@@ -63,6 +63,7 @@ class MemoryDailyDistillationService(
         check(job.status == MemoryMaintenanceJobStatus.RUNNING) { "memory_job_not_claimed" }
         check(!job.leaseOwner.isNullOrBlank()) { "memory_job_missing_lease" }
 
+        var runningJob = job
         var mutation = memoryMutationCoordinator.findBySemanticJobId(job.jobId)
         var operationCount = 0
         if (mutation == null) {
@@ -84,14 +85,36 @@ class MemoryDailyDistillationService(
                 )
             }
 
-            maintenanceScheduler.renewClaimedLease(job)
-            val proposal = memoryIntelligence.distillDailyMemory(payload.input, preferredMemoryPlatform())
-                ?: return retryable(job, "daily_distillation_unavailable_or_invalid")
-            maintenanceScheduler.renewClaimedLease(job)
+            runningJob = maintenanceScheduler.renewClaimedLease(runningJob)
+            val binding = resolveClaimedMemoryModel(
+                job = runningJob,
+                settingRepository = settingRepository,
+                modelResolver = modelResolver,
+                maintenanceScheduler = maintenanceScheduler
+            )
+            val resolvedPlatform = when (binding) {
+                is ClaimedMemoryModelBinding.Unavailable -> {
+                    val reason = binding.reason.code
+                    maintenanceScheduler.markBlockedDependency(runningJob, reason)
+                    dailyDistillationScheduler.ensurePlanningJobs()
+                    return MemoryDailyDistillationProcessResult(
+                        status = MemoryDailyDistillationProcessResult.STATUS_BLOCKED,
+                        jobId = runningJob.jobId,
+                        reason = reason
+                    )
+                }
+                is ClaimedMemoryModelBinding.Resolved -> {
+                    runningJob = binding.job
+                    binding.platform
+                }
+            }
+            val proposal = memoryIntelligence.distillDailyMemory(payload.input, resolvedPlatform)
+                ?: return retryable(runningJob, "daily_distillation_unavailable_or_invalid")
+            runningJob = maintenanceScheduler.renewClaimedLease(runningJob)
             val validatedOperations = runCatching {
                 operationController.validate(payload.input, proposal.operations)
             }.getOrElse { throwable ->
-                return retryable(job, "invalid_daily_distillation_operations:${throwable.message}")
+                return retryable(runningJob, "invalid_daily_distillation_operations:${throwable.message}")
             }
             val baseMarkdown = memoryFileStore.readLongTermMemory().getOrThrow()
             val rendered = runCatching {
@@ -113,7 +136,7 @@ class MemoryDailyDistillationService(
                         mutationGroupId = null,
                         processedAt = null
                     )
-                    maintenanceScheduler.markDismissed(job, MemoryDistillationCheckpointStatus.STALE_TARGET_BASE)
+                    maintenanceScheduler.markDismissed(runningJob, MemoryDistillationCheckpointStatus.STALE_TARGET_BASE)
                     dailyDistillationScheduler.ensurePlanningJobs()
                     return MemoryDailyDistillationProcessResult(
                         status = MemoryDailyDistillationProcessResult.STATUS_TERMINAL,
@@ -121,11 +144,11 @@ class MemoryDailyDistillationService(
                         reason = MemoryDistillationCheckpointStatus.STALE_TARGET_BASE
                     )
                 }
-                return retryable(job, "daily_distillation_render_failed:${throwable.message}")
+                return retryable(runningJob, "daily_distillation_render_failed:${throwable.message}")
             }
             operationCount = proposal.operations.size
             mutation = runCatching {
-                maintenanceScheduler.renewClaimedLease(job)
+                runningJob = maintenanceScheduler.renewClaimedLease(runningJob)
                 memoryMutationCoordinator.prepare(
                     semanticJobId = job.jobId,
                     semanticBatchId = payload.input.batchId,
@@ -133,7 +156,7 @@ class MemoryDailyDistillationService(
                 )
             }.getOrElse { throwable ->
                 rethrowInterruption(throwable)
-                return retryable(job, "daily_distillation_prepare_failed:${throwable.message}")
+                return retryable(runningJob, "daily_distillation_prepare_failed:${throwable.message}")
             }
             if (BuildConfig.DEBUG) commitObserver.afterPrepared(mutation)
             checkpoint = transitionCheckpoint(
@@ -148,11 +171,11 @@ class MemoryDailyDistillationService(
         }
 
         val commitResult = runCatching {
-            maintenanceScheduler.renewClaimedLease(job)
+            runningJob = maintenanceScheduler.renewClaimedLease(runningJob)
             memoryMutationCoordinator.reconcile(mutation)
         }.getOrElse { throwable ->
             rethrowInterruption(throwable)
-            return retryable(job, "daily_distillation_commit_failed:${throwable.message}")
+            return retryable(runningJob, "daily_distillation_commit_failed:${throwable.message}")
         }
         if (commitResult is MemoryMutationCommitResult.Conflict) {
             transitionCheckpoint(
@@ -163,13 +186,13 @@ class MemoryDailyDistillationService(
                 processedAt = now()
             )
             maintenanceScheduler.markFailedTerminal(
-                job,
+                runningJob,
                 commitResult.reason
             )
             dailyDistillationScheduler.ensurePlanningJobs()
             return MemoryDailyDistillationProcessResult(
                 status = MemoryDailyDistillationProcessResult.STATUS_TERMINAL,
-                jobId = job.jobId,
+                jobId = runningJob.jobId,
                 operationCount = operationCount,
                 reason = commitResult.reason
             )
@@ -179,12 +202,12 @@ class MemoryDailyDistillationService(
         if (BuildConfig.DEBUG) commitObserver.afterCanonicalFileCommit(committed.mutation)
         checkpoint = completeCheckpoint(checkpoint, committed.mutation)
         if (BuildConfig.DEBUG) commitObserver.afterCheckpointCompletion(checkpoint)
-        maintenanceScheduler.markSucceeded(job)
+        maintenanceScheduler.markSucceeded(runningJob)
         memoryMutationCoordinator.acknowledgeSemanticCompletion(committed.mutation.group.groupId)
         dailyDistillationScheduler.ensurePlanningJobs()
         return MemoryDailyDistillationProcessResult(
             status = MemoryDailyDistillationProcessResult.STATUS_SUCCEEDED,
-            jobId = job.jobId,
+            jobId = runningJob.jobId,
             operationCount = operationCount
         )
     }
@@ -346,9 +369,6 @@ class MemoryDailyDistillationService(
         return current
     }
 
-    private suspend fun preferredMemoryPlatform(): PlatformV2? = settingRepository.fetchPlatformV2s()
-        .firstOrNull { platform -> platform.enabled && platform.model.isNotBlank() }
-
     private suspend fun retryable(
         job: MemoryMaintenanceJob,
         reason: String
@@ -380,6 +400,11 @@ class MemoryDailyDistillationService(
         MemoryMaintenanceJobStatus.SUCCEEDED -> MemoryDailyDistillationProcessResult(
             status = MemoryDailyDistillationProcessResult.STATUS_DUPLICATE,
             jobId = job.jobId
+        )
+        MemoryMaintenanceJobStatus.BLOCKED_DEPENDENCY -> MemoryDailyDistillationProcessResult(
+            status = MemoryDailyDistillationProcessResult.STATUS_BLOCKED,
+            jobId = job.jobId,
+            reason = job.blockedReason ?: job.lastError
         )
         MemoryMaintenanceJobStatus.FAILED_TERMINAL,
         MemoryMaintenanceJobStatus.DISMISSED -> MemoryDailyDistillationProcessResult(
