@@ -171,6 +171,80 @@ class MemoryLongTermConsolidationSchedulerTest {
     }
 
     @Test
+    fun `manual request bypasses periodic gate and reuses the active checkpoint`() = runBlocking {
+        val fixture = fixture(entries = listOf(entry(1)))
+        fixture.checkpointDao.seedCompleted(
+            completedGeneration = 4,
+            completedAt = NOW_EPOCH_SECONDS - 60
+        )
+        fixture.checkpointDao.materialMutationCount = 0
+        fixture.seedCorpusGeneration(5)
+
+        val first = fixture.scheduler.scheduleNow()
+        val repeated = fixture.scheduler.scheduleNow()
+
+        assertTrue(first.scheduled)
+        assertEquals(MemoryLongTermTriggerReason.MANUAL, first.reason)
+        assertEquals(first.checkpointId, repeated.checkpointId)
+        assertEquals(first.jobId, repeated.jobId)
+        assertEquals(MemoryLongTermConsolidationScheduler.REASON_ACTIVE_CHECKPOINT, repeated.reason)
+        val active = fixture.checkpointDao.checkpoints.single { checkpoint -> checkpoint.activeKey != null }
+        assertEquals(MemoryLongTermTriggerReason.MANUAL, active.triggerReason)
+        assertEquals(4L, fixture.checkpointDao.lastAfterGeneration)
+        assertEquals(
+            listOf(
+                EnqueuedMemoryWork(MemoryMaintenanceJobFamily.SEMANTIC, 0),
+                EnqueuedMemoryWork(MemoryMaintenanceJobFamily.SEMANTIC, 0)
+            ),
+            fixture.workEnqueuer.works
+        )
+    }
+
+    @Test
+    fun `manual request reopens a failed active job for a new retry cycle`() = runBlocking {
+        val fixture = fixture(entries = listOf(entry(1)))
+        val first = fixture.scheduler.scheduleNow(enqueueWork = false)
+        val failed = fixture.jobDao.jobs.single().copy(
+            status = MemoryMaintenanceJobStatus.FAILED_TERMINAL,
+            attempts = 3,
+            lastError = "long_term_consolidation_unavailable_or_invalid",
+            nextRunAt = null,
+            blockedReason = "long_term_consolidation_unavailable_or_invalid"
+        )
+        fixture.jobDao.forceUpdate(failed)
+
+        val retry = fixture.scheduler.scheduleNow(enqueueWork = false)
+
+        assertTrue(retry.scheduled)
+        assertEquals(first.checkpointId, retry.checkpointId)
+        assertEquals(first.jobId, retry.jobId)
+        assertEquals(MemoryMaintenanceJobStatus.PENDING, fixture.jobDao.jobs.single().status)
+        assertEquals(0, fixture.jobDao.jobs.single().attempts)
+        assertEquals(1, fixture.jobDao.jobs.single().retryCycle)
+        assertTrue(fixture.workEnqueuer.works.isEmpty())
+    }
+
+    @Test
+    fun `force request creates a new cycle after a completed pass below periodic threshold`() = runBlocking {
+        val fixture = fixture(entries = listOf(entry(1)))
+        val first = fixture.scheduler.ensureScheduled()
+        fixture.completeActiveCheckpoint(
+            completedGeneration = 0,
+            completedAt = NOW_EPOCH_SECONDS,
+            continuationRequired = false
+        )
+        fixture.checkpointDao.materialMutationCount = 0
+
+        val forced = fixture.scheduler.scheduleForceNow(enqueueWork = false)
+
+        assertTrue(forced.scheduled)
+        assertEquals(MemoryLongTermTriggerReason.MANUAL_FORCE, forced.reason)
+        assertNotEquals(first.checkpointId, forced.checkpointId)
+        assertEquals(2, fixture.checkpointDao.checkpoints.size)
+        assertEquals(2, fixture.jobDao.jobs.size)
+    }
+
+    @Test
     fun `unchanged weekly corpus starts a new deterministic cycle`() = runBlocking {
         val fixture = fixture(entries = listOf(entry(1)))
         val first = fixture.scheduler.ensureScheduled()

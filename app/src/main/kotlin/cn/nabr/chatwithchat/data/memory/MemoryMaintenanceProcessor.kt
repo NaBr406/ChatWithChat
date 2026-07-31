@@ -26,7 +26,8 @@ class MemoryMaintenanceProcessor @Inject constructor(
 ) {
     suspend fun processRunnableJobs(
         family: String,
-        limit: Int = DEFAULT_LIMIT
+        limit: Int = DEFAULT_LIMIT,
+        preferredJobId: String? = null
     ): MemoryMaintenanceProcessResult {
         require(family in MemoryMaintenanceJobFamily.ALL) { "Unknown memory maintenance family: $family" }
         val leaseOwner = "$family:${UUID.randomUUID()}"
@@ -39,10 +40,18 @@ class MemoryMaintenanceProcessor @Inject constructor(
         var shouldContinue = true
 
         while (processedCount < limit && shouldContinue) {
-            val job = maintenanceScheduler.claimNextRunnable(
-                family = family,
-                leaseOwner = leaseOwner
-            ) ?: break
+            val job = if (preferredJobId == null) {
+                maintenanceScheduler.claimNextRunnable(
+                    family = family,
+                    leaseOwner = leaseOwner
+                )
+            } else {
+                maintenanceScheduler.claimRunnableJob(
+                    jobId = preferredJobId,
+                    family = family,
+                    leaseOwner = leaseOwner
+                )
+            } ?: break
             leaseWatchdog.scheduleLeaseWatchdog()
             processedCount += 1
             val outcome = try {

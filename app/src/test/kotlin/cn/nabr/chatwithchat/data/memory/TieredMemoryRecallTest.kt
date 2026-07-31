@@ -61,6 +61,36 @@ class TieredMemoryRecallTest {
     }
 
     @Test
+    fun `preferred address query fact is recalled in the core capsule before consolidation`() {
+        val preferredAddress = coreChunk(
+            id = "preferred_address_query",
+            text = "希望以后被称呼为大哥。",
+            canonicalKey = "identity.preferred_address"
+        ).copy(recallState = MemoryRecallState.QUERY)
+        val workAddress = preferredAddress.copy(
+            entryId = "work_address_query",
+            scope = MemoryScope.WORK
+        )
+        val obsoleteAddress = preferredAddress.copy(
+            entryId = "obsolete_address_query",
+            validity = MemoryValidity.OBSOLETE,
+            recallState = MemoryRecallState.MAINTENANCE_ONLY,
+            supersededBy = "preferred_address_query"
+        )
+        val unrelatedQuery = coreChunk(
+            id = "unrelated_query",
+            text = "用户喜欢简短回复。",
+            canonicalKey = "communication.response_style"
+        ).copy(recallState = MemoryRecallState.QUERY)
+
+        val core = snapshot(
+            listOf(preferredAddress, workAddress, obsoleteAddress, unrelatedQuery)
+        ).selectCoreResults(includePrivate = true)
+
+        assertEquals(listOf("preferred_address_query"), core.mapNotNull(MemoryRetrievalResult::entryId))
+    }
+
+    @Test
     fun `equal trust core conflicts use evidence observation time before update time`() {
         val olderEvidence = coreChunk(
             id = "older_evidence",

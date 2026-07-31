@@ -24,8 +24,8 @@ import org.junit.Test
 
 class MemoryLongTermConsolidationServiceTest {
     @Test
-    fun `fully canonical clean pass performs no llm or canonical mutation`() = runBlocking {
-        val intelligence = RecordingLongTermMemoryIntelligence()
+    fun `fully canonical distinct facts are reviewed without canonical mutation`() = runBlocking {
+        val intelligence = RecordingLongTermMemoryIntelligence { MemoryLongTermConsolidationProposal() }
         val fixture = fixture(
             entries = listOf(
                 entry(id = "canonical_1", text = "Prefers concise replies.", canonicalKey = "communication.concise_reply"),
@@ -40,7 +40,7 @@ class MemoryLongTermConsolidationServiceTest {
         assertEquals(MemoryLongTermProcessResult.STATUS_SUCCEEDED, result.status)
         assertEquals("clean_no_op", result.reason)
         assertEquals(0, result.operationCount)
-        assertEquals(0, intelligence.requests.size)
+        assertEquals(1, intelligence.requests.size)
         assertEquals(originalMarkdown, fixture.fileStore.readLongTermMemory().getOrThrow())
         assertNull(fixture.recoveryDao.getMutationGroupBySemanticJobId(fixture.claimedJob.jobId))
         assertEquals(
@@ -478,6 +478,47 @@ class MemoryLongTermConsolidationServiceTest {
     }
 
     @Test
+    fun `repeated managed sections are coalesced before semantic continuation`() = runBlocking {
+        val codec = MarkdownMemoryCodec()
+        val major = entry(
+            id = "education_major",
+            text = "目前即将升入大二，专业是计算机科学与技术（计科）。",
+            canonicalKey = "profile.education.major"
+        ).copy(type = "stable_profile")
+        val institution = entry(
+            id = "institution_tier",
+            text = "就读于二本院校。",
+            canonicalKey = "profile.education.institution_tier"
+        ).copy(type = "stable_profile")
+        val repeatedSections = buildString {
+            appendLine("# ChatWithChat Memory")
+            appendLine()
+            appendLine(codec.renderLongTermAppend(listOf(major)).trim())
+            appendLine()
+            appendLine(codec.renderLongTermAppend(listOf(institution)).trim())
+        }
+        val intelligence = RecordingLongTermMemoryIntelligence { MemoryLongTermConsolidationProposal() }
+        val fixture = fixture(
+            entries = emptyList(),
+            intelligence = intelligence,
+            initialMarkdown = repeatedSections
+        )
+
+        val result = fixture.service().process(fixture.claimedJob)
+        val repairedMarkdown = fixture.fileStore.readLongTermMemory().getOrThrow()
+
+        assertEquals(MemoryLongTermProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(1, result.operationCount)
+        assertEquals(0, intelligence.requests.size)
+        assertEquals(1, Regex("(?m)^## Stable Profile$").findAll(repairedMarkdown).count())
+        assertEquals(
+            setOf(major.id, institution.id),
+            fixture.codec.parse(repairedMarkdown).entries.map(MarkdownMemoryEntry::id).toSet()
+        )
+        assertNotNull(fixture.recoveryDao.getMutationGroupBySemanticJobId(fixture.claimedJob.jobId))
+    }
+
+    @Test
     fun `duplicate ids and dangling supersession commit as repair only before semantic continuation`() = runBlocking {
         val codec = MarkdownMemoryCodec()
         val duplicateFirst = entry(
@@ -631,7 +672,7 @@ class MemoryLongTermConsolidationServiceTest {
     }
 
     @Test
-    fun `synonymous legacy canonical keys converge to one active survivor`() = runBlocking {
+    fun `Chinese preferred address variants converge to one active survivor`() = runBlocking {
         val targetKey = "identity.preferred_address"
         val intelligence = RecordingLongTermMemoryIntelligence { request ->
             MemoryLongTermConsolidationProposal(
@@ -650,12 +691,12 @@ class MemoryLongTermConsolidationServiceTest {
             entries = listOf(
                 entry(
                     id = "legacy_address",
-                    text = "Address the user as Captain.",
+                    text = "希望以后称呼我为“大哥”。",
                     canonicalKey = "identity.legacy_address"
                 ),
                 entry(
                     id = "preferred_address",
-                    text = "The user's preferred address is Captain.",
+                    text = "用户偏好的称呼是“大哥”。",
                     canonicalKey = targetKey
                 )
             ),
@@ -674,7 +715,50 @@ class MemoryLongTermConsolidationServiceTest {
         assertEquals(1, active.size)
         assertEquals(targetKey, active.single().canonicalKey)
         assertEquals(MemoryScope.GENERAL, active.single().scope)
+        assertEquals(MemoryRecallState.CORE, active.single().recallState)
         assertTrue(parsed.entries.filter { it.validity == MemoryValidity.OBSOLETE }.all { it.supersededBy == active.single().id })
+    }
+
+    @Test
+    fun `singleton preferred address query is promoted into the recall capsule`() = runBlocking {
+        val targetKey = "identity.preferred_address"
+        val fixture = fixture(
+            entries = listOf(
+                entry(
+                    id = "preferred_address",
+                    text = "用户偏好的称呼是“大哥”。",
+                    canonicalKey = targetKey
+                )
+            ),
+            intelligence = RecordingLongTermMemoryIntelligence()
+        )
+
+        val result = fixture.service().process(fixture.claimedJob)
+        val markdown = fixture.fileStore.readLongTermMemory().getOrThrow()
+        val parsed = fixture.codec.parse(markdown)
+        val active = parsed.entries.single { it.validity == MemoryValidity.CURRENT }
+        val chunking = MemoryChunker(fixture.codec).chunksFor(
+            sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+            markdown = markdown,
+            projectionPolicy = MemoryProjectionPolicy.CHAT_ACTIVE_ONLY
+        )
+        val snapshot = MemoryCorpusSnapshot(
+            corpus = MemoryCorpus.CHAT_RECALL_LONG_TERM,
+            sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+            canonicalSourceHash = "canonical",
+            recallProjectionHash = chunking.projectionHash,
+            generation = 1L,
+            chunks = chunking.chunks
+        )
+
+        assertEquals(MemoryLongTermProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(1, result.operationCount)
+        assertEquals(0, fixture.intelligence.requests.size)
+        assertEquals(MemoryRecallState.CORE, active.recallState)
+        assertEquals(
+            listOf(active.id),
+            snapshot.selectCoreResults(includePrivate = true).mapNotNull(MemoryRetrievalResult::entryId)
+        )
     }
 
     private suspend fun fixture(

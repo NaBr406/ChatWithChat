@@ -1,6 +1,7 @@
 package cn.nabr.chatwithchat.data.memory
 
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
+import cn.nabr.chatwithchat.data.dto.ProviderUsage
 import cn.nabr.chatwithchat.data.dto.anthropic.response.ContentBlock
 import cn.nabr.chatwithchat.data.dto.anthropic.response.ContentBlockType
 import cn.nabr.chatwithchat.data.dto.anthropic.response.ContentDeltaResponseChunk
@@ -13,6 +14,7 @@ import cn.nabr.chatwithchat.data.dto.openai.request.ResponsesRequest
 import cn.nabr.chatwithchat.data.dto.openai.response.ChatCompletionChunk
 import cn.nabr.chatwithchat.data.dto.openai.response.Choice
 import cn.nabr.chatwithchat.data.dto.openai.response.Delta
+import cn.nabr.chatwithchat.data.dto.openai.response.ErrorDetail
 import cn.nabr.chatwithchat.data.dto.openai.response.OutputTextDeltaEvent
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponsesStreamEvent
 import cn.nabr.chatwithchat.data.model.ClientType
@@ -75,6 +77,89 @@ class LlmMemoryIntelligenceTest {
         assertEquals(1f, openAIAPI.lastChatRequest?.topP)
         assertEquals(1200, openAIAPI.lastChatRequest?.maxTokens)
         assertEquals(120, openAIAPI.lastChatTimeoutSeconds)
+    }
+
+    @Test
+    fun `custom compatible platform does not receive openai reasoning-only fields`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(chatChunks = chatChunks(EMPTY_PROPOSAL_JSON))
+        val intelligence = intelligence(openAIAPI = openAIAPI)
+
+        intelligence.consolidateMemoryBatch(
+            batchRequest(),
+            resolvedPlatform = platform(ClientType.CUSTOM, "compatible-model", reasoning = true)
+        )
+
+        assertEquals(0f, openAIAPI.lastChatRequest?.temperature)
+        assertEquals(1f, openAIAPI.lastChatRequest?.topP)
+        assertEquals(1200, openAIAPI.lastChatRequest?.maxTokens)
+        assertNull(openAIAPI.lastChatRequest?.maxCompletionTokens)
+        assertNull(openAIAPI.lastChatRequest?.reasoningEffort)
+    }
+
+    @Test
+    fun `official deepseek memory request disables thinking`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(chatChunks = chatChunks(EMPTY_PROPOSAL_JSON))
+        val intelligence = intelligence(openAIAPI = openAIAPI)
+
+        intelligence.consolidateMemoryBatch(
+            batchRequest(),
+            resolvedPlatform = platform(ClientType.CUSTOM, "deepseek-v4-flash").copy(
+                apiUrl = "https://api.deepseek.com"
+            )
+        )
+
+        assertEquals("disabled", openAIAPI.lastChatRequest?.thinking?.type)
+        assertNull(openAIAPI.lastChatRequest?.temperature)
+        assertNull(openAIAPI.lastChatRequest?.topP)
+        assertEquals(1200, openAIAPI.lastChatRequest?.maxTokens)
+    }
+
+    @Test
+    fun `reasoning-only blank response records bounded generation diagnostics`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatChunks = flowOf(
+                ChatCompletionChunk(
+                    choices = listOf(
+                        Choice(
+                            index = 0,
+                            delta = Delta(reasoningContent = "plan"),
+                            finishReason = "length"
+                        )
+                    ),
+                    usage = ProviderUsage(completionTokens = 1200)
+                )
+            )
+        )
+        val activityLogger = RecordingMemoryActivityLogger()
+        val intelligence = intelligence(openAIAPI = openAIAPI, activityLogger = activityLogger)
+        val activityRunId = activityLogger.startSemanticAttempt()
+
+        assertNull(intelligence.consolidateMemoryBatch(batchRequest(), platform(ClientType.OPENROUTER, "model"), activityRunId))
+
+        val detail = activityLogger.run(activityRunId).data.errorDetail
+        assertTrue(detail?.contains("finish_reason=length") == true)
+        assertTrue(detail?.contains("reasoning_chars=4") == true)
+        assertTrue(detail?.contains("completion_tokens=1200") == true)
+    }
+
+    @Test
+    fun `network error retries once before returning a model failure`() = runBlocking {
+        var attempt = 0
+        val openAIAPI = RecordingOpenAIAPI(
+            chatChunkProvider = {
+                if (attempt++ == 0) {
+                    flowOf(ChatCompletionChunk(error = ErrorDetail(type = "network_error", message = "temporary")))
+                } else {
+                    chatChunks(EMPTY_PROPOSAL_JSON)
+                }
+            }
+        )
+        val intelligence = intelligence(openAIAPI = openAIAPI)
+
+        val result = intelligence.consolidateMemoryBatch(batchRequest(), platform(ClientType.OPENROUTER, "model"))
+
+        assertEquals(0, result?.operations?.size)
+        assertEquals(2, openAIAPI.streamChatCompletionCalls)
     }
 
     @Test
@@ -221,6 +306,32 @@ class LlmMemoryIntelligenceTest {
         assertEquals(MemoryActivityStatus.FAILED, activityRun.status)
         assertEquals("model_call_failed", activityRun.data.errorCode)
         assertEquals(MemoryActivityCategory.TURN_BATCH_CONSOLIDATION, activityRun.category)
+    }
+
+    @Test
+    fun `provider error keeps a bounded diagnostic detail in the activity run`() = runBlocking {
+        val activityLogger = RecordingMemoryActivityLogger()
+        val intelligence = intelligence(
+            openAIAPI = RecordingOpenAIAPI(
+                chatChunks = flowOf(
+                    ChatCompletionChunk(
+                        error = ErrorDetail(
+                            type = "http_error",
+                            code = "400",
+                            message = "Unsupported parameter: reasoning_effort"
+                        )
+                    )
+                )
+            ),
+            activityLogger = activityLogger
+        )
+        val activityRunId = activityLogger.startSemanticAttempt()
+
+        assertNull(intelligence.consolidateMemoryBatch(batchRequest(), platform(ClientType.CUSTOM, "model"), activityRunId))
+
+        val run = activityLogger.run(activityRunId)
+        assertEquals("model_call_failed", run.data.errorCode)
+        assertTrue(run.data.errorDetail?.contains("Unsupported parameter") == true)
     }
 
     @Test
@@ -436,7 +547,8 @@ class LlmMemoryIntelligenceTest {
 
 private class RecordingOpenAIAPI(
     private val chatChunks: Flow<ChatCompletionChunk> = emptyFlow(),
-    private val responseEvents: Flow<ResponsesStreamEvent> = emptyFlow()
+    private val responseEvents: Flow<ResponsesStreamEvent> = emptyFlow(),
+    private val chatChunkProvider: (() -> Flow<ChatCompletionChunk>)? = null
 ) : OpenAIAPI {
     var streamChatCompletionCalls = 0
     var streamResponsesCalls = 0
@@ -452,7 +564,7 @@ private class RecordingOpenAIAPI(
         streamChatCompletionCalls += 1
         lastChatRequest = request
         lastChatTimeoutSeconds = timeoutSeconds
-        return chatChunks
+        return chatChunkProvider?.invoke() ?: chatChunks
     }
 
     override fun streamResponses(request: ResponsesRequest, timeoutSeconds: Int): Flow<ResponsesStreamEvent> {
@@ -612,5 +724,6 @@ private fun MemoryActivityRunData.merge(update: MemoryActivityRunData): MemoryAc
     operationCount = update.operationCount ?: operationCount,
     cursor = update.cursor ?: cursor,
     hashPrefix = update.hashPrefix ?: hashPrefix,
-    errorCode = update.errorCode ?: errorCode
+    errorCode = update.errorCode ?: errorCode,
+    errorDetail = update.errorDetail ?: errorDetail
 )

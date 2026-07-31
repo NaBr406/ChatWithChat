@@ -28,7 +28,7 @@ class MemoryLongTermConsolidationInvocationTest {
                 id = "canonical_$index",
                 text = "unique${index}token",
                 canonicalKey = "preference.unique_$index"
-            )
+            ).copy(scope = "chat:$index")
         }
         val intelligence = InvocationRecordingIntelligence()
         val fixture = fixture(entries, intelligence)

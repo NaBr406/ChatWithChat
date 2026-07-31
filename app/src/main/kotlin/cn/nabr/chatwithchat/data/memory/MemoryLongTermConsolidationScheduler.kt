@@ -7,6 +7,7 @@ import cn.nabr.chatwithchat.data.repository.SettingRepository
 import java.nio.charset.StandardCharsets
 import java.time.Clock
 import java.time.Duration
+import java.util.UUID
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -56,28 +57,7 @@ class MemoryLongTermConsolidationScheduler(
             sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
             afterGeneration = completedGeneration
         )
-        if (latestCompleted?.continuationRequired == true) {
-            val completedJobStatus = maintenanceScheduler.jobStatus(latestCompleted.jobId)
-            if (completedJobStatus in ACTIVE_JOB_STATUSES) {
-                if (completedJobStatus in RUNNABLE_JOB_STATUSES) {
-                    workEnqueuer.enqueueWork(MemoryMaintenanceJobFamily.SEMANTIC)
-                }
-                return MemoryLongTermPlanResult(
-                    scheduled = true,
-                    checkpointId = latestCompleted.checkpointId,
-                    jobId = latestCompleted.jobId,
-                    reason = REASON_COMPLETED_JOB_ACTIVE
-                ).also { result ->
-                    recordScheduledSemanticRun(result, latestCompleted.entryCount)
-                    recordPlanningResult(result)
-                }
-            }
-            return createAndSchedule(
-                triggerReason = MemoryLongTermTriggerReason.CONTINUATION,
-                cycleAnchor = "continuation:${latestCompleted.checkpointId}",
-                materialMutationCount = materialMutationCount
-            )
-        }
+        resumeContinuationIfRequired(latestCompleted, materialMutationCount, enqueueWork = true)?.let { return it }
         val decision = MemoryLongTermConsolidationSchedulePolicy.evaluate(
             materialMutationCount = materialMutationCount,
             latestCompletedAt = latestCompleted?.completedAt,
@@ -93,6 +73,63 @@ class MemoryLongTermConsolidationScheduler(
             triggerReason = checkNotNull(decision.triggerReason),
             cycleAnchor = latestCompleted?.checkpointId ?: INITIAL_CYCLE_ANCHOR,
             materialMutationCount = materialMutationCount
+        )
+    }
+
+    suspend fun scheduleNow(enqueueWork: Boolean = true): MemoryLongTermPlanResult {
+        if (!settingRepository.fetchMemoryEnabled()) {
+            return recordPlanningResult(
+                MemoryLongTermPlanResult(scheduled = false, reason = REASON_MEMORY_DISABLED)
+            )
+        }
+        activeCheckpoint()?.let { checkpoint ->
+            // A failed semantic job leaves its checkpoint active so that recovery can inspect the
+            // frozen snapshot. A new explicit manual request is the user-controlled retry point.
+            maintenanceScheduler.retryManually(checkpoint.jobId)
+            return recordPlanningResult(ensureSemanticJob(checkpoint, REASON_ACTIVE_CHECKPOINT, enqueueWork))
+        }
+
+        val latestCompleted = checkpointDao.getLatestCompleted(MemoryLongTermCheckpointStatus.COMPLETED)
+        val completedGeneration = latestCompleted?.completedGeneration ?: 0L
+        val materialMutationCount = checkpointDao.sumMaterialMutationsAfterGeneration(
+            sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+            afterGeneration = completedGeneration
+        )
+        resumeContinuationIfRequired(latestCompleted, materialMutationCount, enqueueWork)?.let { return it }
+        return createAndSchedule(
+            triggerReason = MemoryLongTermTriggerReason.MANUAL,
+            cycleAnchor = "manual:${latestCompleted?.checkpointId ?: now()}",
+            materialMutationCount = materialMutationCount,
+            enqueueWork = enqueueWork
+        )
+    }
+
+    /**
+     * Explicit user-confirmed recovery path. It always freezes a fresh snapshot and never
+     * resumes a stale, dismissed, completed, or continuation checkpoint. An already running
+     * checkpoint is left alone so a force request cannot race a pending CAS/mutation commit.
+     */
+    suspend fun scheduleForceNow(enqueueWork: Boolean = true): MemoryLongTermPlanResult {
+        if (!settingRepository.fetchMemoryEnabled()) {
+            return recordPlanningResult(
+                MemoryLongTermPlanResult(scheduled = false, reason = REASON_MEMORY_DISABLED)
+            )
+        }
+        activeCheckpoint()?.let { checkpoint ->
+            val job = maintenanceScheduler.resetExpiredRunningJob(checkpoint.jobId)
+            if (!retireFailedPendingCheckpoint(checkpoint, job)) {
+                return recordPlanningResult(ensureSemanticJob(checkpoint, REASON_ACTIVE_CHECKPOINT, enqueueWork))
+            }
+        }
+        val materialMutationCount = checkpointDao.sumMaterialMutationsAfterGeneration(
+            sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+            afterGeneration = 0L
+        )
+        return createAndSchedule(
+            triggerReason = MemoryLongTermTriggerReason.MANUAL_FORCE,
+            cycleAnchor = "manual_force:${now()}:${UUID.randomUUID()}",
+            materialMutationCount = materialMutationCount,
+            enqueueWork = enqueueWork
         )
     }
 
@@ -128,21 +165,51 @@ class MemoryLongTermConsolidationScheduler(
         return ensureContinuationScheduled(previous.checkpointId)
     }
 
+    private suspend fun resumeContinuationIfRequired(
+        latestCompleted: MemoryLongTermConsolidationCheckpoint?,
+        materialMutationCount: Long,
+        enqueueWork: Boolean
+    ): MemoryLongTermPlanResult? {
+        if (latestCompleted?.continuationRequired != true) return null
+        val completedJobStatus = maintenanceScheduler.jobStatus(latestCompleted.jobId)
+        if (completedJobStatus in ACTIVE_JOB_STATUSES) {
+            if (enqueueWork && completedJobStatus in RUNNABLE_JOB_STATUSES) {
+                workEnqueuer.enqueueWork(MemoryMaintenanceJobFamily.SEMANTIC)
+            }
+            return MemoryLongTermPlanResult(
+                scheduled = true,
+                checkpointId = latestCompleted.checkpointId,
+                jobId = latestCompleted.jobId,
+                reason = REASON_COMPLETED_JOB_ACTIVE
+            ).also { result ->
+                recordScheduledSemanticRun(result, latestCompleted.entryCount)
+                recordPlanningResult(result)
+            }
+        }
+        return createAndSchedule(
+            triggerReason = MemoryLongTermTriggerReason.CONTINUATION,
+            cycleAnchor = "continuation:${latestCompleted.checkpointId}",
+            materialMutationCount = materialMutationCount,
+            enqueueWork = enqueueWork
+        )
+    }
+
     private suspend fun createAndSchedule(
         triggerReason: String,
         cycleAnchor: String,
-        materialMutationCount: Long
+        materialMutationCount: Long,
+        enqueueWork: Boolean = true
     ): MemoryLongTermPlanResult {
         val snapshot = frozenSnapshot() ?: run {
             activeCheckpoint()?.let { checkpoint ->
-                return recordPlanningResult(ensureSemanticJob(checkpoint, REASON_ACTIVE_CHECKPOINT))
+                return recordPlanningResult(ensureSemanticJob(checkpoint, REASON_ACTIVE_CHECKPOINT, enqueueWork))
             }
             return recordPlanningResult(
                 MemoryLongTermPlanResult(scheduled = false, reason = REASON_INVALID_CANONICAL_SNAPSHOT)
             )
         }
         activeCheckpoint()?.let { checkpoint ->
-            return recordPlanningResult(ensureSemanticJob(checkpoint, REASON_ACTIVE_CHECKPOINT))
+            return recordPlanningResult(ensureSemanticJob(checkpoint, REASON_ACTIVE_CHECKPOINT, enqueueWork))
         }
 
         val checkpointId = checkpointId(snapshot, cycleAnchor)
@@ -187,7 +254,7 @@ class MemoryLongTermConsolidationScheduler(
         } else {
             REASON_ACTIVE_CHECKPOINT
         }
-        return ensureSemanticJob(persisted, reason)
+        return ensureSemanticJob(persisted, reason, enqueueWork)
     }
 
     private suspend fun frozenSnapshot(): FrozenLongTermSnapshot? {
@@ -221,7 +288,8 @@ class MemoryLongTermConsolidationScheduler(
 
     private suspend fun ensureSemanticJob(
         checkpoint: MemoryLongTermConsolidationCheckpoint,
-        reason: String
+        reason: String,
+        enqueueWork: Boolean = true
     ): MemoryLongTermPlanResult {
         check(checkpoint.status in MemoryLongTermCheckpointStatus.ACTIVE) {
             "cannot schedule a terminal long-term consolidation checkpoint"
@@ -248,7 +316,7 @@ class MemoryLongTermConsolidationScheduler(
             job = maintenanceScheduler.reviveDismissedLongTermConsolidation(job.jobId) ?: job
             validateJob(job, checkpoint, payloadJson)
         }
-        if (job.status in RUNNABLE_JOB_STATUSES) {
+        if (enqueueWork && job.status in RUNNABLE_JOB_STATUSES) {
             workEnqueuer.enqueueWork(MemoryMaintenanceJobFamily.SEMANTIC)
         }
         val result = MemoryLongTermPlanResult(
@@ -315,6 +383,33 @@ class MemoryLongTermConsolidationScheduler(
         statuses = MemoryLongTermCheckpointStatus.ACTIVE
     )
 
+    private suspend fun retireFailedPendingCheckpoint(
+        checkpoint: MemoryLongTermConsolidationCheckpoint,
+        job: MemoryMaintenanceJob?
+    ): Boolean {
+        if (checkpoint.status != MemoryLongTermCheckpointStatus.PENDING) return false
+        if (job?.status !in FORCE_REPLACEABLE_JOB_STATUSES) return false
+        val changed = checkpointDao.transitionCas(
+            checkpointId = checkpoint.checkpointId,
+            expectedStatus = checkpoint.status,
+            expectedRowVersion = checkpoint.rowVersion,
+            expectedResultSourceHash = checkpoint.resultSourceHash,
+            expectedMutationGroupId = checkpoint.mutationGroupId,
+            newStatus = MemoryLongTermCheckpointStatus.DISMISSED,
+            newActiveKey = null,
+            newResultSourceHash = checkpoint.resultSourceHash,
+            newCompletedGeneration = null,
+            newMutationGroupId = checkpoint.mutationGroupId,
+            lastError = REASON_FORCE_REPLACED,
+            completedAt = null,
+            updatedAt = now()
+        )
+        if (changed == 1 && job != null) {
+            maintenanceScheduler.markDismissed(job, REASON_FORCE_REPLACED)
+        }
+        return changed == 1
+    }
+
     private suspend fun scheduleNextEvaluation(nextDueAt: Long) {
         val timestamp = now()
         val wakeAt = listOfNotNull(
@@ -379,6 +474,7 @@ class MemoryLongTermConsolidationScheduler(
         internal const val REASON_INVALID_CANONICAL_SNAPSHOT = "invalid_canonical_snapshot"
         internal const val REASON_ALREADY_PLANNED = "already_planned"
         internal const val REASON_COMPLETED_JOB_ACTIVE = "completed_checkpoint_job_active"
+        internal const val REASON_FORCE_REPLACED = "force_replaced_previous_attempt"
         private const val ACTIVE_CHECKPOINT_KEY = "memory-long-term-consolidation:active:v1"
         private const val INITIAL_CYCLE_ANCHOR = "initial"
         private const val CHECKPOINT_IDENTITY_VERSION = "whole-corpus-checkpoint:v1"
@@ -390,6 +486,14 @@ class MemoryLongTermConsolidationScheduler(
             MemoryMaintenanceJobStatus.FAILED_RETRYABLE
         )
         private val ACTIVE_JOB_STATUSES = RUNNABLE_JOB_STATUSES + MemoryMaintenanceJobStatus.RUNNING
+        private val FORCE_REPLACEABLE_JOB_STATUSES = setOf(
+            MemoryMaintenanceJobStatus.SUCCEEDED,
+            MemoryMaintenanceJobStatus.FAILED_RETRYABLE,
+            MemoryMaintenanceJobStatus.FAILED_TERMINAL,
+            MemoryMaintenanceJobStatus.WAITING_REPAIR,
+            MemoryMaintenanceJobStatus.BLOCKED_DEPENDENCY,
+            MemoryMaintenanceJobStatus.DISMISSED
+        )
     }
 }
 

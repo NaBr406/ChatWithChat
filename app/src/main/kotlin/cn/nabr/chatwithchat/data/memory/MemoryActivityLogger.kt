@@ -253,6 +253,7 @@ class RoomMemoryActivityLogger(
                 inputCount = merged.inputCount,
                 operationCount = merged.operationCount,
                 errorCode = data.errorCode,
+                detail = data.errorDetail?.take(MAX_DETAIL_LENGTH),
                 phaseSummaryJson = history.encode(),
                 completedAt = completedAt,
                 updatedAt = completedAt
@@ -355,6 +356,7 @@ class RoomMemoryActivityLogger(
         (data.inputCount == null || data.inputCount == inputCount) &&
         (data.operationCount == null || data.operationCount == operationCount) &&
         (data.errorCode == null || data.errorCode == errorCode) &&
+        (data.errorDetail == null || data.errorDetail == detail) &&
         matchesRecordedPhaseData(expectedPhase, data)
 
     private fun MemoryActivityLog.matchesRecordedData(

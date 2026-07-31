@@ -204,6 +204,68 @@ class MarkdownMemoryCodecTest {
     }
 
     @Test
+    fun `escaped exported markdown is parsed and repeated managed sections are normalized`() {
+        val markdown = """
+            \# ChatWithChat Memory
+
+            \## Projects
+
+            <!-- memory:id=mem_project_a type=project_context sensitivity=normal source=explicit\_user\_statement created=1 updated=1 -->
+            \- First project fact.
+
+            \## Projects
+
+            <!-- memory:id=mem_project_b type=project_context sensitivity=normal source=explicit\_user\_statement created=2 updated=2 -->
+            \- Second project fact.
+        """.trimIndent()
+
+        val repaired = checkNotNull(codec.repairStructuralRelationships(markdown))
+
+        assertEquals(2, repaired.entries.size)
+        assertEquals(1, repaired.repairedCount)
+        assertEquals(1, repaired.markdown.lines().count { it == "## Projects" })
+        assertTrue(repaired.markdown.contains("mem_project_a"))
+        assertTrue(repaired.markdown.contains("mem_project_b"))
+    }
+
+    @Test
+    fun `active projection hides obsolete history while preserving current entries`() {
+        val markdown = codec.renderLongTerm(
+            listOf(
+                MarkdownMemoryEntry(
+                    id = "mem_current",
+                    text = "Current preferred answer style.",
+                    type = "communication_style",
+                    sensitivity = MemorySensitivity.NORMAL,
+                    source = MemorySource.EXPLICIT_USER_STATEMENT,
+                    canonicalKey = "communication.response_style",
+                    validity = MemoryValidity.CURRENT,
+                    recallState = MemoryRecallState.QUERY,
+                    updatedAt = 2
+                ),
+                MarkdownMemoryEntry(
+                    id = "mem_old",
+                    text = "Old preferred answer style.",
+                    type = "communication_style",
+                    sensitivity = MemorySensitivity.NORMAL,
+                    source = MemorySource.EXPLICIT_USER_STATEMENT,
+                    canonicalKey = "communication.response_style",
+                    validity = MemoryValidity.OBSOLETE,
+                    supersededBy = "mem_current",
+                    recallState = MemoryRecallState.MAINTENANCE_ONLY,
+                    updatedAt = 1
+                )
+            )
+        )
+
+        val projection = codec.renderLongTermActiveProjection(markdown)
+
+        assertTrue(projection.contains("Current preferred answer style."))
+        assertTrue(!projection.contains("Old preferred answer style."))
+        assertTrue(markdown.contains("Old preferred answer style."))
+    }
+
+    @Test
     fun `canonical lifecycle metadata round trips with unknown metadata and multilingual text`() {
         val entries = listOf(
             MarkdownMemoryEntry(
@@ -467,6 +529,88 @@ class MarkdownMemoryCodecTest {
         assertTrue(repaired.markdown.contains("## Manual Notes\n\nKeep this paragraph unchanged."))
         assertEquals(0, replay.repairedCount)
         assertEquals(repaired.markdown, replay.markdown)
+    }
+
+    @Test
+    fun `structural repair coalesces repeated managed sections from exported sample`() {
+        val profile = canonicalEntry(
+            id = "education_major",
+            text = "目前即将升入大二，专业是计算机科学与技术（计科）。",
+            canonicalKey = "profile.education.major"
+        ).copy(type = "stable_profile")
+        val institution = canonicalEntry(
+            id = "institution_tier",
+            text = "就读于二本院校。",
+            canonicalKey = "profile.education.institution_tier"
+        ).copy(type = "stable_profile")
+        val project = canonicalEntry(
+            id = "chatwithchat_project",
+            text = "正在开发一个基于 GPTMobile 改造的 AI 应用。",
+            canonicalKey = "project.chatwithchat"
+        )
+        val markdown = buildString {
+            appendLine("# ChatWithChat Memory")
+            appendLine()
+            appendLine(codec.renderLongTermAppend(listOf(profile)).trim())
+            appendLine()
+            appendLine(codec.renderLongTermAppend(listOf(project)).trim())
+            appendLine()
+            appendLine(codec.renderLongTermAppend(listOf(institution)).trim())
+        }
+
+        val repaired = checkNotNull(codec.repairStructuralRelationships(markdown))
+        val parsed = codec.parse(repaired.markdown)
+        val replay = checkNotNull(codec.repairStructuralRelationships(repaired.markdown))
+
+        assertEquals(1, repaired.repairedCount)
+        assertEquals(1, Regex("(?m)^## Stable Profile$").findAll(repaired.markdown).count())
+        assertEquals(1, Regex("(?m)^## Projects$").findAll(repaired.markdown).count())
+        assertEquals(setOf(profile.id, institution.id, project.id), parsed.entries.map { it.id }.toSet())
+        assertEquals(0, replay.repairedCount)
+        assertEquals(repaired.markdown, replay.markdown)
+    }
+
+    @Test
+    fun `long term append reuses managed sections but preserves documents with manual prose`() {
+        val first = canonicalEntry(
+            id = "education_major",
+            text = "专业是计算机科学与技术。",
+            canonicalKey = "profile.education.major"
+        ).copy(type = "stable_profile")
+        val second = canonicalEntry(
+            id = "institution_tier",
+            text = "就读于二本院校。",
+            canonicalKey = "profile.education.institution_tier"
+        ).copy(type = "stable_profile")
+        val managed = codec.appendLongTermEntries(codec.renderLongTerm(listOf(first)), listOf(second))
+        val manualBase = codec.renderLongTerm(listOf(first)) + "\nManual note that must remain byte-preserved.\n"
+        val manual = codec.appendLongTermEntries(manualBase, listOf(second))
+
+        assertEquals(1, Regex("(?m)^## Stable Profile$").findAll(managed).count())
+        assertEquals(setOf(first.id, second.id), codec.parse(managed).entries.map { it.id }.toSet())
+        assertTrue(manual.startsWith(manualBase.trimEnd()))
+        assertTrue(manual.contains("Manual note that must remain byte-preserved."))
+        assertEquals(2, Regex("(?m)^## Stable Profile$").findAll(manual).count())
+    }
+
+    @Test
+    fun `structural repair leaves repeated sections untouched when manual prose is present`() {
+        val first = canonicalEntry(id = "first", text = "First managed fact.")
+        val second = canonicalEntry(id = "second", text = "Second managed fact.", canonicalKey = "project.second")
+        val markdown = buildString {
+            appendLine("# ChatWithChat Memory")
+            appendLine()
+            appendLine(codec.renderLongTermAppend(listOf(first)).trim())
+            appendLine()
+            appendLine("Manual note that is not a managed memory entry.")
+            appendLine()
+            appendLine(codec.renderLongTermAppend(listOf(second)).trim())
+        }
+
+        val repaired = checkNotNull(codec.repairStructuralRelationships(markdown))
+
+        assertEquals(0, repaired.repairedCount)
+        assertEquals(markdown, repaired.markdown)
     }
 
     @Test

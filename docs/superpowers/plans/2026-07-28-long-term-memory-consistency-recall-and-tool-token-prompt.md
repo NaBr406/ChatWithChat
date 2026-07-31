@@ -810,6 +810,19 @@ git diff --check
 - Focused verification passed 175 tests with zero failures/errors/skips across 10 suites, including all 72 `ChatRepositoryImplTest` provider/DTO cases. `:app:compileDebugKotlin`, `:app:compileDebugAndroidTestKotlin`, ktlint 1.3.1 over every changed Kotlin file, and `git diff --check` passed.
 - Full `:app:testDebugUnitTest` executed 1048 tests with 6 failures in pre-existing Task 2/3 consolidation tests. The identical 6/63 failures reproduced in a clean detached `7bcd77c` worktree, proving they are not introduced by Task 5; they remain open for the later integration gate rather than being reported as passed.
 
+#### Task 5 Follow-up (2026-07-30) - preferred-address recall after consolidation
+
+- [x] 修复全集整理后的称呼状态丢失：`CanonicalMemoryMergePolicy` 在 whole-corpus 模式下会把 `core` 状态写回稳定 survivor，不再只重绑 `canonicalKey/scope` 而留下 `recall=query`。
+- [x] `identity.preferred_address` + `general` 被视为核心召回不变量；既支持多条历史称呼合并，也支持单条已 canonical 但仍为 `query` 的条目由本地整理直接提升，无需额外 LLM 调用。
+- [x] 回归覆盖验证最终 Markdown 为 `recall=core`，并由 `MemoryChunker` + `selectCoreResults()` 实际进入核心胶囊；重点 memory/recall 测试 144/144 通过，`:app:compileDebugKotlin` 通过，`git diff --check` 无错误（CRLF 提示为既有工作区信息）。
+
+#### Task 5 Follow-up (2026-07-31) - manual long-term consolidation feedback and retry
+
+- [x] 手动整理绕过周期门槛，直接执行一次语义 job；活动 checkpoint 对应的终止失败 job 会在下一次手动点击时开启新的 retry cycle，不再永久卡在 `active_checkpoint`。
+- [x] Memory 页面点击后立即发出 `STARTED` Snackbar，最终状态按 job 的 `succeeded`、`failed_terminal`/`blocked_dependency`/`waiting_repair` 或可继续的 retry 状态分别反馈，避免网络调用期间看起来无响应或把终止失败误报为“正在运行”。
+- [x] 设备诊断确认原点击链路曾真实创建 `lt_job_892edcca76526b1ac47bac25`，但 `deepseek-v4-flash` 的 `model_call` 连续失败并留下 `long_term_consolidation_unavailable_or_invalid`；安装新 debug APK (`adb install -r`) 后 `MEMORY.md` 与 Room 数据仍保留，称呼条目由兼容召回路径继续可见。
+- [x] `:app:testDebugUnitTest`、`:app:assembleDebug`、`:app:compileDebugKotlin` 与 `git diff --check` 通过；connected Compose test 未进入断言，设备在锁屏/安装受限状态返回 `INSTALL_FAILED_USER_RESTRICTED`，真实人工点击仍 OPEN。
+
 ### Task 6: Add Default Memory Model Selection And Unified Activity Runs
 
 **Goal:** 让用户在 Memory 页面明确选择后续语义记忆任务使用的模型，并让每个 job attempt 只产生一条可读、可推进 phase 的 activity run，同时完整保留 planner 可观测性且不记录记忆正文。

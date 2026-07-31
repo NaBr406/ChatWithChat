@@ -12,6 +12,22 @@ class MarkdownMemoryCodec {
             defaultSection = null
         )
 
+    fun renderLongTermActiveProjection(markdown: String): String {
+        val parsed = parse(markdown)
+        if (
+            parsed.skippedEntries.isNotEmpty() ||
+            !isFullyManagedLongTermDocument(markdown, parsed.entries.size)
+        ) {
+            return markdown
+        }
+        return renderLongTerm(
+            parsed.entries.filter { entry ->
+                entry.validity == MemoryValidity.CURRENT &&
+                    entry.recallState in setOf(MemoryRecallState.CORE, MemoryRecallState.QUERY)
+            }
+        )
+    }
+
     fun renderDaily(
         date: LocalDate,
         entries: List<MarkdownMemoryEntry>
@@ -27,9 +43,34 @@ class MarkdownMemoryCodec {
     fun renderLongTermAppend(entries: List<MarkdownMemoryEntry>): String =
         renderEntryBlocks(entries, defaultSection = null)
 
+    internal fun appendLongTermEntries(
+        markdown: String,
+        entries: List<MarkdownMemoryEntry>
+    ): String {
+        val append = renderLongTermAppend(entries)
+        if (append.isBlank()) return markdown
+        val parsed = parse(markdown)
+        return if (
+            parsed.skippedEntries.isEmpty() &&
+            isFullyManagedLongTermDocument(markdown, parsed.entries.size)
+        ) {
+            renderLongTerm(parsed.entries + entries)
+        } else {
+            markdown.trimEnd() + "\n\n" + append.trim() + "\n"
+        }
+    }
+
     internal fun repairStructuralRelationships(markdown: String): MarkdownMemoryRelationshipRepair? {
         val parsed = parse(markdown)
         if (parsed.skippedEntries.isEmpty()) {
+            val normalizedLayout = normalizeRepeatedManagedSections(markdown, parsed.entries)
+            if (normalizedLayout != null) {
+                return MarkdownMemoryRelationshipRepair(
+                    markdown = normalizedLayout,
+                    entries = parse(normalizedLayout).entries,
+                    repairedCount = 1
+                )
+            }
             return MarkdownMemoryRelationshipRepair(markdown, parsed.entries, repairedCount = 0)
         }
         if (parsed.skippedEntries.any { skipped ->
@@ -239,7 +280,7 @@ class MarkdownMemoryCodec {
 
         while (index < lines.size) {
             val line = lines[index]
-            val trimmed = line.trim()
+            val trimmed = normalizeEscapedMarkdownSyntax(line).trim()
             if (trimmed.startsWith("## ")) {
                 currentSection = trimmed.removePrefix("## ").trim().takeIf { it.isNotBlank() }
                 index += 1
@@ -256,7 +297,7 @@ class MarkdownMemoryCodec {
             val metadata = metadataParse.values
             val bulletIndex = nextMeaningfulLineIndex(lines, index + 1)
             val text = bulletIndex
-                ?.takeIf { lines[it].trimStart().startsWith("- ") }
+                ?.takeIf { normalizeEscapedMarkdownSyntax(lines[it]).trimStart().startsWith("- ") }
                 ?.let { parseBulletText(lines, it) }
 
             val built = if (metadataParse.error == null) {
@@ -449,6 +490,55 @@ class MarkdownMemoryCodec {
         }.trimEnd() + "\n"
     }
 
+    private fun normalizeRepeatedManagedSections(
+        markdown: String,
+        entries: List<MarkdownMemoryEntry>
+    ): String? {
+        if (!isFullyManagedLongTermDocument(markdown, entries.size)) return null
+        val sections = markdown.lineSequence()
+            .map(::normalizeEscapedMarkdownSyntax)
+            .map(String::trim)
+            .filter { line -> line.startsWith("## ") }
+            .map { line -> line.removePrefix("## ").trim() }
+            .filter(String::isNotBlank)
+            .toList()
+        if (sections.size == sections.distinct().size) return null
+        return renderLongTerm(entries)
+    }
+
+    private fun isFullyManagedLongTermDocument(
+        markdown: String,
+        expectedEntryCount: Int
+    ): Boolean {
+        val lines = markdown.lines()
+        var index = 0
+        var entryCount = 0
+        var hasTitle = false
+        while (index < lines.size) {
+            val trimmed = normalizeEscapedMarkdownSyntax(lines[index]).trim()
+            when {
+                trimmed.isBlank() -> index += 1
+                !hasTitle && trimmed == LONG_TERM_TITLE -> {
+                    hasTitle = true
+                    index += 1
+                }
+                hasTitle && trimmed.startsWith("## ") && trimmed.removePrefix("## ").isNotBlank() -> {
+                    index += 1
+                }
+                hasTitle && trimmed.startsWith(MarkdownMemoryMetadataPolicy.COMMENT_PREFIX) -> {
+                    if (parseMetadata(trimmed).error != null) return false
+                    val bulletIndex = nextMeaningfulLineIndex(lines, index + 1)
+                        ?.takeIf { candidate -> normalizeEscapedMarkdownSyntax(lines[candidate]).trimStart().startsWith("- ") }
+                        ?: return false
+                    entryCount += 1
+                    index = entryBlockEndExclusive(lines, index, bulletIndex)
+                }
+                else -> return false
+            }
+        }
+        return hasTitle && entryCount == expectedEntryCount
+    }
+
     private fun sectionFor(
         entry: MarkdownMemoryEntry,
         defaultSection: String?
@@ -520,10 +610,12 @@ class MarkdownMemoryCodec {
         lines: List<String>,
         bulletIndex: Int
     ): String {
-        val textLines = mutableListOf(lines[bulletIndex].trimStart().removePrefix("- ").trimEnd())
+        val textLines = mutableListOf(
+            normalizeEscapedMarkdownSyntax(lines[bulletIndex]).trimStart().removePrefix("- ").trimEnd()
+        )
         var index = bulletIndex + 1
         while (index < lines.size) {
-            val line = lines[index]
+            val line = normalizeEscapedMarkdownSyntax(lines[index])
             if (line.startsWith("  ") || line.startsWith("\t")) {
                 textLines += line.trim()
                 index += 1
@@ -532,6 +624,15 @@ class MarkdownMemoryCodec {
             }
         }
         return textLines.joinToString("\n").trim()
+    }
+
+    private fun normalizeEscapedMarkdownSyntax(line: String): String {
+        val unescapedPrefix = line.replaceFirst(Regex("^(\\s*)\\\\([#-])"), "$1$2")
+        return if (unescapedPrefix.trimStart().startsWith(MarkdownMemoryMetadataPolicy.COMMENT_PREFIX)) {
+            unescapedPrefix.replace("\\_", "_")
+        } else {
+            unescapedPrefix
+        }
     }
 
     private fun normalizeEditedMarkdown(markdown: String): String =
@@ -543,7 +644,7 @@ class MarkdownMemoryCodec {
         bulletIndex: Int?
     ): Int {
         var index = commentIndex + 1
-        if (bulletIndex != null && lines[bulletIndex].trimStart().startsWith("- ")) {
+        if (bulletIndex != null && normalizeEscapedMarkdownSyntax(lines[bulletIndex]).trimStart().startsWith("- ")) {
             index = bulletIndex + 1
             while (index < lines.size && (lines[index].startsWith("  ") || lines[index].startsWith("\t"))) {
                 index += 1
@@ -714,6 +815,7 @@ class MarkdownMemoryCodec {
     }
 
     companion object {
+        private const val LONG_TERM_TITLE = "# ChatWithChat Memory"
         private const val DAILY_CONVERSATION_SECTION = "Conversation Notes"
         private const val ERROR_DUPLICATE_MEMORY_ID = "duplicate memory id"
         private const val ERROR_OBSOLETE_ENTRY_REQUIRES_SUPERSESSION_TARGET =

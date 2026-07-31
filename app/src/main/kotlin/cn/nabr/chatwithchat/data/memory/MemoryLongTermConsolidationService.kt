@@ -207,7 +207,8 @@ class MemoryLongTermConsolidationService(
                 checkpointId = checkpoint.checkpointId,
                 orderedEntries = snapshot.entries,
                 cursor = checkpoint.partitionCursor,
-                alreadyAssignedIds = assignedIds
+                alreadyAssignedIds = assignedIds,
+                forceReview = checkpoint.triggerReason == MemoryLongTermTriggerReason.MANUAL_FORCE
             )
             val partition = boundedRequest.partition
             val request = boundedRequest.request

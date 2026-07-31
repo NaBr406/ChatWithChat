@@ -2140,6 +2140,7 @@ private class BaselineMemoryActivityLogDao : MemoryActivityLogDao {
         inputCount: Int?,
         operationCount: Int?,
         errorCode: String?,
+        detail: String?,
         phaseSummaryJson: String,
         completedAt: Long,
         updatedAt: Long
@@ -2163,6 +2164,7 @@ private class BaselineMemoryActivityLogDao : MemoryActivityLogDao {
             inputCount = inputCount,
             operationCount = operationCount,
             errorCode = errorCode,
+            detail = detail,
             phaseSummaryJson = phaseSummaryJson,
             completedAt = completedAt,
             updatedAt = updatedAt,

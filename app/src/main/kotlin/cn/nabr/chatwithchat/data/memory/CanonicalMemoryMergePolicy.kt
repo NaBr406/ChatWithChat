@@ -32,6 +32,7 @@ internal class CanonicalMemoryMergePolicy(
         candidates: List<CanonicalMemoryCandidate>,
         mutationAt: Long,
         allowCanonicalRebinding: Boolean = false,
+        promoteRecallState: Boolean = false,
         maxEntryMutations: Int? = null
     ): CanonicalMemoryMergeResult {
         require(mutationAt >= 0L) { "invalid canonical mutation time" }
@@ -106,6 +107,15 @@ internal class CanonicalMemoryMergePolicy(
                 require(identityCandidates.map(CanonicalMemoryCandidate::type).distinct().size == 1) {
                     "canonical candidates have incompatible types"
                 }
+                val promotedRecallState = if (
+                    promoteRecallState &&
+                    (currentEntries.any { entry -> entry.recallState == MemoryRecallState.CORE } ||
+                        identityCandidates.any { candidate -> candidate.recallState == MemoryRecallState.CORE })
+                ) {
+                    MemoryRecallState.CORE
+                } else {
+                    null
+                }
 
                 val candidateVariants = identityCandidates.toCandidateVariants()
                 val winningVariant = (existingVariants + candidateVariants).sortedWith(variantComparator).first()
@@ -138,12 +148,14 @@ internal class CanonicalMemoryMergePolicy(
                         survivor.lastObservedAt,
                         acceptedCandidates.maxOfOrNull(CanonicalMemoryCandidate::evidenceAt) ?: 0L
                     )
-                    if (survivor.identityOrNull() != identity) {
+                    val recallState = promotedRecallState ?: survivor.recallState
+                    if (survivor.identityOrNull() != identity || survivor.recallState != recallState) {
                         identityReplacements[survivor.id] = survivor.copy(
                             canonicalKey = identity.canonicalKey,
                             scope = identity.scope,
                             updatedAt = mutationAt,
                             lastObservedAt = lastObservedAt,
+                            recallState = recallState,
                             evidenceRefs = evidenceRefs
                         )
                         identityMaterialMutationCount = 1
@@ -194,7 +206,7 @@ internal class CanonicalMemoryMergePolicy(
                         lastObservedAt = lastObservedAt,
                         validity = MemoryValidity.CURRENT,
                         supersededBy = null,
-                        recallState = winningVariant.recallState,
+                        recallState = promotedRecallState ?: winningVariant.recallState,
                         evidenceRefs = evidenceRefs
                     )
                     val materialActiveChanged = survivor == null ||
@@ -329,8 +341,10 @@ internal class CanonicalMemoryMergePolicy(
             markdown = removal.markdown
         }
         if (appends.isNotEmpty()) {
-            val append = markdownMemoryCodec.renderLongTermAppend(appends.values.sortedBy { it.id })
-            markdown = markdown.trimEnd() + "\n\n" + append.trim() + "\n"
+            markdown = markdownMemoryCodec.appendLongTermEntries(
+                markdown,
+                appends.values.sortedBy { it.id }
+            )
         }
         if (observationUpdates.isNotEmpty()) {
             markdown = markdownMemoryCodec.updateObservations(

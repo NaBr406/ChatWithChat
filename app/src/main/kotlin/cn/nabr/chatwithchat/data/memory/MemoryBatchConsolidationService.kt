@@ -896,12 +896,12 @@ class MemoryBatchConsolidationService(
                             chatId = chatId,
                             createdAt = renderedAt
                         )
-                        val append = if (operation.destination == MemoryBatchDestination.LONG_TERM) {
-                            markdownMemoryCodec.renderLongTermAppend(listOf(entry))
+                        if (operation.destination == MemoryBatchDestination.LONG_TERM) {
+                            markdownMemoryCodec.appendLongTermEntries(currentMarkdown, listOf(entry))
                         } else {
-                            markdownMemoryCodec.renderDailyAppend(listOf(entry))
+                            val append = markdownMemoryCodec.renderDailyAppend(listOf(entry))
+                            currentMarkdown.trimEnd() + "\n\n" + append.trim() + "\n"
                         }
-                        currentMarkdown.trimEnd() + "\n\n" + append.trim() + "\n"
                     }
                     MemoryBatchAction.REPLACE -> {
                         val targetId = checkNotNull(operation.targetMemoryId)

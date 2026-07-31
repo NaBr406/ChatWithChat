@@ -93,6 +93,7 @@ interface MemoryActivityLogDao {
             input_count = :inputCount,
             operation_count = :operationCount,
             error_code = :errorCode,
+            detail = :detail,
             phase_summary_json = :phaseSummaryJson,
             completed_at = :completedAt,
             updated_at = :updatedAt,
@@ -115,6 +116,7 @@ interface MemoryActivityLogDao {
         inputCount: Int?,
         operationCount: Int?,
         errorCode: String?,
+        detail: String?,
         phaseSummaryJson: String,
         completedAt: Long,
         updatedAt: Long

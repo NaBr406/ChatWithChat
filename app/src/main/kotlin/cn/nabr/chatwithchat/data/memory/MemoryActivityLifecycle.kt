@@ -157,7 +157,8 @@ internal fun PlatformV2.toMemoryActivityData(
     operationCount: Int? = null,
     cursor: Int? = null,
     hashPrefix: String? = null,
-    errorCode: String? = null
+    errorCode: String? = null,
+    errorDetail: String? = null
 ): MemoryActivityRunData = MemoryActivityRunData(
     platformUid = uid,
     modelId = model,
@@ -167,7 +168,8 @@ internal fun PlatformV2.toMemoryActivityData(
     operationCount = operationCount,
     cursor = cursor,
     hashPrefix = hashPrefix,
-    errorCode = errorCode
+    errorCode = errorCode,
+    errorDetail = errorDetail
 )
 
 private const val STANDALONE_IDENTITY_NAMESPACE = "chatwithchat-memory-standalone-activity-v1"

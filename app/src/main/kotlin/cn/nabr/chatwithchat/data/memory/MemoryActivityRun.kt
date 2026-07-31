@@ -73,7 +73,8 @@ data class MemoryActivityRunData(
     val operationCount: Int? = null,
     val cursor: Int? = null,
     val hashPrefix: String? = null,
-    val errorCode: String? = null
+    val errorCode: String? = null,
+    val errorDetail: String? = null
 ) {
     init {
         require((platformUid == null) == (modelId == null)) {
@@ -107,6 +108,12 @@ data class MemoryActivityRunData(
         }
         require(errorCode == null || MemoryActivityStructuredValue.isCode(errorCode)) {
             "Invalid memory activity error code"
+        }
+        require(errorDetail == null || errorDetail.length <= 500) {
+            "Memory activity error detail is too long"
+        }
+        require(errorDetail == null || errorDetail.none(Char::isISOControl)) {
+            "Memory activity error detail contains control characters"
         }
     }
 

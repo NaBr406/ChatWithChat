@@ -67,6 +67,34 @@ class MemoryMaintenanceScheduler(
         return claimed
     }
 
+    suspend fun claimRunnableJob(
+        jobId: String,
+        family: String,
+        leaseOwner: String,
+        now: Long = now()
+    ): MemoryMaintenanceJob? {
+        require(jobId.isNotBlank()) { "Memory maintenance job ID must not be blank" }
+        require(family in MemoryMaintenanceJobFamily.ALL) { "Unknown memory maintenance family: $family" }
+        val candidate = jobDao.getById(jobId)?.takeIf { job ->
+            job.family == family &&
+                job.status in RUNNABLE_JOB_STATUSES &&
+                (job.nextRunAt ?: 0L) <= now
+        } ?: return null
+        val claimed = jobDao.claimRunnableCandidate(
+            jobId = candidate.jobId,
+            family = family,
+            expectedStatus = candidate.status,
+            expectedRowVersion = candidate.rowVersion,
+            leaseOwner = leaseOwner,
+            now = now,
+            leaseExpiresAt = now + leaseDurationSeconds(family)
+        )
+        if (claimed != 1) return null
+        return jobDao.getById(candidate.jobId)?.also { updated ->
+            emitStatusChanged(oldJob = candidate, newJob = updated, occurredAt = now)
+        }
+    }
+
     suspend fun renewClaimedLease(
         job: MemoryMaintenanceJob,
         now: Long = now()
@@ -454,6 +482,36 @@ class MemoryMaintenanceScheduler(
         return resetCount
     }
 
+    /** Reclaims one dead worker lease without scanning unrelated maintenance families. */
+    suspend fun resetExpiredRunningJob(jobId: String): MemoryMaintenanceJob? {
+        val job = jobDao.getById(jobId) ?: return null
+        val now = now()
+        if (
+            job.status != MemoryMaintenanceJobStatus.RUNNING ||
+            job.leaseExpiresAt?.let { expiresAt -> expiresAt > now } == true
+        ) {
+            return job
+        }
+        val policy = retryPolicy(job.family)
+        val exhausted = job.attempts >= policy.maxAutomaticAttempts
+        val reason = "job_lease_expired"
+        val changed = jobDao.reclaimExpiredLease(
+            jobId = job.jobId,
+            expectedLeaseOwner = job.leaseOwner,
+            expectedRowVersion = job.rowVersion,
+            now = now,
+            newStatus = if (exhausted) policy.exhaustedStatus else MemoryMaintenanceJobStatus.FAILED_RETRYABLE,
+            lastError = reason,
+            blockedReason = reason.takeIf { exhausted },
+            updatedAt = now,
+            nextRunAt = now.takeUnless { exhausted }
+        )
+        if (changed != 1) return jobDao.getById(jobId)
+        val updated = checkNotNull(jobDao.getById(jobId))
+        emitStatusChanged(job, updated, now)
+        return updated
+    }
+
     suspend fun reopenWaitingRepairJobs(limit: Int = DEFAULT_VISIBLE_LIMIT): Int = jobDao.getReopenableLocalJobs(limit).count { job -> retryManually(job.jobId) != null }
 
     suspend fun reopenMemoryModelBlockedJobs(limit: Int = DEFAULT_VISIBLE_LIMIT): Int {
@@ -671,6 +729,10 @@ class MemoryMaintenanceScheduler(
             MemoryMaintenanceJobStatus.FAILED_RETRYABLE,
             MemoryMaintenanceJobStatus.FAILED_TERMINAL,
             MemoryMaintenanceJobStatus.WAITING_REPAIR
+        )
+        private val RUNNABLE_JOB_STATUSES = setOf(
+            MemoryMaintenanceJobStatus.PENDING,
+            MemoryMaintenanceJobStatus.FAILED_RETRYABLE
         )
         private val SEMANTIC_RETRY_POLICY = MemoryMaintenanceRetryPolicy(
             maxAutomaticAttempts = 3,

@@ -79,6 +79,7 @@ object MemoryLongTermTriggerReason {
     const val WEEKLY_DUE = "weekly_due"
     const val CONTINUATION = "continuation"
     const val MANUAL = "manual"
+    const val MANUAL_FORCE = "manual_force"
 }
 
 data class MemoryLongTermPlanResult(

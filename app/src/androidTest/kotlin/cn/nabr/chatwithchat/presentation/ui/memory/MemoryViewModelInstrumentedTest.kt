@@ -357,6 +357,7 @@ class MemoryViewModelInstrumentedTest {
             inputCount: Int?,
             operationCount: Int?,
             errorCode: String?,
+            detail: String?,
             phaseSummaryJson: String,
             completedAt: Long,
             updatedAt: Long

@@ -11,7 +11,7 @@ class MemoryLongTermConsolidationPolicyTest {
     private val policy = MemoryLongTermConsolidationPolicy()
 
     @Test
-    fun `twenty four independent eligible anchors all become candidate groups`() {
+    fun `eligible entries are packed into bounded review buckets`() {
         val entries = (0 until MemoryLongTermConsolidationPolicy.MAX_PARTITION_ENTRIES).map { index ->
             entry(id = "anchor_$index", text = "lexeme${index}x")
         }
@@ -23,10 +23,10 @@ class MemoryLongTermConsolidationPolicyTest {
             alreadyAssignedIds = emptySet()
         )
 
-        assertEquals(MemoryLongTermConsolidationPolicy.MAX_PARTITION_ENTRIES, groups.size)
-        assertEquals(entries.map(MarkdownMemoryEntry::id), groups.flatMap { group -> group.anchorMemoryIds })
+        assertEquals(3, groups.size)
+        assertEquals(entries.map(MarkdownMemoryEntry::id).toSet(), groups.flatMap { group -> group.anchorMemoryIds }.toSet())
         assertEquals(entries.map(MarkdownMemoryEntry::id).toSet(), groups.flatMap { group -> group.entries }.map { it.memoryId }.toSet())
-        assertTrue(groups.all { group -> group.entries.size == 1 })
+        assertTrue(groups.all { group -> group.entries.size == MemoryLongTermConsolidationPolicy.MAX_GROUP_ENTRIES })
     }
 
     @Test
@@ -176,7 +176,7 @@ class MemoryLongTermConsolidationPolicyTest {
     fun `proposal decision cannot cross candidate group boundaries`() {
         val entries = listOf(
             entry(id = "first", text = "Prefers concise responses"),
-            entry(id = "second", text = "Enjoys hiking on weekends")
+            entry(id = "second", text = "Enjoys hiking on weekends", type = "interest")
         )
         val partition = policy.nextPartition(entries, cursor = 0)
         val groups = policy.candidateGroups(entries, partition, emptySet())
@@ -233,6 +233,101 @@ class MemoryLongTermConsolidationPolicyTest {
 
         assertEquals(1, groups.size)
         assertEquals(setOf("old_key", "new_key"), groups.single().entries.map { entry -> entry.memoryId }.toSet())
+    }
+
+    @Test
+    fun `low overlap sample memories share one review bucket without crossing scope`() {
+        val entries = listOf(
+            entry(
+                id = "education_major",
+                text = "目前即将升入大二，专业是计算机科学与技术（计科）。",
+                canonicalKey = "profile.education.major"
+            ),
+            entry(
+                id = "institution_tier",
+                text = "就读于二本院校。",
+                canonicalKey = "profile.education.institution_tier"
+            ),
+            entry(
+                id = "work_profile",
+                text = "在工作场景中负责移动端开发。",
+                canonicalKey = "profile.work.role",
+                scope = MemoryScope.WORK
+            )
+        )
+        val partition = policy.nextPartition(entries, cursor = 0)
+
+        val groups = policy.candidateGroups(entries, partition, emptySet())
+
+        assertEquals(1, groups.size)
+        assertEquals(
+            setOf("education_major", "institution_tier"),
+            groups.single().entries.map(MemoryLongTermCandidateEntry::memoryId).toSet()
+        )
+        assertEquals(
+            groups.single().entries.map(MemoryLongTermCandidateEntry::memoryId).toSet(),
+            groups.single().anchorMemoryIds.toSet()
+        )
+    }
+
+    @Test
+    fun `one review bucket accepts multiple disjoint canonical decisions`() {
+        val entries = listOf(
+            entry(id = "major", text = "专业是计算机科学与技术。"),
+            entry(id = "institution", text = "就读于二本院校。")
+        )
+        val partition = policy.nextPartition(entries, cursor = 0)
+        val group = policy.candidateGroups(entries, partition, emptySet()).single()
+        val request = MemoryLongTermConsolidationPartitionRequest(
+            checkpointId = "checkpoint",
+            partitionStart = partition.start,
+            partitionEndExclusive = partition.endExclusive,
+            candidateGroups = listOf(group)
+        )
+
+        val persisted = policy.validateAndMergeProposal(
+            existing = MemoryLongTermPersistedProposal(),
+            partitionRequest = request,
+            proposal = MemoryLongTermConsolidationProposal(
+                decisions = listOf(
+                    MemoryLongTermCanonicalDecision(
+                        action = MemoryLongTermDecisionAction.CANONICALIZE,
+                        memoryIds = listOf("major"),
+                        canonicalKey = "profile.education.major",
+                        scope = MemoryScope.GENERAL,
+                        recallState = MemoryRecallState.QUERY
+                    ),
+                    MemoryLongTermCanonicalDecision(
+                        action = MemoryLongTermDecisionAction.CANONICALIZE,
+                        memoryIds = listOf("institution"),
+                        canonicalKey = "profile.education.institution_tier",
+                        scope = MemoryScope.GENERAL,
+                        recallState = MemoryRecallState.QUERY
+                    )
+                )
+            )
+        )
+
+        assertEquals(2, persisted.decisions.size)
+        assertEquals(setOf("major", "institution"), persisted.decisions.flatMap { it.memoryIds }.toSet())
+    }
+
+    @Test
+    fun `force review includes a singleton canonical entry`() {
+        val entries = listOf(
+            entry(
+                id = "singleton",
+                text = "Address the user as Captain",
+                canonicalKey = "identity.preferred_address"
+            )
+        )
+        val partition = policy.nextPartition(entries, cursor = 0)
+
+        val ordinary = policy.candidateGroups(entries, partition, emptySet())
+        val forced = policy.candidateGroups(entries, partition, emptySet(), forceReview = true)
+
+        assertTrue(ordinary.isEmpty())
+        assertEquals(listOf("singleton"), forced.single().entries.map { it.memoryId })
     }
 
     private fun MemoryLongTermCandidateGroup.requestCharacterCount(): Int =

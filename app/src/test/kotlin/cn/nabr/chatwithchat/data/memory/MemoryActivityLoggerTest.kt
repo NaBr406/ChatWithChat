@@ -516,6 +516,7 @@ internal class InMemoryActivityLogDao : MemoryActivityLogDao {
         inputCount: Int?,
         operationCount: Int?,
         errorCode: String?,
+        detail: String?,
         phaseSummaryJson: String,
         completedAt: Long,
         updatedAt: Long
@@ -531,6 +532,7 @@ internal class InMemoryActivityLogDao : MemoryActivityLogDao {
             inputCount = inputCount,
             operationCount = operationCount,
             errorCode = errorCode,
+            detail = detail,
             phaseSummaryJson = phaseSummaryJson,
             completedAt = completedAt,
             updatedAt = updatedAt,

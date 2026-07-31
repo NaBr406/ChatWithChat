@@ -49,14 +49,16 @@ internal class MemoryLongTermConsolidationPolicy {
         checkpointId: String,
         orderedEntries: List<MarkdownMemoryEntry>,
         cursor: Int,
-        alreadyAssignedIds: Set<String>
+        alreadyAssignedIds: Set<String>,
+        forceReview: Boolean = false
     ): MemoryLongTermBoundedPartitionRequest {
         var partition = nextPartition(orderedEntries, cursor)
         while (true) {
             val groups = candidateGroups(
                 allEntries = orderedEntries,
                 partition = partition,
-                alreadyAssignedIds = alreadyAssignedIds
+                alreadyAssignedIds = alreadyAssignedIds,
+                forceReview = forceReview
             )
             val request = partition.toRequest(checkpointId, groups)
             val serialized = requestJson.encodeToString(request)
@@ -89,16 +91,18 @@ internal class MemoryLongTermConsolidationPolicy {
     fun candidateGroups(
         allEntries: List<MarkdownMemoryEntry>,
         partition: MemoryLongTermPartition,
-        alreadyAssignedIds: Set<String>
+        alreadyAssignedIds: Set<String>,
+        forceReview: Boolean = false
     ): List<MemoryLongTermCandidateGroup> {
         val eligibleAll = allEntries.filter { entry -> entry.isEligibleForCanonicalConsolidation() }
         val consumed = alreadyAssignedIds.toMutableSet()
         val partitionIds = partition.entries.map(MarkdownMemoryEntry::id).toSet()
+        val futureIds = allEntries.drop(partition.endExclusive).mapTo(mutableSetOf(), MarkdownMemoryEntry::id)
         val groupedEntries = buildList {
             partition.entries.forEach { anchor ->
                 if (
                     !anchor.isEligibleForCanonicalConsolidation() ||
-                    !anchor.requiresSemanticReview(eligibleAll, consumed) ||
+                    !anchor.requiresSemanticReview(eligibleAll, consumed, forceReview) ||
                     !consumed.add(anchor.id)
                 ) {
                     return@forEach
@@ -110,13 +114,14 @@ internal class MemoryLongTermConsolidationPolicy {
                             candidate.isEligibleForCanonicalConsolidation() &&
                             candidate.type == anchor.type &&
                             candidate.scope == anchor.scope &&
-                            anchor.canShareSemanticGroupWith(candidate) &&
-                            localSimilarity(anchor.text, candidate.text) >= LOCAL_SIMILARITY_FLOOR
+                            anchor.canShareSemanticGroupWith(candidate)
                     }
                     .sortedWith(
-                        compareByDescending<MarkdownMemoryEntry> { candidate ->
-                            localSimilarity(anchor.text, candidate.text)
-                        }.thenBy(MarkdownMemoryEntry::id)
+                        compareByDescending<MarkdownMemoryEntry> { candidate -> groupingAffinity(anchor, candidate) }
+                            .thenByDescending { candidate ->
+                                localSimilarity(anchor.text, candidate.text)
+                            }
+                            .thenBy(MarkdownMemoryEntry::id)
                     )
                     .take(MAX_GROUP_ENTRIES - 1)
                     .toList()
@@ -138,16 +143,17 @@ internal class MemoryLongTermConsolidationPolicy {
                 .asSequence()
                 .filter { candidate ->
                     candidate.id !in consumed &&
-                        candidate.id !in partitionIds &&
+                        candidate.id in futureIds &&
                         candidate.type == anchor.type &&
                         candidate.scope == anchor.scope &&
-                        anchor.canShareSemanticGroupWith(candidate) &&
-                        localSimilarity(anchor.text, candidate.text) >= LOCAL_SIMILARITY_FLOOR
+                        anchor.canShareSemanticGroupWith(candidate)
                 }
                 .sortedWith(
-                    compareByDescending<MarkdownMemoryEntry> { candidate ->
-                        localSimilarity(anchor.text, candidate.text)
-                    }.thenBy(MarkdownMemoryEntry::id)
+                    compareByDescending<MarkdownMemoryEntry> { candidate -> groupingAffinity(anchor, candidate) }
+                        .thenByDescending { candidate ->
+                            localSimilarity(anchor.text, candidate.text)
+                        }
+                        .thenBy(MarkdownMemoryEntry::id)
                 )
                 .forEach { candidate ->
                     val candidateChars = candidate.requestCharacterCount()
@@ -171,7 +177,7 @@ internal class MemoryLongTermConsolidationPolicy {
             val groupIds = grouped.map(MarkdownMemoryEntry::id).sorted()
             MemoryLongTermCandidateGroup(
                 groupId = stableGroupId(groupIds),
-                anchorMemoryIds = listOf(grouped.first().id),
+                anchorMemoryIds = grouped.map(MarkdownMemoryEntry::id).filter(partitionIds::contains),
                 entries = grouped.map { entry -> entry.toCandidateEntry() }
             )
         }
@@ -250,7 +256,7 @@ internal class MemoryLongTermConsolidationPolicy {
                 memoryIds = memoryIds,
                 canonicalKey = canonicalKey,
                 scope = scope,
-                recallState = recallState,
+                recallState = consolidationRecallState(canonicalKey, scope, recallState),
                 reason = decision.reason.take(MAX_REASON_CHARS)
             )
         }
@@ -270,10 +276,20 @@ internal class MemoryLongTermConsolidationPolicy {
         .filter { entry -> entry.canonicalKey != null }
         .groupBy { entry -> checkNotNull(entry.canonicalKey) to entry.scope }
         .toSortedMap(compareBy<Pair<String, String>> { pair -> pair.first }.thenBy { pair -> pair.second })
-        .filterValues { identityEntries -> identityEntries.size > 1 }
+        .filterValues { identityEntries ->
+            identityEntries.size > 1 || identityEntries.any { entry -> entry.requiresCoreRecallRepair() }
+        }
         .values
         .flatten()
-        .map { entry -> entry.toCanonicalCandidate() }
+        .map { entry ->
+            entry.toCanonicalCandidate(
+                recallState = consolidationRecallState(
+                    canonicalKey = checkNotNull(entry.canonicalKey),
+                    scope = entry.scope,
+                    recallState = entry.recallState
+                )
+            )
+        }
 
     fun proposalCandidates(
         entries: List<MarkdownMemoryEntry>,
@@ -289,7 +305,11 @@ internal class MemoryLongTermConsolidationPolicy {
                 entry.toCanonicalCandidate(
                     canonicalKey = requireNotNull(decision.canonicalKey),
                     scope = requireNotNull(decision.scope),
-                    recallState = requireNotNull(decision.recallState)
+                    recallState = consolidationRecallState(
+                        canonicalKey = requireNotNull(decision.canonicalKey),
+                        scope = requireNotNull(decision.scope),
+                        recallState = requireNotNull(decision.recallState)
+                    )
                 )
             }
         }
@@ -334,23 +354,50 @@ internal class MemoryLongTermConsolidationPolicy {
             sensitivity in MemoryControlledOperationPolicy.validSensitivities &&
             source in MemoryControlledOperationPolicy.validSources
 
+    private fun MarkdownMemoryEntry.requiresCoreRecallRepair(): Boolean =
+        canonicalKey == PREFERRED_ADDRESS_CANONICAL_KEY &&
+            scope == MemoryScope.GENERAL &&
+            recallState != MemoryRecallState.CORE
+
+    private fun consolidationRecallState(
+        canonicalKey: String,
+        scope: String,
+        recallState: String
+    ): String = if (
+        canonicalKey == PREFERRED_ADDRESS_CANONICAL_KEY && scope == MemoryScope.GENERAL
+    ) {
+        MemoryRecallState.CORE
+    } else {
+        recallState
+    }
+
     private fun MarkdownMemoryEntry.requiresSemanticReview(
         eligibleEntries: List<MarkdownMemoryEntry>,
-        consumedIds: Set<String>
+        consumedIds: Set<String>,
+        forceReview: Boolean
     ): Boolean {
+        if (forceReview) return true
         if (canonicalKey == null) return true
         return eligibleEntries.any { candidate ->
             candidate.id != id &&
                 candidate.id !in consumedIds &&
                 candidate.type == type &&
                 candidate.scope == scope &&
-                canShareSemanticGroupWith(candidate) &&
-                localSimilarity(text, candidate.text) >= LOCAL_SIMILARITY_FLOOR
+                canShareSemanticGroupWith(candidate)
         }
     }
 
     private fun MarkdownMemoryEntry.canShareSemanticGroupWith(other: MarkdownMemoryEntry): Boolean =
         canonicalKey == null || other.canonicalKey == null || canonicalKey != other.canonicalKey
+
+    private fun groupingAffinity(
+        anchor: MarkdownMemoryEntry,
+        candidate: MarkdownMemoryEntry
+    ): Int {
+        val anchorKey = anchor.canonicalKey ?: return 1
+        val candidateKey = candidate.canonicalKey ?: return 1
+        return if (anchorKey.substringBeforeLast('.') == candidateKey.substringBeforeLast('.')) 2 else 0
+    }
 
     private fun MarkdownMemoryEntry.toCandidateEntry(): MemoryLongTermCandidateEntry = MemoryLongTermCandidateEntry(
         memoryId = id,
@@ -463,6 +510,7 @@ internal class MemoryLongTermConsolidationPolicy {
         "lt_group_${ids.joinToString("|").sha256Utf8().take(ID_HASH_LENGTH)}"
 
     companion object {
+        private const val PREFERRED_ADDRESS_CANONICAL_KEY = "identity.preferred_address"
         const val MAX_PARTITION_ENTRIES = 24
         const val MAX_PARTITION_CHARS = 12_000
         const val MAX_SERIALIZED_REQUEST_CHARS = 12_000
@@ -474,7 +522,6 @@ internal class MemoryLongTermConsolidationPolicy {
         private const val ENTRY_OVERHEAD_CHARS = 160
         private const val MAX_REASON_CHARS = 240
         private const val ID_HASH_LENGTH = 24
-        private const val LOCAL_SIMILARITY_FLOOR = 0.22f
         private val ACTIVE_RECALL_STATES = setOf(MemoryRecallState.CORE, MemoryRecallState.QUERY)
         private val VALID_ACTIONS = setOf(MemoryLongTermDecisionAction.CANONICALIZE, MemoryLongTermDecisionAction.IGNORE)
         private val WORD_REGEX = Regex("[a-z0-9]+")

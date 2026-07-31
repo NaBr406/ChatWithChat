@@ -49,7 +49,9 @@ internal fun MemoryCorpusSnapshot.selectCoreResults(includePrivate: Boolean): Li
         .asSequence()
         .filter { chunk -> chunk.sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME }
         .filter { chunk -> chunk.validity == MemoryValidity.CURRENT }
-        .filter { chunk -> chunk.recallState == MemoryRecallState.CORE }
+        .filter { chunk ->
+            chunk.recallState == MemoryRecallState.CORE || chunk.isPreferredAddressQueryFallback()
+        }
         .filter { chunk -> chunk.scope == MemoryScope.GENERAL }
         .filter { chunk -> includePrivate || !chunk.isPrivateOrSensitive() }
         .filter { chunk -> chunk.coreKeyPriority() != null }
@@ -88,6 +90,16 @@ private fun MemoryCorpusChunk.coreKeyPriority(): Int? = when {
     type == CORE_BOUNDARY_TYPE && canonicalKey?.startsWith(CORE_BOUNDARY_KEY_PREFIX) == true -> 3
     else -> null
 }
+
+/**
+ * Older canonical files may still contain the user's preferred address as a query fact until the
+ * next long-term consolidation pass. It is a core capsule fact by contract, so keep this one
+ * bounded compatibility path from depending on a background maintenance run.
+ */
+private fun MemoryCorpusChunk.isPreferredAddressQueryFallback(): Boolean =
+    canonicalKey == CORE_PREFERRED_ADDRESS_KEY &&
+        scope == MemoryScope.GENERAL &&
+        recallState == MemoryRecallState.QUERY
 
 private fun MemoryCorpusChunk.isPrivateOrSensitive(): Boolean =
     sensitivity in setOf(MemorySensitivity.PRIVATE, MemorySensitivity.SENSITIVE)

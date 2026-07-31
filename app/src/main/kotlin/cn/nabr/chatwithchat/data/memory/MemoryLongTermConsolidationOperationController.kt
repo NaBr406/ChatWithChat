@@ -29,6 +29,7 @@ class MemoryLongTermConsolidationOperationController(
             candidates = selectedCandidates,
             mutationAt = renderedAt,
             allowCanonicalRebinding = true,
+            promoteRecallState = true,
             maxEntryMutations = MemoryControlledOperationPolicy.MAX_OPERATIONS
         )
         val targets = if (merge.markdown == baseMarkdown) {
