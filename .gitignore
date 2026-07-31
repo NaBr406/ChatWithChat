@@ -32,6 +32,7 @@ app/release/**
 app/build/**
 app/src/androidTest/assets/memory-model/**
 app/src/main/assets/memory-model/**
+.codex-device-db/
 .idea/copilot.data.migration.ask.xml
 .idea/copilot.data.migration.agent.xml
 .idea/copilot.data.migration.edit.xml
