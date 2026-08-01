@@ -24,6 +24,7 @@ class TieredMemoryRecallTest {
                     source = MemorySource.USER_CONFIRMED,
                     updatedAt = 10
                 ),
+                coreChunk("assistant_name", "My name is Small C.", "identity.assistant_name"),
                 coreChunk("language", "Reply in Chinese.", "locale.response_language"),
                 coreChunk("style", "Keep answers concise.", "communication.response_style"),
                 coreChunk("boundary", "Never publish private credentials.", "boundary.credentials", type = "boundary"),
@@ -40,7 +41,7 @@ class TieredMemoryRecallTest {
         val core = snapshot.selectCoreResults(includePrivate = true)
 
         assertEquals(
-            listOf("address_confirmed", "language", "style", "boundary"),
+            listOf("address_confirmed", "assistant_name", "language", "style"),
             core.mapNotNull(MemoryRetrievalResult::entryId)
         )
         assertTrue(core.none { result -> result.entryId in setOf("unsupported", "work_address", "address_inferred") })
@@ -61,11 +62,16 @@ class TieredMemoryRecallTest {
     }
 
     @Test
-    fun `preferred address query fact is recalled in the core capsule before consolidation`() {
+    fun `core identity query facts are recalled before consolidation`() {
         val preferredAddress = coreChunk(
             id = "preferred_address_query",
             text = "希望以后被称呼为大哥。",
             canonicalKey = "identity.preferred_address"
+        ).copy(recallState = MemoryRecallState.QUERY)
+        val assistantName = coreChunk(
+            id = "assistant_name_query",
+            text = "用户为 AI 取名为小c。",
+            canonicalKey = "identity.assistant_name"
         ).copy(recallState = MemoryRecallState.QUERY)
         val workAddress = preferredAddress.copy(
             entryId = "work_address_query",
@@ -84,10 +90,13 @@ class TieredMemoryRecallTest {
         ).copy(recallState = MemoryRecallState.QUERY)
 
         val core = snapshot(
-            listOf(preferredAddress, workAddress, obsoleteAddress, unrelatedQuery)
+            listOf(preferredAddress, assistantName, workAddress, obsoleteAddress, unrelatedQuery)
         ).selectCoreResults(includePrivate = true)
 
-        assertEquals(listOf("preferred_address_query"), core.mapNotNull(MemoryRetrievalResult::entryId))
+        assertEquals(
+            listOf("preferred_address_query", "assistant_name_query"),
+            core.mapNotNull(MemoryRetrievalResult::entryId)
+        )
     }
 
     @Test

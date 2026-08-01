@@ -50,7 +50,7 @@ internal fun MemoryCorpusSnapshot.selectCoreResults(includePrivate: Boolean): Li
         .filter { chunk -> chunk.sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME }
         .filter { chunk -> chunk.validity == MemoryValidity.CURRENT }
         .filter { chunk ->
-            chunk.recallState == MemoryRecallState.CORE || chunk.isPreferredAddressQueryFallback()
+            chunk.recallState == MemoryRecallState.CORE || chunk.isCoreIdentityQueryFallback()
         }
         .filter { chunk -> chunk.scope == MemoryScope.GENERAL }
         .filter { chunk -> includePrivate || !chunk.isPrivateOrSensitive() }
@@ -85,19 +85,20 @@ internal fun MemoryCorpusSnapshot.selectCoreResults(includePrivate: Boolean): Li
 
 private fun MemoryCorpusChunk.coreKeyPriority(): Int? = when {
     canonicalKey == CORE_PREFERRED_ADDRESS_KEY -> 0
-    canonicalKey == CORE_RESPONSE_LANGUAGE_KEY -> 1
-    canonicalKey == CORE_RESPONSE_STYLE_KEY -> 2
-    type == CORE_BOUNDARY_TYPE && canonicalKey?.startsWith(CORE_BOUNDARY_KEY_PREFIX) == true -> 3
+    canonicalKey == CORE_ASSISTANT_NAME_KEY -> 1
+    canonicalKey == CORE_RESPONSE_LANGUAGE_KEY -> 2
+    canonicalKey == CORE_RESPONSE_STYLE_KEY -> 3
+    type == CORE_BOUNDARY_TYPE && canonicalKey?.startsWith(CORE_BOUNDARY_KEY_PREFIX) == true -> 4
     else -> null
 }
 
 /**
- * Older canonical files may still contain the user's preferred address as a query fact until the
- * next long-term consolidation pass. It is a core capsule fact by contract, so keep this one
- * bounded compatibility path from depending on a background maintenance run.
+ * Older canonical files may still contain identity facts as query entries until the next
+ * long-term consolidation pass. These identity facts are core capsule facts by contract, so keep
+ * this bounded compatibility path from depending on a background maintenance run.
  */
-private fun MemoryCorpusChunk.isPreferredAddressQueryFallback(): Boolean =
-    canonicalKey == CORE_PREFERRED_ADDRESS_KEY &&
+private fun MemoryCorpusChunk.isCoreIdentityQueryFallback(): Boolean =
+    canonicalKey in CORE_IDENTITY_KEYS &&
         scope == MemoryScope.GENERAL &&
         recallState == MemoryRecallState.QUERY
 
@@ -130,9 +131,10 @@ private fun coreResultComparator(): Comparator<MemoryRetrievalResult> =
     compareBy<MemoryRetrievalResult> { result ->
         when {
             result.canonicalKey == CORE_PREFERRED_ADDRESS_KEY -> 0
-            result.canonicalKey == CORE_RESPONSE_LANGUAGE_KEY -> 1
-            result.canonicalKey == CORE_RESPONSE_STYLE_KEY -> 2
-            result.canonicalKey?.startsWith(CORE_BOUNDARY_KEY_PREFIX) == true -> 3
+            result.canonicalKey == CORE_ASSISTANT_NAME_KEY -> 1
+            result.canonicalKey == CORE_RESPONSE_LANGUAGE_KEY -> 2
+            result.canonicalKey == CORE_RESPONSE_STYLE_KEY -> 3
+            result.canonicalKey?.startsWith(CORE_BOUNDARY_KEY_PREFIX) == true -> 4
             else -> 2
         }
     }.thenBy { result -> result.canonicalKey.orEmpty() }
@@ -165,12 +167,18 @@ private fun MemoryCorpusChunk.toCoreRetrievalResult(): MemoryRetrievalResult = M
 )
 
 private const val CORE_PREFERRED_ADDRESS_KEY = "identity.preferred_address"
+private const val CORE_ASSISTANT_NAME_KEY = "identity.assistant_name"
 private const val CORE_RESPONSE_LANGUAGE_KEY = "locale.response_language"
 private const val CORE_RESPONSE_STYLE_KEY = "communication.response_style"
 private const val CORE_BOUNDARY_KEY_PREFIX = "boundary."
 private const val CORE_BOUNDARY_TYPE = "boundary"
 private const val LEGACY_RESPONSE_STYLE_TYPE = "communication_style"
 private const val MAX_CORE_FACTS = 4
+
+private val CORE_IDENTITY_KEYS = setOf(
+    CORE_PREFERRED_ADDRESS_KEY,
+    CORE_ASSISTANT_NAME_KEY
+)
 
 private val INTERNAL_MEMORY_METADATA_MARKERS = listOf(
     Regex("""<!--"""),

@@ -761,6 +761,48 @@ class MemoryLongTermConsolidationServiceTest {
         )
     }
 
+    @Test
+    fun `singleton assistant name query is promoted into the recall capsule`() = runBlocking {
+        val targetKey = "identity.assistant_name"
+        val fixture = fixture(
+            entries = listOf(
+                entry(
+                    id = "assistant_name",
+                    text = "用户为 AI 取名为“小c”，以后称其为小c。",
+                    canonicalKey = targetKey
+                )
+            ),
+            intelligence = RecordingLongTermMemoryIntelligence()
+        )
+
+        val result = fixture.service().process(fixture.claimedJob)
+        val markdown = fixture.fileStore.readLongTermMemory().getOrThrow()
+        val parsed = fixture.codec.parse(markdown)
+        val active = parsed.entries.single { it.validity == MemoryValidity.CURRENT }
+        val chunking = MemoryChunker(fixture.codec).chunksFor(
+            sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+            markdown = markdown,
+            projectionPolicy = MemoryProjectionPolicy.CHAT_ACTIVE_ONLY
+        )
+        val snapshot = MemoryCorpusSnapshot(
+            corpus = MemoryCorpus.CHAT_RECALL_LONG_TERM,
+            sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+            canonicalSourceHash = "canonical",
+            recallProjectionHash = chunking.projectionHash,
+            generation = 1L,
+            chunks = chunking.chunks
+        )
+
+        assertEquals(MemoryLongTermProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(1, result.operationCount)
+        assertEquals(0, fixture.intelligence.requests.size)
+        assertEquals(MemoryRecallState.CORE, active.recallState)
+        assertEquals(
+            listOf(active.id),
+            snapshot.selectCoreResults(includePrivate = true).mapNotNull(MemoryRetrievalResult::entryId)
+        )
+    }
+
     private suspend fun fixture(
         entries: List<MarkdownMemoryEntry>,
         intelligence: RecordingLongTermMemoryIntelligence,

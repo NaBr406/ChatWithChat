@@ -355,7 +355,7 @@ internal class MemoryLongTermConsolidationPolicy {
             source in MemoryControlledOperationPolicy.validSources
 
     private fun MarkdownMemoryEntry.requiresCoreRecallRepair(): Boolean =
-        canonicalKey == PREFERRED_ADDRESS_CANONICAL_KEY &&
+        canonicalKey in CORE_IDENTITY_CANONICAL_KEYS &&
             scope == MemoryScope.GENERAL &&
             recallState != MemoryRecallState.CORE
 
@@ -364,7 +364,7 @@ internal class MemoryLongTermConsolidationPolicy {
         scope: String,
         recallState: String
     ): String = if (
-        canonicalKey == PREFERRED_ADDRESS_CANONICAL_KEY && scope == MemoryScope.GENERAL
+        canonicalKey in CORE_IDENTITY_CANONICAL_KEYS && scope == MemoryScope.GENERAL
     ) {
         MemoryRecallState.CORE
     } else {
@@ -511,6 +511,11 @@ internal class MemoryLongTermConsolidationPolicy {
 
     companion object {
         private const val PREFERRED_ADDRESS_CANONICAL_KEY = "identity.preferred_address"
+        private const val ASSISTANT_NAME_CANONICAL_KEY = "identity.assistant_name"
+        private val CORE_IDENTITY_CANONICAL_KEYS = setOf(
+            PREFERRED_ADDRESS_CANONICAL_KEY,
+            ASSISTANT_NAME_CANONICAL_KEY
+        )
         const val MAX_PARTITION_ENTRIES = 24
         const val MAX_PARTITION_CHARS = 12_000
         const val MAX_SERIALIZED_REQUEST_CHARS = 12_000
