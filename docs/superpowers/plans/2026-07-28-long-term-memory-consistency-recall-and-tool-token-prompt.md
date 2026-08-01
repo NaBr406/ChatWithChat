@@ -40,6 +40,7 @@
 核心胶囊只用于真正需要跨话题持续生效的少量事实，初始覆盖：
 
 - 用户希望被如何称呼；
+- 用户为 AI 指定的名称；
 - 用户偏好的回复语言；
 - 已合并成一条的沟通风格；
 - 需要始终遵守的重要边界。
@@ -208,7 +209,7 @@ maintenance/job/checkpoint ids and hashes
 CanonicalMemoryIdentity = (canonicalKey, scope)
 ```
 
-- `canonicalKey` 是受控、稳定、语义化的 ASCII key，例如 `identity.preferred_address`、`locale.response_language`、`communication.response_style`。
+- `canonicalKey` 是受控、稳定、语义化的 ASCII key，例如 `identity.preferred_address`、`identity.assistant_name`、`locale.response_language`、`communication.response_style`。
 - `scope` 描述事实生效上下文，不包含自然语言正文。
 - open-ended event/project facts也必须获得稳定 key，但可以使用由 evidence identity 派生的 suffix；不得使用完整事实文本或不稳定的模型措辞直接作为 key。
 
@@ -801,7 +802,7 @@ git diff --check
 #### Task 5 Implementation Record (2026-07-29)
 
 - Added explicit `TieredMemoryRecall`, model-visible fact, rendered prompt, and immutable `TurnRecallSnapshot` values. A single snapshot now freezes canonical revision/hash, recall projection hash, core/query facts, mode/diagnostics, final prompt, and rendered token count.
-- Core selection is restricted to controlled general-scope keys (`identity.preferred_address`, `locale.response_language`, `communication.response_style`, and typed `boundary.*`), ordered by key, trust, evidence observation time, and stable IDs, capped at 4 facts/150 fact tokens. Legacy unkeyed `communication_style` contributes at most one fallback fact.
+- Core selection is restricted to controlled general-scope keys (`identity.preferred_address`, `identity.assistant_name`, `locale.response_language`, `communication.response_style`, and typed `boundary.*`), ordered by key, trust, evidence observation time, and stable IDs, capped at 4 facts/150 fact tokens. Legacy unkeyed `communication_style` contributes at most one fallback fact.
 - Query recall defaults to `scope=general`, excludes scoped conflicts, caps at 3 facts/300 retrieval tokens, and removes core duplicates by identity and normalized text. Manual retry and initial multi-provider fan-out reuse a bounded per-turn `PreparedMemoryContext` cache; tool rounds receive the same frozen prompt.
 - Final lexical floor is `1.25f`: meaningful Latin tokens (including hyphen/underscore compound components) or CJK bigrams/trigrams are required; exact or accumulated isolated CJK characters fail closed. Vector cosine floor is `0.45f`; `0.449` is rejected and `0.45` is accepted before RRF/MMR. Ready vectors with no survivor remain distinct from unavailable-vector lexical fallback, and lexical-only survivors are no longer mislabeled Hybrid.
 - Calibration evidence: greeting, unrelated, single-CJK, metadata-only, scoped-work, obsolete/superseded, and hard-negative fixtures produced zero query leakage. Meaningful Latin/CJK boundary fixtures and the 108-entry project corpus produced no observed target false negatives before the configured top-k cap; the 108-entry evaluation kept all top 8 as targets and selected 3/3 target facts. Relative `0.85 * max` remains only a post-gate diversity filter.
@@ -813,7 +814,7 @@ git diff --check
 #### Task 5 Follow-up (2026-07-30) - preferred-address recall after consolidation
 
 - [x] 修复全集整理后的称呼状态丢失：`CanonicalMemoryMergePolicy` 在 whole-corpus 模式下会把 `core` 状态写回稳定 survivor，不再只重绑 `canonicalKey/scope` 而留下 `recall=query`。
-- [x] `identity.preferred_address` + `general` 被视为核心召回不变量；既支持多条历史称呼合并，也支持单条已 canonical 但仍为 `query` 的条目由本地整理直接提升，无需额外 LLM 调用。
+- [x] `identity.preferred_address`、`identity.assistant_name` + `general` 被视为核心召回不变量；既支持多条历史身份事实合并，也支持单条已 canonical 但仍为 `query` 的条目由本地整理直接提升，无需额外 LLM 调用。
 - [x] 回归覆盖验证最终 Markdown 为 `recall=core`，并由 `MemoryChunker` + `selectCoreResults()` 实际进入核心胶囊；重点 memory/recall 测试 144/144 通过，`:app:compileDebugKotlin` 通过，`git diff --check` 无错误（CRLF 提示为既有工作区信息）。
 
 #### Task 5 Follow-up (2026-07-31) - manual long-term consolidation feedback and retry
@@ -822,6 +823,13 @@ git diff --check
 - [x] Memory 页面点击后立即发出 `STARTED` Snackbar，最终状态按 job 的 `succeeded`、`failed_terminal`/`blocked_dependency`/`waiting_repair` 或可继续的 retry 状态分别反馈，避免网络调用期间看起来无响应或把终止失败误报为“正在运行”。
 - [x] 设备诊断确认原点击链路曾真实创建 `lt_job_892edcca76526b1ac47bac25`，但 `deepseek-v4-flash` 的 `model_call` 连续失败并留下 `long_term_consolidation_unavailable_or_invalid`；安装新 debug APK (`adb install -r`) 后 `MEMORY.md` 与 Room 数据仍保留，称呼条目由兼容召回路径继续可见。
 - [x] `:app:testDebugUnitTest`、`:app:assembleDebug`、`:app:compileDebugKotlin` 与 `git diff --check` 通过；connected Compose test 未进入断言，设备在锁屏/安装受限状态返回 `INSTALL_FAILED_USER_RESTRICTED`，真实人工点击仍 OPEN。
+
+#### Task 5 Follow-up (2026-08-01) - assistant-name core recall repair
+
+- [x] 将 `identity.assistant_name` 纳入 core 胶囊，与 `identity.preferred_address` 一样固定为 `general` 身份不变量；长期整理对单条 `recall=query` 的 AI 名字 canonical 条目执行本地提升，不依赖额外 LLM 调用。
+- [x] 增加 JVM 回归：`TieredMemoryRecallTest` 4/4、`MemoryLongTermConsolidationPolicyTest` 11/11、`MemoryLongTermConsolidationServiceTest` 14/14、baseline/relevance 各 1/1，共 31/31 通过；`:app:compileDebugAndroidTestKotlin`、`:app:assembleDebug` 和 `:app:assembleDebugAndroidTest` 通过。
+- [x] 在 `ChatWithChat_API35_16K_X86_64`（`emulator-5554`，API 35，16 KB）运行 `MemoryRecallCoreInstrumentedTest`，读取目标应用私有 `files/memory_store/MEMORY.md` 的附件副本（5812 bytes，两个身份条目均为 `recall=query`），`MemoryCorpusSnapshotter + MemoryChunker + selectCoreResults()` 断言用户称呼和 AI 名字均进入 core，结果 1/1、0 failures/errors。
+- [x] 重新安装 debug APK 并恢复附件后，`MainActivity` 成功成为设备前台 resumed activity；未宣称真实 provider 对话或人工点击链路已验证。
 
 ### Task 6: Add Default Memory Model Selection And Unified Activity Runs
 
