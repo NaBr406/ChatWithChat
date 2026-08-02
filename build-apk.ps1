@@ -142,8 +142,15 @@ function Invoke-Gradle {
     $gradlew = Join-Path $ProjectRoot "gradlew.bat"
     if (-not (Test-Path -LiteralPath $gradlew)) { throw "gradlew.bat not found in project root." }
 
-    Write-Step "Running Gradle: $($Tasks -join ' ')"
-    & $gradlew @Tasks
+    # This packaging script must not leave Gradle or Kotlin compiler daemons behind.
+    $processExitArgs = @(
+        "--no-daemon"
+        "-Pkotlin.compiler.execution.strategy=in-process"
+    )
+    $gradleArgs = $processExitArgs + $Tasks
+
+    Write-Step "Running Gradle: $($gradleArgs -join ' ')"
+    & $gradlew @gradleArgs
     $exitCode = $LASTEXITCODE
     if ($exitCode -eq 0) { return }
 
@@ -152,8 +159,9 @@ function Invoke-Gradle {
     }
 
     Write-Step "Gradle failed with exit code $exitCode. Retrying once after clean."
-    Write-Step "Running Gradle: $($CleanRetryTasks -join ' ')"
-    & $gradlew @CleanRetryTasks
+    $cleanRetryArgs = $processExitArgs + $CleanRetryTasks
+    Write-Step "Running Gradle: $($cleanRetryArgs -join ' ')"
+    & $gradlew @cleanRetryArgs
     $retryExitCode = $LASTEXITCODE
     if ($retryExitCode -ne 0) {
         throw "Gradle failed with exit code $exitCode and clean retry failed with exit code $retryExitCode."
