@@ -52,7 +52,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import cn.nabr.chatwithchat.R
-import cn.nabr.chatwithchat.presentation.common.AppleBlue
 import cn.nabr.chatwithchat.presentation.common.AppleGreen
 import cn.nabr.chatwithchat.presentation.common.AppleIndigo
 import cn.nabr.chatwithchat.presentation.common.AppleOrange
@@ -234,6 +233,7 @@ private fun ToolIcon(toolName: String) {
 
 @Composable
 private fun ToolStatusIndicator(status: ChatViewModel.ToolProgressStatus) {
+    val materialColors = settingsMaterialColors()
     Box(
         modifier = Modifier.size(28.dp),
         contentAlignment = Alignment.Center
@@ -247,7 +247,7 @@ private fun ToolStatusIndicator(status: ChatViewModel.ToolProgressStatus) {
                 ChatViewModel.ToolProgressStatus.Running -> CircularProgressIndicator(
                     modifier = Modifier.size(16.dp),
                     strokeWidth = 2.dp,
-                    color = AppleBlue
+                    color = materialColors.primaryLabel
                 )
                 ChatViewModel.ToolProgressStatus.Finished,
                 ChatViewModel.ToolProgressStatus.Failed -> Icon(
@@ -318,18 +318,20 @@ private fun ChatViewModel.ToolProgressState.toolDisplayName(): String = when (to
     else -> toolName.replace('_', ' ')
 }
 
+@Composable
 private fun String.toolVisual(): Pair<ImageVector, Color> = when (this) {
-    WEB_SEARCH_TOOL -> Icons.Rounded.Search to AppleBlue
+    WEB_SEARCH_TOOL -> Icons.Rounded.Search to settingsMaterialColors().primaryLabel
     FETCH_URL_TOOL -> Icons.Rounded.Language to AppleIndigo
     CURRENT_DATETIME_TOOL -> Icons.Rounded.Schedule to AppleOrange
     DEVICE_LOCATION_TOOL -> Icons.Rounded.LocationOn to AppleGreen
-    ADD_SCHEDULE_TOOL -> Icons.Rounded.Event to AppleBlue
+    ADD_SCHEDULE_TOOL -> Icons.Rounded.Event to settingsMaterialColors().primaryLabel
     SET_ALARM_TOOL -> Icons.Rounded.Alarm to AppleRed
     else -> Icons.Rounded.Extension to ApplePurple
 }
 
+@Composable
 private fun ChatViewModel.ToolProgressStatus.statusColor(): Color = when (this) {
-    ChatViewModel.ToolProgressStatus.Running -> AppleBlue
+    ChatViewModel.ToolProgressStatus.Running -> settingsMaterialColors().primaryLabel
     ChatViewModel.ToolProgressStatus.Finished -> AppleGreen
     ChatViewModel.ToolProgressStatus.Failed -> AppleRed
 }

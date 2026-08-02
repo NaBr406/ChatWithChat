@@ -1,5 +1,6 @@
 package cn.nabr.chatwithchat.presentation.ui.setting
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Column
@@ -9,6 +10,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -46,6 +48,7 @@ import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.presentation.common.SettingItem
 import cn.nabr.chatwithchat.presentation.common.SettingsMaterialGroup
 import cn.nabr.chatwithchat.presentation.common.SettingsTopAppBar
+import cn.nabr.chatwithchat.presentation.common.settingsDropdownMenuItemColors
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.common.settingsSwitchColors
 import cn.nabr.chatwithchat.util.formatPlatformTimeout
@@ -245,9 +248,15 @@ fun PlatformTopAppBar(
             }
             DropdownMenu(
                 expanded = showMenu,
-                onDismissRequest = { showMenu = false }
+                onDismissRequest = { showMenu = false },
+                shape = RoundedCornerShape(12.dp),
+                containerColor = settingsMaterialColors().grouped,
+                tonalElevation = 0.dp,
+                shadowElevation = 8.dp,
+                border = BorderStroke(0.5.dp, settingsMaterialColors().separatorStrong)
             ) {
                 DropdownMenuItem(
+                    colors = settingsDropdownMenuItemColors(),
                     text = { Text(stringResource(R.string.delete_platform)) },
                     onClick = {
                         showMenu = false

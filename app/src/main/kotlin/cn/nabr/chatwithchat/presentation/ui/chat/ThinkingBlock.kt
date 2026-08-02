@@ -39,7 +39,6 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cn.nabr.chatwithchat.R
-import cn.nabr.chatwithchat.presentation.common.AppleBlue
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.theme.ChatWithChatTheme
 
@@ -88,7 +87,7 @@ fun ThinkingBlock(
             Icon(
                 imageVector = Icons.Rounded.Psychology,
                 contentDescription = null,
-                tint = AppleBlue,
+                tint = settingsMaterialColors().primaryLabel,
                 modifier = Modifier.size(18.dp)
             )
             Spacer(modifier = Modifier.width(8.dp))

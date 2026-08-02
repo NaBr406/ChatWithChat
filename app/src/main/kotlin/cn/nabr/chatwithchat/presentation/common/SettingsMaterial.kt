@@ -8,12 +8,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.RadioButtonDefaults
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -106,7 +110,12 @@ fun SettingsTopAppBar(
             }
         },
         actions = actions,
-        colors = TopAppBarDefaults.topAppBarColors(containerColor = materialColors.navigation)
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = materialColors.navigation,
+            titleContentColor = materialColors.primaryLabel,
+            navigationIconContentColor = materialColors.primaryLabel,
+            actionIconContentColor = materialColors.primaryLabel
+        )
     )
 }
 
@@ -129,10 +138,19 @@ fun SettingsMaterialGroup(
 
 @Composable
 fun settingsTextFieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedTextColor = settingsMaterialColors().primaryLabel,
+    unfocusedTextColor = settingsMaterialColors().primaryLabel,
+    disabledTextColor = settingsMaterialColors().tertiaryLabel,
     focusedContainerColor = settingsMaterialColors().field,
     unfocusedContainerColor = settingsMaterialColors().field,
-    focusedBorderColor = AppleBlue,
-    unfocusedBorderColor = settingsMaterialColors().separatorStrong
+    disabledContainerColor = settingsMaterialColors().field,
+    focusedBorderColor = settingsMaterialColors().primaryLabel,
+    unfocusedBorderColor = settingsMaterialColors().separatorStrong,
+    disabledBorderColor = settingsMaterialColors().separator,
+    focusedLabelColor = settingsMaterialColors().primaryLabel,
+    unfocusedLabelColor = settingsMaterialColors().secondaryLabel,
+    disabledLabelColor = settingsMaterialColors().tertiaryLabel,
+    cursorColor = settingsMaterialColors().primaryLabel
 )
 
 @Composable
@@ -147,7 +165,77 @@ fun settingsSwitchColors() = settingsMaterialColors().let { materialColors ->
     )
 }
 
-val AppleBlue = Color(0xFF007AFF)
+@Composable
+fun settingsInteractiveColor(): Color = settingsMaterialColors().primaryLabel
+
+@Composable
+fun settingsButtonColors() = settingsMaterialColors().let { materialColors ->
+    ButtonDefaults.buttonColors(
+        containerColor = materialColors.primaryLabel,
+        contentColor = materialColors.canvas,
+        disabledContainerColor = materialColors.controlFill,
+        disabledContentColor = materialColors.tertiaryLabel
+    )
+}
+
+@Composable
+fun settingsTextButtonColors() = settingsMaterialColors().let { materialColors ->
+    ButtonDefaults.textButtonColors(
+        contentColor = materialColors.primaryLabel,
+        disabledContentColor = materialColors.tertiaryLabel
+    )
+}
+
+@Composable
+fun settingsCheckboxColors() = settingsMaterialColors().let { materialColors ->
+    CheckboxDefaults.colors(
+        checkedColor = materialColors.primaryLabel,
+        uncheckedColor = materialColors.secondaryLabel,
+        checkmarkColor = materialColors.canvas,
+        disabledCheckedColor = materialColors.controlFill,
+        disabledUncheckedColor = materialColors.tertiaryLabel,
+        disabledIndeterminateColor = materialColors.controlFill
+    )
+}
+
+@Composable
+fun settingsRadioButtonColors() = settingsMaterialColors().let { materialColors ->
+    RadioButtonDefaults.colors(
+        selectedColor = materialColors.primaryLabel,
+        unselectedColor = materialColors.secondaryLabel,
+        disabledSelectedColor = materialColors.controlFill,
+        disabledUnselectedColor = materialColors.tertiaryLabel
+    )
+}
+
+@Composable
+fun settingsSliderColors() = settingsMaterialColors().let { materialColors ->
+    SliderDefaults.colors(
+        thumbColor = materialColors.primaryLabel,
+        activeTrackColor = materialColors.primaryLabel,
+        activeTickColor = materialColors.canvas,
+        inactiveTrackColor = materialColors.controlFill,
+        inactiveTickColor = materialColors.secondaryLabel,
+        disabledThumbColor = materialColors.tertiaryLabel,
+        disabledActiveTrackColor = materialColors.controlFill,
+        disabledActiveTickColor = materialColors.canvas,
+        disabledInactiveTrackColor = materialColors.controlFill,
+        disabledInactiveTickColor = materialColors.tertiaryLabel
+    )
+}
+
+@Composable
+fun settingsDropdownMenuItemColors() = settingsMaterialColors().let { materialColors ->
+    androidx.compose.material3.MenuDefaults.itemColors(
+        textColor = materialColors.primaryLabel,
+        leadingIconColor = materialColors.secondaryLabel,
+        trailingIconColor = materialColors.secondaryLabel,
+        disabledTextColor = materialColors.tertiaryLabel,
+        disabledLeadingIconColor = materialColors.tertiaryLabel,
+        disabledTrailingIconColor = materialColors.tertiaryLabel
+    )
+}
+
 val AppleGreen = Color(0xFF34C759)
 val AppleIndigo = Color(0xFF5856D6)
 val AppleOrange = Color(0xFFFF9500)

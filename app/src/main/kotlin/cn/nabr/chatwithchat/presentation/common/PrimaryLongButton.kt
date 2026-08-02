@@ -3,6 +3,7 @@ package cn.nabr.chatwithchat.presentation.common
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -24,7 +25,9 @@ fun PrimaryLongButton(
             .fillMaxWidth()
             .height(56.dp),
         onClick = onClick,
-        enabled = enabled
+        enabled = enabled,
+        shape = RoundedCornerShape(8.dp),
+        colors = settingsButtonColors()
     ) {
         Text(text = text)
     }

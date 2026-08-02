@@ -70,7 +70,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.database.entity.ChatRoomV2
-import cn.nabr.chatwithchat.presentation.common.AppleBlue
 import cn.nabr.chatwithchat.presentation.common.AppleRed
 import cn.nabr.chatwithchat.presentation.common.HigActionDialog
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
@@ -539,6 +538,6 @@ fun DeleteWarningDialog(
         secondaryActionLabel = stringResource(R.string.cancel),
         onSecondaryAction = onDismissRequest,
         primaryActionColor = AppleRed,
-        secondaryActionColor = AppleBlue
+        secondaryActionColor = settingsMaterialColors().primaryLabel
     )
 }

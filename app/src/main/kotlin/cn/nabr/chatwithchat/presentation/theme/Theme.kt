@@ -2,12 +2,16 @@ package cn.nabr.chatwithchat.presentation.theme
 
 import android.app.Activity
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.text.selection.LocalTextSelectionColors
+import androidx.compose.foundation.text.selection.TextSelectionColors
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
@@ -16,6 +20,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import cn.nabr.chatwithchat.data.model.DynamicTheme
 import cn.nabr.chatwithchat.data.model.ThemeMode
+import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 
 @Immutable
 data class ExtendedColorScheme(
@@ -406,7 +411,7 @@ fun ChatWithChatTheme(
         ThemeMode.LIGHT -> false
     }
 
-    val colorScheme = when {
+    val baseColorScheme = when {
         useDynamicColor -> {
             val context = LocalContext.current
             if (useDarkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
@@ -416,6 +421,7 @@ fun ChatWithChatTheme(
 
         else -> lightScheme
     }
+    val colorScheme = settingsColorScheme(baseColorScheme, useDarkTheme)
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
@@ -428,6 +434,58 @@ fun ChatWithChatTheme(
     MaterialTheme(
         colorScheme = colorScheme,
         typography = AppTypography,
-        content = content
+        content = {
+            val materialColors = settingsMaterialColors()
+            CompositionLocalProvider(
+                LocalTextSelectionColors provides TextSelectionColors(
+                    handleColor = materialColors.primaryLabel,
+                    backgroundColor = materialColors.primaryLabel.copy(alpha = 0.20f)
+                ),
+                content = content
+            )
+        }
+    )
+}
+
+private fun settingsColorScheme(base: ColorScheme, isDark: Boolean): ColorScheme {
+    val canvas = if (isDark) Color.Black else Color.White
+    val grouped = if (isDark) Color(0xFF1C1C1E) else Color(0xFFF8F8FA)
+    val field = if (isDark) Color(0xFF2C2C2E) else Color.White
+    val primaryLabel = if (isDark) Color.White else Color(0xFF1C1C1E)
+    val secondaryLabel = if (isDark) Color(0xFFAEAEB2) else Color(0xFF6C6C70)
+    val separator = if (isDark) Color(0x42545458) else Color(0x183C3C43)
+    val separatorStrong = if (isDark) Color(0x66545458) else Color(0x303C3C43)
+    val controlFill = if (isDark) Color(0xFF39393D) else Color(0xFFD1D1D6)
+    return base.copy(
+        primary = primaryLabel,
+        onPrimary = canvas,
+        primaryContainer = controlFill,
+        onPrimaryContainer = primaryLabel,
+        secondary = secondaryLabel,
+        onSecondary = canvas,
+        secondaryContainer = controlFill,
+        onSecondaryContainer = primaryLabel,
+        tertiary = primaryLabel,
+        onTertiary = canvas,
+        tertiaryContainer = grouped,
+        onTertiaryContainer = primaryLabel,
+        background = canvas,
+        onBackground = primaryLabel,
+        surface = canvas,
+        onSurface = primaryLabel,
+        surfaceVariant = grouped,
+        onSurfaceVariant = secondaryLabel,
+        inverseSurface = primaryLabel,
+        inverseOnSurface = canvas,
+        inversePrimary = canvas,
+        outline = separatorStrong,
+        outlineVariant = separator,
+        surfaceDim = if (isDark) canvas else controlFill,
+        surfaceBright = if (isDark) field else canvas,
+        surfaceContainerLowest = canvas,
+        surfaceContainerLow = field,
+        surfaceContainer = grouped,
+        surfaceContainerHigh = controlFill,
+        surfaceContainerHighest = controlFill
     )
 }

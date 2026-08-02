@@ -47,8 +47,8 @@ fun HigActionDialog(
     onSecondaryAction: (() -> Unit)? = null,
     isDismissible: Boolean = true,
     isPrimaryActionEnabled: Boolean = true,
-    primaryActionColor: Color = AppleBlue,
-    secondaryActionColor: Color = AppleBlue,
+    primaryActionColor: Color = settingsInteractiveColor(),
+    secondaryActionColor: Color = settingsInteractiveColor(),
     content: @Composable ColumnScope.() -> Unit = {}
 ) {
     val materialColors = settingsMaterialColors()

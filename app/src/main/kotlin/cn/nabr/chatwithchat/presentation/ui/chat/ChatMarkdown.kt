@@ -65,7 +65,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import cn.nabr.chatwithchat.R
-import cn.nabr.chatwithchat.presentation.common.AppleBlue
 import cn.nabr.chatwithchat.presentation.common.AppleGreen
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import com.mikepenz.markdown.annotator.annotatorSettings
@@ -386,7 +385,7 @@ private fun CodeBlockWithCopy(
                         contentDescription = stringResource(
                             if (isCopied) R.string.code_copied else R.string.copy_code
                         ),
-                        tint = if (isCopied) AppleGreen else AppleBlue,
+                        tint = if (isCopied) AppleGreen else materialColors.primaryLabel,
                         modifier = Modifier.size(18.dp)
                     )
                 }
@@ -880,6 +879,7 @@ private fun ChatMarkdownBlockQuote(
     model: MarkdownComponentModel,
     contentColor: Color
 ) {
+    val materialColors = settingsMaterialColors()
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
@@ -892,7 +892,7 @@ private fun ChatMarkdownBlockQuote(
                 .fillMaxWidth()
                 .drawBehind {
                     drawRect(
-                        color = AppleBlue,
+                        color = materialColors.primaryLabel,
                         size = Size(width = 3.dp.toPx(), height = size.height)
                     )
                 }

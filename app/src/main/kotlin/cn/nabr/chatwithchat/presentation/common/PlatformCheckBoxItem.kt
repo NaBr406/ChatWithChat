@@ -29,6 +29,7 @@ fun PlatformCheckBoxItem(
     onClickEvent: () -> Unit
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    val materialColors = settingsMaterialColors()
     val rowModifier = if (enabled) {
         modifier
             .fillMaxWidth()
@@ -52,19 +53,22 @@ fun PlatformCheckBoxItem(
             enabled = enabled,
             checked = selected,
             interactionSource = interactionSource,
-            onCheckedChange = { onClickEvent.invoke() }
+            onCheckedChange = { onClickEvent.invoke() },
+            colors = settingsCheckboxColors()
         )
         Column(horizontalAlignment = Alignment.Start) {
             Text(
                 text = title,
                 modifier = textModifier,
-                style = MaterialTheme.typography.titleMedium
+                style = MaterialTheme.typography.titleMedium,
+                color = if (enabled) materialColors.primaryLabel else materialColors.tertiaryLabel
             )
             description?.let {
                 Text(
                     text = it,
                     modifier = textModifier,
-                    style = MaterialTheme.typography.bodySmall
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (enabled) materialColors.secondaryLabel else materialColors.tertiaryLabel
                 )
             }
         }

@@ -2,6 +2,7 @@ package cn.nabr.chatwithchat.presentation.common
 
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Clear
@@ -43,6 +44,8 @@ fun TokenInputField(
         singleLine = true,
         visualTransformation = PasswordVisualTransformation(),
         keyboardOptions = keyboardOptions,
+        shape = RoundedCornerShape(10.dp),
+        colors = settingsTextFieldColors(),
         supportingText = {
             HelpText(helpLink)
         },
@@ -59,11 +62,15 @@ fun TokenInputField(
 @Preview
 @Composable
 fun HelpText(helpLink: String = "") {
+    val materialColors = settingsMaterialColors()
     val annotatedString = buildAnnotatedString {
         val str = stringResource(R.string.need_help)
         withLink(LinkAnnotation.Url(url = helpLink)) {
             append(str)
         }
     }
-    Text(annotatedString)
+    Text(
+        text = annotatedString,
+        color = materialColors.secondaryLabel
+    )
 }

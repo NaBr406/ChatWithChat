@@ -45,7 +45,6 @@ import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.database.entity.PlatformModelRefreshStatus
 import cn.nabr.chatwithchat.data.database.entity.PlatformModelV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
-import cn.nabr.chatwithchat.presentation.common.AppleBlue
 import cn.nabr.chatwithchat.presentation.common.SettingsMaterialGroup
 import cn.nabr.chatwithchat.presentation.common.SettingsTopAppBar
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
@@ -148,7 +147,7 @@ private fun PlatformModelGroup(
             TextButton(
                 enabled = !refreshing,
                 onClick = onRefreshClick,
-                colors = ButtonDefaults.textButtonColors(contentColor = AppleBlue)
+                colors = ButtonDefaults.textButtonColors(contentColor = settingsMaterialColors().primaryLabel)
             ) {
                 if (refreshing) {
                     CircularProgressIndicator(
@@ -212,7 +211,7 @@ private fun ModelManagementRow(
                     Icon(
                         imageVector = Icons.Outlined.Check,
                         contentDescription = null,
-                        tint = if (model.enabled) AppleBlue else settingsMaterialColors().tertiaryLabel
+                        tint = if (model.enabled) settingsMaterialColors().primaryLabel else settingsMaterialColors().tertiaryLabel
                     )
                 }
             }

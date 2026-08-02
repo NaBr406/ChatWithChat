@@ -104,6 +104,7 @@ import cn.nabr.chatwithchat.data.database.entity.effectiveStickerRefs
 import cn.nabr.chatwithchat.data.database.entity.effectiveThoughts
 import cn.nabr.chatwithchat.data.database.entity.effectiveTokenUsage
 import cn.nabr.chatwithchat.data.model.ReasoningMode
+import cn.nabr.chatwithchat.presentation.common.settingsDropdownMenuItemColors
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import java.io.File
 import kotlin.math.abs
@@ -267,7 +268,13 @@ fun ChatScreen(
 
     if (isSelectTextSheetOpen) {
         val selectedText by chatViewModel.selectedText.collectAsStateWithLifecycle()
-        ModalBottomSheet(onDismissRequest = chatViewModel::closeSelectTextSheet) {
+        val materialColors = settingsMaterialColors()
+        ModalBottomSheet(
+            onDismissRequest = chatViewModel::closeSelectTextSheet,
+            containerColor = materialColors.grouped,
+            contentColor = materialColors.primaryLabel,
+            scrimColor = materialColors.primaryLabel.copy(alpha = 0.32f)
+        ) {
             SelectionContainer(
                 modifier = Modifier
                     .padding(24.dp)
@@ -992,6 +999,7 @@ fun ChatDropdownMenu(
         DropdownMenuItem(
             modifier = Modifier.heightIn(min = 52.dp),
             enabled = isMenuItemEnabled,
+            colors = settingsDropdownMenuItemColors(),
             leadingIcon = {
                 Icon(
                     imageVector = Icons.Outlined.Edit,
@@ -1015,6 +1023,7 @@ fun ChatDropdownMenu(
         DropdownMenuItem(
             modifier = Modifier.heightIn(min = 52.dp),
             enabled = isMenuItemEnabled,
+            colors = settingsDropdownMenuItemColors(),
             leadingIcon = {
                 Icon(
                     imageVector = Icons.Outlined.IosShare,
@@ -1044,13 +1053,20 @@ fun ChatBubbleDropdownMenu(
     onEditItemClick: () -> Unit,
     onCopyItemClick: () -> Unit
 ) {
+    val materialColors = settingsMaterialColors()
     DropdownMenu(
         modifier = Modifier.wrapContentSize(),
         expanded = isChatBubbleDropdownMenuExpanded,
-        onDismissRequest = onDismissRequest
+        onDismissRequest = onDismissRequest,
+        shape = RoundedCornerShape(12.dp),
+        containerColor = materialColors.grouped,
+        tonalElevation = 0.dp,
+        shadowElevation = 8.dp,
+        border = BorderStroke(0.5.dp, materialColors.separatorStrong)
     ) {
         DropdownMenuItem(
             enabled = canEdit,
+            colors = settingsDropdownMenuItemColors(),
             leadingIcon = {
                 Icon(
                     Icons.Outlined.Edit,
@@ -1064,6 +1080,7 @@ fun ChatBubbleDropdownMenu(
             }
         )
         DropdownMenuItem(
+            colors = settingsDropdownMenuItemColors(),
             leadingIcon = {
                 Icon(
                     imageVector = ImageVector.vectorResource(id = R.drawable.ic_copy),

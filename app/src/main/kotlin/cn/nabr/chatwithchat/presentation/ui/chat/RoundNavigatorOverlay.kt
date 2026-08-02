@@ -59,7 +59,6 @@ import cn.nabr.chatwithchat.data.database.entity.effectiveContent
 import cn.nabr.chatwithchat.data.database.entity.effectiveStickerRefs
 import cn.nabr.chatwithchat.data.database.entity.effectiveTokenUsage
 import cn.nabr.chatwithchat.data.token.TokenUsageRecord
-import cn.nabr.chatwithchat.presentation.common.AppleBlue
 import cn.nabr.chatwithchat.presentation.common.AppleGreen
 import cn.nabr.chatwithchat.presentation.common.AppleOrange
 import cn.nabr.chatwithchat.presentation.common.AppleRed
@@ -101,11 +100,11 @@ fun CompletedRoundButton(
 ) {
     val materialColors = settingsMaterialColors()
     val containerColor = animateColorAsState(
-        targetValue = if (isExpanded) AppleBlue.copy(alpha = 0.12f) else Color.Transparent,
+        targetValue = if (isExpanded) materialColors.primaryLabel.copy(alpha = 0.12f) else Color.Transparent,
         label = "roundCountContainerColor"
     ).value
     val contentColor = animateColorAsState(
-        targetValue = if (isExpanded) AppleBlue else materialColors.secondaryLabel,
+        targetValue = if (isExpanded) materialColors.primaryLabel else materialColors.secondaryLabel,
         label = "roundCountContentColor"
     ).value
     val description = stringResource(R.string.round_navigator_button_description, roundCount)
@@ -281,7 +280,7 @@ private fun RoundNavigatorItem(
     onClick: () -> Unit
 ) {
     val materialColors = settingsMaterialColors()
-    val statusColor = item.status.color
+    val statusColor = item.status.color()
     val statusLabel = item.status.localizedLabel()
     val onClickLabel = stringResource(R.string.round_navigator_jump_to, item.displayNumber)
     val questionPreview = item.questionPreview.ifBlank { stringResource(R.string.round_question_empty) }
@@ -291,7 +290,7 @@ private fun RoundNavigatorItem(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(if (isCurrent) AppleBlue.copy(alpha = 0.08f) else Color.Transparent)
+            .background(if (isCurrent) materialColors.primaryLabel.copy(alpha = 0.08f) else Color.Transparent)
             .semantics(mergeDescendants = true) { selected = isCurrent }
             .clickable(
                 role = Role.Button,
@@ -308,8 +307,8 @@ private fun RoundNavigatorItem(
                 .width(roundNumberWidth)
                 .heightIn(min = 32.dp),
             shape = CircleShape,
-            color = if (isCurrent) AppleBlue else AppleBlue.copy(alpha = 0.1f),
-            contentColor = if (isCurrent) Color.White else AppleBlue,
+            color = if (isCurrent) materialColors.primaryLabel else materialColors.primaryLabel.copy(alpha = 0.1f),
+            contentColor = if (isCurrent) materialColors.canvas else materialColors.primaryLabel,
             tonalElevation = 0.dp
         ) {
             Box(contentAlignment = Alignment.Center) {
@@ -375,7 +374,7 @@ private fun RoundNavigatorItem(
         Icon(
             imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
             contentDescription = null,
-            tint = if (isCurrent) AppleBlue else materialColors.tertiaryLabel,
+            tint = if (isCurrent) materialColors.primaryLabel else materialColors.tertiaryLabel,
             modifier = Modifier
                 .padding(top = 7.dp)
                 .size(18.dp)
@@ -463,12 +462,12 @@ fun buildRoundNavigationItems(
     )
 }
 
-private val RoundStatus.color: Color
-    get() = when (this) {
+@Composable
+private fun RoundStatus.color(): Color = when (this) {
         RoundStatus.Completed -> AppleGreen
         RoundStatus.Partial -> AppleOrange
         RoundStatus.Failed -> AppleRed
-        RoundStatus.Generating -> AppleBlue
+        RoundStatus.Generating -> settingsMaterialColors().primaryLabel
     }
 
 @Composable

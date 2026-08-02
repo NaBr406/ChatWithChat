@@ -5,6 +5,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AddPhotoAlternate
 import androidx.compose.material.icons.outlined.Delete
@@ -60,8 +62,11 @@ import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.sticker.StickerCatalogItem
 import cn.nabr.chatwithchat.presentation.common.SettingsMaterialGroup
 import cn.nabr.chatwithchat.presentation.common.SettingsTopAppBar
+import cn.nabr.chatwithchat.presentation.common.settingsDropdownMenuItemColors
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.common.settingsSwitchColors
+import cn.nabr.chatwithchat.presentation.common.settingsTextButtonColors
+import cn.nabr.chatwithchat.presentation.common.settingsTextFieldColors
 import cn.nabr.chatwithchat.presentation.ui.chat.StickerAssetPreview
 import kotlinx.coroutines.flow.collect
 
@@ -263,18 +268,27 @@ fun StickerLibraryScreen(
 
     deletingSticker?.let { sticker ->
         AlertDialog(
+            containerColor = settingsMaterialColors().grouped,
+            titleContentColor = settingsMaterialColors().primaryLabel,
+            textContentColor = settingsMaterialColors().secondaryLabel,
             title = { Text(stringResource(R.string.sticker_library_delete)) },
             text = {
                 Text(stringResource(R.string.sticker_library_delete_confirmation, sticker.title))
             },
             onDismissRequest = { deletingStickerId = null },
             confirmButton = {
-                TextButton(onClick = { stickerLibraryViewModel.deleteCustomItem(sticker.stickerId) }) {
+                TextButton(
+                    onClick = { stickerLibraryViewModel.deleteCustomItem(sticker.stickerId) },
+                    colors = settingsTextButtonColors()
+                ) {
                     Text(stringResource(R.string.delete))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { deletingStickerId = null }) {
+                TextButton(
+                    onClick = { deletingStickerId = null },
+                    colors = settingsTextButtonColors()
+                ) {
                     Text(stringResource(R.string.cancel))
                 }
             }
@@ -490,9 +504,15 @@ private fun StickerCatalogRow(
                         }
                         DropdownMenu(
                             expanded = menuExpanded,
-                            onDismissRequest = { menuExpanded = false }
+                            onDismissRequest = { menuExpanded = false },
+                            shape = RoundedCornerShape(12.dp),
+                            containerColor = settingsMaterialColors().grouped,
+                            tonalElevation = 0.dp,
+                            shadowElevation = 8.dp,
+                            border = BorderStroke(0.5.dp, settingsMaterialColors().separatorStrong)
                         ) {
                             DropdownMenuItem(
+                                colors = settingsDropdownMenuItemColors(),
                                 text = { Text(stringResource(R.string.sticker_library_edit)) },
                                 leadingIcon = {
                                     Icon(imageVector = Icons.Outlined.Edit, contentDescription = null)
@@ -503,6 +523,7 @@ private fun StickerCatalogRow(
                                 }
                             )
                             DropdownMenuItem(
+                                colors = settingsDropdownMenuItemColors(),
                                 text = { Text(stringResource(R.string.sticker_library_delete)) },
                                 leadingIcon = {
                                     Icon(imageVector = Icons.Outlined.Delete, contentDescription = null)
@@ -539,6 +560,9 @@ private fun StickerMetadataDialog(
     }
 
     AlertDialog(
+        containerColor = settingsMaterialColors().grouped,
+        titleContentColor = settingsMaterialColors().primaryLabel,
+        textContentColor = settingsMaterialColors().secondaryLabel,
         title = { Text(stringResource(R.string.sticker_library_edit)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -547,7 +571,9 @@ private fun StickerMetadataDialog(
                     value = title,
                     onValueChange = { value -> title = value.take(80) },
                     label = { Text(stringResource(R.string.sticker_title)) },
-                    singleLine = true
+                    singleLine = true,
+                    shape = RoundedCornerShape(10.dp),
+                    colors = settingsTextFieldColors()
                 )
                 OutlinedTextField(
                     modifier = Modifier.fillMaxWidth(),
@@ -555,7 +581,9 @@ private fun StickerMetadataDialog(
                     onValueChange = { value -> altText = value.take(160) },
                     label = { Text(stringResource(R.string.sticker_alt_text)) },
                     minLines = 2,
-                    maxLines = 3
+                    maxLines = 3,
+                    shape = RoundedCornerShape(10.dp),
+                    colors = settingsTextFieldColors()
                 )
                 OutlinedTextField(
                     modifier = Modifier.fillMaxWidth(),
@@ -564,7 +592,9 @@ private fun StickerMetadataDialog(
                     label = { Text(stringResource(R.string.sticker_tags)) },
                     supportingText = { Text(stringResource(R.string.sticker_tags_supporting)) },
                     minLines = 1,
-                    maxLines = 2
+                    maxLines = 2,
+                    shape = RoundedCornerShape(10.dp),
+                    colors = settingsTextFieldColors()
                 )
             }
         },
@@ -572,13 +602,18 @@ private fun StickerMetadataDialog(
         confirmButton = {
             TextButton(
                 enabled = !isSaving && title.isNotBlank() && altText.isNotBlank(),
-                onClick = { onSave(title, altText, tags) }
+                onClick = { onSave(title, altText, tags) },
+                colors = settingsTextButtonColors()
             ) {
                 Text(stringResource(R.string.sticker_save))
             }
         },
         dismissButton = {
-            TextButton(enabled = !isSaving, onClick = onDismissRequest) {
+            TextButton(
+                enabled = !isSaving,
+                onClick = onDismissRequest,
+                colors = settingsTextButtonColors()
+            ) {
                 Text(stringResource(R.string.cancel))
             }
         }

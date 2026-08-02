@@ -31,6 +31,7 @@ fun RadioItem(
     onSelected: (String) -> Unit = { }
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    val materialColors = settingsMaterialColors()
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -47,7 +48,8 @@ fun RadioItem(
         RadioButton(
             selected = selected,
             onClick = null,
-            interactionSource = interactionSource
+            interactionSource = interactionSource,
+            colors = settingsRadioButtonColors()
         )
         Column(
             modifier = Modifier.padding(start = 16.dp),
@@ -55,12 +57,14 @@ fun RadioItem(
         ) {
             Text(
                 text = title,
-                style = MaterialTheme.typography.titleMedium
+                style = MaterialTheme.typography.titleMedium,
+                color = materialColors.primaryLabel
             )
             description?.let {
                 Text(
                     text = it,
-                    style = MaterialTheme.typography.bodySmall
+                    style = MaterialTheme.typography.bodySmall,
+                    color = materialColors.secondaryLabel
                 )
             }
         }

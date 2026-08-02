@@ -17,7 +17,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -41,8 +40,9 @@ import cn.nabr.chatwithchat.data.context.stripInternalStickerMarkers
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.effectiveContent
 import cn.nabr.chatwithchat.data.database.entity.effectiveThoughts
-import cn.nabr.chatwithchat.presentation.common.AppleBlue
 import cn.nabr.chatwithchat.presentation.common.HigActionDialog
+import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
+import cn.nabr.chatwithchat.presentation.common.settingsTextButtonColors
 import cn.nabr.chatwithchat.presentation.common.settingsTextFieldColors
 import kotlinx.coroutines.launch
 
@@ -91,7 +91,7 @@ fun ChatTitleDialog(
         )
         TextButton(
             onClick = { title = onDefaultTitleMode.invoke() ?: untitledChat },
-            colors = ButtonDefaults.textButtonColors(contentColor = AppleBlue)
+            colors = settingsTextButtonColors()
         ) {
             Icon(
                 imageVector = Icons.Rounded.Refresh,
@@ -147,6 +147,9 @@ fun UserMessageEditDialog(
     }
 
     AlertDialog(
+        containerColor = settingsMaterialColors().grouped,
+        titleContentColor = settingsMaterialColors().primaryLabel,
+        textContentColor = settingsMaterialColors().secondaryLabel,
         properties = DialogProperties(usePlatformDefaultWidth = false),
         modifier = Modifier
             .widthIn(max = screenWidth - 40.dp)
@@ -163,7 +166,9 @@ fun UserMessageEditDialog(
                     onValueChange = { question = it },
                     minLines = 3,
                     maxLines = questionFieldMaxLines,
-                    label = { Text(stringResource(R.string.user_message)) }
+                    label = { Text(stringResource(R.string.user_message)) },
+                    shape = RoundedCornerShape(10.dp),
+                    colors = settingsTextFieldColors()
                 )
                 AttachmentEditorSection(
                     attachments = attachments,
@@ -185,14 +190,16 @@ fun UserMessageEditDialog(
                     !hasPendingOrFailedAttachments &&
                     (question.isNotBlank() || attachments.isNotEmpty()) &&
                     (question != initialQuestion.content || attachments.mapNotNull { it.attachment } != initialQuestion.attachments),
-                onClick = { onConfirmRequest(initialQuestion.copy(content = question)) }
+                onClick = { onConfirmRequest(initialQuestion.copy(content = question)) },
+                colors = settingsTextButtonColors()
             ) {
                 Text(stringResource(R.string.confirm))
             }
         },
         dismissButton = {
             TextButton(
-                onClick = onDismissRequest
+                onClick = onDismissRequest,
+                colors = settingsTextButtonColors()
             ) {
                 Text(stringResource(R.string.cancel))
             }
@@ -239,6 +246,9 @@ fun AssistantMessageEditDialog(
     }
 
     AlertDialog(
+        containerColor = settingsMaterialColors().grouped,
+        titleContentColor = settingsMaterialColors().primaryLabel,
+        textContentColor = settingsMaterialColors().secondaryLabel,
         properties = DialogProperties(usePlatformDefaultWidth = false),
         modifier = Modifier
             .widthIn(max = screenWidth - 40.dp)
@@ -255,7 +265,9 @@ fun AssistantMessageEditDialog(
                     onValueChange = { responseText = it },
                     minLines = 3,
                     maxLines = 8,
-                    label = { Text(stringResource(R.string.assistant_message)) }
+                    label = { Text(stringResource(R.string.assistant_message)) },
+                    shape = RoundedCornerShape(10.dp),
+                    colors = settingsTextFieldColors()
                 )
                 OutlinedTextField(
                     modifier = Modifier
@@ -266,7 +278,9 @@ fun AssistantMessageEditDialog(
                     onValueChange = { thoughtsText = it },
                     minLines = 2,
                     maxLines = 8,
-                    label = { Text(stringResource(R.string.assistant_thoughts)) }
+                    label = { Text(stringResource(R.string.assistant_thoughts)) },
+                    shape = RoundedCornerShape(10.dp),
+                    colors = settingsTextFieldColors()
                 )
                 AttachmentEditorSection(
                     attachments = attachments,
@@ -297,13 +311,14 @@ fun AssistantMessageEditDialog(
                         initialMessage.copy(content = responseText),
                         thoughtsText
                     )
-                }
+                },
+                colors = settingsTextButtonColors()
             ) {
                 Text(stringResource(R.string.confirm))
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismissRequest) {
+            TextButton(onClick = onDismissRequest, colors = settingsTextButtonColors()) {
                 Text(stringResource(R.string.cancel))
             }
         }
@@ -326,7 +341,8 @@ private fun AttachmentEditorSection(
     TextButton(
         modifier = Modifier.padding(horizontal = 12.dp),
         enabled = enabled,
-        onClick = onAttachFileClick
+        onClick = onAttachFileClick,
+        colors = settingsTextButtonColors()
     ) {
         Text(text = stringResource(R.string.attach_file))
     }

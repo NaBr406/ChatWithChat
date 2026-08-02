@@ -35,7 +35,6 @@ import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Tune
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -46,7 +45,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -75,7 +73,7 @@ import cn.nabr.chatwithchat.data.tool.ResolvedToolCatalogEntry
 import cn.nabr.chatwithchat.data.tool.ToolCallingMode
 import cn.nabr.chatwithchat.data.tool.ToolCatalogEntry
 import cn.nabr.chatwithchat.data.websearch.WebSearchMode
-import cn.nabr.chatwithchat.presentation.common.AppleBlue
+import cn.nabr.chatwithchat.presentation.common.AppleRed
 import cn.nabr.chatwithchat.presentation.common.HigActionDialog
 import cn.nabr.chatwithchat.presentation.common.LocalNotificationPermissionRequester
 import cn.nabr.chatwithchat.presentation.common.LocalToolPermissionRequester
@@ -630,7 +628,7 @@ private fun SettingsSelectionCheckmark(selected: Boolean) {
                 imageVector = Icons.Outlined.Check,
                 contentDescription = null,
                 modifier = Modifier.size(22.dp),
-                tint = AppleBlue
+                tint = settingsMaterialColors().primaryLabel
             )
         }
     }
@@ -696,19 +694,14 @@ fun MemoryMaintenanceNotificationsItem(
 fun DeletePlatformDialog(
     settingViewModel: SettingViewModelV2 = hiltViewModel()
 ) {
-    AlertDialog(
-        title = { Text(stringResource(R.string.delete_platform)) },
-        text = { Text(stringResource(R.string.delete_platform_confirmation)) },
+    HigActionDialog(
+        title = stringResource(R.string.delete_platform),
+        message = stringResource(R.string.delete_platform_confirmation),
+        primaryActionLabel = stringResource(R.string.delete),
+        primaryActionColor = AppleRed,
+        onPrimaryAction = settingViewModel::confirmDelete,
         onDismissRequest = settingViewModel::closeDeleteDialog,
-        confirmButton = {
-            TextButton(onClick = settingViewModel::confirmDelete) {
-                Text(stringResource(R.string.delete))
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = settingViewModel::closeDeleteDialog) {
-                Text(stringResource(R.string.cancel))
-            }
-        }
+        secondaryActionLabel = stringResource(R.string.cancel),
+        onSecondaryAction = settingViewModel::closeDeleteDialog
     )
 }

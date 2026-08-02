@@ -1,6 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
+    <style name="Theme.ChatWithChat" parent="android:Theme.Material.NoActionBar">
+        <item name="android:colorAccent">@color/settings_interactive</item>
+        <item name="android:colorControlNormal">@color/settings_interactive</item>
+        <item name="android:colorControlActivated">@color/settings_interactive</item>
+        <item name="android:colorControlHighlight">@color/settings_selection_highlight</item>
+        <item name="android:textColorPrimary">@color/settings_interactive</item>
+        <item name="android:textColorHighlight">@color/settings_selection_highlight</item>
+        <item name="android:colorBackgroundFloating">@color/settings_popup</item>
+    </style>
+
     <style name="Theme.ChatWithChat.Starting" parent="Theme.SplashScreen.IconBackground">
         <item name="windowSplashScreenBackground">@color/ic_chat_with_chat_background</item>
         <item name="windowSplashScreenAnimatedIcon">@drawable/splash_icon_inset</item>

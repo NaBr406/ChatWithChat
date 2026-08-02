@@ -42,7 +42,6 @@ fun SettingItem(
             .fillMaxWidth()
             .padding(horizontal = 8.dp)
     }
-    val colors = ListItemDefaults.colors()
     val materialColors = settingsMaterialColors()
 
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -65,10 +64,10 @@ fun SettingItem(
                 },
                 colors = ListItemDefaults.colors(
                     containerColor = Color.Transparent,
-                    headlineColor = if (enabled) colors.headlineColor else colors.disabledHeadlineColor,
-                    supportingColor = if (enabled) colors.supportingTextColor else colors.disabledHeadlineColor,
-                    leadingIconColor = if (enabled) materialColors.primaryLabel else colors.disabledLeadingIconColor,
-                    trailingIconColor = if (enabled) colors.trailingIconColor else colors.disabledTrailingIconColor
+                    headlineColor = if (enabled) materialColors.primaryLabel else materialColors.tertiaryLabel,
+                    supportingColor = if (enabled) materialColors.secondaryLabel else materialColors.tertiaryLabel,
+                    leadingIconColor = if (enabled) materialColors.primaryLabel else materialColors.tertiaryLabel,
+                    trailingIconColor = if (enabled) materialColors.secondaryLabel else materialColors.tertiaryLabel
                 )
             )
         } else {
@@ -89,9 +88,9 @@ fun SettingItem(
                 },
                 colors = ListItemDefaults.colors(
                     containerColor = Color.Transparent,
-                    headlineColor = if (enabled) colors.headlineColor else colors.disabledHeadlineColor,
-                    supportingColor = if (enabled) colors.supportingTextColor else colors.disabledHeadlineColor,
-                    trailingIconColor = if (enabled) colors.trailingIconColor else colors.disabledTrailingIconColor
+                    headlineColor = if (enabled) materialColors.primaryLabel else materialColors.tertiaryLabel,
+                    supportingColor = if (enabled) materialColors.secondaryLabel else materialColors.tertiaryLabel,
+                    trailingIconColor = if (enabled) materialColors.secondaryLabel else materialColors.tertiaryLabel
                 )
             )
         }

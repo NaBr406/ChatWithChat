@@ -67,7 +67,6 @@ import cn.nabr.chatwithchat.data.database.entity.MessageStickerRef
 import cn.nabr.chatwithchat.data.database.entity.SafeMessageSourceTarget
 import cn.nabr.chatwithchat.data.database.entity.safeDedupeKey
 import cn.nabr.chatwithchat.data.database.entity.safeNavigationTarget
-import cn.nabr.chatwithchat.presentation.common.AppleBlue
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.theme.ChatWithChatTheme
 import java.io.File
@@ -259,13 +258,13 @@ private fun ResponseLoadingIndicator() {
         Box(
             modifier = Modifier
                 .size(30.dp)
-                .background(AppleBlue.copy(alpha = 0.1f), CircleShape),
+                .background(materialColors.primaryLabel.copy(alpha = 0.1f), CircleShape),
             contentAlignment = Alignment.Center
         ) {
             CircularProgressIndicator(
                 modifier = Modifier.size(15.dp),
                 strokeWidth = 2.dp,
-                color = AppleBlue
+                color = materialColors.primaryLabel
             )
         }
         Text(
@@ -316,13 +315,13 @@ private fun SourceMetadataBlock(
                 Box(
                     modifier = Modifier
                         .size(28.dp)
-                        .background(AppleBlue.copy(alpha = 0.1f), CircleShape),
+                        .background(materialColors.primaryLabel.copy(alpha = 0.1f), CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.Language,
                         contentDescription = null,
-                        tint = AppleBlue,
+                        tint = materialColors.primaryLabel,
                         modifier = Modifier.size(16.dp)
                     )
                 }
@@ -437,7 +436,7 @@ private fun SourceMetadataItem(
             Text(
                 text = detail,
                 style = MaterialTheme.typography.bodySmall,
-                color = if (openSource != null) AppleBlue else materialColors.secondaryLabel,
+                color = if (openSource != null) materialColors.primaryLabel else materialColors.secondaryLabel,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )

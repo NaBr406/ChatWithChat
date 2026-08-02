@@ -45,9 +45,9 @@ import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.ModelConstants
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.model.ClientType
-import cn.nabr.chatwithchat.presentation.common.AppleBlue
 import cn.nabr.chatwithchat.presentation.common.SettingsMaterialGroup
 import cn.nabr.chatwithchat.presentation.common.SettingsTopAppBar
+import cn.nabr.chatwithchat.presentation.common.settingsDropdownMenuItemColors
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.common.settingsTextFieldColors
 
@@ -149,10 +149,11 @@ fun AddPlatformScreen(
                             ClientType.entries.forEach { clientType ->
                                 val isSelected = clientType == selectedClientType
                                 DropdownMenuItem(
+                                    colors = settingsDropdownMenuItemColors(),
                                     modifier = Modifier
                                         .padding(horizontal = 4.dp)
                                         .background(
-                                            color = if (isSelected) AppleBlue.copy(alpha = 0.08f) else Color.Transparent,
+                                            color = if (isSelected) settingsMaterialColors().primaryLabel.copy(alpha = 0.08f) else Color.Transparent,
                                             shape = RoundedCornerShape(8.dp)
                                         ),
                                     text = {
@@ -174,7 +175,7 @@ fun AddPlatformScreen(
                                             Icon(
                                                 imageVector = Icons.Outlined.Check,
                                                 contentDescription = null,
-                                                tint = AppleBlue
+                                                tint = settingsMaterialColors().primaryLabel
                                             )
                                         }
                                     } else {
@@ -248,7 +249,10 @@ fun AddPlatformScreen(
                     Button(
                         onClick = ::closeScreen,
                         modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(containerColor = AppleBlue)
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = settingsMaterialColors().primaryLabel,
+                            contentColor = settingsMaterialColors().canvas
+                        )
                     ) {
                         Text(stringResource(R.string.done))
                     }
@@ -270,7 +274,10 @@ fun AddPlatformScreen(
                             Button(
                                 onClick = ::closeScreen,
                                 modifier = Modifier.weight(1f),
-                                colors = ButtonDefaults.buttonColors(containerColor = AppleBlue)
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = settingsMaterialColors().primaryLabel,
+                                    contentColor = settingsMaterialColors().canvas
+                                )
                             ) {
                                 Text(stringResource(R.string.done))
                             }
@@ -349,7 +356,10 @@ private fun AddPlatformActionButtons(
         },
         modifier = Modifier.fillMaxWidth(),
         enabled = enabled && platformName.isNotBlank() && apiUrl.isNotBlank(),
-        colors = ButtonDefaults.buttonColors(containerColor = AppleBlue)
+        colors = ButtonDefaults.buttonColors(
+            containerColor = settingsMaterialColors().primaryLabel,
+            contentColor = settingsMaterialColors().canvas
+        )
     ) {
         Text(stringResource(R.string.save))
     }

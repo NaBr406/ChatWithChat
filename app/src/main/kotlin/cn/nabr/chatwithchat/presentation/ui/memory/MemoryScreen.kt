@@ -91,6 +91,7 @@ import cn.nabr.chatwithchat.data.memory.MemoryActivityStatus
 import cn.nabr.chatwithchat.data.memory.MemoryModelPreference
 import cn.nabr.chatwithchat.presentation.common.SettingsMaterialGroup
 import cn.nabr.chatwithchat.presentation.common.SettingsTopAppBar
+import cn.nabr.chatwithchat.presentation.common.settingsDropdownMenuItemColors
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import java.time.Instant
 import java.time.ZoneId
@@ -173,6 +174,7 @@ fun MemoryScreen(
                             tonalElevation = 0.dp
                         ) {
                             DropdownMenuItem(
+                                colors = settingsDropdownMenuItemColors(),
                                 text = {
                                     Text(
                                         text = stringResource(R.string.memory_consolidate_now),
@@ -192,6 +194,7 @@ fun MemoryScreen(
                                 }
                             )
                             DropdownMenuItem(
+                                colors = settingsDropdownMenuItemColors(),
                                 text = {
                                     Text(
                                         text = stringResource(R.string.memory_force_consolidate_now),
@@ -211,6 +214,7 @@ fun MemoryScreen(
                                 }
                             )
                             DropdownMenuItem(
+                                colors = settingsDropdownMenuItemColors(),
                                 text = {
                                     Text(
                                         text = stringResource(R.string.memory_model_title),
@@ -231,6 +235,7 @@ fun MemoryScreen(
                                 }
                             )
                             DropdownMenuItem(
+                                colors = settingsDropdownMenuItemColors(),
                                 text = {
                                     Text(
                                         text = stringResource(R.string.memory_export),

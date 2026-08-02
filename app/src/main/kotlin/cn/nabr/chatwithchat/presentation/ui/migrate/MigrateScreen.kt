@@ -32,6 +32,8 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.presentation.common.PrimaryLongButton
+import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
+import cn.nabr.chatwithchat.presentation.common.settingsTextButtonColors
 import cn.nabr.chatwithchat.presentation.icons.Block
 import cn.nabr.chatwithchat.presentation.icons.Complete
 import cn.nabr.chatwithchat.presentation.icons.Error
@@ -46,10 +48,21 @@ fun MigrateScreen(
     onFinish: () -> Unit
 ) {
     val uiState by migrateViewModel.uiState.collectAsStateWithLifecycle()
+    val colors = settingsMaterialColors()
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
-        topBar = { TopAppBar(title = {}) }
+        topBar = {
+            TopAppBar(
+                title = {},
+                colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(
+                    containerColor = colors.navigation,
+                    navigationIconContentColor = colors.primaryLabel,
+                    titleContentColor = colors.primaryLabel
+                )
+            )
+        },
+        containerColor = colors.canvas
     ) { innerPadding ->
         Column(
             modifier = Modifier
@@ -108,9 +121,11 @@ fun MigrationCard(
     description: String,
     onMigrationClick: () -> Unit
 ) {
+    val colors = settingsMaterialColors()
     Card(
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
+            containerColor = colors.grouped,
+            contentColor = colors.primaryLabel
         ),
         modifier = Modifier
             .fillMaxWidth()
@@ -151,7 +166,8 @@ fun MigrationCard(
             Spacer(modifier = Modifier.weight(1f))
             TextButton(
                 onClick = onMigrationClick,
-                enabled = status == MigrateViewModel.MigrationState.READY || status == MigrateViewModel.MigrationState.ERROR
+                enabled = status == MigrateViewModel.MigrationState.READY || status == MigrateViewModel.MigrationState.ERROR,
+                colors = settingsTextButtonColors()
             ) {
                 when (status) {
                     MigrateViewModel.MigrationState.READY, MigrateViewModel.MigrationState.BLOCKED -> Text(stringResource(R.string.migrate))

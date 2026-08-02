@@ -55,6 +55,7 @@ import cn.nabr.chatwithchat.data.debug.PromptTraceStage
 import cn.nabr.chatwithchat.data.memory.MemoryRetrievalMode
 import cn.nabr.chatwithchat.presentation.common.SettingsTopAppBar
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
+import cn.nabr.chatwithchat.presentation.common.settingsTextButtonColors
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -119,6 +120,9 @@ fun PromptTraceScreen(
 
     if (showClearConfirmation) {
         AlertDialog(
+            containerColor = colors.grouped,
+            titleContentColor = colors.primaryLabel,
+            textContentColor = colors.secondaryLabel,
             onDismissRequest = { showClearConfirmation = false },
             title = { Text(stringResource(R.string.prompt_trace_clear)) },
             text = { Text(stringResource(R.string.prompt_trace_clear_confirmation)) },
@@ -128,13 +132,17 @@ fun PromptTraceScreen(
                         promptTraceViewModel.clear()
                         selectedEntry = null
                         showClearConfirmation = false
-                    }
+                    },
+                    colors = settingsTextButtonColors()
                 ) {
                     Text(stringResource(R.string.clear))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showClearConfirmation = false }) {
+                TextButton(
+                    onClick = { showClearConfirmation = false },
+                    colors = settingsTextButtonColors()
+                ) {
                     Text(stringResource(R.string.cancel))
                 }
             }
@@ -218,6 +226,9 @@ private fun PromptTraceDetailDialog(entry: PromptTraceEntry, onDismissRequest: (
     val promptText = entry.systemPrompt.ifBlank { stringResource(R.string.prompt_trace_prompt_empty) }
 
     AlertDialog(
+        containerColor = settingsMaterialColors().grouped,
+        titleContentColor = settingsMaterialColors().primaryLabel,
+        textContentColor = settingsMaterialColors().secondaryLabel,
         onDismissRequest = onDismissRequest,
         title = {
             Column {
@@ -259,7 +270,8 @@ private fun PromptTraceDetailDialog(entry: PromptTraceEntry, onDismissRequest: (
                             ClipEntry(ClipData.newPlainText("system_prompt", entry.systemPrompt))
                         )
                     }
-                }
+                },
+                colors = settingsTextButtonColors()
             ) {
                 Icon(
                     imageVector = Icons.Outlined.ContentCopy,
@@ -271,7 +283,7 @@ private fun PromptTraceDetailDialog(entry: PromptTraceEntry, onDismissRequest: (
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismissRequest) {
+            TextButton(onClick = onDismissRequest, colors = settingsTextButtonColors()) {
                 Text(stringResource(R.string.close))
             }
         }

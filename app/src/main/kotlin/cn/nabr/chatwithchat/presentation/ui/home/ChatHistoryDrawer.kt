@@ -54,7 +54,6 @@ import androidx.compose.ui.unit.dp
 import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.database.entity.ChatRoomV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
-import cn.nabr.chatwithchat.presentation.common.AppleBlue
 import cn.nabr.chatwithchat.presentation.common.AppleRed
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.util.getPlatformName
@@ -213,7 +212,7 @@ fun ChatHistoryRow(
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(12.dp),
-        color = if (selected) AppleBlue.copy(alpha = 0.08f) else Color.Transparent,
+        color = if (selected) settingsMaterialColors().primaryLabel.copy(alpha = 0.08f) else Color.Transparent,
         contentColor = MaterialTheme.colorScheme.onSurface
     ) {
         Row(
@@ -255,7 +254,7 @@ private fun DrawerSelectionIndicator(selected: Boolean) {
         Surface(
             modifier = Modifier.size(22.dp),
             shape = CircleShape,
-            color = if (selected) AppleBlue else Color.Transparent,
+            color = if (selected) materialColors.primaryLabel else Color.Transparent,
             border = BorderStroke(
                 width = if (selected) 0.dp else 1.5.dp,
                 color = if (selected) Color.Transparent else materialColors.separatorStrong
@@ -265,7 +264,7 @@ private fun DrawerSelectionIndicator(selected: Boolean) {
                 Icon(
                     imageVector = Icons.Rounded.Check,
                     contentDescription = null,
-                    tint = Color.White,
+                    tint = materialColors.canvas,
                     modifier = Modifier.padding(3.dp)
                 )
             }
@@ -292,8 +291,8 @@ private fun DrawerHeader(
             modifier = Modifier.size(40.dp),
             onClick = onNewChatClick,
             colors = IconButtonDefaults.iconButtonColors(
-                containerColor = AppleBlue.copy(alpha = 0.12f),
-                contentColor = AppleBlue
+                containerColor = settingsMaterialColors().primaryLabel.copy(alpha = 0.12f),
+                contentColor = settingsMaterialColors().primaryLabel
             )
         ) {
             Icon(
@@ -321,7 +320,7 @@ private fun ChatDrawerSearchField(
         singleLine = true,
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
         textStyle = MaterialTheme.typography.bodyLarge.copy(color = materialColors.primaryLabel),
-        cursorBrush = SolidColor(AppleBlue),
+        cursorBrush = SolidColor(settingsMaterialColors().primaryLabel),
         decorationBox = { innerTextField ->
             Surface(
                 shape = RoundedCornerShape(10.dp),
@@ -398,7 +397,7 @@ private fun DrawerSelectionToolbar(
                 Icon(
                     imageVector = Icons.Rounded.Close,
                     contentDescription = stringResource(R.string.close),
-                    tint = AppleBlue
+                    tint = settingsMaterialColors().primaryLabel
                 )
             }
             Text(
@@ -414,7 +413,7 @@ private fun DrawerSelectionToolbar(
                     Icon(
                         imageVector = Icons.Outlined.ContentCopy,
                         contentDescription = stringResource(R.string.duplicate),
-                        tint = AppleBlue
+                        tint = settingsMaterialColors().primaryLabel
                     )
                 }
             }

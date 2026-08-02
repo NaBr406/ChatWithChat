@@ -32,6 +32,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
+import cn.nabr.chatwithchat.presentation.common.settingsSliderColors
+import cn.nabr.chatwithchat.presentation.common.settingsTextButtonColors
 import cn.nabr.chatwithchat.presentation.common.settingsTextFieldColors
 import cn.nabr.chatwithchat.util.isValidUrl
 import kotlin.math.roundToInt
@@ -186,13 +188,14 @@ private fun PlatformNameDialog(
         confirmButton = {
             TextButton(
                 enabled = platformName.isNotBlank(),
-                onClick = { onConfirmRequest(platformName) }
+                onClick = { onConfirmRequest(platformName) },
+                colors = settingsTextButtonColors()
             ) {
                 Text(stringResource(R.string.confirm))
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismissRequest) {
+            TextButton(onClick = onDismissRequest, colors = settingsTextButtonColors()) {
                 Text(stringResource(R.string.cancel))
             }
         }
@@ -249,13 +252,14 @@ private fun APIUrlDialog(
         confirmButton = {
             TextButton(
                 enabled = apiUrl.isNotBlank() && apiUrl.isValidUrl() && apiUrl.endsWith("/"),
-                onClick = { onConfirmRequest(apiUrl) }
+                onClick = { onConfirmRequest(apiUrl) },
+                colors = settingsTextButtonColors()
             ) {
                 Text(stringResource(R.string.confirm))
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismissRequest) {
+            TextButton(onClick = onDismissRequest, colors = settingsTextButtonColors()) {
                 Text(stringResource(R.string.cancel))
             }
         }
@@ -296,14 +300,16 @@ private fun APIKeyDialog(
         onDismissRequest = onDismissRequest,
         confirmButton = {
             TextButton(
-                onClick = { onConfirmRequest(token) }
+                onClick = { onConfirmRequest(token) },
+                colors = settingsTextButtonColors()
             ) {
                 Text(stringResource(R.string.confirm))
             }
         },
         dismissButton = {
             TextButton(
-                onClick = onDismissRequest
+                onClick = onDismissRequest,
+                colors = settingsTextButtonColors()
             ) {
                 Text(stringResource(R.string.cancel))
             }
@@ -362,13 +368,14 @@ private fun TimeoutDialog(
         confirmButton = {
             TextButton(
                 enabled = isValidTimeout,
-                onClick = { onConfirmRequest(parsedTimeout!!) }
+                onClick = { onConfirmRequest(parsedTimeout!!) },
+                colors = settingsTextButtonColors()
             ) {
                 Text(stringResource(R.string.confirm))
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismissRequest) {
+            TextButton(onClick = onDismissRequest, colors = settingsTextButtonColors()) {
                 Text(stringResource(R.string.cancel))
             }
         }
@@ -437,6 +444,7 @@ private fun TemperatureDialog(
                     valueRange = 0F..2F,
                     steps = 19,
                     enabled = !isUnset,
+                    colors = settingsSliderColors(),
                     onValueChange = { t ->
                         val rounded = (t * 10).roundToInt() / 10F
                         sliderTemperature = rounded
@@ -452,7 +460,8 @@ private fun TemperatureDialog(
                         onClick = {
                             textFieldTemperature = ""
                             isUnset = true
-                        }
+                        },
+                        colors = settingsTextButtonColors()
                     ) {
                         Text(stringResource(R.string.reset))
                     }
@@ -462,14 +471,16 @@ private fun TemperatureDialog(
         onDismissRequest = onDismissRequest,
         confirmButton = {
             TextButton(
-                onClick = { onConfirmRequest(if (isUnset) null else sliderTemperature) }
+                onClick = { onConfirmRequest(if (isUnset) null else sliderTemperature) },
+                colors = settingsTextButtonColors()
             ) {
                 Text(stringResource(R.string.confirm))
             }
         },
         dismissButton = {
             TextButton(
-                onClick = onDismissRequest
+                onClick = onDismissRequest,
+                colors = settingsTextButtonColors()
             ) {
                 Text(stringResource(R.string.cancel))
             }
@@ -539,6 +550,7 @@ private fun TopPDialog(
                     valueRange = 0.1F..1F,
                     steps = 8,
                     enabled = !isUnset,
+                    colors = settingsSliderColors(),
                     onValueChange = { t ->
                         val rounded = (t * 10).roundToInt() / 10F
                         sliderTopP = rounded
@@ -554,7 +566,8 @@ private fun TopPDialog(
                         onClick = {
                             textFieldTopP = ""
                             isUnset = true
-                        }
+                        },
+                        colors = settingsTextButtonColors()
                     ) {
                         Text(stringResource(R.string.reset))
                     }
@@ -564,14 +577,16 @@ private fun TopPDialog(
         onDismissRequest = onDismissRequest,
         confirmButton = {
             TextButton(
-                onClick = { onConfirmRequest(if (isUnset) null else sliderTopP) }
+                onClick = { onConfirmRequest(if (isUnset) null else sliderTopP) },
+                colors = settingsTextButtonColors()
             ) {
                 Text(stringResource(R.string.confirm))
             }
         },
         dismissButton = {
             TextButton(
-                onClick = onDismissRequest
+                onClick = onDismissRequest,
+                colors = settingsTextButtonColors()
             ) {
                 Text(stringResource(R.string.cancel))
             }
@@ -621,14 +636,16 @@ private fun SystemPromptDialog(
         onDismissRequest = onDismissRequest,
         confirmButton = {
             TextButton(
-                onClick = { onConfirmRequest(textFieldPrompt) }
+                onClick = { onConfirmRequest(textFieldPrompt) },
+                colors = settingsTextButtonColors()
             ) {
                 Text(stringResource(R.string.confirm))
             }
         },
         dismissButton = {
             TextButton(
-                onClick = onDismissRequest
+                onClick = onDismissRequest,
+                colors = settingsTextButtonColors()
             ) {
                 Text(stringResource(R.string.cancel))
             }
@@ -672,12 +689,12 @@ private fun DeletePlatformDialog(
         },
         onDismissRequest = onDismissRequest,
         confirmButton = {
-            TextButton(onClick = onConfirmRequest) {
+            TextButton(onClick = onConfirmRequest, colors = settingsTextButtonColors()) {
                 Text(stringResource(R.string.delete))
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismissRequest) {
+            TextButton(onClick = onDismissRequest, colors = settingsTextButtonColors()) {
                 Text(stringResource(R.string.cancel))
             }
         }

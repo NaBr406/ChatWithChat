@@ -79,7 +79,6 @@ import cn.nabr.chatwithchat.data.model.ReasoningCapability
 import cn.nabr.chatwithchat.data.model.ReasoningCapabilityProfile
 import cn.nabr.chatwithchat.data.model.ReasoningMode
 import cn.nabr.chatwithchat.data.model.reasoningCapabilityForModel
-import cn.nabr.chatwithchat.presentation.common.AppleBlue
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import kotlin.math.roundToInt
 
@@ -281,6 +280,7 @@ private fun ColumnScope.ModelSelectionPopup(
     onOptionSelected: (ModelSelectionOption) -> Unit,
     onReasoningModeSelected: (ReasoningMode) -> Unit
 ) {
+    val materialColors = settingsMaterialColors()
     var activeSelection by remember(options, initiallySelectedOption) {
         mutableStateOf(initiallySelectedOption?.selectionKey)
     }
@@ -303,7 +303,7 @@ private fun ColumnScope.ModelSelectionPopup(
 
     HorizontalDivider(
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.62f)
+        color = materialColors.separator
     )
 
     val capability = activeOption?.reasoningCapability
@@ -352,6 +352,7 @@ private fun ModelOptionRow(
     isSelected: Boolean,
     onClick: () -> Unit
 ) {
+    val materialColors = settingsMaterialColors()
     Row(
         modifier = Modifier
             .padding(horizontal = 8.dp)
@@ -371,7 +372,7 @@ private fun ModelOptionRow(
                 Icon(
                     imageVector = Icons.Rounded.Check,
                     contentDescription = null,
-                    tint = AppleBlue,
+                    tint = settingsMaterialColors().primaryLabel,
                     modifier = Modifier.size(18.dp)
                 )
             }
@@ -383,7 +384,7 @@ private fun ModelOptionRow(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurface
+            color = materialColors.primaryLabel
         )
         option.subtitle?.let { subtitle ->
             Spacer(modifier = Modifier.width(8.dp))
@@ -393,7 +394,7 @@ private fun ModelOptionRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = materialColors.secondaryLabel
             )
         }
     }
@@ -406,6 +407,7 @@ private fun ReasoningControlRow(
     expanded: Boolean,
     onClick: () -> Unit
 ) {
+    val materialColors = settingsMaterialColors()
     val arrowRotation by animateFloatAsState(
         targetValue = if (expanded) 180f else 0f,
         animationSpec = tween(durationMillis = 180),
@@ -430,7 +432,7 @@ private fun ReasoningControlRow(
         Text(
             text = stringResource(R.string.reasoning_mode),
             style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurface
+            color = materialColors.primaryLabel
         )
         Spacer(modifier = Modifier.width(12.dp))
         Text(
@@ -440,14 +442,14 @@ private fun ReasoningControlRow(
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.End,
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = materialColors.secondaryLabel
         )
         if (capability.isConfigurable) {
             Spacer(modifier = Modifier.width(6.dp))
             Icon(
                 imageVector = Icons.Rounded.KeyboardArrowDown,
                 contentDescription = stringResource(if (expanded) R.string.collapse else R.string.expand),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = materialColors.secondaryLabel,
                 modifier = Modifier
                     .size(20.dp)
                     .graphicsLayer { rotationZ = arrowRotation }
@@ -463,6 +465,7 @@ private fun ReasoningModeRow(
     isSelected: Boolean,
     onClick: () -> Unit
 ) {
+    val materialColors = settingsMaterialColors()
     Row(
         modifier = Modifier
             .padding(horizontal = 8.dp)
@@ -482,7 +485,7 @@ private fun ReasoningModeRow(
                 Icon(
                     imageVector = Icons.Rounded.Check,
                     contentDescription = null,
-                    tint = AppleBlue,
+                    tint = settingsMaterialColors().primaryLabel,
                     modifier = Modifier.size(20.dp)
                 )
             }
@@ -494,14 +497,14 @@ private fun ReasoningModeRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface
+                color = materialColors.primaryLabel
             )
             Text(
                 text = reasoningModeDescription(reasoningMode, capability),
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = materialColors.secondaryLabel
             )
         }
     }

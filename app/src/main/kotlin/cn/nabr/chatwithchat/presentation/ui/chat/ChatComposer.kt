@@ -74,7 +74,7 @@ import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider.getUriForFile
 import cn.nabr.chatwithchat.R
-import cn.nabr.chatwithchat.presentation.common.AppleBlue
+import cn.nabr.chatwithchat.presentation.common.settingsDropdownMenuItemColors
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.theme.ChatWithChatTheme
 import cn.nabr.chatwithchat.util.FileUtils
@@ -264,7 +264,7 @@ fun ChatComposer(
                                     enabled = chatEnabled && !isAttachmentBusy,
                                     onClick = { isAttachmentMenuExpanded = true },
                                     colors = IconButtonDefaults.iconButtonColors(
-                                        contentColor = if (isAttachmentMenuExpanded) AppleBlue else materialColors.secondaryLabel,
+                                        contentColor = if (isAttachmentMenuExpanded) materialColors.primaryLabel else materialColors.secondaryLabel,
                                         disabledContentColor = materialColors.tertiaryLabel
                                     )
                                 ) {
@@ -286,6 +286,7 @@ fun ChatComposer(
                                     border = BorderStroke(0.5.dp, materialColors.separator)
                                 ) {
                                     DropdownMenuItem(
+                                        colors = settingsDropdownMenuItemColors(),
                                         modifier = Modifier.heightIn(min = 48.dp),
                                         text = {
                                             Text(
@@ -308,6 +309,7 @@ fun ChatComposer(
                                         }
                                     )
                                     DropdownMenuItem(
+                                        colors = settingsDropdownMenuItemColors(),
                                         modifier = Modifier.heightIn(min = 48.dp),
                                         text = {
                                             Text(
@@ -354,7 +356,7 @@ fun ChatComposer(
                                 modifier = Modifier
                                     .size(36.dp)
                                     .background(
-                                        color = if (canSend) AppleBlue else materialColors.controlFill,
+                                        color = if (canSend) materialColors.primaryLabel else materialColors.controlFill,
                                         shape = CircleShape
                                     )
                             )
@@ -362,7 +364,7 @@ fun ChatComposer(
                                 enabled = canSend,
                                 onClick = onSendButtonClick,
                                 colors = IconButtonDefaults.iconButtonColors(
-                                    contentColor = Color.White,
+                                    contentColor = materialColors.canvas,
                                     disabledContentColor = materialColors.tertiaryLabel
                                 )
                             ) {
