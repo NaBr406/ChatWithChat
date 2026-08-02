@@ -44,6 +44,7 @@ ChatWithChat 不提供项目方托管的账号、模型或 API 中转服务。�
 | 丰富消息 | 流式回复、Markdown、代码块复制、数学公式、思考过程、来源链接和 Token 用量 |
 | 会话操作 | 搜索、复制与批量删除历史会话，编辑消息、重试回答、切换回答版本并导出会话 |
 | 图片附件 | 从相册或相机添加图片；单文件与单次附件总量上限均为 50 MiB，发送前会检查格式并压缩大图 |
+| 表情库 | 管理内置和自定义静态表情；AI 仅接收标题、替代文本和标签，可在回复中按需搜索并发送 |
 
 ## 相较上游的主要改造
 
@@ -82,6 +83,9 @@ ChatWithChat 不只是更换了名称和图标。相较于 GPT Mobile 上游基�
     <td align="center"><img src="./images/screenshots/settings.jpg" alt="应用设置" width="260"><br><sub>应用设置</sub></td>
     <td align="center"><img src="./images/screenshots/tools.jpg" alt="工具与联网搜索设置" width="260"><br><sub>工具与联网搜索</sub></td>
     <td align="center"><img src="./images/screenshots/memory.jpg" alt="长期记忆页面" width="260"><br><sub>长期记忆</sub></td>
+  </tr>
+  <tr>
+    <td colspan="3" align="center"><img src="./images/screenshots/sticker-library.jpg" alt="表情库" width="260"><br><sub>表情库</sub></td>
   </tr>
 </table>
 
@@ -141,7 +145,7 @@ ChatWithChat 不只是更换了名称和图标。相较于 GPT Mobile 上游基�
 
 ## 工具调用与联网搜索
 
-工具总开关提供“关闭”和“自动”两种模式。自动模式下，模型可以在当前请求需要时调用已启用工具。当前内置工具均为只读工具：
+工具总开关提供“关闭”和“自动”两种模式。自动模式下，模型可以在当前请求需要时调用已启用工具。内置工具主要是只读工具；表情库额外提供 `search_stickers` 和 `send_sticker`，后者只会从本地已启用目录中选择并展示静态表情：
 
 | 工具 | 用途 | 启用条件 |
 | --- | --- | --- |
@@ -149,6 +153,8 @@ ChatWithChat 不只是更换了名称和图标。相较于 GPT Mobile 上游基�
 | `fetch_url` | 读取公开网页正文 | 与网页搜索相同 |
 | `current_datetime` | 读取设备本地日期、时间与时区 | 工具调用为自动 |
 | `device_location` | 按需读取设备当前位置 | 默认关闭，需要用户主动启用并授予 Android 定位权限 |
+| `search_stickers` | 按语义搜索本地已启用的静态表情 | 工具调用为自动，并启用 AI 自动发送表情 |
+| `send_sticker` | 展示模型选定的本地静态表情 | 仅在 `search_stickers` 返回候选后使用 |
 
 工具执行前会检查当前启用列表、参数 schema、调用次数、超时、结果大小和 Android 权限。模型生成的调用不会自行弹出系统授权窗口；缺少权限时，应用会返回可恢复错误，由用户决定是否授权。
 
@@ -211,6 +217,7 @@ ObjectBox 索引可以安全删除并从 Markdown 重建。模型资产缺失、
 | 联网搜索 | 查询发送到用户配置的 SearXNG；网页正文由应用从公开 URL 读取 |
 | 长期记忆语义整理 | 完成轮次、已有记忆和受约束整理提示会发送到已配置的模型服务；模型返回的操作在本地校验后才允许提交 |
 | 长期记忆召回 | Markdown、Room 控制状态、ONNX embedding 和 ObjectBox 检索均在设备端运行；普通召回不会调用云端 embedding |
+| 表情库 | 图片和元数据保存在应用私有存储；模型仅接收标题、替代文本和标签，不会收到图片字节或本地路径 |
 | 设备位置 | 仅在用户主动启用并授权后读取；调用结果会进入所选模型的对话上下文 |
 | Android 备份 | `MEMORY.md`、日记忆、Room 和 DataStore 当前符合系统备份条件；暂存/回滚目录、ObjectBox 索引和运行时模型副本不进入备份 |
 
