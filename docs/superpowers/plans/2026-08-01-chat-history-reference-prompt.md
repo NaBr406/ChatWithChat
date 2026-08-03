@@ -102,6 +102,8 @@ Reuse the existing `MemoryTurnBatchCoordinator` canonical assistant rule exactly
 - Baseline verification passed before production edits: `./gradlew.bat :app:testDebugUnitTest --tests "*Memory*"` and `./gradlew.bat :app:compileDebugKotlin`.
 - The baseline branch was created as `codex/chat-history-reference` from `a3f419e`.
 - Prompt-trace and provider-runtime fixtures remain open and will be captured with the integration changes.
+- Production slice `b042602` adds Room schema 20 history projections, durable queue/checkpoint/state tables, rebuildable FTS5 triggers, bounded WorkManager indexing, local history-vector cache/fallback, prompt composition, Settings copy, and focused JVM tests.
+- Post-slice validation passed: `./gradlew.bat :app:compileDebugKotlin`, `./gradlew.bat :app:compileDebugAndroidTestKotlin`, and focused history/memory/retry unit tests. The connected migration test was attempted with the emulator online but the instrumentation process was killed under emulator low-memory pressure; device/runtime proof remains open.
 
 The following facts were observed during planning and must be rechecked by the implementation agent before edits:
 
@@ -422,12 +424,12 @@ adb devices
 
 ### Task 1: Add History Projection Contracts And Derived Storage
 
-- [ ] Create the history data contracts and projection builder under `data/history`.
-- [ ] Add rebuildable Room projection storage and DAO with a non-null canonical assistant ID, stable `turn_key`, content hashes, timestamps, projection version, and fail-closed state.
-- [ ] Add the three durable lifecycle tables (or equivalent Room entities) exactly as contracted above: `chat_history_index_queue`, `chat_history_backfill_checkpoint`, and `chat_history_index_state`.
-- [ ] Make queue enqueue/replay idempotent by `turn_key`; do not use an auto-increment queue identity or a caller-supplied source payload/version as truth.
-- [ ] Add the external-content FTS5 table, INSERT/UPDATE/DELETE triggers, and explicit `rebuild` path as one migration/rebuild contract.
-- [ ] Add schema migration from the live version (currently expected to be 19) to the new version; do not assume 19 without rechecking.
+- [x] Create the history data contracts and projection builder under `data/history`.
+- [x] Add rebuildable Room projection storage and DAO with a non-null canonical assistant ID, stable `turn_key`, content hashes, timestamps, projection version, and fail-closed state.
+- [x] Add the three durable lifecycle tables (or equivalent Room entities) exactly as contracted above: `chat_history_index_queue`, `chat_history_backfill_checkpoint`, and `chat_history_index_state`.
+- [x] Make queue enqueue/replay idempotent by `turn_key`; do not use an auto-increment queue identity or a caller-supplied source payload/version as truth.
+- [x] Add the external-content FTS5 table, INSERT/UPDATE/DELETE triggers, and explicit `rebuild` path as one migration/rebuild contract.
+- [x] Add schema migration from the live version (currently expected to be 19) to the new version; do not assume 19 without rechecking.
 - [ ] Export the new schema and add fresh/open/populated migration tests.
 - [ ] Prove that raw `MessageV2` and long-term memory tables remain unchanged in meaning.
 
@@ -444,21 +446,21 @@ app/src/main/kotlin/cn/nabr/chatwithchat/di/DatabaseModule.kt
 
 ### Task 2: Implement Projection Updates, Backfill, And Rebuild
 
-- [ ] Build one deterministic projection from each completed persisted turn.
-- [ ] Add idempotent upsert/replacement by chat/turn/content hash.
-- [ ] Enqueue index work after `saveChat()` completion without delaying the provider response.
-- [ ] Enqueue affected rows after edit, delete, duplicate, and chat replacement paths.
+- [x] Build one deterministic projection from each completed persisted turn.
+- [x] Add idempotent upsert/replacement by chat/turn/content hash.
+- [x] Enqueue index work after `saveChat()` completion without delaying the provider response.
+- [x] Enqueue affected rows after edit, delete, duplicate, and chat replacement paths.
 - [ ] Add bounded backfill and full rebuild workers with unique work and durable cursor semantics.
-- [ ] Ensure disabling `memory_enabled` prevents history recall on the next context preparation and prevents subsequent queue consumption/new index writes while retaining derived index data; an already-prepared or already-issued provider turn remains frozen.
+- [x] Ensure disabling `memory_enabled` prevents history recall on the next context preparation and prevents subsequent queue consumption/new index writes while retaining derived index data; an already-prepared or already-issued provider turn remains frozen.
 - [ ] Add process-death, repeated-enqueue, stale-row, and rebuild tests.
 
 Do not call `MemoryRepository.recordCompletedTurn()` as a substitute for history indexing. The existing method belongs to long-term memory batching and must remain semantically unchanged.
 
 ### Task 3: Implement Lexical History Retrieval
 
-- [ ] Add `ChatHistoryRetriever` and `ChatHistoryPromptBuilder`.
-- [ ] Implement deterministic query normalization, FTS candidate retrieval, current-chat exclusion, metadata filtering, deduplication, chat diversification, and token packing.
-- [ ] Add `HistoryRecallSnapshot` and local trace data with only bounded counts, scores, hashes, and opaque IDs.
+- [x] Add `ChatHistoryRetriever` and `ChatHistoryPromptBuilder`.
+- [x] Implement deterministic query normalization, FTS candidate retrieval, current-chat exclusion, metadata filtering, deduplication, chat diversification, and token packing.
+- [x] Add `HistoryRecallSnapshot` and local trace data with only bounded counts, scores, hashes, and opaque IDs.
 - [ ] Define empty, failed, stale, disabled, and backfill-incomplete modes.
 - [ ] Add fixed relevance fixtures: exact name, CJK phrase, paraphrase, unrelated query, duplicate provider answers, same-chat exclusion, deleted chat, stale projection, and long answer truncation.
 - [ ] Add an Android SQLite tokenizer fixture covering trigram availability, Chinese short queries/substrings, English, emoji, exact phrase behavior, and latency; record the selected tokenizer/search-column contract in the migration tests.
@@ -467,13 +469,13 @@ The first lexical implementation must not use a full-corpus SQL scan per user qu
 
 ### Task 4: Compose History With Existing Memory Context
 
-- [ ] Inject the history retriever through the existing `MemoryRepository.prepareMemoryContext()` composition boundary or an equivalent narrowly scoped context composer.
-- [ ] Preserve the existing long-term `TurnRecallSnapshot` and its 500-token memory contract.
-- [ ] Add a separately bounded history section and a combined prompt result.
-- [ ] Ensure `ChatViewModel.prepareMemoryContextForTurn()` calls retrieval once per turn snapshot.
-- [ ] Ensure all enabled providers and tool rounds reuse the same history snapshot.
-- [ ] Ensure retries use the correct snapshot key and do not silently retrieve a different history state.
-- [ ] Add prompt assertions that no message IDs, paths, hashes, ranking scores, memory metadata, or internal diagnostics reach provider DTOs.
+- [x] Inject the history retriever through the existing `MemoryRepository.prepareMemoryContext()` composition boundary or an equivalent narrowly scoped context composer.
+- [x] Preserve the existing long-term `TurnRecallSnapshot` and its 500-token memory contract.
+- [x] Add a separately bounded history section and a combined prompt result.
+- [x] Ensure `ChatViewModel.prepareMemoryContextForTurn()` calls retrieval once per turn snapshot.
+- [x] Ensure all enabled providers and tool rounds reuse the same history snapshot.
+- [x] Ensure retries use the correct snapshot key and do not silently retrieve a different history state.
+- [x] Add prompt assertions that no message IDs, paths, hashes, ranking scores, memory metadata, or internal diagnostics reach provider DTOs.
 - [ ] Test `HistoryRecallSnapshot` immutability and reuse through all enabled providers, tool rounds, and retries; a background projection/vector publication must not alter an in-flight turn.
 
 Expected integration areas:
@@ -488,8 +490,8 @@ app/src/main/kotlin/cn/nabr/chatwithchat/data/repository/ChatRepositoryImpl.kt
 
 ### Task 5: Reuse The Existing Memory Switch
 
-- [ ] Reuse `memory_enabled`; do not add a history preference, repository API, or independent toggle.
-- [ ] Add localized Settings copy and a disabled/empty/backfill status that does not expose raw content.
+- [x] Reuse `memory_enabled`; do not add a history preference, repository API, or independent toggle.
+- [x] Add localized Settings copy and a disabled/empty/backfill status that does not expose raw content.
 - [ ] Verify one memory switch transition gates both long-term memory and history workers/recall.
 - [ ] Verify turning it off prevents history injection on the next context preparation and prevents subsequent queue consumption/new index writes, while all derived history state remains intact; already-prepared or already-issued turns remain frozen.
 - [ ] Verify re-enable resumes pending work and runs stale/missing reconciliation before normal hybrid recall.
@@ -498,9 +500,9 @@ app/src/main/kotlin/cn/nabr/chatwithchat/data/repository/ChatRepositoryImpl.kt
 
 This task is required for MVP. It may be implemented after the lexical projection/FTS contracts are stable, but it cannot be deferred to a later product milestone.
 
-- [ ] Define a history-specific vector index identity/namespace separate from the long-term memory identity.
+- [x] Define a history-specific vector index identity/namespace separate from the long-term memory identity.
 - [ ] Reuse the existing on-device embedding provider only after checking its release/runtime availability and latency.
-- [ ] Embed turn/chunk text, not raw Room serialization or maintenance metadata.
+- [x] Embed turn/chunk text, not raw Room serialization or maintenance metadata.
 - [ ] Add incremental vector sync, stale detection, rebuild, corruption repair, and lexical fallback.
 - [ ] Add lexical/vector/hybrid hard-negative fixtures and calibrate absolute thresholds from recorded score distributions.
 - [ ] Test complete snapshot publication via `embedDocuments()`/`embedQuery()`, embedding-cache reuse, stale/corrupt snapshot detection, and lexical fallback without touching the long-term vector store.
