@@ -71,6 +71,11 @@ class ChatHistoryIndexCoordinator @Inject constructor(
         workEnqueuer.enqueue()
     }
 
+    suspend fun requestFullRebuild() {
+        if (!settingRepository.fetchMemoryEnabled()) return
+        workEnqueuer.enqueueRebuild()
+    }
+
     suspend fun ensureReconciliationScheduled() {
         if (!settingRepository.fetchMemoryEnabled()) return
         var checkpoint = historyDao.getBackfillCheckpoint(ChatHistoryContract.BACKFILL_ID)

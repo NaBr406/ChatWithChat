@@ -23,6 +23,9 @@ class ChatHistoryIndexWorker(
             return ListenableWorker.Result.retry()
         }
         return try {
+            if (inputData.getBoolean(INPUT_REBUILD, false)) {
+                entryPoint.chatHistoryIndexProcessor().rebuild()
+            }
             var keepRunning = true
             var iterations = 0
             while (keepRunning && iterations++ < MAX_ITERATIONS) {
@@ -36,8 +39,9 @@ class ChatHistoryIndexWorker(
         }
     }
 
-    private companion object {
-        const val MAX_ITERATIONS = 8
+    companion object {
+        private const val MAX_ITERATIONS = 8
+        const val INPUT_REBUILD = "rebuild"
     }
 }
 

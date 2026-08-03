@@ -73,10 +73,16 @@ class RoomHistoryVectorStore(
             ?: error("history_embedding_unavailable")
         val queryVector = ready.provider.embedQuery(query).getOrThrow()
         val descriptorHash = descriptorHash(ready)
-        dao.getEmbeddings(descriptorHash)
-            .mapNotNull { cached ->
-                val score = cosine(queryVector, decodeVector(cached.embeddingJson))
-                score.takeIf { it.isFinite() }?.let { HistoryVectorHit(cached.turnKey, it) }
+        val cached = dao.getEmbeddings(descriptorHash)
+        val decoded = cached.mapNotNull { item ->
+            decodeVector(item.embeddingJson)?.let { vector -> item to vector }
+        }
+        val corruptKeys = cached.map(ChatHistoryEmbeddingEntity::turnKey).toSet() - decoded.map { (item, _) -> item.turnKey }.toSet()
+        if (corruptKeys.isNotEmpty()) dao.deleteEmbeddings(corruptKeys.toList())
+        decoded
+            .mapNotNull { (cachedItem, vector) ->
+                val score = cosine(queryVector, vector)
+                score.takeIf { it.isFinite() }?.let { HistoryVectorHit(cachedItem.turnKey, it) }
             }
             .sortedByDescending(HistoryVectorHit::score)
             .take(limit.coerceAtLeast(0))
@@ -110,10 +116,12 @@ class RoomHistoryVectorStore(
 
     private fun encodeVector(vector: FloatArray): String = vector.joinToString(",")
 
-    private fun decodeVector(value: String): FloatArray = value
-        .split(',')
-        .mapNotNull(String::toFloatOrNull)
-        .toFloatArray()
+    private fun decodeVector(value: String): FloatArray? {
+        if (value.isBlank()) return null
+        val parts = value.split(',')
+        if (parts.any { it.toFloatOrNull() == null }) return null
+        return parts.map(String::toFloat).toFloatArray().takeIf { it.isNotEmpty() }
+    }
 
     private fun cosine(left: FloatArray, right: FloatArray): Float {
         if (left.isEmpty() || left.size != right.size) return Float.NaN

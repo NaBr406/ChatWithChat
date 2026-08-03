@@ -104,7 +104,11 @@ class ChatHistoryRetriever(
             tokenBudget = request.tokenBudget,
             maximumSnippets = request.limit.coerceIn(0, MAX_SNIPPETS)
         )
+        val backfillIncomplete = backfillCheckpoint?.status == ChatHistoryContract.BACKFILL_RUNNING
+        val indexStale = indexState?.vectorStatus == ChatHistoryContract.VECTOR_STALE
         val mode = when {
+            selected.snippets.isEmpty() && backfillIncomplete -> HistoryRecallMode.BACKFILL_INCOMPLETE
+            selected.snippets.isEmpty() && indexStale -> HistoryRecallMode.STALE
             selected.snippets.isEmpty() -> HistoryRecallMode.NONE
             vectorHits.isNotEmpty() -> HistoryRecallMode.HYBRID
             else -> HistoryRecallMode.LEXICAL
@@ -112,9 +116,10 @@ class ChatHistoryRetriever(
         val diagnostics = buildList {
             add(HistoryRecallDiagnostic("lexical_candidates", lexicalHits.size))
             add(HistoryRecallDiagnostic("vector_candidates", vectorHits.size))
-            if (backfillCheckpoint?.status == ChatHistoryContract.BACKFILL_RUNNING) {
+            if (backfillIncomplete) {
                 add(HistoryRecallDiagnostic("backfill_incomplete"))
             }
+            if (indexStale) add(HistoryRecallDiagnostic("index_stale"))
         }
         return HistoryRecallSnapshot(
             projectionGeneration = indexState?.projectionGeneration,

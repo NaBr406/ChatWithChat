@@ -793,7 +793,21 @@ class ChatDatabaseV2MigrationInstrumentedTest {
 
     @Test
     fun migration19To20_createsHistoryDerivedTablesAndFtsTriggers() {
-        migrationHelper.createDatabase(TEST_DATABASE, 19).close()
+        migrationHelper.createDatabase(TEST_DATABASE, 19).apply {
+            execSQL(
+                "INSERT INTO chats_v2 (chat_id, title, enabled_platform, created_at, updated_at) VALUES (7, 'existing chat', '', 1, 1)"
+            )
+            execSQL(
+                """
+                INSERT INTO messages_v2 (
+                    message_id, chat_id, thoughts, content, attachments, revisions,
+                    active_revision_index, source_metadata, token_usage, linked_message_id,
+                    platform_type, created_at
+                ) VALUES (11, 7, '', 'existing message', '', '[]', -1, '', NULL, 0, NULL, 2)
+                """.trimIndent()
+            )
+            close()
+        }
 
         migrationHelper.runMigrationsAndValidate(
             TEST_DATABASE,
@@ -815,6 +829,25 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 )
             )
             assertEquals(20L, database.singleLong("PRAGMA user_version"))
+            assertEquals(1L, database.singleLong("SELECT COUNT(*) FROM chats_v2"))
+            assertEquals(1L, database.singleLong("SELECT COUNT(*) FROM messages_v2"))
+            database.execSQL(
+                """
+                INSERT INTO chat_history_projection (
+                    turn_key, chat_id, user_message_id, assistant_message_id, assistant_platform_uid,
+                    title, user_content, assistant_content, search_terms, content_hash,
+                    projection_version, eligibility_state, created_at, updated_at
+                ) VALUES (
+                    'chat:7:user:11', 7, 11, 12, 'provider', 'existing chat', '北京旅行',
+                    '北京旅程 answer', '北京 京旅 北京旅 answer', 'hash-1', 1, 'eligible', 1, 1
+                )
+                """.trimIndent()
+            )
+            assertEquals(1L, database.singleLong("SELECT COUNT(*) FROM chat_history_projection_fts WHERE chat_history_projection_fts MATCH '北京'"))
+            database.execSQL("UPDATE chat_history_projection SET assistant_content = 'updated answer', search_terms = 'updated' WHERE turn_key = 'chat:7:user:11'")
+            assertEquals(1L, database.singleLong("SELECT COUNT(*) FROM chat_history_projection_fts WHERE chat_history_projection_fts MATCH 'updated'"))
+            database.execSQL("DELETE FROM chat_history_projection WHERE turn_key = 'chat:7:user:11'")
+            assertEquals(0L, database.singleLong("SELECT COUNT(*) FROM chat_history_projection_fts WHERE chat_history_projection_fts MATCH 'updated'"))
             database.query("PRAGMA foreign_key_check").use { cursor -> assertEquals(0, cursor.count) }
         }
     }
@@ -822,7 +855,9 @@ class ChatDatabaseV2MigrationInstrumentedTest {
     @Test
     fun freshSchema20_opensAndReopensWithHistoryDerivedState() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val freshDatabase = Room.databaseBuilder(context, ChatDatabaseV2::class.java, TEST_DATABASE).build()
+        val freshDatabase = Room.databaseBuilder(context, ChatDatabaseV2::class.java, TEST_DATABASE)
+            .addCallback(ChatHistoryDatabaseCallback())
+            .build()
         try {
             val database = freshDatabase
             val sqliteDatabase = database.openHelper.writableDatabase
@@ -838,7 +873,9 @@ class ChatDatabaseV2MigrationInstrumentedTest {
             freshDatabase.close()
         }
 
-        val reopenedDatabase = Room.databaseBuilder(context, ChatDatabaseV2::class.java, TEST_DATABASE).build()
+        val reopenedDatabase = Room.databaseBuilder(context, ChatDatabaseV2::class.java, TEST_DATABASE)
+            .addCallback(ChatHistoryDatabaseCallback())
+            .build()
         try {
             val database = reopenedDatabase
             val sqliteDatabase = database.openHelper.writableDatabase
@@ -860,6 +897,46 @@ class ChatDatabaseV2MigrationInstrumentedTest {
             reopenedDatabase.close()
         }
     }
+
+    @Test
+    fun historyFtsTokenizerContract_supportsCjkNgramsAndEnglishWithoutRawMetadata() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val database = Room.databaseBuilder(context, ChatDatabaseV2::class.java, TEST_DATABASE)
+            .addCallback(ChatHistoryDatabaseCallback())
+            .build()
+        try {
+            val sqliteDatabase = database.openHelper.writableDatabase
+            sqliteDatabase.execSQL(
+                "INSERT INTO chats_v2 (chat_id, title, enabled_platform, created_at, updated_at) VALUES (7, '旅行计划', '', 1, 1)"
+            )
+            sqliteDatabase.execSQL(
+                """
+                INSERT INTO chat_history_projection (
+                    turn_key, chat_id, user_message_id, assistant_message_id, assistant_platform_uid,
+                    title, user_content, assistant_content, search_terms, content_hash,
+                    projection_version, eligibility_state, created_at, updated_at
+                ) VALUES (
+                    'chat:7:user:1', 7, 1, 2, 'provider', '旅行计划', '北京旅行 hello',
+                    '北京旅程 answer', '旅行 旅行计 北京 京旅 北京旅 hello answer', 'hash', 1, 'eligible', 1, 1
+                )
+                """.trimIndent()
+            )
+
+            assertEquals(1L, ftsCount(sqliteDatabase, "北京"))
+            assertEquals(1L, ftsCount(sqliteDatabase, "京旅"))
+            assertEquals(1L, ftsCount(sqliteDatabase, "hello"))
+            assertEquals(1L, ftsCount(sqliteDatabase, "\"北京旅\""))
+            assertEquals(0L, ftsCount(sqliteDatabase, "😀"))
+            assertEquals("ok", sqliteDatabase.singleString("PRAGMA integrity_check"))
+        } finally {
+            database.close()
+        }
+    }
+
+    private fun ftsCount(database: SupportSQLiteDatabase, match: String): Long =
+        database.singleLong(
+            "SELECT COUNT(*) FROM chat_history_projection_fts WHERE chat_history_projection_fts MATCH '${match.replace("'", "''")}'"
+        )
 
     private fun assertMigratedLegacyActivity(
         database: SupportSQLiteDatabase,

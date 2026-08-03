@@ -39,7 +39,9 @@ enum class HistoryRecallMode {
     DISABLED,
     LEXICAL,
     HYBRID,
-    FAILED
+    FAILED,
+    STALE,
+    BACKFILL_INCOMPLETE
 }
 
 data class HistoryRecallDiagnostic(

@@ -20,6 +20,32 @@ class ChatHistoryIndexProcessor @Inject constructor(
     private val projectionBuilder: ChatHistoryProjectionBuilder,
     private val vectorStore: HistoryVectorStore?
 ) {
+    suspend fun rebuild() {
+        if (!settingRepository.fetchMemoryEnabled()) return
+        val now = now()
+        database.withTransaction {
+            historyDao.clearQueue()
+            historyDao.deleteAllEmbeddings()
+            historyDao.deleteAllProjections()
+            historyDao.upsertBackfillCheckpoint(
+                ChatHistoryBackfillCheckpointEntity(
+                    checkpointId = ChatHistoryContract.BACKFILL_ID,
+                    projectionVersion = ChatHistoryContract.PROJECTION_VERSION,
+                    status = ChatHistoryContract.BACKFILL_RUNNING,
+                    updatedAt = now
+                )
+            )
+            historyDao.upsertIndexState(
+                ChatHistoryIndexStateEntity(
+                    stateId = ChatHistoryContract.INDEX_STATE_ID,
+                    projectionGeneration = 0,
+                    vectorStatus = ChatHistoryContract.VECTOR_STALE,
+                    updatedAt = now
+                )
+            )
+        }
+    }
+
     suspend fun process(limit: Int = 32): Boolean {
         if (!settingRepository.fetchMemoryEnabled()) return false
         val queue = historyDao.getQueueBatch(limit)

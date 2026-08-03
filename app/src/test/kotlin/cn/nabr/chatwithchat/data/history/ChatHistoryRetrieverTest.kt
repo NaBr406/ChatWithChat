@@ -69,6 +69,7 @@ private class FakeHistoryDao(
     override suspend fun upsertProjection(projection: ChatHistoryProjectionEntity): Long = projection.projectionId
     override suspend fun updateProjection(projection: ChatHistoryProjectionEntity) = Unit
     override suspend fun deleteProjection(turnKey: String): Int = 0
+    override suspend fun deleteAllProjections(): Int = 0
     override suspend fun enqueue(item: ChatHistoryIndexQueueEntity) = Unit
     override suspend fun getQueueBatch(limit: Int): List<ChatHistoryIndexQueueEntity> = emptyList()
     override suspend fun countQueue(): Int = 0
@@ -82,4 +83,7 @@ private class FakeHistoryDao(
     override suspend fun upsertEmbeddings(embeddings: List<ChatHistoryEmbeddingEntity>) = Unit
     override suspend fun getEmbeddings(descriptorHash: String): List<ChatHistoryEmbeddingEntity> = emptyList()
     override suspend fun deleteOrphanedEmbeddings(): Int = 0
+    override suspend fun deleteEmbeddings(turnKeys: List<String>): Int = 0
+    override suspend fun deleteAllEmbeddings(): Int = 0
+    override suspend fun clearQueue(): Int = 0
 }

@@ -35,6 +35,9 @@ interface ChatHistoryDao {
     @Query("DELETE FROM chat_history_projection WHERE turn_key = :turnKey")
     suspend fun deleteProjection(turnKey: String): Int
 
+    @Query("DELETE FROM chat_history_projection")
+    suspend fun deleteAllProjections(): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun enqueue(item: ChatHistoryIndexQueueEntity)
 
@@ -73,6 +76,15 @@ interface ChatHistoryDao {
 
     @Query("DELETE FROM chat_history_embedding_cache WHERE turn_key NOT IN (SELECT turn_key FROM chat_history_projection WHERE eligibility_state = 'eligible')")
     suspend fun deleteOrphanedEmbeddings(): Int
+
+    @Query("DELETE FROM chat_history_embedding_cache WHERE turn_key IN (:turnKeys)")
+    suspend fun deleteEmbeddings(turnKeys: List<String>): Int
+
+    @Query("DELETE FROM chat_history_embedding_cache")
+    suspend fun deleteAllEmbeddings(): Int
+
+    @Query("DELETE FROM chat_history_index_queue")
+    suspend fun clearQueue(): Int
 }
 
 data class ChatHistoryLexicalHit(
