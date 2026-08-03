@@ -50,6 +50,8 @@ import cn.nabr.chatwithchat.data.memory.MemoryVectorRecallStateSource
 import cn.nabr.chatwithchat.data.memory.RoomMemoryActivityLogger
 import cn.nabr.chatwithchat.data.memory.RoomMemoryVectorRecallStateSource
 import cn.nabr.chatwithchat.data.memory.WorkEnqueuingMemoryVectorRecallRepairTrigger
+import cn.nabr.chatwithchat.data.history.ChatHistoryIndexCoordinator
+import cn.nabr.chatwithchat.data.history.ChatHistoryRetriever
 import cn.nabr.chatwithchat.data.memory.embedding.MemoryEmbeddingArtifactInstaller
 import cn.nabr.chatwithchat.data.memory.embedding.MemoryEmbeddingCapabilitySource
 import cn.nabr.chatwithchat.data.memory.embedding.MutableMemoryEmbeddingCapabilitySource
@@ -511,7 +513,9 @@ object MemoryRepositoryModule {
         memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler,
         memoryLongTermConsolidationScheduler: MemoryLongTermConsolidationScheduler,
         promptTraceStore: PromptTraceStore,
-        memoryActivityLogger: MemoryActivityLogger
+        memoryActivityLogger: MemoryActivityLogger,
+        chatHistoryRetriever: ChatHistoryRetriever,
+        chatHistoryIndexCoordinator: ChatHistoryIndexCoordinator
     ): MemoryRepository = MemoryRepositoryImpl(
         memoryPromptBuilder = memoryPromptBuilder,
         memoryRetriever = memoryRetriever,
@@ -521,6 +525,8 @@ object MemoryRepositoryModule {
         memoryDailyDistillationScheduler = memoryDailyDistillationScheduler,
         memoryLongTermConsolidationScheduler = memoryLongTermConsolidationScheduler,
         promptTraceStore = promptTraceStore,
-        activityLogger = memoryActivityLogger
+        activityLogger = memoryActivityLogger,
+        chatHistoryRetriever = chatHistoryRetriever,
+        chatHistoryIndexCoordinator = chatHistoryIndexCoordinator
     )
 }

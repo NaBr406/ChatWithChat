@@ -14,6 +14,7 @@ import cn.nabr.chatwithchat.data.database.dao.ChatRoomV2Dao
 import cn.nabr.chatwithchat.data.database.dao.MessageDao
 import cn.nabr.chatwithchat.data.database.dao.MessageV2Dao
 import cn.nabr.chatwithchat.data.debug.PromptTraceStore
+import cn.nabr.chatwithchat.data.history.ChatHistoryIndexCoordinator
 import cn.nabr.chatwithchat.data.memory.MemoryTurnBatchScheduler
 import cn.nabr.chatwithchat.data.network.AnthropicAPI
 import cn.nabr.chatwithchat.data.network.GoogleAPI
@@ -50,6 +51,7 @@ object ChatRepositoryModule {
         toolLoopOrchestrator: ToolLoopOrchestrator,
         searchDecisionService: SearchDecisionService,
         memoryTurnBatchScheduler: MemoryTurnBatchScheduler,
+        chatHistoryIndexCoordinator: ChatHistoryIndexCoordinator,
         promptTraceStore: PromptTraceStore
     ): ChatRepository = ChatRepositoryImpl(
         context,
@@ -69,6 +71,7 @@ object ChatRepositoryModule {
         searchDecisionService = searchDecisionService,
         memoryTurnBatchScheduler = memoryTurnBatchScheduler,
         chatDatabaseV2 = chatDatabaseV2,
-        promptTraceStore = promptTraceStore
+        promptTraceStore = promptTraceStore,
+        chatHistoryIndexCoordinator = chatHistoryIndexCoordinator
     )
 }

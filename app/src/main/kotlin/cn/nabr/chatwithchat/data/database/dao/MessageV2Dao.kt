@@ -28,6 +28,17 @@ interface MessageV2Dao {
     suspend fun searchMessagesByContent(query: String): List<Int>
 
     @Query(
+        """
+        SELECT * FROM messages_v2
+        WHERE platform_type IS NULL
+          AND (chat_id > :lastChatId OR (chat_id = :lastChatId AND message_id > :lastUserMessageId))
+        ORDER BY chat_id, message_id
+        LIMIT :limit
+        """
+    )
+    suspend fun loadHistoryBackfillPage(lastChatId: Int, lastUserMessageId: Int, limit: Int): List<MessageV2>
+
+    @Query(
         "SELECT COUNT(*) FROM messages_v2 " +
             "WHERE sticker_refs LIKE '%' || :assetKey || '%' OR " +
             "revisions LIKE '%' || :assetKey || '%'"

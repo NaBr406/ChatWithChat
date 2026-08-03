@@ -84,6 +84,7 @@ import cn.nabr.chatwithchat.data.dto.openai.response.ResponseCompletedEvent
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponseErrorEvent
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponseFailedEvent
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponsesStreamEvent
+import cn.nabr.chatwithchat.data.history.ChatHistoryIndexCoordinator
 import cn.nabr.chatwithchat.data.memory.MemoryTurnBatchScheduler
 import cn.nabr.chatwithchat.data.memory.containsInternalMemoryMetadata
 import cn.nabr.chatwithchat.data.model.ApiType
@@ -183,7 +184,8 @@ class ChatRepositoryImpl @Inject constructor(
     private val googleToolAdapter: ToolCallingAdapter = GoogleToolAdapter(),
     private val memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null,
     private val chatDatabaseV2: ChatDatabaseV2? = null,
-    private val promptTraceStore: PromptTraceStore = PromptTraceStore()
+    private val promptTraceStore: PromptTraceStore = PromptTraceStore(),
+    private val chatHistoryIndexCoordinator: ChatHistoryIndexCoordinator? = null
 ) : ChatRepository {
 
     private fun isImageFile(extension: String): Boolean = extension in setOf("jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff", "svg")
@@ -3137,6 +3139,7 @@ class ChatRepositoryImpl @Inject constructor(
 
     override suspend fun updateChatTitle(chatRoom: ChatRoomV2, title: String) {
         chatRoomV2Dao.editChatRoom(chatRoom.copy(title = title.replace('\n', ' ').take(50)))
+        chatHistoryIndexCoordinator?.enqueueChatReconciliation(chatRoom.id)
     }
 
     override suspend fun saveChat(chatRoom: ChatRoomV2, messages: List<MessageV2>, chatPlatformModels: Map<String, ChatPlatformConfig>): ChatRoomV2 {
@@ -3179,6 +3182,7 @@ class ChatRepositoryImpl @Inject constructor(
                 chatId = chatRoom.id,
                 models = chatPlatformModels.filterKeys { it in chatRoom.enabledPlatform }
             )
+            chatHistoryIndexCoordinator?.enqueueChatReconciliation(chatRoom.id)
 
             chatRoom
         }
@@ -3209,6 +3213,7 @@ class ChatRepositoryImpl @Inject constructor(
 
         val chatPlatformModels = fetchChatPlatformModels(chatRoom.id)
         saveChatPlatformModels(duplicatedChatId, chatPlatformModels)
+        chatHistoryIndexCoordinator?.enqueueChatReconciliation(duplicatedChatId)
 
         return chatRoom.copy(
             id = duplicatedChatId,

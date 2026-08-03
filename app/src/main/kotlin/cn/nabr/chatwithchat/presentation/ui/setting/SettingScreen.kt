@@ -657,6 +657,7 @@ fun MemoryEnabledItem(
 ) {
     SettingsRow(
         title = stringResource(R.string.memory_enabled_title),
+        description = stringResource(R.string.memory_enabled_description),
         onClick = { onCheckedChange(!memoryEnabled) },
         leadingIcon = Icons.Outlined.Memory,
         showNavigationIndicator = false,

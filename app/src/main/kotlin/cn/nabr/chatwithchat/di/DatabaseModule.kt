@@ -5,7 +5,9 @@ import androidx.room.Room
 import cn.nabr.chatwithchat.data.database.ChatDatabase
 import cn.nabr.chatwithchat.data.database.ChatDatabaseV2
 import cn.nabr.chatwithchat.data.database.ChatDatabaseV2Migrations
+import cn.nabr.chatwithchat.data.database.ChatHistoryDatabaseCallback
 import cn.nabr.chatwithchat.data.database.dao.ChatPlatformModelV2Dao
+import cn.nabr.chatwithchat.data.database.dao.ChatHistoryDao
 import cn.nabr.chatwithchat.data.database.dao.ChatRoomDao
 import cn.nabr.chatwithchat.data.database.dao.ChatRoomV2Dao
 import cn.nabr.chatwithchat.data.database.dao.MemoryActivityLogDao
@@ -45,6 +47,9 @@ object DatabaseModule {
 
     @Provides
     fun provideChatRoomV2Dao(chatDatabaseV2: ChatDatabaseV2): ChatRoomV2Dao = chatDatabaseV2.chatRoomDao()
+
+    @Provides
+    fun provideChatHistoryDao(chatDatabaseV2: ChatDatabaseV2): ChatHistoryDao = chatDatabaseV2.chatHistoryDao()
 
     @Provides
     fun provideMessageDao(chatDatabase: ChatDatabase): MessageDao = chatDatabase.messageDao()
@@ -103,6 +108,7 @@ object DatabaseModule {
         ChatDatabaseV2Migrations.MIGRATION_15_16,
         ChatDatabaseV2Migrations.MIGRATION_16_17,
         ChatDatabaseV2Migrations.MIGRATION_17_18,
-        ChatDatabaseV2Migrations.MIGRATION_18_19
-    ).build()
+        ChatDatabaseV2Migrations.MIGRATION_18_19,
+        ChatDatabaseV2Migrations.MIGRATION_19_20
+    ).addCallback(ChatHistoryDatabaseCallback()).build()
 }

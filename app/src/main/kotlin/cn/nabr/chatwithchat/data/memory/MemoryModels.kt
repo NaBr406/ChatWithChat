@@ -12,10 +12,14 @@ data class MemoryConversationMessage(
 
 data class PreparedMemoryContext(
     val retrievedMemories: List<MemoryRetrievalResult> = emptyList(),
-    val snapshot: TurnRecallSnapshot = TurnRecallSnapshot()
+    val snapshot: TurnRecallSnapshot = TurnRecallSnapshot(),
+    val historySnapshot: cn.nabr.chatwithchat.data.history.HistoryRecallSnapshot =
+        cn.nabr.chatwithchat.data.history.HistoryRecallSnapshot()
 ) {
     val prompt: String?
-        get() = snapshot.prompt
+        get() = listOfNotNull(snapshot.prompt, historySnapshot.prompt)
+            .joinToString(separator = "\n\n")
+            .takeIf { it.isNotBlank() }
 }
 
 object MemorySensitivity {

@@ -6,6 +6,10 @@ import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.debug.MemoryRecallTrace
 import cn.nabr.chatwithchat.data.debug.PromptTraceStore
+import cn.nabr.chatwithchat.data.history.ChatHistoryIndexCoordinator
+import cn.nabr.chatwithchat.data.history.ChatHistoryRetrievalRequest
+import cn.nabr.chatwithchat.data.history.ChatHistoryRetriever
+import cn.nabr.chatwithchat.data.history.HistoryRecallSnapshot
 import cn.nabr.chatwithchat.data.memory.MemoryActivityLogger
 import cn.nabr.chatwithchat.data.memory.MemoryActivityStatus
 import cn.nabr.chatwithchat.data.memory.MemoryCompletedTurnInput
@@ -47,10 +51,15 @@ class MemoryRepositoryImpl(
     private val memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler? = null,
     private val memoryLongTermConsolidationScheduler: MemoryLongTermConsolidationScheduler? = null,
     private val promptTraceStore: PromptTraceStore? = null,
-    private val activityLogger: MemoryActivityLogger = MemoryActivityLogger.None
+    private val activityLogger: MemoryActivityLogger = MemoryActivityLogger.None,
+    private val chatHistoryRetriever: ChatHistoryRetriever? = null,
+    private val chatHistoryIndexCoordinator: ChatHistoryIndexCoordinator? = null
 ) : MemoryRepository {
 
     override suspend fun onMemoryEnabledChanged(enabled: Boolean) {
+        runMemoryTransitionStep("history_toggle_failed") {
+            if (enabled) chatHistoryIndexCoordinator?.onMemoryEnabledChanged(true)
+        }
         runMemoryTransitionStep("memory_toggle_turn_batch_failed") {
             memoryTurnBatchScheduler?.onMemoryEnabledChanged(enabled)
         }
@@ -104,16 +113,26 @@ class MemoryRepositoryImpl(
         memoryPlatform: PlatformV2?
     ): PreparedMemoryContext {
         val recallKey = memoryRecallKey(chatRoom.id, userMessages)
+        val query = buildLocalRecallQuery(userMessages.lastOrNull())
+        val recentContext = buildLocalRecentContext(chatRoom, userMessages, assistantMessages)
+        val historySnapshot = retrieveHistory(
+            chatRoom = chatRoom,
+            query = query,
+            recentContext = recentContext
+        )
+        chatHistoryIndexCoordinator?.let { coordinator ->
+            runMemoryTransitionStep("history_reconcile_schedule_failed") {
+                coordinator.ensureReconciliationScheduled()
+            }
+        }
         val retriever = memoryRetriever ?: run {
             recordMemoryRecall(recallKey, MemoryRecallTrace(MemoryRetrievalMode.NONE, 0, emptyList()))
-            return PreparedMemoryContext()
+            return PreparedMemoryContext(historySnapshot = historySnapshot)
         }
-        val query = buildLocalRecallQuery(userMessages.lastOrNull())
         if (query.isBlank()) {
             recordMemoryRecall(recallKey, MemoryRecallTrace(MemoryRetrievalMode.NONE, 0, emptyList()))
-            return PreparedMemoryContext()
+            return PreparedMemoryContext(historySnapshot = historySnapshot)
         }
-        val recentContext = buildLocalRecentContext(chatRoom, userMessages, assistantMessages)
         val retrievalRequest = MemoryRetrievalRequest(
             corpus = MemoryCorpus.CHAT_RECALL_LONG_TERM,
             query = query,
@@ -178,8 +197,33 @@ class MemoryRepositoryImpl(
         )
         return PreparedMemoryContext(
             retrievedMemories = retrievedMemories,
-            snapshot = turnSnapshot
+            snapshot = turnSnapshot,
+            historySnapshot = historySnapshot
         )
+    }
+
+    private suspend fun retrieveHistory(
+        chatRoom: ChatRoomV2,
+        query: String,
+        recentContext: String?
+    ): HistoryRecallSnapshot {
+        val retriever = chatHistoryRetriever ?: return HistoryRecallSnapshot()
+        if (query.isBlank()) return HistoryRecallSnapshot()
+        return runCatching {
+            retriever.retrieve(
+                ChatHistoryRetrievalRequest(
+                    currentChatId = chatRoom.id,
+                    query = query,
+                    recentContext = recentContext
+                )
+            )
+        }.getOrElse {
+            HistoryRecallSnapshot(
+                mode = cn.nabr.chatwithchat.data.history.HistoryRecallMode.FAILED,
+                errorCode = "history_retrieval_failed",
+                diagnostics = listOf(cn.nabr.chatwithchat.data.history.HistoryRecallDiagnostic("history_retrieval_failed"))
+            )
+        }
     }
 
     override suspend fun getLongTermMarkdown(): String =

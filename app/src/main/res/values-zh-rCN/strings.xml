@@ -76,7 +76,7 @@
     <string name="history_older">更早</string>
     <string name="memory">记忆</string>
     <string name="memory_enabled_title">启用记忆</string>
-    <string name="memory_enabled_description">开启后才会召回和学习长期个性化记忆。</string>
+    <string name="memory_enabled_description">开启后会召回和学习长期个性化记忆，也允许在相关时参考之前对话中的片段。</string>
     <string name="memory_maintenance_notifications_title">记忆维护通知</string>
     <string name="memory_maintenance_notifications_description">维护失败时提醒你查看并重试；需要系统通知权限。</string>
     <string name="memory_page_description">查看、编辑和管理已保存的记忆。</string>

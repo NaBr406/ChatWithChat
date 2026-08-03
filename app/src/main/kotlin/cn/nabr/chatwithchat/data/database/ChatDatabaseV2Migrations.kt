@@ -430,6 +430,13 @@ object ChatDatabaseV2Migrations {
         }
     }
 
+    val MIGRATION_19_20 = object : Migration(19, 20) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            createChatHistoryDerivedTables(db)
+            createChatHistoryFtsTriggers(db)
+        }
+    }
+
     internal fun legacyFilesToAttachmentsJson(filesValue: String): String {
         val attachments = filesValue
             .split(",")
@@ -459,6 +466,131 @@ object ChatDatabaseV2Migrations {
             .map { AssistantRevision(content = it, thoughts = "", createdAt = createdAt) }
 
         return AssistantRevisionListConverter().fromList(revisions)
+    }
+
+    internal fun createChatHistoryDerivedTables(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `chat_history_projection` (
+                `projection_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                `turn_key` TEXT NOT NULL,
+                `chat_id` INTEGER NOT NULL,
+                `user_message_id` INTEGER NOT NULL,
+                `assistant_message_id` INTEGER NOT NULL,
+                `assistant_platform_uid` TEXT NOT NULL,
+                `title` TEXT NOT NULL,
+                `user_content` TEXT NOT NULL,
+                `assistant_content` TEXT NOT NULL,
+                `search_terms` TEXT NOT NULL,
+                `content_hash` TEXT NOT NULL,
+                `projection_version` INTEGER NOT NULL,
+                `eligibility_state` TEXT NOT NULL,
+                `created_at` INTEGER NOT NULL,
+                `updated_at` INTEGER NOT NULL,
+                FOREIGN KEY(`chat_id`) REFERENCES `chats_v2`(`chat_id`) ON UPDATE NO ACTION ON DELETE CASCADE
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_chat_history_projection_turn_key` ON `chat_history_projection` (`turn_key`)")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_chat_history_projection_chat_id_user_message_id` ON `chat_history_projection` (`chat_id`, `user_message_id`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_chat_history_projection_eligibility_state` ON `chat_history_projection` (`eligibility_state`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_chat_history_projection_updated_at` ON `chat_history_projection` (`updated_at`)")
+        db.execSQL(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS `chat_history_projection_fts` USING FTS5(
+                `title`, `user_content`, `assistant_content`, `search_terms`,
+                content='chat_history_projection', content_rowid='projection_id',
+                tokenize='unicode61'
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `chat_history_index_queue` (
+                `turn_key` TEXT NOT NULL,
+                `chat_id` INTEGER NOT NULL,
+                `user_message_id` INTEGER NOT NULL,
+                `operation_hint` TEXT NOT NULL,
+                `requested_at` INTEGER NOT NULL,
+                `attempt_count` INTEGER NOT NULL,
+                PRIMARY KEY(`turn_key`),
+                FOREIGN KEY(`chat_id`) REFERENCES `chats_v2`(`chat_id`) ON UPDATE NO ACTION ON DELETE CASCADE
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_chat_history_index_queue_chat_id` ON `chat_history_index_queue` (`chat_id`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_chat_history_index_queue_requested_at` ON `chat_history_index_queue` (`requested_at`)")
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `chat_history_backfill_checkpoint` (
+                `checkpoint_id` TEXT NOT NULL,
+                `last_chat_id` INTEGER,
+                `last_user_message_id` INTEGER,
+                `projection_version` INTEGER NOT NULL,
+                `status` TEXT NOT NULL,
+                `updated_at` INTEGER NOT NULL,
+                PRIMARY KEY(`checkpoint_id`)
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `chat_history_index_state` (
+                `state_id` TEXT NOT NULL,
+                `projection_generation` INTEGER NOT NULL,
+                `projection_hash` TEXT,
+                `vector_published_generation` INTEGER,
+                `vector_status` TEXT NOT NULL,
+                `updated_at` INTEGER NOT NULL,
+                PRIMARY KEY(`state_id`)
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `chat_history_embedding_cache` (
+                `turn_key` TEXT NOT NULL,
+                `content_hash` TEXT NOT NULL,
+                `descriptor_hash` TEXT NOT NULL,
+                `embedding_json` TEXT NOT NULL,
+                `updated_at` INTEGER NOT NULL,
+                PRIMARY KEY(`turn_key`),
+                FOREIGN KEY(`turn_key`) REFERENCES `chat_history_projection`(`turn_key`) ON UPDATE NO ACTION ON DELETE CASCADE
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_chat_history_embedding_cache_descriptor_hash` ON `chat_history_embedding_cache` (`descriptor_hash`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_chat_history_embedding_cache_content_hash` ON `chat_history_embedding_cache` (`content_hash`)")
+    }
+
+    internal fun createChatHistoryFtsTriggers(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TRIGGER IF NOT EXISTS `chat_history_projection_ai` AFTER INSERT ON `chat_history_projection` BEGIN
+                INSERT INTO `chat_history_projection_fts`(rowid, title, user_content, assistant_content, search_terms)
+                VALUES (new.projection_id, new.title, new.user_content, new.assistant_content, new.search_terms);
+            END
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TRIGGER IF NOT EXISTS `chat_history_projection_ad` AFTER DELETE ON `chat_history_projection` BEGIN
+                INSERT INTO `chat_history_projection_fts`(chat_history_projection_fts, rowid, title, user_content, assistant_content, search_terms)
+                VALUES ('delete', old.projection_id, old.title, old.user_content, old.assistant_content, old.search_terms);
+            END
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TRIGGER IF NOT EXISTS `chat_history_projection_au` AFTER UPDATE ON `chat_history_projection` BEGIN
+                INSERT INTO `chat_history_projection_fts`(chat_history_projection_fts, rowid, title, user_content, assistant_content, search_terms)
+                VALUES ('delete', old.projection_id, old.title, old.user_content, old.assistant_content, old.search_terms);
+                INSERT INTO `chat_history_projection_fts`(rowid, title, user_content, assistant_content, search_terms)
+                VALUES (new.projection_id, new.title, new.user_content, new.assistant_content, new.search_terms);
+            END
+            """.trimIndent()
+        )
+        db.execSQL("INSERT INTO chat_history_projection_fts(chat_history_projection_fts) VALUES ('rebuild')")
     }
 
     private fun ensureMemoryTables(db: SupportSQLiteDatabase) {

@@ -160,7 +160,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 ChatDatabaseV2Migrations.MIGRATION_15_16,
                 ChatDatabaseV2Migrations.MIGRATION_16_17,
                 ChatDatabaseV2Migrations.MIGRATION_17_18,
-                ChatDatabaseV2Migrations.MIGRATION_18_19
+                ChatDatabaseV2Migrations.MIGRATION_18_19,
+                ChatDatabaseV2Migrations.MIGRATION_19_20
             )
             .build()
         try {
@@ -276,7 +277,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 ChatDatabaseV2Migrations.MIGRATION_15_16,
                 ChatDatabaseV2Migrations.MIGRATION_16_17,
                 ChatDatabaseV2Migrations.MIGRATION_17_18,
-                ChatDatabaseV2Migrations.MIGRATION_18_19
+                ChatDatabaseV2Migrations.MIGRATION_18_19,
+                ChatDatabaseV2Migrations.MIGRATION_19_20
             )
             .build()
         try {
@@ -327,7 +329,7 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                     assertEquals("dismissed", roomDatabase.memoryMaintenanceJobDao().getById(jobId)?.status)
                 }
             }
-            assertEquals(SCHEMA_19_TABLES, roomDatabase.openHelper.writableDatabase.userTableNames())
+            assertEquals(SCHEMA_20_TABLES, roomDatabase.openHelper.writableDatabase.userTableNames())
             assertLegacySemanticTablesAbsent(roomDatabase.openHelper.writableDatabase)
         } finally {
             roomDatabase.close()
@@ -465,7 +467,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
         val roomDatabase = Room.databaseBuilder(context, ChatDatabaseV2::class.java, TEST_DATABASE)
             .addMigrations(
                 ChatDatabaseV2Migrations.MIGRATION_17_18,
-                ChatDatabaseV2Migrations.MIGRATION_18_19
+                ChatDatabaseV2Migrations.MIGRATION_18_19,
+                ChatDatabaseV2Migrations.MIGRATION_19_20
             )
             .build()
         try {
@@ -738,7 +741,7 @@ class ChatDatabaseV2MigrationInstrumentedTest {
 
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val roomDatabase = Room.databaseBuilder(context, ChatDatabaseV2::class.java, TEST_DATABASE)
-            .addMigrations(ChatDatabaseV2Migrations.MIGRATION_18_19)
+            .addMigrations(ChatDatabaseV2Migrations.MIGRATION_18_19, ChatDatabaseV2Migrations.MIGRATION_19_20)
             .build()
         try {
             runBlocking {
@@ -789,15 +792,44 @@ class ChatDatabaseV2MigrationInstrumentedTest {
     }
 
     @Test
-    fun freshSchema19_opensAndReopensWithLongTermConsolidationState() {
+    fun migration19To20_createsHistoryDerivedTablesAndFtsTriggers() {
+        migrationHelper.createDatabase(TEST_DATABASE, 19).close()
+
+        migrationHelper.runMigrationsAndValidate(
+            TEST_DATABASE,
+            20,
+            true,
+            ChatDatabaseV2Migrations.MIGRATION_19_20
+        ).use { database ->
+            assertEquals(SCHEMA_20_TABLES, database.userTableNames())
+            assertEquals(
+                1L,
+                database.singleLong(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'chat_history_projection_fts'"
+                )
+            )
+            assertEquals(
+                3L,
+                database.singleLong(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'chat_history_projection_%'"
+                )
+            )
+            assertEquals(20L, database.singleLong("PRAGMA user_version"))
+            database.query("PRAGMA foreign_key_check").use { cursor -> assertEquals(0, cursor.count) }
+        }
+    }
+
+    @Test
+    fun freshSchema20_opensAndReopensWithHistoryDerivedState() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val freshDatabase = Room.databaseBuilder(context, ChatDatabaseV2::class.java, TEST_DATABASE).build()
         try {
             val database = freshDatabase
             val sqliteDatabase = database.openHelper.writableDatabase
-            assertEquals(SCHEMA_19_TABLES, sqliteDatabase.userTableNames())
+            assertEquals(SCHEMA_20_TABLES, sqliteDatabase.userTableNames())
             assertLegacySemanticTablesAbsent(sqliteDatabase)
-            assertEquals(19L, sqliteDatabase.singleLong("PRAGMA user_version"))
+            assertEquals(20L, sqliteDatabase.singleLong("PRAGMA user_version"))
+            assertEquals(1L, sqliteDatabase.singleLong("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'chat_history_projection_fts'"))
             sqliteDatabase.query("PRAGMA foreign_key_check").use { cursor ->
                 assertEquals(0, cursor.count)
             }
@@ -810,9 +842,9 @@ class ChatDatabaseV2MigrationInstrumentedTest {
         try {
             val database = reopenedDatabase
             val sqliteDatabase = database.openHelper.writableDatabase
-            assertEquals(SCHEMA_19_TABLES, sqliteDatabase.userTableNames())
+            assertEquals(SCHEMA_20_TABLES, sqliteDatabase.userTableNames())
             assertLegacySemanticTablesAbsent(sqliteDatabase)
-            assertEquals(19L, sqliteDatabase.singleLong("PRAGMA user_version"))
+            assertEquals(20L, sqliteDatabase.singleLong("PRAGMA user_version"))
             assertEquals("ok", sqliteDatabase.singleString("PRAGMA integrity_check"))
             runBlocking {
                 assertTrue(database.chatRoomDao().getChatRooms().isEmpty())
@@ -1504,7 +1536,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
         FROM sqlite_master
         WHERE type = 'table'
             AND name NOT LIKE 'sqlite_%'
-            AND name NOT IN ('android_metadata', 'room_master_table')
+             AND name NOT IN ('android_metadata', 'room_master_table')
+             AND name NOT LIKE 'chat_history_projection_fts%'
         ORDER BY name
         """.trimIndent()
     ).use { cursor ->
@@ -1604,6 +1637,13 @@ class ChatDatabaseV2MigrationInstrumentedTest {
             "sticker_items"
         )
         private val SCHEMA_19_TABLES = SCHEMA_18_TABLES + "memory_long_term_consolidation_checkpoint"
+        private val SCHEMA_20_TABLES = SCHEMA_19_TABLES + setOf(
+            "chat_history_projection",
+            "chat_history_index_queue",
+            "chat_history_backfill_checkpoint",
+            "chat_history_index_state",
+            "chat_history_embedding_cache"
+        )
         private val UNCHANGED_SCHEMA_18_TO_19_TABLES = SCHEMA_18_TABLES - setOf(
             "memory_maintenance_job",
             "memory_mutation_receipt",
