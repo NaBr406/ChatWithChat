@@ -103,6 +103,7 @@ Reuse the existing `MemoryTurnBatchCoordinator` canonical assistant rule exactly
 - The baseline branch was created as `codex/chat-history-reference` from `a3f419e`.
 - Prompt-trace and provider-runtime fixtures remain open and will be captured with the integration changes.
 - Production slice `b042602` adds Room schema 20 history projections, durable queue/checkpoint/state tables, rebuildable FTS5 triggers, bounded WorkManager indexing, local history-vector cache/fallback, prompt composition, Settings copy, and focused JVM tests.
+- Lifecycle slice `059538a` adds explicit full rebuild work, checkpoint reset, vector corruption repair, stale/backfill diagnostics, and populated FTS trigger/tokenizer fixtures.
 - Post-slice validation passed: `./gradlew.bat :app:compileDebugKotlin`, `./gradlew.bat :app:compileDebugAndroidTestKotlin`, and focused history/memory/retry unit tests. The connected migration test was attempted with the emulator online but the instrumentation process was killed under emulator low-memory pressure; device/runtime proof remains open.
 
 The following facts were observed during planning and must be rechecked by the implementation agent before edits:
@@ -430,7 +431,7 @@ adb devices
 - [x] Make queue enqueue/replay idempotent by `turn_key`; do not use an auto-increment queue identity or a caller-supplied source payload/version as truth.
 - [x] Add the external-content FTS5 table, INSERT/UPDATE/DELETE triggers, and explicit `rebuild` path as one migration/rebuild contract.
 - [x] Add schema migration from the live version (currently expected to be 19) to the new version; do not assume 19 without rechecking.
-- [ ] Export the new schema and add fresh/open/populated migration tests.
+- [x] Export the new schema and add fresh/open/populated migration tests.
 - [ ] Prove that raw `MessageV2` and long-term memory tables remain unchanged in meaning.
 
 Expected areas:
@@ -450,7 +451,7 @@ app/src/main/kotlin/cn/nabr/chatwithchat/di/DatabaseModule.kt
 - [x] Add idempotent upsert/replacement by chat/turn/content hash.
 - [x] Enqueue index work after `saveChat()` completion without delaying the provider response.
 - [x] Enqueue affected rows after edit, delete, duplicate, and chat replacement paths.
-- [ ] Add bounded backfill and full rebuild workers with unique work and durable cursor semantics.
+- [x] Add bounded backfill and full rebuild workers with unique work and durable cursor semantics.
 - [x] Ensure disabling `memory_enabled` prevents history recall on the next context preparation and prevents subsequent queue consumption/new index writes while retaining derived index data; an already-prepared or already-issued provider turn remains frozen.
 - [ ] Add process-death, repeated-enqueue, stale-row, and rebuild tests.
 
@@ -461,7 +462,7 @@ Do not call `MemoryRepository.recordCompletedTurn()` as a substitute for history
 - [x] Add `ChatHistoryRetriever` and `ChatHistoryPromptBuilder`.
 - [x] Implement deterministic query normalization, FTS candidate retrieval, current-chat exclusion, metadata filtering, deduplication, chat diversification, and token packing.
 - [x] Add `HistoryRecallSnapshot` and local trace data with only bounded counts, scores, hashes, and opaque IDs.
-- [ ] Define empty, failed, stale, disabled, and backfill-incomplete modes.
+- [x] Define empty, failed, stale, disabled, and backfill-incomplete modes.
 - [ ] Add fixed relevance fixtures: exact name, CJK phrase, paraphrase, unrelated query, duplicate provider answers, same-chat exclusion, deleted chat, stale projection, and long answer truncation.
 - [ ] Add an Android SQLite tokenizer fixture covering trigram availability, Chinese short queries/substrings, English, emoji, exact phrase behavior, and latency; record the selected tokenizer/search-column contract in the migration tests.
 
@@ -503,7 +504,7 @@ This task is required for MVP. It may be implemented after the lexical projectio
 - [x] Define a history-specific vector index identity/namespace separate from the long-term memory identity.
 - [ ] Reuse the existing on-device embedding provider only after checking its release/runtime availability and latency.
 - [x] Embed turn/chunk text, not raw Room serialization or maintenance metadata.
-- [ ] Add incremental vector sync, stale detection, rebuild, corruption repair, and lexical fallback.
+- [x] Add incremental vector sync, stale detection, rebuild, corruption repair, and lexical fallback.
 - [ ] Add lexical/vector/hybrid hard-negative fixtures and calibrate absolute thresholds from recorded score distributions.
 - [ ] Test complete snapshot publication via `embedDocuments()`/`embedQuery()`, embedding-cache reuse, stale/corrupt snapshot detection, and lexical fallback without touching the long-term vector store.
 - [ ] Prove long-term memory vector snapshots and `MEMORY.md` behavior are byte/index unchanged by history indexing.
