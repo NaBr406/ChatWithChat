@@ -2,6 +2,7 @@ package cn.nabr.chatwithchat.data.database.entity
 
 import androidx.room.ColumnInfo
 import androidx.room.Entity
+import androidx.room.Fts4
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -55,6 +56,21 @@ data class ChatHistoryProjectionEntity(
     val createdAt: Long,
     @ColumnInfo(name = "updated_at")
     val updatedAt: Long
+)
+
+@Fts4(
+    contentEntity = ChatHistoryProjectionEntity::class,
+    tokenizer = "unicode61"
+)
+@Entity(tableName = "chat_history_projection_fts")
+data class ChatHistoryProjectionFtsEntity(
+    val title: String,
+    @ColumnInfo(name = "user_content")
+    val userContent: String,
+    @ColumnInfo(name = "assistant_content")
+    val assistantContent: String,
+    @ColumnInfo(name = "search_terms")
+    val searchTerms: String
 )
 
 @Entity(

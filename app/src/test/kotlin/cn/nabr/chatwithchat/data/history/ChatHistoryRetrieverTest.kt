@@ -66,6 +66,7 @@ private class FakeHistoryDao(
     override suspend fun getEligibleProjections(): List<ChatHistoryProjectionEntity> = projections
     override suspend fun getProjectionsByTurnKeys(turnKeys: List<String>): List<ChatHistoryProjectionEntity> =
         projections.filter { it.turnKey in turnKeys }
+    override suspend fun getFtsDefinition(): String? = "CREATE VIRTUAL TABLE chat_history_projection_fts USING FTS5"
     override suspend fun upsertProjection(projection: ChatHistoryProjectionEntity): Long = projection.projectionId
     override suspend fun updateProjection(projection: ChatHistoryProjectionEntity) = Unit
     override suspend fun deleteProjection(turnKey: String): Int = 0

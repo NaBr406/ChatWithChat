@@ -102,9 +102,11 @@ Reuse the existing `MemoryTurnBatchCoordinator` canonical assistant rule exactly
 - Baseline verification passed before production edits: `./gradlew.bat :app:testDebugUnitTest --tests "*Memory*"` and `./gradlew.bat :app:compileDebugKotlin`.
 - The baseline branch was created as `codex/chat-history-reference` from `a3f419e`.
 - Prompt-trace and provider-runtime fixtures remain open and will be captured with the integration changes.
-- Production slice `b042602` adds Room schema 20 history projections, durable queue/checkpoint/state tables, rebuildable FTS5 triggers, bounded WorkManager indexing, local history-vector cache/fallback, prompt composition, Settings copy, and focused JVM tests.
+- Production slice `b042602` adds Room schema 20 history projections, durable queue/checkpoint/state tables, rebuildable external-content FTS triggers, bounded WorkManager indexing, local history-vector cache/fallback, prompt composition, Settings copy, and focused JVM tests.
 - Lifecycle slice `059538a` adds explicit full rebuild work, checkpoint reset, vector corruption repair, stale/backfill diagnostics, and populated FTS trigger/tokenizer fixtures.
-- Post-slice validation passed: `./gradlew.bat :app:compileDebugKotlin`, `./gradlew.bat :app:compileDebugAndroidTestKotlin`, and focused history/memory/retry unit tests. The connected migration test was attempted with the emulator online but the instrumentation process was killed under emulator low-memory pressure; device/runtime proof remains open.
+- Safety slice `f455d93` marks edited projections stale before reconciliation, requires all CJK query n-grams, records vector fallback diagnostics, and strips unsafe historical metadata from provider-visible text.
+- Android compatibility validation selected Room's external-content FTS4 contract: the emulator system SQLite does not provide FTS5, while FTS4 with `unicode61` and deterministic CJK n-gram search terms is available. The migration and database callback use Room's four generated sync triggers.
+- Latest validation (2026-08-03) passed: `./gradlew.bat :app:testDebugUnitTest :app:assembleDebug --no-daemon`, and `./gradlew.bat :app:connectedDebugAndroidTest "-Pandroid.testInstrumentationRunnerArguments.class=cn.nabr.chatwithchat.data.database.ChatDatabaseV2MigrationInstrumentedTest" --no-daemon` (8 migration tests on `emulator-5554`, including fresh schema, 19->20 upgrade, trigger INSERT/UPDATE/DELETE synchronization, restart, and foreign-key checks). Provider/UI end-to-end proof and switch-transition coverage remain open.
 
 The following facts were observed during planning and must be rechecked by the implementation agent before edits:
 
@@ -280,10 +282,10 @@ chat_history_index_state
 - When `memory_enabled=false`, do not enqueue or consume new history work. Preserve queue, checkpoint, index-state, projection, FTS, vector snapshot, and embedding-cache data. Re-enable performs a full stale/missing reconciliation so turns created while disabled are discovered.
 - WorkManager is only a wake-up mechanism. Use dedicated unique history work names, `KEEP` for queue drain, exponential retry backoff, and explicit `CancellationException` propagation.
 
-### FTS5 lifecycle and tokenizer gate
+### FTS lifecycle and tokenizer gate (Android runtime uses FTS4)
 
-- Use an external-content FTS5 table over title, user content, and assistant content. Migration and rebuild logic must include INSERT, UPDATE, and DELETE triggers plus the FTS `rebuild` command.
-- Every query joins back to the projection table, requires `eligibility_state = 'eligible'`, excludes the current chat, and orders with `bm25` before application-level fusion.
+- Use a Room-supported external-content FTS table over title, user content, and assistant content. The current Android runtime uses FTS4 because system SQLite does not expose FTS5; migration and reopen callbacks create Room-compatible BEFORE_UPDATE/BEFORE_DELETE/AFTER_UPDATE/AFTER_INSERT triggers. Full rebuild replays projections through this trigger contract rather than assuming an FTS5-only `rebuild` command.
+- Every query joins back to the projection table, requires `eligibility_state = 'eligible'`, excludes the current chat, and uses `bm25` only when FTS5 is available; the FTS4 fallback supplies a deterministic application score.
 - `unicode61` is not Chinese word segmentation. Treat `trigram` only as a candidate until an Android SQLite instrumentation fixture proves availability, Chinese substring/short-query behavior, English behavior, emoji behavior, and acceptable latency on min SDK 31.
 - If bundled SQLite cannot use `trigram` or its short-query behavior fails, store deterministic derived CJK n-gram search terms in a search-only column and index that with a supported tokenizer. Do not fall back to a full-corpus `LIKE` query.
 
@@ -429,7 +431,7 @@ adb devices
 - [x] Add rebuildable Room projection storage and DAO with a non-null canonical assistant ID, stable `turn_key`, content hashes, timestamps, projection version, and fail-closed state.
 - [x] Add the three durable lifecycle tables (or equivalent Room entities) exactly as contracted above: `chat_history_index_queue`, `chat_history_backfill_checkpoint`, and `chat_history_index_state`.
 - [x] Make queue enqueue/replay idempotent by `turn_key`; do not use an auto-increment queue identity or a caller-supplied source payload/version as truth.
-- [x] Add the external-content FTS5 table, INSERT/UPDATE/DELETE triggers, and explicit `rebuild` path as one migration/rebuild contract.
+- [x] Add the Room-supported external-content FTS table (FTS4 on Android), four INSERT/UPDATE/DELETE synchronization triggers, and the projection-driven full rebuild path as one migration/rebuild contract.
 - [x] Add schema migration from the live version (currently expected to be 19) to the new version; do not assume 19 without rechecking.
 - [x] Export the new schema and add fresh/open/populated migration tests.
 - [ ] Prove that raw `MessageV2` and long-term memory tables remain unchanged in meaning.
@@ -513,11 +515,11 @@ If the current ObjectBox restrictions cannot be generalized without weakening lo
 
 ### Task 7: Product And Runtime Verification
 
-- [ ] Run JVM tests for projection, ranking, prompt packing, settings, index lifecycle, and snapshot reuse.
-- [ ] Run Room migration tests for fresh install, populated upgrade, restart, foreign keys, delete cascade, and index rebuild.
-- [ ] Run `:app:compileDebugKotlin`, `:app:testDebugUnitTest`, and `:app:assembleDebug` with extended timeout where needed.
-- [ ] Run `git diff --check` and inspect the final dirty-file list.
-- [ ] Check `adb devices` before claiming UI/runtime proof.
+- [x] Run the current JVM suite and focused history/memory/retry tests for the implemented projection, retrieval, prompt packing, and index lifecycle paths.
+- [x] Run Room migration tests for fresh install, populated upgrade, restart, foreign keys, delete cascade, and FTS trigger synchronization (`ChatDatabaseV2MigrationInstrumentedTest`, 8 tests on `emulator-5554`).
+- [x] Run `:app:compileDebugKotlin`, `:app:testDebugUnitTest`, and `:app:assembleDebug` with extended timeout where needed.
+- [x] Run `git diff --check` and inspect the final dirty-file list.
+- [x] Check `adb devices` before claiming UI/runtime proof (`emulator-5554` online).
 - [ ] On a connected device, verify enable/backfill, a new chat retrieving an old snippet, unrelated query returning no history, edit/delete invalidation, retry snapshot reuse, and long-term memory unchanged.
 - [ ] Keep build/unit evidence separate from device/provider/runtime evidence.
 

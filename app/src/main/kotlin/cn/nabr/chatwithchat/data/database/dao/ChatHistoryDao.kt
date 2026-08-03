@@ -26,6 +26,9 @@ interface ChatHistoryDao {
     @Query("SELECT * FROM chat_history_projection WHERE turn_key IN (:turnKeys) AND eligibility_state = 'eligible'")
     suspend fun getProjectionsByTurnKeys(turnKeys: List<String>): List<ChatHistoryProjectionEntity>
 
+    @Query("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'chat_history_projection_fts' LIMIT 1")
+    suspend fun getFtsDefinition(): String?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertProjection(projection: ChatHistoryProjectionEntity): Long
 

@@ -801,9 +801,9 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 """
                 INSERT INTO messages_v2 (
                     message_id, chat_id, thoughts, content, attachments, revisions,
-                    active_revision_index, source_metadata, token_usage, linked_message_id,
+                    active_revision_index, source_metadata, token_usage, sticker_refs, linked_message_id,
                     platform_type, created_at
-                ) VALUES (11, 7, '', 'existing message', '', '[]', -1, '', NULL, 0, NULL, 2)
+                ) VALUES (11, 7, '', 'existing message', '', '[]', -1, '', NULL, '', 0, NULL, 2)
                 """.trimIndent()
             )
             close()
@@ -823,9 +823,9 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 )
             )
             assertEquals(
-                3L,
+                4L,
                 database.singleLong(
-                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'chat_history_projection_%'"
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'room_fts_content_sync_chat_history_projection_fts_%'"
                 )
             )
             assertEquals(20L, database.singleLong("PRAGMA user_version"))

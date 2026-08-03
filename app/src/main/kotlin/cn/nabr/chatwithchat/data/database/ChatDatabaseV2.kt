@@ -24,6 +24,7 @@ import cn.nabr.chatwithchat.data.database.entity.ChatHistoryEmbeddingEntity
 import cn.nabr.chatwithchat.data.database.entity.ChatHistoryIndexQueueEntity
 import cn.nabr.chatwithchat.data.database.entity.ChatHistoryIndexStateEntity
 import cn.nabr.chatwithchat.data.database.entity.ChatHistoryProjectionEntity
+import cn.nabr.chatwithchat.data.database.entity.ChatHistoryProjectionFtsEntity
 import cn.nabr.chatwithchat.data.database.entity.MemoryActivityLog
 import cn.nabr.chatwithchat.data.database.entity.MemoryChatCheckpoint
 import cn.nabr.chatwithchat.data.database.entity.MemoryCorpusState
@@ -67,7 +68,8 @@ import cn.nabr.chatwithchat.data.database.entity.TokenUsageRecordConverter
         ChatHistoryIndexQueueEntity::class,
         ChatHistoryBackfillCheckpointEntity::class,
         ChatHistoryIndexStateEntity::class,
-        ChatHistoryEmbeddingEntity::class
+        ChatHistoryEmbeddingEntity::class,
+        ChatHistoryProjectionFtsEntity::class
     ],
     version = 20,
     exportSchema = true

@@ -28,6 +28,17 @@ class ChatHistoryRetriever(
         ).joinToString(" ")
         val match = ChatHistoryQueryNormalizer.ftsMatchExpression(searchInput)
         if (match.isBlank()) return HistoryRecallSnapshot()
+        val usesFts5 = historyDao.getFtsDefinition()?.contains("USING FTS5", ignoreCase = true) == true
+        val lexicalScoreExpression = if (usesFts5) {
+            "bm25(chat_history_projection_fts)"
+        } else {
+            "0.0"
+        }
+        val lexicalOrderExpression = if (usesFts5) {
+            "bm25(chat_history_projection_fts), p.turn_key"
+        } else {
+            "p.turn_key"
+        }
         val lexicalHits = runCatching {
             historyDao.searchLexical(
                 SimpleSQLiteQuery(
@@ -39,13 +50,13 @@ class ChatHistoryRetriever(
                         p.search_terms AS searchTerms, p.content_hash AS contentHash,
                         p.projection_version AS projectionVersion, p.eligibility_state AS eligibilityState,
                         p.created_at AS createdAt, p.updated_at AS updatedAt,
-                        bm25(chat_history_projection_fts) AS lexicalScore
+                        $lexicalScoreExpression AS lexicalScore
                     FROM chat_history_projection_fts
                     JOIN chat_history_projection p ON p.projection_id = chat_history_projection_fts.rowid
                     WHERE chat_history_projection_fts MATCH ?
                         AND p.eligibility_state = 'eligible'
                         AND p.chat_id != ?
-                    ORDER BY bm25(chat_history_projection_fts), p.turn_key
+                    ORDER BY $lexicalOrderExpression
                     LIMIT ?
                     """.trimIndent(),
                     arrayOf<Any>(match, request.currentChatId, MAX_LEXICAL_CANDIDATES)

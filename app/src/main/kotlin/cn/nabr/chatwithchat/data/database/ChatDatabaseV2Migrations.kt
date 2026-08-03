@@ -495,15 +495,7 @@ object ChatDatabaseV2Migrations {
         db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_chat_history_projection_chat_id_user_message_id` ON `chat_history_projection` (`chat_id`, `user_message_id`)")
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_chat_history_projection_eligibility_state` ON `chat_history_projection` (`eligibility_state`)")
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_chat_history_projection_updated_at` ON `chat_history_projection` (`updated_at`)")
-        db.execSQL(
-            """
-            CREATE VIRTUAL TABLE IF NOT EXISTS `chat_history_projection_fts` USING FTS5(
-                `title`, `user_content`, `assistant_content`, `search_terms`,
-                content='chat_history_projection', content_rowid='projection_id',
-                tokenize='unicode61'
-            )
-            """.trimIndent()
-        )
+        createChatHistoryFtsTable(db)
         db.execSQL(
             """
             CREATE TABLE IF NOT EXISTS `chat_history_index_queue` (
@@ -564,33 +556,64 @@ object ChatDatabaseV2Migrations {
     }
 
     internal fun createChatHistoryFtsTriggers(db: SupportSQLiteDatabase) {
+        // Keep the migration contract byte-for-byte compatible with Room's generated
+        // external-content Fts4 triggers. The same helper is used by the database
+        // callback for newly-created and reopened databases.
         db.execSQL(
             """
-            CREATE TRIGGER IF NOT EXISTS `chat_history_projection_ai` AFTER INSERT ON `chat_history_projection` BEGIN
-                INSERT INTO `chat_history_projection_fts`(rowid, title, user_content, assistant_content, search_terms)
-                VALUES (new.projection_id, new.title, new.user_content, new.assistant_content, new.search_terms);
+            CREATE TRIGGER IF NOT EXISTS `room_fts_content_sync_chat_history_projection_fts_BEFORE_UPDATE`
+            BEFORE UPDATE ON `chat_history_projection` BEGIN
+                DELETE FROM `chat_history_projection_fts` WHERE `docid` = OLD.`rowid`;
             END
             """.trimIndent()
         )
         db.execSQL(
             """
-            CREATE TRIGGER IF NOT EXISTS `chat_history_projection_ad` AFTER DELETE ON `chat_history_projection` BEGIN
-                INSERT INTO `chat_history_projection_fts`(chat_history_projection_fts, rowid, title, user_content, assistant_content, search_terms)
-                VALUES ('delete', old.projection_id, old.title, old.user_content, old.assistant_content, old.search_terms);
+            CREATE TRIGGER IF NOT EXISTS `room_fts_content_sync_chat_history_projection_fts_BEFORE_DELETE`
+            BEFORE DELETE ON `chat_history_projection` BEGIN
+                DELETE FROM `chat_history_projection_fts` WHERE `docid` = OLD.`rowid`;
             END
             """.trimIndent()
         )
         db.execSQL(
             """
-            CREATE TRIGGER IF NOT EXISTS `chat_history_projection_au` AFTER UPDATE ON `chat_history_projection` BEGIN
-                INSERT INTO `chat_history_projection_fts`(chat_history_projection_fts, rowid, title, user_content, assistant_content, search_terms)
-                VALUES ('delete', old.projection_id, old.title, old.user_content, old.assistant_content, old.search_terms);
-                INSERT INTO `chat_history_projection_fts`(rowid, title, user_content, assistant_content, search_terms)
-                VALUES (new.projection_id, new.title, new.user_content, new.assistant_content, new.search_terms);
+            CREATE TRIGGER IF NOT EXISTS `room_fts_content_sync_chat_history_projection_fts_AFTER_UPDATE`
+            AFTER UPDATE ON `chat_history_projection` BEGIN
+                INSERT INTO `chat_history_projection_fts`(`docid`, `title`, `user_content`, `assistant_content`, `search_terms`)
+                VALUES (NEW.`rowid`, NEW.`title`, NEW.`user_content`, NEW.`assistant_content`, NEW.`search_terms`);
             END
             """.trimIndent()
         )
-        db.execSQL("INSERT INTO chat_history_projection_fts(chat_history_projection_fts) VALUES ('rebuild')")
+        db.execSQL(
+            """
+            CREATE TRIGGER IF NOT EXISTS `room_fts_content_sync_chat_history_projection_fts_AFTER_INSERT`
+            AFTER INSERT ON `chat_history_projection` BEGIN
+                INSERT INTO `chat_history_projection_fts`(`docid`, `title`, `user_content`, `assistant_content`, `search_terms`)
+                VALUES (NEW.`rowid`, NEW.`title`, NEW.`user_content`, NEW.`assistant_content`, NEW.`search_terms`);
+            END
+            """.trimIndent()
+        )
+    }
+
+    private fun createChatHistoryFtsTable(db: SupportSQLiteDatabase) {
+        val existing = db.query(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'chat_history_projection_fts' LIMIT 1"
+        ).use { cursor ->
+            if (cursor.moveToFirst()) cursor.getString(0).orEmpty() else null
+        }
+        if (existing != null) return
+        // Android system SQLite does not guarantee FTS5 on the minimum supported API.
+        // Room's Fts4 contract is the portable runtime fallback and keeps migration
+        // validation aligned with the generated schema.
+        db.execSQL(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS `chat_history_projection_fts` USING FTS4(
+                `title`, `user_content`, `assistant_content`, `search_terms`,
+                content=`chat_history_projection`,
+                tokenize=unicode61
+            )
+            """.trimIndent()
+        )
     }
 
     private fun ensureMemoryTables(db: SupportSQLiteDatabase) {
