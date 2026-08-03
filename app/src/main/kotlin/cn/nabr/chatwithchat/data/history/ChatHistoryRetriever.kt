@@ -3,6 +3,7 @@ package cn.nabr.chatwithchat.data.history
 import androidx.sqlite.db.SimpleSQLiteQuery
 import cn.nabr.chatwithchat.data.database.dao.ChatHistoryDao
 import cn.nabr.chatwithchat.data.database.dao.ChatHistoryLexicalHit
+import cn.nabr.chatwithchat.data.memory.containsInternalMemoryMetadata
 import cn.nabr.chatwithchat.data.repository.SettingRepository
 import kotlin.math.abs
 
@@ -57,9 +58,9 @@ class ChatHistoryRetriever(
                 errorCode = "lexical_query_failed"
             )
         }
-        val vectorHits: List<HistoryVectorHit> = vectorStore?.query(searchInput, MAX_VECTOR_CANDIDATES)
-            ?.fold(onSuccess = { hits -> hits }, onFailure = { emptyList() })
-            ?: emptyList()
+        val vectorResult = vectorStore?.query(searchInput, MAX_VECTOR_CANDIDATES)
+        val vectorHits: List<HistoryVectorHit> = vectorResult?.getOrElse { emptyList() } ?: emptyList()
+        val vectorFailed = vectorResult?.isFailure == true
         val lexicalByKey = lexicalHits.associateBy(ChatHistoryLexicalHit::turnKey)
         val vectorByKey = vectorHits.associateBy(HistoryVectorHit::turnKey)
         val vectorOnlyProjections = historyDao.getProjectionsByTurnKeys(
@@ -110,12 +111,13 @@ class ChatHistoryRetriever(
             selected.snippets.isEmpty() && backfillIncomplete -> HistoryRecallMode.BACKFILL_INCOMPLETE
             selected.snippets.isEmpty() && indexStale -> HistoryRecallMode.STALE
             selected.snippets.isEmpty() -> HistoryRecallMode.NONE
-            vectorHits.isNotEmpty() -> HistoryRecallMode.HYBRID
+            selected.snippets.any { snippet -> snippet.vectorScore != null } -> HistoryRecallMode.HYBRID
             else -> HistoryRecallMode.LEXICAL
         }
         val diagnostics = buildList {
             add(HistoryRecallDiagnostic("lexical_candidates", lexicalHits.size))
             add(HistoryRecallDiagnostic("vector_candidates", vectorHits.size))
+            if (vectorFailed) add(HistoryRecallDiagnostic("vector_unavailable"))
             if (backfillIncomplete) {
                 add(HistoryRecallDiagnostic("backfill_incomplete"))
             }
@@ -155,7 +157,12 @@ class ChatHistoryRetriever(
     private fun renderSnippet(hit: ChatHistoryLexicalHit): String {
         val user = truncateAtSentence(hit.userContent, MAX_USER_CHARS)
         val assistant = truncateAtSentence(hit.assistantContent, MAX_ASSISTANT_CHARS)
-        return "在“${hit.title.ifBlank { "未命名对话" }}”中，用户说：$user；助手回答：$assistant"
+        val rendered = "在“${hit.title.ifBlank { "未命名对话" }}”中，用户说：$user；助手回答：$assistant"
+        return if (rendered.containsInternalMemoryMetadata()) {
+            "历史对话片段包含内部标记，已省略具体内容。"
+        } else {
+            rendered
+        }
     }
 
     private fun cn.nabr.chatwithchat.data.database.entity.ChatHistoryProjectionEntity.toLexicalHit(): ChatHistoryLexicalHit =

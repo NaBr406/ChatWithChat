@@ -38,4 +38,25 @@ class ChatHistoryPromptBuilderTest {
         assertFalse(rendered.prompt.contains("chat:1:user"))
         assertTrue(rendered.estimatedTokens > 0)
     }
+
+    @Test
+    fun `prompt does not expose internal paths from a historical snippet`() {
+        val rendered = ChatHistoryPromptBuilder().build(
+            snippets = listOf(
+                ChatHistorySnippet(
+                    turnKey = "chat:2:user:1",
+                    chatId = 2,
+                    userMessageId = 1,
+                    assistantMessageId = 2,
+                    chatTitle = "old",
+                    createdAt = 1,
+                    text = "用户提到 MEMORY.md 和 source_path: /private/path",
+                    fusedScore = 1f
+                )
+            )
+        )
+
+        assertFalse(rendered.prompt!!.contains("MEMORY.md"))
+        assertTrue(rendered.prompt.contains("内部标记"))
+    }
 }

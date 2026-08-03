@@ -22,4 +22,10 @@ class ChatHistoryQueryNormalizerTest {
         val expression = ChatHistoryQueryNormalizer.ftsMatchExpression("hello world")
         assertEquals("\"hello\" OR \"world\"", expression)
     }
+
+    @Test
+    fun `cjk expression requires all deterministic ngrams`() {
+        val expression = ChatHistoryQueryNormalizer.ftsMatchExpression("北京")
+        assertEquals("\"北\" AND \"京\" AND \"北京\"", expression)
+    }
 }

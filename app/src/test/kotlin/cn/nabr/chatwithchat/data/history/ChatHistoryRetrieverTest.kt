@@ -70,6 +70,8 @@ private class FakeHistoryDao(
     override suspend fun updateProjection(projection: ChatHistoryProjectionEntity) = Unit
     override suspend fun deleteProjection(turnKey: String): Int = 0
     override suspend fun deleteAllProjections(): Int = 0
+    override suspend fun markProjectionsStaleForChat(chatId: Int): Int = 0
+    override suspend fun markAllProjectionsStale(): Int = 0
     override suspend fun enqueue(item: ChatHistoryIndexQueueEntity) = Unit
     override suspend fun getQueueBatch(limit: Int): List<ChatHistoryIndexQueueEntity> = emptyList()
     override suspend fun countQueue(): Int = 0

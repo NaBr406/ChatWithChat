@@ -33,11 +33,13 @@ object ChatHistoryQueryNormalizer {
         .distinct()
         .joinToString(separator = " ")
 
-    fun ftsMatchExpression(value: String): String = searchTerms(value)
-        .take(MAX_QUERY_TERMS)
-        .joinToString(separator = " OR ") { term ->
+    fun ftsMatchExpression(value: String): String {
+        val terms = searchTerms(value).take(MAX_QUERY_TERMS)
+        val separator = if (normalize(value).any(::isCjk)) " AND " else " OR "
+        return terms.joinToString(separator = separator) { term ->
             "\"${term.replace("\"", "\"\"")}\""
         }
+    }
 
     private fun isCjk(char: Char): Boolean = char.code in 0x3400..0x9FFF
 

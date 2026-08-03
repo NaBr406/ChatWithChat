@@ -71,6 +71,7 @@ data class ChatHistoryRetrievalRequest(
 
 object ChatHistoryContract {
     const val PROJECTION_VERSION = 1
+    const val VECTOR_NAMESPACE = "chat_history"
     const val ELIGIBLE = "eligible"
     const val OPERATION_RECONCILE = "RECONCILE"
     const val BACKFILL_ID = "history_backfill"

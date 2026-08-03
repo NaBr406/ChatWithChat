@@ -20,6 +20,7 @@ class ChatHistoryIndexCoordinator @Inject constructor(
         if (!settingRepository.fetchMemoryEnabled() || chatId <= 0) return
         val chat = chatRoomDao.getChatRoom(chatId) ?: return
         val now = System.currentTimeMillis() / 1000
+        historyDao.markProjectionsStaleForChat(chatId)
         val users = messageDao.loadMessages(chatId).filter { message -> message.platformType == null }
         val currentKeys = users.mapTo(mutableSetOf()) { user -> turnKey(chatId, user.id) }
         users.forEach { user ->
@@ -52,6 +53,7 @@ class ChatHistoryIndexCoordinator @Inject constructor(
     suspend fun onMemoryEnabledChanged(enabled: Boolean) {
         if (!enabled) return
         val now = System.currentTimeMillis() / 1000
+        historyDao.markAllProjectionsStale()
         historyDao.upsertBackfillCheckpoint(
             ChatHistoryBackfillCheckpointEntity(
                 checkpointId = ChatHistoryContract.BACKFILL_ID,

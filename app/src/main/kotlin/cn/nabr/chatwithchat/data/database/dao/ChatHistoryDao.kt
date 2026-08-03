@@ -38,6 +38,12 @@ interface ChatHistoryDao {
     @Query("DELETE FROM chat_history_projection")
     suspend fun deleteAllProjections(): Int
 
+    @Query("UPDATE chat_history_projection SET eligibility_state = 'stale' WHERE chat_id = :chatId AND eligibility_state = 'eligible'")
+    suspend fun markProjectionsStaleForChat(chatId: Int): Int
+
+    @Query("UPDATE chat_history_projection SET eligibility_state = 'stale' WHERE eligibility_state = 'eligible'")
+    suspend fun markAllProjectionsStale(): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun enqueue(item: ChatHistoryIndexQueueEntity)
 

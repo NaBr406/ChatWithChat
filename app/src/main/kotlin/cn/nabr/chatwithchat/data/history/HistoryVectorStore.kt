@@ -98,6 +98,7 @@ class RoomHistoryVectorStore(
 
     private fun descriptorHash(capability: MemoryEmbeddingCapability.Ready): String = sha256(
         listOf(
+            ChatHistoryContract.VECTOR_NAMESPACE,
             capability.provider.descriptor.providerId,
             capability.provider.descriptor.runtimeVersion,
             capability.provider.descriptor.modelId,
