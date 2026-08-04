@@ -1,6 +1,7 @@
 package cn.nabr.chatwithchat.data.memory
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -10,6 +11,29 @@ class MemoryDailyDistillationOperationControllerTest {
         markdownMemoryCodec = codec,
         targetIndexFingerprint = "fingerprint"
     )
+
+    @Test
+    fun `single assistant inferred evidence cannot create long term memory`() {
+        val fixture = fixture()
+        val input = fixture.input.copy(
+            dailyEvidence = fixture.input.dailyEvidence.map { evidence ->
+                evidence.copy(source = MemorySource.ASSISTANT_INFERRED)
+            }
+        )
+
+        assertThrows(IllegalArgumentException::class.java) {
+            controller.validate(
+                input,
+                listOf(
+                    operation(
+                        action = MemoryDailyDistillationAction.CREATE,
+                        text = "The user enjoys a topic.",
+                        source = MemorySource.ASSISTANT_INFERRED
+                    )
+                )
+            )
+        }
+    }
 
     @Test
     fun `create derives conservative metadata and renders one long term target`() {

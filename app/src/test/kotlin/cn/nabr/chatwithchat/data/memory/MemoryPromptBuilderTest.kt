@@ -41,7 +41,7 @@ class MemoryPromptBuilderTest {
     }
 
     @Test
-    fun `builder keeps at most four core and three query facts with exact deduplication`() {
+    fun `builder keeps every core fact and up to eight query facts with exact deduplication`() {
         val rendered = MemoryPromptBuilder().build(
             coreFacts = (1..6).map { index -> ModelVisibleMemoryFact("Core fact $index.") },
             queryFacts = listOf(
@@ -53,8 +53,8 @@ class MemoryPromptBuilderTest {
             )
         )
 
-        assertEquals(4, rendered.coreFacts.size)
-        assertEquals(3, rendered.queryFacts.size)
+        assertEquals(6, rendered.coreFacts.size)
+        assertEquals(4, rendered.queryFacts.size)
         assertEquals(1, normalizeExactMemoryText(rendered.prompt.orEmpty()).split("query fact 1.").size - 1)
     }
 
@@ -77,7 +77,7 @@ class MemoryPromptBuilderTest {
     }
 
     @Test
-    fun `token budgets drop an oversized fact at a bullet boundary without truncation`() {
+    fun `core and query facts are not dropped by a memory token budget`() {
         val oversized = "oversized-marker " + "detail ".repeat(1_000)
         val retained = "Short relevant fact."
         val rendered = MemoryPromptBuilder().build(
@@ -88,8 +88,8 @@ class MemoryPromptBuilderTest {
 
         assertTrue(prompt.contains(retained))
         assertTrue(prompt.contains("Second query fact."))
-        assertFalse(prompt.contains("oversized-marker"))
-        assertTrue(rendered.estimatedTokens <= 500)
+        assertTrue(prompt.contains("oversized-marker"))
+        assertTrue(rendered.estimatedTokens > 500)
         assertEquals(
             rendered.estimatedTokens,
             TokenUsageEstimator.estimateText(prompt, model = "", clientType = ClientType.OPENAI)
@@ -97,13 +97,9 @@ class MemoryPromptBuilderTest {
     }
 
     @Test
-    fun `configured prompt budget cannot raise the five hundred token hard cap`() {
-        val rendered = MemoryPromptBuilder(
-            coreTokenBudget = 5_000,
-            queryTokenBudget = 5_000,
-            promptTokenBudget = 5_000
-        ).build(
-            coreFacts = (1..4).map { index ->
+    fun `more than four core facts remain visible`() {
+        val rendered = MemoryPromptBuilder().build(
+            coreFacts = (1..6).map { index ->
                 ModelVisibleMemoryFact("Core fact $index. " + "core-detail ".repeat(120))
             },
             queryFacts = (1..3).map { index ->
@@ -111,8 +107,9 @@ class MemoryPromptBuilderTest {
             }
         )
 
-        assertTrue(rendered.coreFacts.size + rendered.queryFacts.size in 1..6)
-        assertTrue(rendered.estimatedTokens <= 500)
+        assertEquals(6, rendered.coreFacts.size)
+        assertEquals(3, rendered.queryFacts.size)
+        assertTrue(rendered.estimatedTokens > 500)
         assertEquals(
             rendered.estimatedTokens,
             TokenUsageEstimator.estimateText(rendered.prompt.orEmpty(), model = "", clientType = ClientType.OPENAI)

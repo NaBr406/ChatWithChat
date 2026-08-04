@@ -330,6 +330,61 @@ class MemoryLongTermConsolidationPolicyTest {
         assertEquals(listOf("singleton"), forced.single().entries.map { it.memoryId })
     }
 
+    @Test
+    fun `retirement decision is bounded to the candidate group and normalizes maintenance state`() {
+        val retired = entry(
+            id = "diagnostic",
+            text = "Current recall threshold diagnostic.",
+            canonicalKey = "project.recall_diagnostic"
+        )
+        val partition = policy.nextPartition(listOf(retired), cursor = 0)
+        val group = policy.candidateGroups(listOf(retired), partition, emptySet(), forceReview = true).single()
+        val request = MemoryLongTermConsolidationPartitionRequest(
+            checkpointId = "checkpoint",
+            partitionStart = partition.start,
+            partitionEndExclusive = partition.endExclusive,
+            candidateGroups = listOf(group)
+        )
+
+        val persisted = policy.validateAndMergeProposal(
+            existing = MemoryLongTermPersistedProposal(),
+            partitionRequest = request,
+            proposal = MemoryLongTermConsolidationProposal(
+                decisions = listOf(
+                    MemoryLongTermCanonicalDecision(
+                        action = MemoryLongTermDecisionAction.RETIRE,
+                        memoryIds = listOf(retired.id),
+                        canonicalKey = retired.canonicalKey,
+                        scope = retired.scope,
+                        recallState = MemoryRecallState.QUERY,
+                        reason = "hard-negative: current recall diagnostics are transient"
+                    )
+                )
+            )
+        )
+
+        assertEquals(1, persisted.decisions.size)
+        assertEquals(MemoryLongTermDecisionAction.RETIRE, persisted.decisions.single().action)
+        assertEquals(MemoryRecallState.MAINTENANCE_ONLY, persisted.decisions.single().recallState)
+        assertThrows(IllegalArgumentException::class.java) {
+            policy.validateAndMergeProposal(
+                existing = persisted,
+                partitionRequest = request,
+                proposal = MemoryLongTermConsolidationProposal(
+                    decisions = listOf(
+                        MemoryLongTermCanonicalDecision(
+                            action = MemoryLongTermDecisionAction.RETIRE,
+                            memoryIds = listOf(retired.id),
+                            canonicalKey = retired.canonicalKey,
+                            scope = retired.scope,
+                            reason = "replay"
+                        )
+                    )
+                )
+            )
+        }
+    }
+
     private fun MemoryLongTermCandidateGroup.requestCharacterCount(): Int =
         entries.sumOf { entry -> entry.text.length + ENTRY_OVERHEAD_CHARS }
 

@@ -7,7 +7,7 @@ import org.junit.Test
 class TieredMemoryRecallTest {
 
     @Test
-    fun `core selector uses controlled general keys stable trust ordering and a four fact cap`() {
+    fun `core selector keeps every eligible current core fact without key or scope filters`() {
         val snapshot = snapshot(
             listOf(
                 coreChunk(
@@ -40,20 +40,19 @@ class TieredMemoryRecallTest {
 
         val core = snapshot.selectCoreResults(includePrivate = true)
 
-        assertEquals(
-            listOf("address_confirmed", "assistant_name", "language", "style"),
-            core.mapNotNull(MemoryRetrievalResult::entryId)
-        )
-        assertTrue(core.none { result -> result.entryId in setOf("unsupported", "work_address", "address_inferred") })
+        assertEquals(8, core.size)
+        assertTrue(core.any { result -> result.entryId == "unsupported" })
+        assertTrue(core.any { result -> result.entryId == "work_address" })
+        assertTrue(core.any { result -> result.entryId == "address_inferred" })
     }
 
     @Test
-    fun `legacy communication style fallback contributes at most one fact and yields to canonical style`() {
+    fun `query-only legacy communication style does not enter core`() {
         val first = legacyChunk("legacy_first", "Legacy first style.", updatedAt = 5)
         val latest = legacyChunk("legacy_latest", "Legacy latest style.", updatedAt = 10)
         val legacyCore = snapshot(listOf(first, latest)).selectCoreResults(includePrivate = true)
 
-        assertEquals(listOf("legacy_latest"), legacyCore.mapNotNull(MemoryRetrievalResult::entryId))
+        assertTrue(legacyCore.isEmpty())
 
         val canonical = coreChunk("canonical", "Canonical response style.", "communication.response_style")
         val canonicalCore = snapshot(listOf(first, latest, canonical)).selectCoreResults(includePrivate = true)
@@ -62,7 +61,7 @@ class TieredMemoryRecallTest {
     }
 
     @Test
-    fun `core identity query facts are recalled before consolidation`() {
+    fun `query facts are not promoted by the core selector`() {
         val preferredAddress = coreChunk(
             id = "preferred_address_query",
             text = "希望以后被称呼为大哥。",
@@ -93,10 +92,7 @@ class TieredMemoryRecallTest {
             listOf(preferredAddress, assistantName, workAddress, obsoleteAddress, unrelatedQuery)
         ).selectCoreResults(includePrivate = true)
 
-        assertEquals(
-            listOf("preferred_address_query", "assistant_name_query"),
-            core.mapNotNull(MemoryRetrievalResult::entryId)
-        )
+        assertTrue(core.isEmpty())
     }
 
     @Test
@@ -116,7 +112,10 @@ class TieredMemoryRecallTest {
 
         val core = snapshot(listOf(olderEvidence, newerEvidence)).selectCoreResults(includePrivate = true)
 
-        assertEquals(listOf("newer_evidence"), core.mapNotNull(MemoryRetrievalResult::entryId))
+        assertEquals(
+            listOf("newer_evidence", "older_evidence"),
+            core.mapNotNull(MemoryRetrievalResult::entryId)
+        )
     }
 
     private fun snapshot(chunks: List<MemoryCorpusChunk>) = MemoryCorpusSnapshot(

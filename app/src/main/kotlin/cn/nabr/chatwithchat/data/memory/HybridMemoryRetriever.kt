@@ -37,7 +37,7 @@ class HybridMemoryRetriever(
         require(request.corpus == MemoryCorpus.CHAT_RECALL_LONG_TERM) {
             "Hybrid recall only supports ${MemoryCorpus.CHAT_RECALL_LONG_TERM}"
         }
-        if (request.limit <= 0 || request.tokenBudget <= 0) {
+        if (request.limit <= 0 || request.tokenBudget?.let { budget -> budget <= 0 } == true) {
             return MemoryRetrievalReport(emptyList(), MemoryRetrievalMode.NONE)
         }
         val lexicalQuery = request.lexicalQuery()
@@ -221,8 +221,7 @@ class HybridMemoryRetriever(
                 val current = currentChunks[match.chunk.chunkId]
                     ?.takeIf { chunk ->
                         chunk.sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME &&
-                            chunk.embeddingContentHash == match.chunk.embeddingContentHash &&
-                            (chunk.scope ?: MemoryScope.GENERAL) == request.recallScope
+                            chunk.embeddingContentHash == match.chunk.embeddingContentHash
                     }
                     ?: return@mapNotNull null
                 CurrentVectorMatch(current, match.embedding, match.cosineDistance)

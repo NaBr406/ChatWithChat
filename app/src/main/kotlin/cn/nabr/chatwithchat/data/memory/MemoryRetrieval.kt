@@ -24,9 +24,10 @@ data class MemoryRetrievalRequest(
     val query: String,
     val recentContext: String? = null,
     val recallScope: String = MemoryScope.GENERAL,
-    val limit: Int = 3,
+    val limit: Int = 8,
     val candidateLimit: Int = 200,
-    val tokenBudget: Int = 300,
+    /** Null means retrieval is not constrained by a memory-specific token budget. */
+    val tokenBudget: Int? = null,
     val includePrivate: Boolean = true,
     val strategy: MemoryRetrievalStrategy = MemoryRetrievalStrategy.LEXICAL
 ) {
@@ -111,8 +112,16 @@ data class MemoryRetrievalConfig(
 )
 
 internal fun List<MemoryRetrievalResult>.packFor(request: MemoryRetrievalRequest): List<MemoryRetrievalResult> {
-    if (request.limit <= 0 || request.tokenBudget <= 0) return emptyList()
+    if (request.limit <= 0 || request.tokenBudget?.let { budget -> budget <= 0 } == true) return emptyList()
+    if (request.tokenBudget == null) {
+        return asSequence()
+            .distinctBy(MemoryRetrievalResult::deduplicationKey)
+            .distinctBy { result -> normalizeExactMemoryText(result.text) }
+            .take(request.limit)
+            .toList()
+    }
     var usedTokens = 0
+    val tokenBudget = requireNotNull(request.tokenBudget)
     return asSequence()
         .distinctBy(MemoryRetrievalResult::deduplicationKey)
         .distinctBy { result -> normalizeExactMemoryText(result.text) }
@@ -122,7 +131,7 @@ internal fun List<MemoryRetrievalResult>.packFor(request: MemoryRetrievalRequest
                 model = "",
                 clientType = ClientType.OPENAI
             ) + MEMORY_RETRIEVAL_RESULT_TOKEN_OVERHEAD
-            if (usedTokens + resultTokens > request.tokenBudget) {
+            if (usedTokens + resultTokens > tokenBudget) {
                 false
             } else {
                 usedTokens += resultTokens
@@ -137,7 +146,7 @@ internal fun MemoryRetrievalRequest.queryLayerRequest(): MemoryRetrievalRequest 
     if (corpus == MemoryCorpus.CHAT_RECALL_LONG_TERM) {
         copy(
             limit = limit.coerceAtMost(MAX_QUERY_RECALL_FACTS),
-            tokenBudget = tokenBudget.coerceAtMost(MAX_QUERY_RECALL_TOKENS)
+            tokenBudget = null
         )
     } else {
         this
@@ -157,8 +166,7 @@ internal fun MemoryRetrievalRequest.lexicalQuery(): String = query
 
 private const val MEMORY_RETRIEVAL_RESULT_TOKEN_OVERHEAD = 24
 private const val MAX_MEMORY_RETRIEVAL_QUERY_CHARS = 8_000
-private const val MAX_QUERY_RECALL_FACTS = 3
-private const val MAX_QUERY_RECALL_TOKENS = 300
+private const val MAX_QUERY_RECALL_FACTS = 8
 
 internal fun List<MemoryProjectionDiagnostic>.toBoundedErrorMessage(): String? =
     take(MAX_REPORTED_PROJECTION_DIAGNOSTICS)

@@ -174,7 +174,7 @@ ChatWithChat 不只是更换了名称和图标。相较于 GPT Mobile 上游基�
 | 一致性提交 | `MemoryMutationCoordinator` 通过幂等键、目标哈希、暂存文件、原子替换和 Room compare-and-set 状态推进提交，避免进程终止后重复写入或回滚新内容 |
 | 本地向量化 | 校验固定版本和 SHA-256 的 `bge-small-zh-v1.5` ONNX 资产，在设备上生成 512 维 CLS/L2 向量；该步骤不会调用云端 embedding 服务 |
 | 派生索引 | ObjectBox 5.4.2 HNSW 位于 `noBackupFilesDir/memory_vector_index`，只保存可从当前 Markdown 重建的派生状态，不拥有权威内容 |
-| 召回 | `HybridMemoryRetriever` 对当前 `MEMORY.md` 同时进行关键词和向量检索，再做融合、去重、多样化和 Token 预算装箱；索引缺失、过期或损坏时永久回退到当前 Markdown 关键词召回 |
+| 召回 | `HybridMemoryRetriever` 对当前 `MEMORY.md` 同时进行关键词和向量检索，再做融合、去重和多样化；普通长期记忆查询最多保留 8 条结果且不设记忆层 Token 预算，维护工作集仍可使用显式预算；索引缺失、过期或损坏时永久回退到当前 Markdown 关键词召回 |
 | 可见性 | 记忆页提供权威 Markdown 的只读查看与导出，以及模型调用、记忆生成、组织结果、重试和失败原因的活动日志 |
 
 ```mermaid
@@ -191,10 +191,10 @@ flowchart TD
     EMBEDDING --> HNSW["ObjectBox HNSW 派生索引"]
     LEXICAL --> HYBRID["Hybrid recall"]
     HNSW --> HYBRID
-    HYBRID --> PROMPT["最多 8 条、约 900 Token 的安静上下文"]
+    HYBRID --> PROMPT["全部 Core 事实 + 最多 8 条查询事实"]
 ```
 
-召回查询由最新用户消息和最近 6 条上下文组成，先取最多 24 个候选，再在约 900 Token 的预算内选择最多 8 条。私密或敏感记忆会保留敏感度元数据，并在注入提示中要求仅在当前请求确有需要时使用，不能因为被召回就主动暴露。
+召回查询由最新用户消息和最近 6 条上下文组成，先取最多 24 个候选，再选择最多 8 条查询事实；长期记忆检索本身不设记忆层 Token 预算。Core 事实独立于查询相关性，保留所有符合当前性、可见性和安全校验的事实。最终提示仍受所选 provider 的 context window 和请求预检约束。私密或敏感记忆会保留敏感度元数据，并在注入提示中要求仅在当前请求确有需要时使用，不能因为被召回就主动暴露。
 
 ### 恢复与降级
 

@@ -150,7 +150,6 @@ internal object MarkdownMemoryMetadataPolicy {
         }
         MemoryValidity.OBSOLETE -> when {
             entry.canonicalKey == null -> "obsolete entry requires identity"
-            entry.supersededBy == null -> "obsolete entry requires supersession target"
             entry.recallState != MemoryRecallState.MAINTENANCE_ONLY -> "obsolete entry must be maintenance only"
             else -> null
         }

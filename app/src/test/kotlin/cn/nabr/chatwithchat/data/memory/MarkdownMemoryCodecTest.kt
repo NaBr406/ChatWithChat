@@ -430,7 +430,7 @@ class MarkdownMemoryCodecTest {
         val cases = linkedMapOf(
             "validity=current superseded_by=mem_target recall=query" to "current entry cannot be superseded",
             "validity=contested recall=core" to "contested entry must be maintenance only",
-            "validity=obsolete recall=maintenance_only" to "obsolete entry requires supersession target"
+            "validity=obsolete recall=query" to "obsolete entry must be maintenance only"
         )
 
         cases.entries.forEachIndexed { index, (lifecycle, expectedReason) ->
@@ -614,7 +614,7 @@ class MarkdownMemoryCodecTest {
     }
 
     @Test
-    fun `structural repair quarantines missing and dangling supersessions as contested history`() {
+    fun `structural repair quarantines dangling supersessions but preserves retired singletons`() {
         val dangling = canonicalEntry(
             id = "mem_dangling",
             text = "Historical preference.",
@@ -635,14 +635,16 @@ class MarkdownMemoryCodecTest {
         val repaired = checkNotNull(codec.repairStructuralRelationships(markdown))
         val entries = codec.parse(repaired.markdown).entries.associateBy(MarkdownMemoryEntry::id)
 
-        assertEquals(2, repaired.repairedCount)
-        listOf(dangling, missingTarget).forEach { original ->
-            val entry = checkNotNull(entries[original.id])
-            assertEquals(original.text, entry.text)
-            assertEquals(MemoryValidity.CONTESTED, entry.validity)
-            assertEquals(MemoryRecallState.MAINTENANCE_ONLY, entry.recallState)
-            assertEquals(null, entry.supersededBy)
-        }
+        assertEquals(1, repaired.repairedCount)
+        val repairedDangling = checkNotNull(entries[dangling.id])
+        assertEquals(dangling.text, repairedDangling.text)
+        assertEquals(MemoryValidity.CONTESTED, repairedDangling.validity)
+        assertEquals(MemoryRecallState.MAINTENANCE_ONLY, repairedDangling.recallState)
+        assertEquals(null, repairedDangling.supersededBy)
+        val retiredSingleton = checkNotNull(entries[missingTarget.id])
+        assertEquals(MemoryValidity.OBSOLETE, retiredSingleton.validity)
+        assertEquals(MemoryRecallState.MAINTENANCE_ONLY, retiredSingleton.recallState)
+        assertEquals(null, retiredSingleton.supersededBy)
     }
 
     @Test

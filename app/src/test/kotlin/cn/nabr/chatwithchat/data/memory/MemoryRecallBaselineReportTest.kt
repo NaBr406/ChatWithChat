@@ -47,13 +47,13 @@ class MemoryRecallBaselineReportTest {
         rows.forEach { row -> println(row.tableRow()) }
 
         assertEquals(EXPECTED_BASELINE, rows)
-        assertEquals(listOf("mem_concise"), rows.first { it.name == "greeting" }.selectedIds)
-        assertEquals(listOf("mem_concise"), rows.first { it.name == "unrelated" }.selectedIds)
+        assertTrue(rows.first { it.name == "greeting" }.selectedIds.isEmpty())
+        assertTrue(rows.first { it.name == "unrelated" }.selectedIds.isEmpty())
         assertTrue(rows.first { it.name == "single_cjk_weak" }.candidateIds.isEmpty())
-        assertEquals(listOf("mem_concise"), rows.first { it.name == "single_cjk_weak" }.selectedIds)
+        assertTrue(rows.first { it.name == "single_cjk_weak" }.selectedIds.isEmpty())
         val corpusRow = rows.first { it.name == "corpus_108" }
         assertTrue(corpusRow.selectedIds.all { id -> id.startsWith("target_event_") })
-        assertEquals(3, corpusRow.selectedIds.size)
+        assertEquals(8, corpusRow.selectedIds.size)
     }
 
     private suspend fun runScenario(
@@ -91,9 +91,9 @@ class MemoryRecallBaselineReportTest {
         assertEquals(1, retriever.invocations)
         assertEquals(MemoryCorpus.CHAT_RECALL_LONG_TERM, retriever.lastRequest?.corpus)
         assertEquals(MemoryRetrievalStrategy.HYBRID, retriever.lastRequest?.strategy)
-        assertEquals(3, retriever.lastRequest?.limit)
+        assertEquals(8, retriever.lastRequest?.limit)
         assertEquals(24, retriever.lastRequest?.candidateLimit)
-        assertEquals(300, retriever.lastRequest?.tokenBudget)
+        assertEquals(null, retriever.lastRequest?.tokenBudget)
         assertTrue(retriever.lastRequest?.includePrivate == true)
         assertEquals(
             if (retriever.lastReport?.results.isNullOrEmpty()) MemoryRetrievalMode.NONE else MemoryRetrievalMode.LEXICAL_FALLBACK,
@@ -103,7 +103,6 @@ class MemoryRecallBaselineReportTest {
             assertFalse(prompt.contains("id: "))
             assertFalse(prompt.contains("path: ${MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME}"))
             assertFalse(prompt.contains("[DISTRACTOR]"))
-            assertTrue(prepared.snapshot.estimatedTokens <= 500)
         }
 
         return BaselineRow(
@@ -232,54 +231,54 @@ class MemoryRecallBaselineReportTest {
                 mode = MemoryRetrievalMode.NONE,
                 invocations = 1,
                 candidateIds = emptyList(),
-                selectedIds = listOf("mem_concise"),
-                promptChars = 82,
-                legacyPackEstimateTokens = 41,
-                renderedEstimatedTokens = 61
+                selectedIds = emptyList(),
+                promptChars = 0,
+                legacyPackEstimateTokens = 0,
+                renderedEstimatedTokens = 0
             ),
             BaselineRow(
                 name = "unrelated",
                 mode = MemoryRetrievalMode.NONE,
                 invocations = 1,
                 candidateIds = emptyList(),
-                selectedIds = listOf("mem_concise"),
-                promptChars = 82,
-                legacyPackEstimateTokens = 41,
-                renderedEstimatedTokens = 61
+                selectedIds = emptyList(),
+                promptChars = 0,
+                legacyPackEstimateTokens = 0,
+                renderedEstimatedTokens = 0
             ),
             BaselineRow(
                 name = "preferred_address",
                 mode = MemoryRetrievalMode.LEXICAL_FALLBACK,
                 invocations = 1,
                 candidateIds = listOf("mem_address"),
-                selectedIds = listOf("mem_concise", "mem_address"),
-                promptChars = 96,
-                legacyPackEstimateTokens = 74,
-                renderedEstimatedTokens = 72
+                selectedIds = listOf("mem_address"),
+                promptChars = 73,
+                legacyPackEstimateTokens = 33,
+                renderedEstimatedTokens = 54
             ),
             BaselineRow(
                 name = "preference",
                 mode = MemoryRetrievalMode.LEXICAL_FALLBACK,
                 invocations = 1,
                 candidateIds = listOf("mem_language"),
-                selectedIds = listOf("mem_concise", "mem_language"),
-                promptChars = 96,
-                legacyPackEstimateTokens = 72,
-                renderedEstimatedTokens = 69
+                selectedIds = listOf("mem_language"),
+                promptChars = 73,
+                legacyPackEstimateTokens = 31,
+                renderedEstimatedTokens = 51
             ),
             BaselineRow(
                 name = "project_paraphrase",
                 mode = MemoryRetrievalMode.LEXICAL_FALLBACK,
                 invocations = 1,
                 candidateIds = listOf("mem_project"),
-                selectedIds = listOf("mem_concise", "mem_project"),
-                promptChars = 123,
-                legacyPackEstimateTokens = 81,
-                renderedEstimatedTokens = 78
+                selectedIds = listOf("mem_project"),
+                promptChars = 100,
+                legacyPackEstimateTokens = 40,
+                renderedEstimatedTokens = 60
             ),
             BaselineRow(
                 name = "chinese_rewrite",
-                mode = MemoryRetrievalMode.NONE,
+                mode = MemoryRetrievalMode.LEXICAL_FALLBACK,
                 invocations = 1,
                 candidateIds = listOf("mem_concise"),
                 selectedIds = listOf("mem_concise"),
@@ -292,10 +291,10 @@ class MemoryRecallBaselineReportTest {
                 mode = MemoryRetrievalMode.NONE,
                 invocations = 1,
                 candidateIds = emptyList(),
-                selectedIds = listOf("mem_concise"),
-                promptChars = 82,
-                legacyPackEstimateTokens = 41,
-                renderedEstimatedTokens = 61
+                selectedIds = emptyList(),
+                promptChars = 0,
+                legacyPackEstimateTokens = 0,
+                renderedEstimatedTokens = 0
             ),
             BaselineRow(
                 name = "corpus_108",
@@ -304,10 +303,10 @@ class MemoryRecallBaselineReportTest {
                 candidateIds =
                 (18 downTo 1).map { index -> "target_event_$index" } +
                     (30 downTo 25).map { index -> "distractor_exhibition_$index" },
-                selectedIds = (18 downTo 16).map { index -> "target_event_$index" },
-                promptChars = 188,
-                legacyPackEstimateTokens = 174,
-                renderedEstimatedTokens = 148
+                selectedIds = (18 downTo 11).map { index -> "target_event_$index" },
+                promptChars = 403,
+                legacyPackEstimateTokens = 464,
+                renderedEstimatedTokens = 323
             )
         )
     }

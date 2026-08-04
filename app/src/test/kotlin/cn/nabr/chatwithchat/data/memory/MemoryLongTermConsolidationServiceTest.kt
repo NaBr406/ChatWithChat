@@ -24,6 +24,59 @@ import org.junit.Test
 
 class MemoryLongTermConsolidationServiceTest {
     @Test
+    fun `forced retirement commits obsolete maintenance entry through mutation coordinator`() = runBlocking {
+        val diagnostic = entry(
+            id = "mem_recall_diagnostic",
+            text = "Current recall threshold diagnostic.",
+            canonicalKey = "project.chatwithchat.recall_diagnostic"
+        )
+        val intelligence = RecordingLongTermMemoryIntelligence { request ->
+            val candidate = request.candidateGroups.single().entries.single()
+            MemoryLongTermConsolidationProposal(
+                decisions = listOf(
+                    MemoryLongTermCanonicalDecision(
+                        action = MemoryLongTermDecisionAction.RETIRE,
+                        memoryIds = listOf(candidate.memoryId),
+                        canonicalKey = candidate.canonicalKey,
+                        scope = candidate.scope,
+                        recallState = MemoryRecallState.MAINTENANCE_ONLY,
+                        reason = "hard-negative: diagnostic state is transient"
+                    )
+                )
+            )
+        }
+        val fixture = fixture(
+            entries = listOf(diagnostic),
+            intelligence = intelligence,
+            forceReview = true
+        )
+        val before = fixture.fileStore.readLongTermMemory().getOrThrow()
+
+        val result = fixture.service().process(fixture.claimedJob)
+
+        val after = fixture.fileStore.readLongTermMemory().getOrThrow()
+        val retired = fixture.codec.parse(after).entries.single()
+        val mutation = checkNotNull(fixture.mutationCoordinator.findBySemanticJobId(fixture.claimedJob.jobId))
+        val receipt = mutation.receipts.single()
+        assertEquals(MemoryLongTermProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(1, result.operationCount)
+        assertEquals(1, intelligence.requests.size)
+        assertNotEquals(before, after)
+        assertEquals(diagnostic.id, retired.id)
+        assertEquals(diagnostic.text, retired.text)
+        assertEquals(MemoryValidity.OBSOLETE, retired.validity)
+        assertEquals(MemoryRecallState.MAINTENANCE_ONLY, retired.recallState)
+        assertNull(retired.supersededBy)
+        assertEquals(1, receipt.materialMutationCount)
+
+        val replay = fixture.service().process(checkNotNull(fixture.jobDao.getById(fixture.claimedJob.jobId)))
+
+        assertEquals(MemoryLongTermProcessResult.STATUS_DUPLICATE, replay.status)
+        assertEquals(1, intelligence.requests.size)
+        assertEquals(after, fixture.fileStore.readLongTermMemory().getOrThrow())
+    }
+
+    @Test
     fun `fully canonical distinct facts are reviewed without canonical mutation`() = runBlocking {
         val intelligence = RecordingLongTermMemoryIntelligence { MemoryLongTermConsolidationProposal() }
         val fixture = fixture(
@@ -806,7 +859,8 @@ class MemoryLongTermConsolidationServiceTest {
     private suspend fun fixture(
         entries: List<MarkdownMemoryEntry>,
         intelligence: RecordingLongTermMemoryIntelligence,
-        initialMarkdown: String? = null
+        initialMarkdown: String? = null,
+        forceReview: Boolean = false
     ): Fixture {
         val fileStore = MemoryFileStore(
             paths = MemoryFilePaths(Files.createTempDirectory("memory-long-term-service").toFile()),
@@ -840,7 +894,11 @@ class MemoryLongTermConsolidationServiceTest {
             workEnqueuer = workEnqueuer,
             clock = FIXED_CLOCK
         )
-        val plan = longTermScheduler.ensureScheduled()
+        val plan = if (forceReview) {
+            longTermScheduler.scheduleForceNow()
+        } else {
+            longTermScheduler.ensureScheduled()
+        }
         assertTrue(plan.scheduled)
         val claimedJob = checkNotNull(
             maintenanceScheduler.claimNextRunnable(

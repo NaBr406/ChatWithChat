@@ -9,6 +9,7 @@ import cn.nabr.chatwithchat.data.dto.google.common.Content
 import cn.nabr.chatwithchat.data.dto.google.common.Part
 import cn.nabr.chatwithchat.data.dto.google.response.Candidate
 import cn.nabr.chatwithchat.data.dto.google.response.GenerateContentResponse
+import cn.nabr.chatwithchat.data.dto.openai.common.TextContent as OpenAiTextContent
 import cn.nabr.chatwithchat.data.dto.openai.request.ChatCompletionRequest
 import cn.nabr.chatwithchat.data.dto.openai.request.ResponsesRequest
 import cn.nabr.chatwithchat.data.dto.openai.response.ChatCompletionChunk
@@ -32,6 +33,35 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LlmMemoryIntelligenceTest {
+
+    @Test
+    fun `memory generation prompts enforce conservative quality gates and retirement contract`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(chatChunks = chatChunks(EMPTY_PROPOSAL_JSON))
+        val intelligence = intelligence(openAIAPI = openAIAPI)
+        val platform = platform(ClientType.OPENROUTER, "model")
+
+        intelligence.consolidateMemoryBatch(batchRequest(), platform)
+        val batchPrompt = checkNotNull(openAIAPI.lastSystemPrompt)
+        assertTrue(batchPrompt.contains("Default to ignore"))
+        assertTrue(batchPrompt.contains("future utility"))
+        assertTrue(batchPrompt.contains("one isolated assistant inference", ignoreCase = true))
+        assertTrue(batchPrompt.contains("current task progress"))
+        assertTrue(batchPrompt.contains("application tool-calling policy"))
+
+        intelligence.distillDailyMemory(dailyRequest(), platform)
+        val dailyPrompt = checkNotNull(openAIAPI.lastSystemPrompt)
+        assertTrue(dailyPrompt.contains("Default to ignore"))
+        assertTrue(dailyPrompt.contains("repeated independent evidence"))
+        assertTrue(dailyPrompt.contains("current debugging"))
+        assertTrue(dailyPrompt.contains("historical context stays daily", ignoreCase = true))
+
+        intelligence.consolidateLongTermMemory(longTermRequest(), platform)
+        val longTermPrompt = checkNotNull(openAIAPI.lastSystemPrompt)
+        assertTrue(longTermPrompt.contains("canonicalize|retire|ignore"))
+        assertTrue(longTermPrompt.contains("recoverable corpus-quality action"))
+        assertTrue(longTermPrompt.contains("singleton decision"))
+        assertTrue(longTermPrompt.contains("do not invent a supersession target"))
+    }
 
     @Test
     fun `openai memory platform uses responses api for batch consolidation`() = runBlocking {
@@ -554,6 +584,7 @@ private class RecordingOpenAIAPI(
     var streamResponsesCalls = 0
     var lastChatRequest: ChatCompletionRequest? = null
     var lastResponsesRequest: ResponsesRequest? = null
+    var lastSystemPrompt: String? = null
     var lastChatTimeoutSeconds: Int? = null
     var lastResponsesTimeoutSeconds: Int? = null
 
@@ -563,6 +594,9 @@ private class RecordingOpenAIAPI(
     override fun streamChatCompletion(request: ChatCompletionRequest, timeoutSeconds: Int): Flow<ChatCompletionChunk> {
         streamChatCompletionCalls += 1
         lastChatRequest = request
+        lastSystemPrompt = request.messages.firstOrNull()?.content?.filterIsInstance<OpenAiTextContent>()
+            ?.firstOrNull()
+            ?.text
         lastChatTimeoutSeconds = timeoutSeconds
         return chatChunkProvider?.invoke() ?: chatChunks
     }
@@ -570,6 +604,7 @@ private class RecordingOpenAIAPI(
     override fun streamResponses(request: ResponsesRequest, timeoutSeconds: Int): Flow<ResponsesStreamEvent> {
         streamResponsesCalls += 1
         lastResponsesRequest = request
+        lastSystemPrompt = request.instructions
         lastResponsesTimeoutSeconds = timeoutSeconds
         return responseEvents
     }

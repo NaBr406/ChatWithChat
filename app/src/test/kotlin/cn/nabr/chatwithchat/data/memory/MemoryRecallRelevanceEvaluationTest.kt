@@ -195,7 +195,7 @@ class MemoryRecallRelevanceEvaluationTest {
                 query = "请帮我安排上海摄影展的线下场地和宣传。",
                 limit = 8,
                 candidateLimit = 24,
-                tokenBudget = 900
+                tokenBudget = null
             ),
             combinedQuery = "请帮我安排上海摄影展的线下场地和宣传。",
             snapshots = listOf(snapshot)
@@ -250,22 +250,25 @@ class MemoryRecallRelevanceEvaluationTest {
         assertEquals(108, targetEntries.size + distractorEntries.size)
         assertEquals(18, rankedCandidates.count { memory -> memory.entryId?.startsWith("target_event_") == true })
         assertEquals(8, candidateTargetCount)
-        assertEquals(3, retrievedTargetCount)
-        assertEquals(3, promptTargetCount)
+        assertEquals(8, retrievedTargetCount)
+        assertEquals(8, promptTargetCount)
         assertFalse("Unrelated events must not leak into the prompt", prompt.contains("[DISTRACTOR]"))
         assertFalse("Hard negatives must not leak into the prompt", prompt.contains("[HARD_NEGATIVE]"))
         assertEquals(listOf("address_current"), greeting.retrievedMemories.mapNotNull { memory -> memory.entryId })
         assertTrue(greeting.snapshot.queryFacts.isEmpty())
         assertEquals(listOf("address_current"), unrelated.retrievedMemories.mapNotNull { memory -> memory.entryId })
         assertTrue(unrelated.snapshot.queryFacts.isEmpty())
-        assertEquals(listOf("address_current"), address.retrievedMemories.mapNotNull { memory -> memory.entryId })
-        assertTrue(address.snapshot.queryFacts.isEmpty())
-        assertFalse(address.prompt.orEmpty().contains("[SCOPED_WORK]"))
+        assertEquals(
+            listOf("address_current", "address_work"),
+            address.retrievedMemories.mapNotNull { memory -> memory.entryId }
+        )
+        assertEquals(listOf("工作场景称呼用户为总监。[SCOPED_WORK]"), address.snapshot.queryFacts.map { fact -> fact.text })
+        assertTrue(address.prompt.orEmpty().contains("[SCOPED_WORK]"))
         assertFalse(address.prompt.orEmpty().contains("[SUPERSEDED]"))
         assertEquals(listOf("address_current"), singleCjk.retrievedMemories.mapNotNull { memory -> memory.entryId })
         assertTrue(singleCjk.snapshot.queryFacts.isEmpty())
         assertFalse(singleCjk.prompt.orEmpty().contains("[SINGLE_CJK]"))
-        assertTrue(prepared.snapshot.estimatedTokens <= 500)
+        assertTrue(prepared.snapshot.estimatedTokens > 0)
     }
 }
 

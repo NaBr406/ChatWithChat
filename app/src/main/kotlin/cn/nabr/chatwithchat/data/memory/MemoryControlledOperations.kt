@@ -88,6 +88,11 @@ class MemoryDailyDistillationOperationController(
                         null
                     }
                     val evidence = operation.evidenceKeys.map(evidenceByKey::getValue)
+                    require(
+                        operation.action != MemoryDailyDistillationAction.CREATE ||
+                            derivedSource(evidence) != MemorySource.ASSISTANT_INFERRED ||
+                            operation.evidenceKeys.size >= MIN_INFERRED_LONG_TERM_EVIDENCE
+                    ) { "assistant_inferred_long_term_create_requires_repeated_evidence" }
                     val canonicalKey = requireNotNull(operation.canonicalKey)
                     val scope = requireNotNull(operation.scope)
                     val evidenceAt = evidence.maxOf { item -> maxOf(item.createdAt, item.updatedAt) }
@@ -231,6 +236,7 @@ class MemoryDailyDistillationOperationController(
             MemoryDailyDistillationAction.REPLACE,
             MemoryDailyDistillationAction.IGNORE
         )
+        const val MIN_INFERRED_LONG_TERM_EVIDENCE = 2
         val ACTIVE_RECALL_STATES = setOf(MemoryRecallState.CORE, MemoryRecallState.QUERY)
         val WHITESPACE_REGEX = Regex("\\s+")
     }

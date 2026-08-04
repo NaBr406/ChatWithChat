@@ -136,7 +136,7 @@ class HybridMemoryRetrieverTest {
     }
 
     @Test
-    fun `hybrid query defaults to general scope and excludes work conflict`() = runBlocking {
+    fun `hybrid query recalls across scopes without a hard scope filter`() = runBlocking {
         val general = chunk("general", "mem_general", "Preferred address is Alex.").copy(scope = MemoryScope.GENERAL)
         val work = chunk("work", "mem_work", "Preferred work address is Director.").copy(scope = MemoryScope.WORK)
         val fixture = fixture(snapshot(chunks = listOf(general, work)))
@@ -148,7 +148,7 @@ class HybridMemoryRetrieverTest {
         val report = fixture.retriever.retrieveWithDiagnostics(request("preferred address")).getOrThrow()
 
         assertEquals(MemoryRetrievalMode.HYBRID, report.mode)
-        assertEquals(listOf("mem_general"), report.results.map { result -> result.entryId })
+        assertEquals(listOf("mem_general", "mem_work"), report.results.map { result -> result.entryId })
     }
 
     @Test
@@ -403,7 +403,7 @@ class HybridMemoryRetrieverTest {
     }
 
     @Test
-    fun `vector gate embeds only the current query and caps query facts at three`() = runBlocking {
+    fun `vector gate embeds only the current query and keeps up to eight query facts`() = runBlocking {
         val chunks = (1..5).map { index -> chunk("vector-$index", "mem_vector_$index", "Vector fact $index.") }
         val fixture = fixture(snapshot(chunks = chunks))
         fixture.vectorStore.matches = chunks.mapIndexed { index, chunk ->
@@ -419,7 +419,7 @@ class HybridMemoryRetrieverTest {
         ).getOrThrow()
 
         assertEquals(listOf("vector facts"), fixture.provider.embeddedQueries)
-        assertEquals(3, report.results.size)
+        assertEquals(5, report.results.size)
     }
 
     @Test
@@ -572,7 +572,7 @@ class HybridMemoryRetrieverTest {
     }
 
     @Test
-    fun `token budget is applied after fusion`() = runBlocking {
+    fun `long term query token budget does not discard fused facts`() = runBlocking {
         val first = chunk("first", "mem_first", "Short preference.")
         val second = chunk("second", "mem_second", "Other preference.")
         val fixture = fixture(snapshot(chunks = listOf(first, second)))
@@ -585,7 +585,7 @@ class HybridMemoryRetrieverTest {
             request("semantic only").copy(tokenBudget = 30)
         ).getOrThrow()
 
-        assertEquals(1, results.size)
+        assertEquals(2, results.size)
     }
 
     @Test

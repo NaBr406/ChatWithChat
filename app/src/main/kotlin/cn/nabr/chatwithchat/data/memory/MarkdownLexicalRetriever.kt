@@ -26,7 +26,7 @@ class MarkdownLexicalRetriever(
         check(request.strategy == MemoryRetrievalStrategy.LEXICAL) {
             "Markdown lexical retrieval only supports the lexical strategy"
         }
-        if (request.limit <= 0 || request.tokenBudget <= 0) {
+        if (request.limit <= 0 || request.tokenBudget?.let { budget -> budget <= 0 } == true) {
             return@runCatching MemoryRetrievalReport(emptyList(), MemoryRetrievalMode.NONE)
         }
         val lexicalQuery = request.lexicalQuery()
@@ -104,10 +104,6 @@ class MarkdownLexicalRetriever(
             .filter { chunk ->
                 request.corpus != MemoryCorpus.CHAT_RECALL_LONG_TERM ||
                     chunk.sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME
-            }
-            .filter { chunk ->
-                request.corpus != MemoryCorpus.CHAT_RECALL_LONG_TERM ||
-                    (chunk.scope ?: MemoryScope.GENERAL) == request.recallScope
             }
             .filter { chunk ->
                 request.includePrivate ||

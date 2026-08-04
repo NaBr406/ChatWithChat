@@ -55,7 +55,7 @@ class MemoryRepositoryTest {
         assertEquals(1, retriever.calls)
         assertEquals("Please implement this directly.", retriever.lastRequest?.query)
         assertEquals(MemoryCorpus.CHAT_RECALL_LONG_TERM, retriever.lastRequest?.corpus)
-        assertEquals(300, retriever.lastRequest?.tokenBudget)
+        assertNull(retriever.lastRequest?.tokenBudget)
         assertTrue(retriever.lastRequest?.includePrivate == true)
         assertEquals(MemoryRetrievalStrategy.HYBRID, retriever.lastRequest?.strategy)
         assertEquals(1, prepared.retrievedMemories.size)
@@ -127,7 +127,7 @@ class MemoryRepositoryTest {
     }
 
     @Test
-    fun `repository freezes at most three rendered query facts under the final prompt budget`() = runBlocking {
+    fun `repository freezes all returned query facts up to the top eight limit`() = runBlocking {
         val results = (1..5).map { index ->
             retrievalResult("Query fact $index.").copy(
                 chunkId = "MEMORY.md#mem_$index#0",
@@ -143,9 +143,8 @@ class MemoryRepositoryTest {
             listOf(emptyList())
         )
 
-        assertEquals(3, prepared.snapshot.queryFacts.size)
-        assertEquals(3, prepared.retrievedMemories.size)
-        assertTrue(prepared.snapshot.estimatedTokens <= 500)
+        assertEquals(5, prepared.snapshot.queryFacts.size)
+        assertEquals(5, prepared.retrievedMemories.size)
         assertEquals(prepared.prompt, prepared.snapshot.prompt)
     }
 

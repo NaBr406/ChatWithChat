@@ -206,7 +206,7 @@ internal class MemoryLongTermConsolidationPolicy {
             }
         }
         val previouslyAssigned = existing.decisions
-            .filter { decision -> decision.action == MemoryLongTermDecisionAction.CANONICALIZE }
+            .filter { decision -> decision.action in ASSIGNING_ACTIONS }
             .flatMap(MemoryLongTermCanonicalDecision::memoryIds)
             .toMutableSet()
         val normalized = proposal.decisions.map { decision ->
@@ -236,6 +236,32 @@ internal class MemoryLongTermConsolidationPolicy {
             require(entries.map(MemoryLongTermCandidateEntry::type).distinct().size == 1) {
                 "decision mixed incompatible memory types"
             }
+            if (decision.action == MemoryLongTermDecisionAction.RETIRE) {
+                val canonicalKey = decision.canonicalKey ?: entries.mapNotNull(MemoryLongTermCandidateEntry::canonicalKey)
+                    .distinct()
+                    .singleOrNull()
+                    ?: "maintenance.retired.${memoryIds.joinToString("_").sha256Utf8().take(16)}"
+                val scope = decision.scope ?: entries.map(MemoryLongTermCandidateEntry::scope).distinct().single()
+                require(MarkdownMemoryMetadataPolicy.isCanonicalKey(canonicalKey)) {
+                    "invalid retired memory canonical key"
+                }
+                require(MarkdownMemoryMetadataPolicy.isScope(scope)) { "invalid retired memory scope" }
+                require(entries.all { entry -> entry.canonicalKey == null || entry.canonicalKey == canonicalKey }) {
+                    "retirement changed canonical identity"
+                }
+                require(entries.all { entry -> entry.scope == scope }) {
+                    "retirement crossed memory scopes"
+                }
+                require(decision.reason.isNotBlank()) { "retirement requires a quality reason" }
+                previouslyAssigned += memoryIds
+                return@map decision.copy(
+                    memoryIds = memoryIds,
+                    canonicalKey = canonicalKey,
+                    scope = scope,
+                    recallState = MemoryRecallState.MAINTENANCE_ONLY,
+                    reason = decision.reason.trim().take(MAX_REASON_CHARS)
+                )
+            }
             val canonicalKey = requireNotNull(decision.canonicalKey)
             val scope = requireNotNull(decision.scope)
             val recallState = requireNotNull(decision.recallState)
@@ -261,9 +287,10 @@ internal class MemoryLongTermConsolidationPolicy {
             )
         }
         val decisions = (existing.decisions + normalized)
-            .filter { decision -> decision.action == MemoryLongTermDecisionAction.CANONICALIZE }
+            .filter { decision -> decision.action in ASSIGNING_ACTIONS }
             .sortedWith(
-                compareBy<MemoryLongTermCanonicalDecision> { decision -> decision.canonicalKey }
+                compareBy<MemoryLongTermCanonicalDecision> { decision -> decision.action }
+                    .thenBy { decision -> decision.canonicalKey }
                     .thenBy { decision -> decision.scope }
                     .thenBy { decision -> decision.memoryIds.joinToString(",") }
             )
@@ -296,29 +323,55 @@ internal class MemoryLongTermConsolidationPolicy {
         proposal: MemoryLongTermPersistedProposal
     ): List<List<CanonicalMemoryCandidate>> {
         val entriesById = entries.associateBy(MarkdownMemoryEntry::id)
-        return proposal.decisions.map { decision ->
-            decision.memoryIds.map { memoryId ->
-                val entry = requireNotNull(entriesById[memoryId]) { "persisted proposal references a missing memory" }
-                require(entry.isEligibleForCanonicalConsolidation()) {
-                    "persisted proposal references an ineligible memory"
-                }
-                entry.toCanonicalCandidate(
-                    canonicalKey = requireNotNull(decision.canonicalKey),
-                    scope = requireNotNull(decision.scope),
-                    recallState = consolidationRecallState(
+        return proposal.decisions
+            .filter { decision -> decision.action == MemoryLongTermDecisionAction.CANONICALIZE }
+            .map { decision ->
+                decision.memoryIds.map { memoryId ->
+                    val entry = requireNotNull(entriesById[memoryId]) {
+                        "persisted proposal references a missing memory"
+                    }
+                    require(entry.isEligibleForCanonicalConsolidation()) {
+                        "persisted proposal references an ineligible memory"
+                    }
+                    entry.toCanonicalCandidate(
                         canonicalKey = requireNotNull(decision.canonicalKey),
                         scope = requireNotNull(decision.scope),
-                        recallState = requireNotNull(decision.recallState)
+                        recallState = consolidationRecallState(
+                            canonicalKey = requireNotNull(decision.canonicalKey),
+                            scope = requireNotNull(decision.scope),
+                            recallState = requireNotNull(decision.recallState)
+                        )
                     )
-                )
+                }
             }
-        }
+    }
+
+    fun retirementMemoryIds(
+        entries: List<MarkdownMemoryEntry>,
+        proposal: MemoryLongTermPersistedProposal
+    ): List<String> {
+        val entriesById = entries.associateBy(MarkdownMemoryEntry::id)
+        return proposal.decisions
+            .filter { decision -> decision.action == MemoryLongTermDecisionAction.RETIRE }
+            .flatMap(MemoryLongTermCanonicalDecision::memoryIds)
+            .distinct()
+            .sorted()
+            .onEach { memoryId ->
+                val entry = requireNotNull(entriesById[memoryId]) {
+                    "retirement proposal references a missing memory"
+                }
+                require(entry.isCurrentActive()) { "retirement proposal references an inactive memory" }
+            }
     }
 
     fun selectBoundedCandidateGroups(
         localCandidates: List<CanonicalMemoryCandidate>,
-        proposalCandidateGroups: List<List<CanonicalMemoryCandidate>>
+        proposalCandidateGroups: List<List<CanonicalMemoryCandidate>>,
+        maxOperations: Int = MemoryControlledOperationPolicy.MAX_OPERATIONS
     ): Pair<List<CanonicalMemoryCandidate>, Boolean> {
+        require(maxOperations in 0..MemoryControlledOperationPolicy.MAX_OPERATIONS) {
+            "invalid bounded canonical operation limit"
+        }
         val groups = buildList {
             localCandidates
                 .groupBy { candidate -> candidate.canonicalKey to candidate.scope }
@@ -331,7 +384,7 @@ internal class MemoryLongTermConsolidationPolicy {
         var consumedGroups = 0
         var hasPartialGroup = false
         for (group in groups) {
-            val remaining = MemoryControlledOperationPolicy.MAX_OPERATIONS - selected.size
+            val remaining = maxOperations - selected.size
             if (remaining == 0) break
             val boundedGroup = group.take(remaining)
             selected += boundedGroup
@@ -528,7 +581,11 @@ internal class MemoryLongTermConsolidationPolicy {
         private const val MAX_REASON_CHARS = 240
         private const val ID_HASH_LENGTH = 24
         private val ACTIVE_RECALL_STATES = setOf(MemoryRecallState.CORE, MemoryRecallState.QUERY)
-        private val VALID_ACTIONS = setOf(MemoryLongTermDecisionAction.CANONICALIZE, MemoryLongTermDecisionAction.IGNORE)
+        private val ASSIGNING_ACTIONS = setOf(
+            MemoryLongTermDecisionAction.CANONICALIZE,
+            MemoryLongTermDecisionAction.RETIRE
+        )
+        private val VALID_ACTIONS = ASSIGNING_ACTIONS + MemoryLongTermDecisionAction.IGNORE
         private val WORD_REGEX = Regex("[a-z0-9]+")
         private val CJK_SEQUENCE_REGEX = Regex("[\\u3400-\\u4dbf\\u4e00-\\u9fff]+")
     }

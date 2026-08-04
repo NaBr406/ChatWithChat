@@ -610,11 +610,15 @@ internal class CanonicalMemoryMergePolicy(
                 entry.identityOrNull() in touchedIdentities && entry.validity == MemoryValidity.OBSOLETE
             }
             .forEach { obsolete ->
-                val successor = requireNotNull(obsolete.supersededBy?.let(entriesById::get)) {
-                    "canonical history is missing its active successor"
-                }
-                require(successor.validity == MemoryValidity.CURRENT && successor.identityOrNull() == obsolete.identityOrNull()) {
-                    "canonical history successor mismatch"
+                val successor = obsolete.supersededBy?.let(entriesById::get)
+                if (successor != null) {
+                    require(successor.validity == MemoryValidity.CURRENT && successor.identityOrNull() == obsolete.identityOrNull()) {
+                        "canonical history successor mismatch"
+                    }
+                } else {
+                    require(obsolete.recallState == MemoryRecallState.MAINTENANCE_ONLY) {
+                        "retired canonical entry must be maintenance only"
+                    }
                 }
             }
         val originalCounts = exactTextCounts(baseMarkdown)

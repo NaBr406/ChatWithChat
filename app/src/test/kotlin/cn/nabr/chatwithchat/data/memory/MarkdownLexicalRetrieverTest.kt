@@ -34,7 +34,7 @@ class MarkdownLexicalRetrieverTest {
         ).getOrThrow()
 
         assertTrue(chatReport.results.isEmpty())
-        assertEquals("mem_visible", chatReport.coreResults.single().entryId)
+        assertTrue(chatReport.coreResults.isEmpty())
         assertEquals("day_hidden", maintenanceResults.single().entryId)
         assertTrue(maintenanceResults.single().sourcePath.startsWith("memory/"))
     }
@@ -185,9 +185,9 @@ class MarkdownLexicalRetrieverTest {
             request(MemoryCorpus.CHAT_RECALL_LONG_TERM, "implementation steps")
         ).getOrThrow()
 
-        assertEquals("mem_zh", chinese.coreResults.single().entryId)
-        assertTrue(chinese.results.isEmpty())
-        assertEquals("mem_zh", english.coreResults.single().entryId)
+        assertTrue(chinese.coreResults.isEmpty())
+        assertEquals("mem_zh", chinese.results.single().entryId)
+        assertTrue(english.coreResults.isEmpty())
         assertEquals("mem_en", english.results.single().entryId)
         assertEquals(english.results.single().lexicalScore, english.results.single().fusedScore)
     }
@@ -369,7 +369,33 @@ class MarkdownLexicalRetrieverTest {
     }
 
     @Test
-    fun `chat query defaults to general scope while explicit work scope stays selectable`() = runBlocking {
+    fun `long term query keeps eight ranked facts across scopes without a memory token budget`() = runBlocking {
+        val chunks = (1..10).map { index ->
+            corpusChunk(
+                chunkId = "MEMORY.md#top8_$index#0",
+                entryId = "top8_$index",
+                text = "Shared retrieval fact $index. " + "detail ".repeat(160)
+            ).copy(scope = if (index % 2 == 0) MemoryScope.WORK else "project:top8")
+        }
+        val results = MarkdownLexicalRetriever(StaticSnapshotSource(snapshot(1L, chunks))).retrieve(
+            MemoryRetrievalRequest(
+                corpus = MemoryCorpus.CHAT_RECALL_LONG_TERM,
+                query = "shared retrieval",
+                limit = 8,
+                candidateLimit = 24,
+                tokenBudget = 1
+            )
+        ).getOrThrow()
+
+        assertEquals(8, results.size)
+        val resultIds = results.mapNotNull { result -> result.entryId }.toSet()
+        assertTrue(resultIds.all { id -> id.startsWith("top8_") })
+        assertTrue("top8_10" in resultIds)
+        assertEquals(setOf(MemoryScope.WORK, "project:top8"), results.map { result -> result.scope }.toSet())
+    }
+
+    @Test
+    fun `chat query recalls across scopes without a hard scope filter`() = runBlocking {
         val general = corpusChunk(
             "MEMORY.md#mem_general#0",
             "mem_general",
@@ -389,8 +415,8 @@ class MarkdownLexicalRetrieverTest {
             request(MemoryCorpus.CHAT_RECALL_LONG_TERM, "preferred address").copy(recallScope = MemoryScope.WORK)
         ).getOrThrow()
 
-        assertEquals(listOf("mem_general"), generalResults.map { result -> result.entryId })
-        assertEquals(listOf("mem_work"), workResults.map { result -> result.entryId })
+        assertEquals(listOf("mem_general", "mem_work"), generalResults.map { result -> result.entryId })
+        assertEquals(listOf("mem_general", "mem_work"), workResults.map { result -> result.entryId })
     }
 
     @Test

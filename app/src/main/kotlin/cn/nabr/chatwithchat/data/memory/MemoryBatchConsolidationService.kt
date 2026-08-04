@@ -687,6 +687,11 @@ class MemoryBatchConsolidationService(
                         )
                     }
                     check(operation.evidenceTurnKeys.isNotEmpty())
+                    check(
+                        operation.destination != MemoryBatchDestination.LONG_TERM ||
+                            operation.source != MemorySource.ASSISTANT_INFERRED ||
+                            operation.evidenceTurnKeys.size >= MIN_INFERRED_LONG_TERM_EVIDENCE
+                    ) { "assistant_inferred_long_term_create_requires_repeated_evidence" }
                     validatedCanonicalWrite(operation, null, turnsByKey)
                 }
                 MemoryBatchAction.REPLACE -> {
@@ -1130,6 +1135,7 @@ class MemoryBatchConsolidationService(
         private const val MAX_EXISTING_MEMORIES = 24
         private const val MAX_EXISTING_CANDIDATES = 200
         private const val MAX_EXISTING_MEMORY_TOKEN_BUDGET = 2_400
+        private const val MIN_INFERRED_LONG_TERM_EVIDENCE = 2
         private val VALID_TRIGGER_REASONS = setOf(
             MemoryTurnBatchTriggerReason.THRESHOLD,
             MemoryTurnBatchTriggerReason.IDLE,

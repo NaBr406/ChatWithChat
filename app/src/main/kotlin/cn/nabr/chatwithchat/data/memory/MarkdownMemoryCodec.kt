@@ -713,7 +713,7 @@ class MarkdownMemoryCodec {
         entriesById: Map<String, MarkdownMemoryEntry>
     ): String? {
         if (entry.validity != MemoryValidity.OBSOLETE) return null
-        val targetId = entry.supersededBy ?: return ERROR_OBSOLETE_ENTRY_REQUIRES_SUPERSESSION_TARGET
+        val targetId = entry.supersededBy ?: return null
         if (targetId == entry.id) return "obsolete entry cannot supersede itself"
         val target = entriesById[targetId] ?: return "supersession target not found"
         if (target.validity != MemoryValidity.CURRENT) return "supersession target must be current"

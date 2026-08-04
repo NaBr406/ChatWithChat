@@ -58,6 +58,7 @@ data class MemoryLongTermPersistedProposal(
 
 object MemoryLongTermDecisionAction {
     const val CANONICALIZE = "canonicalize"
+    const val RETIRE = "retire"
     const val IGNORE = "ignore"
 }
 

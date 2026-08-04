@@ -139,7 +139,7 @@ class MemoryRepositoryImpl(
             recentContext = recentContext,
             limit = MAX_QUERY_MEMORIES,
             candidateLimit = MAX_CANDIDATE_MEMORIES,
-            tokenBudget = QUERY_RECALL_TOKEN_BUDGET,
+            tokenBudget = null,
             includePrivate = true,
             strategy = MemoryRetrievalStrategy.HYBRID
         )
@@ -291,8 +291,7 @@ class MemoryRepositoryImpl(
     companion object {
         private const val TAG = "MemoryRepository"
         private const val MAX_CANDIDATE_MEMORIES = 24
-        private const val MAX_QUERY_MEMORIES = 3
-        private const val QUERY_RECALL_TOKEN_BUDGET = 300
+        private const val MAX_QUERY_MEMORIES = 8
         private const val MAX_CONTEXT_MESSAGE_LENGTH = 1200
         private const val LOCAL_RECALL_RECENT_MESSAGE_COUNT = 6
         private const val MAX_LOCAL_RECALL_QUERY_LENGTH = 2_000
