@@ -2,9 +2,9 @@ package cn.nabr.chatwithchat.data.memory
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import java.io.File
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -12,30 +12,55 @@ import org.junit.runner.RunWith
 class MemoryRecallCoreInstrumentedTest {
 
     @Test
-    fun installedMemoryFile_projectsUserAddressAndAssistantNameIntoCore() = runBlocking {
+    fun isolatedMemoryFile_projectsUserAddressAndAssistantNameIntoCore() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val fileStore = MemoryFileStore(MemoryFilePaths.fromContext(context))
-        val markdown = fileStore.readLongTermMemory().getOrThrow()
+        val root = File(context.noBackupFilesDir, "memory_recall_core_test/run-${System.nanoTime()}")
+        val fileStore = MemoryFileStore(MemoryFilePaths(root))
+        try {
+            fileStore.ensureStore().getOrThrow()
+            val markdown = MarkdownMemoryCodec().renderLongTerm(
+                listOf(
+                    MarkdownMemoryEntry(
+                        id = "core-preferred-address",
+                        text = "用户希望被称为小纳。",
+                        type = "stable_profile",
+                        sensitivity = MemorySensitivity.NORMAL,
+                        source = MemorySource.EXPLICIT_USER_STATEMENT,
+                        canonicalKey = "identity.preferred_address",
+                        recallState = MemoryRecallState.CORE
+                    ),
+                    MarkdownMemoryEntry(
+                        id = "core-assistant-name",
+                        text = "助手名称是 ChatWithChat。",
+                        type = "stable_profile",
+                        sensitivity = MemorySensitivity.NORMAL,
+                        source = MemorySource.EXPLICIT_USER_STATEMENT,
+                        canonicalKey = "identity.assistant_name",
+                        recallState = MemoryRecallState.CORE
+                    )
+                )
+            )
+            fileStore.replaceLongTermMemory(markdown).getOrThrow()
 
-        assertTrue(markdown.contains("canonical_key=identity.preferred_address"))
-        assertTrue(markdown.contains("canonical_key=identity.assistant_name"))
+            val snapshot = MemoryCorpusSnapshotter(fileStore, MemoryChunker())
+                .snapshots(MemoryCorpus.CHAT_RECALL_LONG_TERM)
+                .getOrThrow()
+                .single()
+            val coreIdentityKeys = snapshot
+                .selectCoreResults(includePrivate = true)
+                .mapNotNull(MemoryRetrievalResult::canonicalKey)
+                .filter { key -> key in CORE_IDENTITY_KEYS }
 
-        val snapshot = MemoryCorpusSnapshotter(fileStore, MemoryChunker())
-            .snapshots(MemoryCorpus.CHAT_RECALL_LONG_TERM)
-            .getOrThrow()
-            .single()
-        val coreIdentityKeys = snapshot
-            .selectCoreResults(includePrivate = true)
-            .mapNotNull(MemoryRetrievalResult::canonicalKey)
-            .filter { key -> key in CORE_IDENTITY_KEYS }
-
-        assertEquals(
-            listOf(
-                "identity.preferred_address",
-                "identity.assistant_name"
-            ),
-            coreIdentityKeys
-        )
+            assertEquals(
+                listOf(
+                    "identity.assistant_name",
+                    "identity.preferred_address"
+                ),
+                coreIdentityKeys
+            )
+        } finally {
+            root.deleteRecursively()
+        }
     }
 
     private companion object {
