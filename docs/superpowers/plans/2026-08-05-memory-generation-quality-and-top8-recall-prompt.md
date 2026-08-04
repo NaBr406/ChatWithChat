@@ -2,7 +2,7 @@
 
 > **CANONICAL IMPLEMENTATION HANDOFF:** Give the implementation agent this file only after it has read `AGENTS.md` and this document completely. The agent must begin with a read-only audit of the live checkout, branch, schema, tests, device state, and dirty files. Do not modify production code until the audit and baseline are recorded. This document is a follow-up to `docs/superpowers/plans/2026-07-28-long-term-memory-consistency-recall-and-tool-token-prompt.md`; where this document changes recall budgets or memory-generation semantics, this document wins.
 
-> **Status (2026-08-05):** Implemented on branch `codex/memory-generation-quality-top8`. JVM and compile gates pass; ktlint, Android device, and live provider gates remain open because this checkout has no ktlint task/CLI and `adb devices -l` reports no attached device.
+> **Status (2026-08-05):** Implemented on branch `codex/memory-generation-quality-top8`. JVM, compile, and isolated Core device gates pass; ktlint, the full Core/maintenance device path, and live provider gates remain open because this checkout has no ktlint task/CLI and provider/API execution has not been exercised.
 
 ## Goal
 
@@ -300,8 +300,8 @@ Do not claim completion from the plan snapshot or from `memory(1).md` alone. Rep
 - Retirement contract: `retire` is validated against supplied candidate IDs and rendered as `obsolete + maintenance_only` through the existing deterministic mutation path while preserving ID, text, evidence, and replay/CAS safeguards.
 - Verification passed: `.\gradlew.bat testDebugUnitTest --no-daemon` (129 XML suites, 1,132 tests, 0 failures, 0 errors); `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugAndroidTestKotlin --no-daemon`; focused retirement, prompt, corpus, and recall tests; `git diff --check` and `git diff --cached --check`.
 - Task 3A implementation: `MemoryRecallQuerySnapshot` normalizes and bounds the current user section plus recent role-labeled context once per turn, exposes a deterministic snapshot hash, weights the current section above secondary context, and rejects assistant-only lexical anchors. Lexical, vector, and hybrid branches consume that same snapshot while history and long-term retrieval continue using separate corpus paths. Four fixtures cover context-only decisive terms, combined intent ranking, unrelated context, and assistant-only conclusions; the vector fixture verifies the exact snapshot passed to embedding.
-- Device evidence: `:app:connectedDebugAndroidTest` passed `MemoryProductionHybridShadowInstrumentedTest` (2/2) and `ObjectBoxMemoryVectorStoreInstrumentedTest` (13/13) on `emulator-5554`; the user-modified `MemoryRecallCoreInstrumentedTest` failed its stale `recallState=QUERY` Core expectation (expected two keys, observed none), so clean Core/maintenance runtime proof remains open. Provider/API runtime was not exercised.
-- Remaining verification before commit: changed-Kotlin ktlint is unavailable because no CLI or Gradle task is present. Provider runtime and the clean real-device Core/maintenance fixture remain open.
+- Device evidence: `:app:connectedDebugAndroidTest` passed `MemoryProductionHybridShadowInstrumentedTest` (2/2), `ObjectBoxMemoryVectorStoreInstrumentedTest` (13/13), and the isolated `MemoryRecallCoreInstrumentedTest` (1/1) on `emulator-5554`; the Core fixture now uses `recallState=CORE` and verifies both identity keys in deterministic selector order. The full maintenance-path fixture and Top8 device path remain open. Provider/API runtime was not exercised.
+- Remaining verification: changed-Kotlin ktlint is unavailable because no CLI or Gradle task is present. Provider runtime, the full maintenance-path fixture, and the Top8 device path remain open.
 
 ## Final Reporting
 
