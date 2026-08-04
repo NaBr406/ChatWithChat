@@ -36,6 +36,97 @@ data class MemoryRetrievalRequest(
     }
 }
 
+/**
+ * The immutable per-turn query shared by long-term and history recall.
+ *
+ * The current user message is kept as the primary section. Recent turns are a
+ * bounded secondary section; role labels are retained so lexical recall can
+ * prevent assistant-only claims from becoming user intent.
+ */
+data class MemoryRecallQuerySnapshot(
+    val currentUserMessage: String,
+    val recentContext: String? = null
+) {
+    val primaryText: String = normalizeComponent(currentUserMessage).take(MAX_PRIMARY_QUERY_CHARS)
+    val recentText: String = normalizeComponent(recentContext.orEmpty()).take(MAX_RECENT_CONTEXT_CHARS)
+    val renderedText: String = if (primaryText.isBlank() && recentText.isBlank()) {
+        ""
+    } else {
+        buildString {
+            append("Current user message:\n")
+            append(primaryText)
+            if (recentText.isNotBlank()) {
+                append("\nRecent conversation context:\n")
+                append(recentText)
+            }
+        }
+    }
+    val snapshotHash: String = renderedText.sha256Utf8()
+
+    val isBlank: Boolean
+        get() = primaryText.isBlank() && recentText.isBlank()
+
+    internal fun contextSegments(): List<MemoryRecallContextSegment> = buildList {
+        var currentRole = MemoryRecallContextRole.UNKNOWN
+        val currentText = StringBuilder()
+
+        fun flush() {
+            currentText.toString().trim().takeIf(String::isNotBlank)?.let { text ->
+                add(MemoryRecallContextSegment(currentRole, text))
+            }
+            currentText.clear()
+        }
+
+        recentText.lineSequence()
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .forEach { line ->
+                when {
+                    line.startsWith("assistant:", ignoreCase = true) -> {
+                        flush()
+                        currentRole = MemoryRecallContextRole.ASSISTANT
+                        currentText.append(line.substringAfter(':').trim())
+                    }
+                    line.startsWith("user:", ignoreCase = true) -> {
+                        flush()
+                        currentRole = MemoryRecallContextRole.USER
+                        currentText.append(line.substringAfter(':').trim())
+                    }
+                    else -> {
+                        if (currentText.isNotEmpty()) currentText.append(' ')
+                        currentText.append(line)
+                    }
+                }
+            }
+        flush()
+    }
+
+    private companion object {
+        const val MAX_PRIMARY_QUERY_CHARS = 8_000
+        const val MAX_RECENT_CONTEXT_CHARS = 8_000
+
+        fun normalizeComponent(value: String): String = value
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .lineSequence()
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .joinToString("\n")
+            .trim()
+    }
+}
+
+internal enum class MemoryRecallContextRole {
+    USER,
+    ASSISTANT,
+    UNKNOWN
+}
+
+internal data class MemoryRecallContextSegment(
+    val role: MemoryRecallContextRole,
+    val text: String
+)
+
 data class MemoryRetrievalResult(
     val chunkId: String,
     val entryId: String?,
@@ -155,17 +246,14 @@ internal fun MemoryRetrievalRequest.queryLayerRequest(): MemoryRetrievalRequest 
 internal fun MemoryRetrievalResult.deduplicationKey(): String =
     entryId?.let { value -> "entry:$value" } ?: "embedding:$embeddingContentHash"
 
-internal fun MemoryRetrievalRequest.combinedQuery(): String = query
-    .trim()
-    .take(MAX_MEMORY_RETRIEVAL_QUERY_CHARS)
+internal fun MemoryRetrievalRequest.querySnapshot(): MemoryRecallQuerySnapshot =
+    MemoryRecallQuerySnapshot(query, recentContext)
 
-/** The current user turn is the only relevance signal for chat recall. */
-internal fun MemoryRetrievalRequest.lexicalQuery(): String = query
-    .trim()
-    .take(MAX_MEMORY_RETRIEVAL_QUERY_CHARS)
+internal fun MemoryRetrievalRequest.combinedQuery(): String = querySnapshot().renderedText
+
+internal fun MemoryRetrievalRequest.lexicalQuery(): String = querySnapshot().renderedText
 
 private const val MEMORY_RETRIEVAL_RESULT_TOKEN_OVERHEAD = 24
-private const val MAX_MEMORY_RETRIEVAL_QUERY_CHARS = 8_000
 private const val MAX_QUERY_RECALL_FACTS = 8
 
 internal fun List<MemoryProjectionDiagnostic>.toBoundedErrorMessage(): String? =

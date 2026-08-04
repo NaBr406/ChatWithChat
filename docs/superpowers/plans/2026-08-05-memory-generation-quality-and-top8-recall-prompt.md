@@ -30,6 +30,15 @@ The target is a smaller and more useful `MEMORY.md`, not a smaller recall result
 - Core recall must not apply a second hardcoded `coreKeyPriority` allowlist or a general-scope equality filter. The generation contract decides which facts may be labeled `recall=core`; recall includes every active/current, model-visible Core fact that passes privacy and safety validation.
 - The provider's own context-window limits remain a provider concern. They must not be implemented as a hidden memory relevance filter. If a provider boundary requires a failure or an explicit truncation diagnostic, preserve Core first and make the result observable.
 
+### Context-aware query construction
+
+- The latest user message is the primary relevance anchor. The bounded `recentContext` from the current conversation is a secondary disambiguation signal for long-term memory recall.
+- Build one deterministic context-aware query snapshot per turn and use it consistently for lexical, vector, and hybrid long-term retrieval. A memory whose decisive term appears only in recent context must still be eligible for recall.
+- Give the current user message greater relevance weight than recent context. Recent assistant text may resolve references, but it must not dominate the query or introduce assistant-only conclusions as user intent.
+- Use recent context to recover project/topic continuity and cross-turn references such as pronouns or omitted subjects. Unrelated recent turns must not pollute the long-term candidate ranking.
+- Keep query character/turn bounds separate from the long-term memory result count and Token budget. Bounds constrain query input only; they must not become another hidden Top8 or memory-text clamp.
+- History recall and long-term recall should use the same per-turn query snapshot, while retaining separate corpora and diagnostics.
+
 ### Memory writing
 
 - A model must return an empty operation list unless a candidate passes the durability and future-utility gates below.
@@ -236,6 +245,16 @@ Do not claim completion from the plan snapshot or from `memory(1).md` alone. Rep
 - [x] Add tests where 8 relevant facts are returned, including facts from different scopes, without a Token-based drop.
 - [x] Preserve candidate pool behavior and verify whether 24 candidates are sufficient for the intended Top8 fixture.
 
+### Task 3A: Make long-term recall context-aware
+
+- [x] Build a deterministic query snapshot from the latest user message plus bounded recent context, with the latest user message as the primary signal.
+- [x] Feed that snapshot consistently into lexical, vector, and hybrid long-term retrieval without changing the unlimited long-term result-budget contract.
+- [x] Preserve separate history and long-term corpora while making their per-turn query snapshots comparable in diagnostics.
+- [x] Add a fixture where the decisive term appears only in recent context and assert that the matching long-term memory is recalled.
+- [x] Add a fixture where the latest message and recent context together express the intent, then assert the correct memory ranking.
+- [x] Add a negative fixture proving unrelated recent context does not displace a directly relevant memory.
+- [x] Add coverage proving recent assistant text cannot override the current user's relevance anchor.
+
 ### Task 4: Remove Core count and Core Token caps
 
 - [x] Remove `MAX_CORE_FACTS`, `maxCoreFacts`, and the Core-only Token budget from production selection.
@@ -267,18 +286,22 @@ Do not claim completion from the plan snapshot or from `memory(1).md` alone. Rep
 - [x] Repeated/explicit durable facts are concise, atomic, deduplicated, and assigned the correct type, scope, and recall state.
 - [x] Existing low-value entries can be retired through a recoverable, replay-safe path without deleting user data.
 - [x] Cross-scope recall works without changing canonical identity semantics.
+- [x] Long-term lexical, vector, and hybrid recall use the current user message together with bounded recent context, with the current message remaining the primary relevance anchor.
+- [x] Context-only and combined-intent fixtures recall the expected long-term memory, while unrelated context does not pollute the Top8.
 - [x] The per-turn recall snapshot remains stable across retries, tools, and multiple providers.
-- [ ] All required test and runtime evidence is recorded with exact commands and results; Android/device/provider runtime evidence remains open because no ADB device is attached.
+- [ ] All required test and runtime evidence is recorded with exact commands and results; provider runtime and a clean real-device Core/maintenance fixture remain open.
 
 ## Implementation Evidence (2026-08-05)
 
-- Baseline preservation: branch `codex/memory-generation-quality-top8`; unrelated chat-history edits, untracked files, stash `stash@{0}`, and worktree `E:/code/ChatWithChat-identity-migration` were preserved. `adb devices -l` reported only `List of devices attached`.
+- Baseline preservation: branch `codex/memory-generation-quality-top8`; unrelated chat-history edits, untracked files, stash `stash@{0}`, and worktree `E:/code/ChatWithChat-identity-migration` were preserved. `adb devices -l` reports `emulator-5554` (API 35, 16 KB).
 - Corpus fixture: 23 entries total, 19 current, 4 obsolete/maintenance-only, and 2 Core; the quality test records 16 current entries after one retirement and two duplicate merges, with 10 ignored candidates.
 - Recall contract: production `MemoryRepositoryImpl` sends `limit=8`, `candidateLimit=24`, and `tokenBudget=null`; `MemoryRetrievalRequest` defaults to `limit=8` and `tokenBudget=null`; `packFor` preserves all ranked results up to 8 when unlimited. Core selection has no count/token cap and retains safe active Core facts.
 - Generation contract: batch, daily, and whole-corpus prompts default to `ignore`, require future utility/durability/atomicity/evidence/non-duplication gates, reject hard negatives, and preserve strict JSON identifiers. A single `assistant_inferred` observation cannot create durable memory.
 - Retirement contract: `retire` is validated against supplied candidate IDs and rendered as `obsolete + maintenance_only` through the existing deterministic mutation path while preserving ID, text, evidence, and replay/CAS safeguards.
 - Verification passed: `.\gradlew.bat testDebugUnitTest --no-daemon` (129 XML suites, 1,132 tests, 0 failures, 0 errors); `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugAndroidTestKotlin --no-daemon`; focused retirement, prompt, corpus, and recall tests; `git diff --check` and `git diff --cached --check`.
-- Remaining verification before commit: changed-Kotlin ktlint is unavailable because no CLI or Gradle task is present. Device/provider/runtime gates are unverified due to no attached device (`adb devices -l` only reported `List of devices attached`).
+- Task 3A implementation: `MemoryRecallQuerySnapshot` normalizes and bounds the current user section plus recent role-labeled context once per turn, exposes a deterministic snapshot hash, weights the current section above secondary context, and rejects assistant-only lexical anchors. Lexical, vector, and hybrid branches consume that same snapshot while history and long-term retrieval continue using separate corpus paths. Four fixtures cover context-only decisive terms, combined intent ranking, unrelated context, and assistant-only conclusions; the vector fixture verifies the exact snapshot passed to embedding.
+- Device evidence: `:app:connectedDebugAndroidTest` passed `MemoryProductionHybridShadowInstrumentedTest` (2/2) and `ObjectBoxMemoryVectorStoreInstrumentedTest` (13/13) on `emulator-5554`; the user-modified `MemoryRecallCoreInstrumentedTest` failed its stale `recallState=QUERY` Core expectation (expected two keys, observed none), so clean Core/maintenance runtime proof remains open. Provider/API runtime was not exercised.
+- Remaining verification before commit: changed-Kotlin ktlint is unavailable because no CLI or Gradle task is present. Provider runtime and the clean real-device Core/maintenance fixture remain open.
 
 ## Final Reporting
 

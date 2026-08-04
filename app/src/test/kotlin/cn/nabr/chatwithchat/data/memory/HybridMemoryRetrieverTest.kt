@@ -403,7 +403,7 @@ class HybridMemoryRetrieverTest {
     }
 
     @Test
-    fun `vector gate embeds only the current query and keeps up to eight query facts`() = runBlocking {
+    fun `vector gate embeds the deterministic context snapshot and keeps up to eight query facts`() = runBlocking {
         val chunks = (1..5).map { index -> chunk("vector-$index", "mem_vector_$index", "Vector fact $index.") }
         val fixture = fixture(snapshot(chunks = chunks))
         fixture.vectorStore.matches = chunks.mapIndexed { index, chunk ->
@@ -418,7 +418,13 @@ class HybridMemoryRetrieverTest {
             )
         ).getOrThrow()
 
-        assertEquals(listOf("vector facts"), fixture.provider.embeddedQueries)
+        assertEquals(
+            listOf(
+                "Current user message:\nvector facts\n" +
+                    "Recent conversation context:\nproject alpha project alpha project alpha"
+            ),
+            fixture.provider.embeddedQueries
+        )
         assertEquals(5, report.results.size)
     }
 

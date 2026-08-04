@@ -40,9 +40,8 @@ class HybridMemoryRetriever(
         if (request.limit <= 0 || request.tokenBudget?.let { budget -> budget <= 0 } == true) {
             return MemoryRetrievalReport(emptyList(), MemoryRetrievalMode.NONE)
         }
-        val lexicalQuery = request.lexicalQuery()
-        if (lexicalQuery.isBlank()) return MemoryRetrievalReport(emptyList(), MemoryRetrievalMode.NONE)
-        val combinedQuery = request.combinedQuery()
+        val querySnapshot = request.querySnapshot()
+        if (querySnapshot.isBlank) return MemoryRetrievalReport(emptyList(), MemoryRetrievalMode.NONE)
 
         var lastSnapshot: MemoryCorpusSnapshot? = null
         repeat(MAX_SNAPSHOT_ATTEMPTS) {
@@ -72,14 +71,14 @@ class HybridMemoryRetriever(
             val coreKeys = coreResults.mapTo(mutableSetOf(), MemoryRetrievalResult::deduplicationKey)
             val lexicalCandidates = lexicalRetriever.rankCandidates(
                 request = request.copy(strategy = MemoryRetrievalStrategy.LEXICAL),
-                combinedQuery = lexicalQuery,
+                querySnapshot = querySnapshot,
                 snapshots = listOf(snapshot)
             ).filterNot { result -> result.deduplicationKey() in coreKeys }
             val rankedWithMode = when (request.strategy) {
                 MemoryRetrievalStrategy.LEXICAL -> lexicalCandidates to MemoryRetrievalMode.LEXICAL
                 MemoryRetrievalStrategy.VECTOR,
                 MemoryRetrievalStrategy.HYBRID -> {
-                    val vectorCandidates = retrieveVectorCandidates(request, combinedQuery, snapshot)
+                    val vectorCandidates = retrieveVectorCandidates(request, querySnapshot, snapshot)
                         ?.filterNot { candidate -> candidate.result.deduplicationKey() in coreKeys }
                     if (vectorCandidates == null) {
                         diversifyLexical(lexicalCandidates, request.candidateLimit) to
@@ -140,7 +139,7 @@ class HybridMemoryRetriever(
 
     private suspend fun retrieveVectorCandidates(
         request: MemoryRetrievalRequest,
-        combinedQuery: String,
+        querySnapshot: MemoryRecallQuerySnapshot,
         snapshot: MemoryCorpusSnapshot
     ): List<VectorCandidate>? {
         return try {
@@ -161,7 +160,7 @@ class HybridMemoryRetriever(
                 return unavailableVectorBranch()
             }
 
-            val queryEmbedding = capability.provider.embedQuery(combinedQuery).getOrElse {
+            val queryEmbedding = capability.provider.embedQuery(querySnapshot.renderedText).getOrElse {
                 return unavailableVectorBranch()
             }
             if (!queryEmbedding.isValidFor(configuration)) return unavailableVectorBranch()

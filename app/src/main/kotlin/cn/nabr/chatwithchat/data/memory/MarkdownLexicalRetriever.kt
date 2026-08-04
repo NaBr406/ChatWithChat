@@ -94,8 +94,26 @@ class MarkdownLexicalRetriever(
         combinedQuery: String,
         snapshots: List<MemoryCorpusSnapshot>
     ): List<MemoryRetrievalResult> {
-        val tokens = tokenize(combinedQuery)
-        if (tokens.isEmpty()) return emptyList()
+        val querySnapshot = if (
+            combinedQuery == request.query ||
+            combinedQuery == request.lexicalQuery() ||
+            combinedQuery == request.combinedQuery()
+        ) {
+            request.querySnapshot()
+        } else {
+            MemoryRecallQuerySnapshot(combinedQuery)
+        }
+        return rankCandidates(request, querySnapshot, snapshots)
+    }
+
+    internal fun rankCandidates(
+        request: MemoryRetrievalRequest,
+        querySnapshot: MemoryRecallQuerySnapshot,
+        snapshots: List<MemoryCorpusSnapshot>
+    ): List<MemoryRetrievalResult> {
+        val primaryTokens = tokenize(querySnapshot.primaryText)
+        val contextSegments = querySnapshot.contextSegments()
+        if (primaryTokens.isEmpty() && contextSegments.isEmpty()) return emptyList()
         val candidateLimit = request.candidateLimit.coerceIn(1, MAX_CANDIDATE_LIMIT)
         val ranked = snapshots
             .asSequence()
@@ -111,7 +129,11 @@ class MarkdownLexicalRetriever(
                     chunk.sensitivity !in setOf(MemorySensitivity.PRIVATE, MemorySensitivity.SENSITIVE)
             }
             .mapNotNull { chunk ->
-                val lexicalMatch = chunk.score(tokens, combinedQuery)
+                val lexicalMatch = chunk.score(
+                    querySnapshot = querySnapshot,
+                    primaryTokens = primaryTokens,
+                    contextSegments = contextSegments
+                )
                 val passesRelevanceGate = when (request.corpus) {
                     MemoryCorpus.CHAT_RECALL_LONG_TERM ->
                         lexicalMatch.hasMeaningfulMatch && lexicalMatch.score >= CHAT_RECALL_LEXICAL_SCORE_FLOOR
@@ -134,41 +156,76 @@ class MarkdownLexicalRetriever(
         return ranked
     }
 
-    private fun MemoryCorpusChunk.score(tokens: List<String>, rawQuery: String): LexicalMatch {
+    private fun MemoryCorpusChunk.score(
+        querySnapshot: MemoryRecallQuerySnapshot,
+        primaryTokens: List<String>,
+        contextSegments: List<MemoryRecallContextSegment>
+    ): LexicalMatch {
         // Only the natural-language fact participates in relevance scoring.
         // Headings and type labels are maintenance metadata, not user evidence.
         val searchableText = normalizeSearchText(text)
         val searchableTokens = tokenize(searchableText).toSet()
-        val normalizedQuery = normalizeSearchText(rawQuery)
-        var score = if (normalizedQuery.isNotBlank() && searchableText.contains(normalizedQuery)) {
+        val normalizedPrimary = normalizeSearchText(querySnapshot.primaryText)
+        var score = if (normalizedPrimary.isNotBlank() && searchableText.contains(normalizedPrimary)) {
             EXACT_QUERY_SCORE
         } else {
             0f
         }
-        var hasMeaningfulMatch = false
+        var primaryScore = 0f
+        var contextScore = 0f
+        var assistantScore = 0f
+        val primaryWeight = if (contextSegments.isEmpty()) 1f else PRIMARY_QUERY_WEIGHT
+        var hasPrimaryOrUserContextMatch = false
 
-        tokens.forEach { token ->
+        fun scoreToken(token: String, countsAsUserIntent: Boolean): Float? {
             val matchesExactToken = token in searchableTokens
             val matchesContainedText = searchableText.contains(token)
-            if (matchesExactToken || matchesContainedText) {
-                score += when {
-                    token.isCjkToken() && token.length >= 3 -> CJK_TRIGRAM_MATCH_SCORE
-                    token.isCjkToken() && token.length == 1 -> CJK_SINGLE_CHAR_MATCH_SCORE
-                    token.isCjkToken() -> CJK_BIGRAM_MATCH_SCORE
-                    else -> TOKEN_MATCH_SCORE
-                }
-                if (
+            if (!matchesExactToken && !matchesContainedText) return null
+            if (
+                countsAsUserIntent &&
+                (
                     (token.isCjkToken() && token.length >= MIN_MEANINGFUL_CJK_TOKEN_LENGTH && matchesContainedText) ||
-                    (!token.isCjkToken() && matchesExactToken)
-                ) {
-                    hasMeaningfulMatch = true
+                        (!token.isCjkToken() && matchesExactToken)
+                )
+            ) {
+                hasPrimaryOrUserContextMatch = true
+            }
+            return when {
+                token.isCjkToken() && token.length >= 3 -> CJK_TRIGRAM_MATCH_SCORE
+                token.isCjkToken() && token.length == 1 -> CJK_SINGLE_CHAR_MATCH_SCORE
+                token.isCjkToken() -> CJK_BIGRAM_MATCH_SCORE
+                else -> TOKEN_MATCH_SCORE
+            }
+        }
+
+        primaryTokens.forEach { token ->
+            scoreToken(token, countsAsUserIntent = true)?.let { value ->
+                primaryScore += value * primaryWeight
+            }
+        }
+        contextSegments.forEach { segment ->
+            tokenize(segment.text).forEach { token ->
+                scoreToken(
+                    token,
+                    countsAsUserIntent = segment.role != MemoryRecallContextRole.ASSISTANT
+                )?.let { value ->
+                    when (segment.role) {
+                        MemoryRecallContextRole.ASSISTANT -> assistantScore += value * ASSISTANT_CONTEXT_WEIGHT
+                        MemoryRecallContextRole.USER,
+                        MemoryRecallContextRole.UNKNOWN -> contextScore += value * RECENT_CONTEXT_WEIGHT
+                    }
                 }
             }
         }
+        // Secondary context can recover an omitted subject, but it cannot
+        // accumulate enough unrelated terms to displace a direct user match.
+        score += primaryScore +
+            contextScore.coerceAtMost(MAX_RECENT_CONTEXT_SCORE) +
+            assistantScore.coerceAtMost(MAX_ASSISTANT_CONTEXT_SCORE)
         if (sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME && score > 0f) {
             score += LONG_TERM_BONUS
         }
-        return LexicalMatch(score = score, hasMeaningfulMatch = hasMeaningfulMatch)
+        return LexicalMatch(score = score, hasMeaningfulMatch = hasPrimaryOrUserContextMatch)
     }
 
     private fun tokenize(query: String): List<String> = buildList {
@@ -247,6 +304,11 @@ class MarkdownLexicalRetriever(
         private const val CHAT_RECALL_LEXICAL_SCORE_FLOOR = 1.25f
         private const val EXACT_QUERY_SCORE = 6f
         private const val TOKEN_MATCH_SCORE = 1f
+        private const val PRIMARY_QUERY_WEIGHT = 3f
+        private const val RECENT_CONTEXT_WEIGHT = 1f
+        private const val ASSISTANT_CONTEXT_WEIGHT = 0.2f
+        private const val MAX_RECENT_CONTEXT_SCORE = 2.5f
+        private const val MAX_ASSISTANT_CONTEXT_SCORE = 0.5f
         private const val CJK_SINGLE_CHAR_MATCH_SCORE = 0.35f
         private const val CJK_BIGRAM_MATCH_SCORE = 1f
         private const val CJK_TRIGRAM_MATCH_SCORE = 1.5f

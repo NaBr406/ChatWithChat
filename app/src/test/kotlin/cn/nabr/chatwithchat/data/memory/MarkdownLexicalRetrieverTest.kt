@@ -6,6 +6,7 @@ import java.time.Instant
 import java.time.ZoneOffset
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -417,6 +418,101 @@ class MarkdownLexicalRetrieverTest {
 
         assertEquals(listOf("mem_general", "mem_work"), generalResults.map { result -> result.entryId })
         assertEquals(listOf("mem_general", "mem_work"), workResults.map { result -> result.entryId })
+    }
+
+    @Test
+    fun `context-only decisive user term recalls long-term memory`() = runBlocking {
+        val target = corpusChunk(
+            "MEMORY.md#mem_apollo#0",
+            "mem_apollo",
+            "The user's project code is Apollo-rocket."
+        )
+        val retriever = MarkdownLexicalRetriever(StaticSnapshotSource(snapshot(1L, listOf(target))))
+
+        val results = retriever.retrieve(
+            request(MemoryCorpus.CHAT_RECALL_LONG_TERM, "继续上面的事情").copy(
+                recentContext = "User: We are discussing the Apollo-rocket release."
+            )
+        ).getOrThrow()
+
+        assertEquals(listOf("mem_apollo"), results.map { result -> result.entryId })
+    }
+
+    @Test
+    fun `current message and recent user context combine into the expected ranking`() = runBlocking {
+        val target = corpusChunk(
+            "MEMORY.md#mem_apollo_deploy#0",
+            "mem_apollo_deploy",
+            "The user deploys Apollo with a blue-green rollout."
+        )
+        val distractor = corpusChunk(
+            "MEMORY.md#mem_billing_deploy#0",
+            "mem_billing_deploy",
+            "The user deploys billing with a blue-green rollout."
+        )
+        val retriever = MarkdownLexicalRetriever(
+            StaticSnapshotSource(snapshot(1L, listOf(distractor, target)))
+        )
+
+        val results = retriever.retrieve(
+            request(MemoryCorpus.CHAT_RECALL_LONG_TERM, "How should I deploy it?").copy(
+                recentContext = "User: This is about the Apollo blue-green rollout."
+            )
+        ).getOrThrow()
+
+        assertEquals("mem_apollo_deploy", results.first().entryId)
+        assertEquals(
+            listOf("mem_apollo_deploy", "mem_billing_deploy"),
+            results.map { result -> result.entryId }
+        )
+    }
+
+    @Test
+    fun `unrelated recent user context does not displace a directly relevant memory`() = runBlocking {
+        val direct = corpusChunk(
+            "MEMORY.md#mem_concise#0",
+            "mem_concise",
+            "The user prefers concise answers."
+        )
+        val unrelated = (1..6).map { index ->
+            corpusChunk(
+                "MEMORY.md#mem_server_$index#0",
+                "mem_server_$index",
+                "Linux server Minecraft deployment detail $index."
+            )
+        }
+        val retriever = MarkdownLexicalRetriever(
+            StaticSnapshotSource(snapshot(1L, listOf(direct) + unrelated))
+        )
+
+        val results = retriever.retrieve(
+            request(MemoryCorpus.CHAT_RECALL_LONG_TERM, "concise answers").copy(
+                recentContext = "User: We were also discussing Linux server Minecraft deployment details."
+            )
+        ).getOrThrow()
+
+        assertEquals("mem_concise", results.first().entryId)
+        assertFalse(results.take(1).any { result -> result.entryId?.startsWith("mem_server_") == true })
+    }
+
+    @Test
+    fun `assistant-only context cannot create a long-term relevance anchor`() = runBlocking {
+        val assistantConclusion = corpusChunk(
+            "MEMORY.md#mem_tokyo#0",
+            "mem_tokyo",
+            "The preferred deployment region is Tokyo."
+        )
+        val retriever = MarkdownLexicalRetriever(
+            StaticSnapshotSource(snapshot(1L, listOf(assistantConclusion)))
+        )
+
+        val results = retriever.retrieve(
+            request(MemoryCorpus.CHAT_RECALL_LONG_TERM, "继续这个问题").copy(
+                recentContext = "Assistant: The preferred deployment region is Tokyo."
+            )
+        ).getOrThrow()
+
+        assertTrue(results.isEmpty())
     }
 
     @Test
