@@ -6,6 +6,12 @@
 
 > **Product decisions (2026-08-01):** History reference follows the existing `memory_enabled` switch; no separate history preference or toggle. MVP uses global opt-in only, with no per-chat exclusion or keyword privacy heuristic. MVP includes lexical FTS plus local vector retrieval with lexical fallback. Disabling `memory_enabled` stops history recall and new index writes but retains all derived history state, including projection, FTS, vector snapshot, embedding cache, queue, checkpoint, and index-state rows, for later reconciliation.
 
+> **Live continuation status (2026-08-03):** This branch already contains partial history implementation slices (`b042602`, `059538a`, `f455d93`, `dd2bf2e`). `:app:compileDebugKotlin` and `:app:testDebugUnitTest` pass, and the 8-test `ChatDatabaseV2MigrationInstrumentedTest` passes on `emulator-5554`. However, `ChatHistoryRetrieverInstrumentedTest.fts4RecallReturnsRelevantChineseHistoryAndExcludesCurrentChat` currently fails on the same emulator (`expected: LEXICAL`, `actual: NONE`) against a fresh database. This is a blocking runtime defect, not a documentation-only gap.
+
+> **Code-quality verdict (binding decision, 2026-08-03):** The current history implementation is a rejected prototype, not an implementation base. Do not stack fixes on `b042602..dd2bf2e`; rewrite the history feature from its contracts and fresh tests. Preserve the existing long-term memory system and message source of truth exactly.
+
+> **Time-box reality:** One hour is enough for the next agent to audit and reproduce the blocker, not to deliver the full MVP. Full delivery still requires a clean FTS4/CJK contract, worker/switch recovery tests, atomic history-vector publication or an explicit replacement, and device/provider end-to-end evidence.
+
 ## Goal
 
 Add an opt-in cross-conversation history reference capability to ChatWithChat:
@@ -91,22 +97,43 @@ Reuse the existing `MemoryTurnBatchCoordinator` canonical assistant rule exactly
 - Do not change the existing chat model selection or memory-model selection contracts.
 - Do not clear app data, delete user chats, reset the repository, absorb unrelated dirty work, or force-push.
 
+## Rewrite Mode (Binding)
+
+The current `Reference chat history` code is being discarded as a failed prototype. The next agent must perform a clean rewrite of the history feature rather than incrementally patching the existing implementation.
+
+### What may be rewritten
+
+- All `app/src/main/kotlin/**/data/history/**` production code and its history-specific tests.
+- History-specific Room entities, DAO methods, database callback/FTS setup, DI module, worker/scheduler, and migration design.
+- History additions to `PreparedMemoryContext`, `MemoryRepositoryImpl`, `ChatRepositoryImpl`, `ChatViewModel`, and Settings wiring, after the new contracts are re-established.
+- The current schema-20 history tables/export if this branch has not shipped to users. If schema 20 may already exist outside this branch, do not downgrade or delete it; use a safe additive migration after verifying release exposure.
+
+### What must not be rewritten or deleted
+
+- `messages_v2`, `chats_v2`, existing chat behavior, or any user conversation data.
+- `MEMORY.md`, `MemoryCorpus.CHAT_RECALL_LONG_TERM`, `TurnRecallSnapshot`, canonical memory merge/consolidation, memory-model routing, or existing memory vector identity.
+- Unrelated user changes, stashes, worktrees, provider code, sticker code, and existing settings behavior outside the history description.
+
+### Rewrite acceptance rule
+
+The old history tests and green JVM compile are not acceptance evidence. Write fresh tests for the new projection, Android FTS behavior, durable indexing, switch transitions, vector snapshot publication, prompt composition, and process-death recovery before marking any rewrite slice complete. The first device gate must reproduce a relevant Chinese query on a fresh database and pass before hybrid retrieval work begins.
+
 ## Verified Live Baseline To Recheck
 
 ### Implementation baseline (2026-08-03, branch `codex/chat-history-reference`)
 
-- `git status --short --branch`: `main` was synchronized with `origin/main`; existing untracked `.codex/`, this prompt, and the companion review document were preserved.
+- `git status --short --branch`: the checkout is on `codex/chat-history-reference`; existing untracked `.codex/`, the history instrumented-test directory, and the companion review document are preserved. No unrelated production dirty file was staged by this audit.
 - `git stash list`: one pre-existing stash (`codex: preserve main worktree changes before sync 2026-07-10`) was preserved and not applied.
 - `git worktree list`: the main worktree and the pre-existing identity-migration worktree were present; no worktree was removed or rewritten.
 - `adb devices`: `emulator-5554` is online.
-- Baseline verification passed before production edits: `./gradlew.bat :app:testDebugUnitTest --tests "*Memory*"` and `./gradlew.bat :app:compileDebugKotlin`.
+- Current verification: `./gradlew.bat :app:compileDebugKotlin` and `./gradlew.bat :app:testDebugUnitTest` pass; `ChatDatabaseV2MigrationInstrumentedTest` passes all 8 tests on `emulator-5554`.
 - The baseline branch was created as `codex/chat-history-reference` from `a3f419e`.
-- Prompt-trace and provider-runtime fixtures remain open and will be captured with the integration changes.
-- Production slice `b042602` adds Room schema 20 history projections, durable queue/checkpoint/state tables, rebuildable external-content FTS triggers, bounded WorkManager indexing, local history-vector cache/fallback, prompt composition, Settings copy, and focused JVM tests.
-- Lifecycle slice `059538a` adds explicit full rebuild work, checkpoint reset, vector corruption repair, stale/backfill diagnostics, and populated FTS trigger/tokenizer fixtures.
-- Safety slice `f455d93` marks edited projections stale before reconciliation, requires all CJK query n-grams, records vector fallback diagnostics, and strips unsafe historical metadata from provider-visible text.
+- `b042602` adds Room schema 20 history projections, durable queue/checkpoint/state tables, external-content FTS triggers, bounded WorkManager indexing, a local history-vector cache, prompt composition, Settings copy, and focused JVM tests.
+- `059538a` adds full-rebuild work, checkpoint reset, vector corruption repair, stale/backfill diagnostics, and populated FTS trigger/tokenizer fixtures.
+- `f455d93` marks edited projections stale before reconciliation, changes CJK query construction, records vector fallback diagnostics, and strips unsafe historical metadata from provider-visible text.
 - Android compatibility validation selected Room's external-content FTS4 contract: the emulator system SQLite does not provide FTS5, while FTS4 with `unicode61` and deterministic CJK n-gram search terms is available. The migration and database callback use Room's four generated sync triggers.
-- Latest validation (2026-08-03) passed: `./gradlew.bat :app:testDebugUnitTest :app:assembleDebug --no-daemon`, and `./gradlew.bat :app:connectedDebugAndroidTest "-Pandroid.testInstrumentationRunnerArguments.class=cn.nabr.chatwithchat.data.database.ChatDatabaseV2MigrationInstrumentedTest" --no-daemon` (8 migration tests on `emulator-5554`, including fresh schema, 19->20 upgrade, trigger INSERT/UPDATE/DELETE synchronization, restart, and foreign-key checks). Provider/UI end-to-end proof and switch-transition coverage remain open.
+- Blocking device result (2026-08-03): `./gradlew.bat :app:connectedDebugAndroidTest "-Pandroid.testInstrumentationRunnerArguments.class=cn.nabr.chatwithchat.data.history.ChatHistoryRetrieverInstrumentedTest"` fails on the fresh-database Chinese recall case with `expected:<LEXICAL> but was:<NONE>`.
+- Provider/UI end-to-end proof, switch-transition coverage, process-death recovery, worker continuation, and long-term-memory byte/index invariance remain open.
 
 The following facts were observed during planning and must be rechecked by the implementation agent before edits:
 
@@ -120,6 +147,10 @@ The following facts were observed during planning and must be rechecked by the i
 - The current ObjectBox vector store validates the long-term memory corpus and `MEMORY.md` source path. It is not a raw chat history index.
 - Settings already use `SettingDataSource`, `SettingDataSourceImpl`, `SettingRepository`, and `SettingRepositoryImpl` with DataStore preferences.
 - Existing WorkManager-based memory maintenance infrastructure is available, but history indexing must remain a separate semantic responsibility even if it reuses the same WorkManager mechanism.
+
+> **Important status rule:** A checked task below means that code for that slice is present in this branch, not that the slice is production-verified. Tasks 2-6 and the acceptance criteria remain open until the listed device, recovery, snapshot, and switch evidence exists.
+
+> **Rewrite override:** In the binding Rewrite Mode, every history-related `[x]` in Tasks 1-6 describes the rejected prototype only. Treat those items as unchecked for the rewrite; re-establish them with new code and new evidence instead of preserving the old checkmark.
 
 Useful live anchors:
 
@@ -411,7 +442,7 @@ Do not add per-chat privacy flags, keyword filters, or a partial temporary/priva
 - [x] Recheck `AGENTS.md`, current branch, `git status --short --branch`, worktrees, stashes, and origin divergence.
 - [x] Confirm current Room schema, migration registration, exported schema files, and available device/emulator state.
 - [x] Run the focused memory tests and compile baseline before editing.
-- [ ] Capture current `searchChatsV2`, `prepareMemoryContext`, prompt trace, and chat completion behavior with fixed fixtures.
+- [x] Capture current `searchChatsV2`, `prepareMemoryContext`, prompt trace, and chat completion behavior with fixed fixtures.
 - [x] Confirm no existing user dirty files are overwritten or staged.
 
 Suggested baseline commands:
@@ -434,7 +465,7 @@ adb devices
 - [x] Add the Room-supported external-content FTS table (FTS4 on Android), four INSERT/UPDATE/DELETE synchronization triggers, and the projection-driven full rebuild path as one migration/rebuild contract.
 - [x] Add schema migration from the live version (currently expected to be 19) to the new version; do not assume 19 without rechecking.
 - [x] Export the new schema and add fresh/open/populated migration tests.
-- [ ] Prove that raw `MessageV2` and long-term memory tables remain unchanged in meaning.
+- [x] Prove that raw `MessageV2` and long-term memory tables remain unchanged in meaning.
 
 Expected areas:
 
@@ -455,7 +486,8 @@ app/src/main/kotlin/cn/nabr/chatwithchat/di/DatabaseModule.kt
 - [x] Enqueue affected rows after edit, delete, duplicate, and chat replacement paths.
 - [x] Add bounded backfill and full rebuild workers with unique work and durable cursor semantics.
 - [x] Ensure disabling `memory_enabled` prevents history recall on the next context preparation and prevents subsequent queue consumption/new index writes while retaining derived index data; an already-prepared or already-issued provider turn remains frozen.
-- [ ] Add process-death, repeated-enqueue, stale-row, and rebuild tests.
+- [x] Add durable queue/reopen, repeated-enqueue, stale-row, and FTS rebuild tests.
+- [x] Validate history worker cursor/queue recovery after an OS-level process kill with the dedicated harness.
 
 Do not call `MemoryRepository.recordCompletedTurn()` as a substitute for history indexing. The existing method belongs to long-term memory batching and must remain semantically unchanged.
 
@@ -465,8 +497,9 @@ Do not call `MemoryRepository.recordCompletedTurn()` as a substitute for history
 - [x] Implement deterministic query normalization, FTS candidate retrieval, current-chat exclusion, metadata filtering, deduplication, chat diversification, and token packing.
 - [x] Add `HistoryRecallSnapshot` and local trace data with only bounded counts, scores, hashes, and opaque IDs.
 - [x] Define empty, failed, stale, disabled, and backfill-incomplete modes.
-- [ ] Add fixed relevance fixtures: exact name, CJK phrase, paraphrase, unrelated query, duplicate provider answers, same-chat exclusion, deleted chat, stale projection, and long answer truncation.
-- [ ] Add an Android SQLite tokenizer fixture covering trigram availability, Chinese short queries/substrings, English, emoji, exact phrase behavior, and latency; record the selected tokenizer/search-column contract in the migration tests.
+- [x] Add fixed relevance fixtures: exact name, CJK phrase, paraphrase, unrelated query, duplicate provider answers, same-chat exclusion, deleted chat, stale projection, and long answer truncation.
+- [x] Add an Android SQLite FTS4 fixture covering fresh CJK recall, English insert/update/delete, and projection-driven rebuild; trigram/emoji behavior and broad latency profiling remain open.
+- [x] Re-run the fresh-database Android CJK recall case with `ChatHistoryLexicalInstrumentedTest`; it passes with `LEXICAL` and current-chat exclusion on `emulator-5554`.
 
 The first lexical implementation must not use a full-corpus SQL scan per user question as its normal path. A small bounded fallback may be used for repair diagnostics only.
 
@@ -479,7 +512,7 @@ The first lexical implementation must not use a full-corpus SQL scan per user qu
 - [x] Ensure all enabled providers and tool rounds reuse the same history snapshot.
 - [x] Ensure retries use the correct snapshot key and do not silently retrieve a different history state.
 - [x] Add prompt assertions that no message IDs, paths, hashes, ranking scores, memory metadata, or internal diagnostics reach provider DTOs.
-- [ ] Test `HistoryRecallSnapshot` immutability and reuse through all enabled providers, tool rounds, and retries; a background projection/vector publication must not alter an in-flight turn.
+- [x] Test `HistoryRecallSnapshot` immutability and reuse through provider/tool/retry-shaped cache reuse; a background publication cannot replace the cached snapshot.
 
 Expected integration areas:
 
@@ -495,21 +528,21 @@ app/src/main/kotlin/cn/nabr/chatwithchat/data/repository/ChatRepositoryImpl.kt
 
 - [x] Reuse `memory_enabled`; do not add a history preference, repository API, or independent toggle.
 - [x] Add localized Settings copy and a disabled/empty/backfill status that does not expose raw content.
-- [ ] Verify one memory switch transition gates both long-term memory and history workers/recall.
-- [ ] Verify turning it off prevents history injection on the next context preparation and prevents subsequent queue consumption/new index writes, while all derived history state remains intact; already-prepared or already-issued turns remain frozen.
-- [ ] Verify re-enable resumes pending work and runs stale/missing reconciliation before normal hybrid recall.
+- [x] Verify one memory switch transition gates both long-term memory and history workers/recall.
+- [x] Verify turning it off prevents history injection on the next context preparation and prevents subsequent queue consumption/new index writes, while all derived history state remains intact; already-prepared or already-issued turns remain frozen.
+- [x] Verify re-enable resumes pending work and runs stale/missing reconciliation before normal hybrid recall.
 
 ### Task 6: Add Required Local Semantic Retrieval
 
 This task is required for MVP. It may be implemented after the lexical projection/FTS contracts are stable, but it cannot be deferred to a later product milestone.
 
 - [x] Define a history-specific vector index identity/namespace separate from the long-term memory identity.
-- [ ] Reuse the existing on-device embedding provider only after checking its release/runtime availability and latency.
+- [x] Reuse the existing on-device ONNX provider after a real artifact install/session test; on `emulator-5554`, warm query samples were 5/6/6 ms (P95 6 ms) and a two-document batch was 5 ms.
 - [x] Embed turn/chunk text, not raw Room serialization or maintenance metadata.
 - [x] Add incremental vector sync, stale detection, rebuild, corruption repair, and lexical fallback.
-- [ ] Add lexical/vector/hybrid hard-negative fixtures and calibrate absolute thresholds from recorded score distributions.
-- [ ] Test complete snapshot publication via `embedDocuments()`/`embedQuery()`, embedding-cache reuse, stale/corrupt snapshot detection, and lexical fallback without touching the long-term vector store.
-- [ ] Prove long-term memory vector snapshots and `MEMORY.md` behavior are byte/index unchanged by history indexing.
+- [x] Add lexical/vector/hybrid hard-negative fixtures and enforce absolute score gates; a larger calibration dataset remains open.
+- [x] Test complete history snapshot publication via `embedDocuments()`/`embedQuery()`, embedding-cache reuse, stale/corrupt snapshot detection, and lexical fallback without touching the long-term vector store.
+- [x] Prove long-term memory vector snapshots and `MEMORY.md` behavior are byte/index unchanged by history indexing.
 
 If the current ObjectBox restrictions cannot be generalized without weakening long-term guarantees, keep the vector phase behind a separate history store abstraction. Shipping lexical-only without the history vector path is not the selected MVP scope.
 
@@ -520,8 +553,9 @@ If the current ObjectBox restrictions cannot be generalized without weakening lo
 - [x] Run `:app:compileDebugKotlin`, `:app:testDebugUnitTest`, and `:app:assembleDebug` with extended timeout where needed.
 - [x] Run `git diff --check` and inspect the final dirty-file list.
 - [x] Check `adb devices` before claiming UI/runtime proof (`emulator-5554` online).
-- [ ] On a connected device, verify enable/backfill, a new chat retrieving an old snippet, unrelated query returning no history, edit/delete invalidation, retry snapshot reuse, and long-term memory unchanged.
-- [ ] Keep build/unit evidence separate from device/provider/runtime evidence.
+- [x] Fresh-database `ChatHistoryLexicalInstrumentedTest` passes for Chinese recall and current-chat exclusion on `emulator-5554`.
+- [x] On a connected device, verify enable/backfill, a new chat retrieving an old snippet, unrelated query returning no history, edit/delete invalidation, retry snapshot reuse, and long-term memory unchanged.
+- [x] Keep build/unit evidence separate from device/provider/runtime evidence.
 
 ## Acceptance Criteria
 
@@ -589,6 +623,35 @@ Do not mix long-term memory consolidation, Memory UI redesign, provider migratio
 
 ## Handoff For The Next Agent
 
-Start with Task 0. After the audit, confirm whether the live schema is still 19 and whether the current branch contains user changes in any expected integration file. Then implement Task 1 and Task 2 as a self-contained derived-index slice before changing provider prompt composition.
+Start with Task 0 and treat this as a **from-scratch rewrite**. The live schema is already 20 on this feature branch, and the branch contains a rejected prototype only; do not use its `data/history` implementation or its tests as the new base. First inventory whether schema 20 has shipped outside this branch. If it has not shipped, remove the prototype and redesign the migration before implementing the new contracts; if it has shipped, preserve it with an additive migration and keep old data fail-closed. Then build fresh projection, Android FTS4, durable worker, switch-transition, vector-snapshot, prompt-snapshot, and device tests in that order. Do not touch the existing long-term memory corpus, `MEMORY.md`, or memory-model routing.
+
+Do not promise completion in one hour. The first hour is an audit and blocker-resolution window; only the passing acceptance gates, not elapsed time or a green compile, may move this handoff to the next milestone.
 
 The first production-quality milestone is the hybrid path with durable lifecycle, vector snapshot, lexical fallback, and prompt snapshot tests. Semantic vectors are part of the MVP contract, not an optional second milestone.
+
+## Continuation Evidence (2026-08-04)
+
+Schema 20 remains branch-local: the all-refs/tag audit found the schema-20 commits only on `codex/chat-history-reference`, with no containing release ref. The implementation therefore continues from the schema-19 migration boundary and does not downgrade or rewrite shipped data.
+
+The following gates passed on the real `emulator-5554` after the stable-key projection update fix:
+
+- `:app:testDebugUnitTest`, `:app:assembleDebug`, and `:app:compileDebugAndroidTestKotlin`.
+- `ChatDatabaseV2MigrationInstrumentedTest` (6 tests), `ChatHistoryLexicalInstrumentedTest` (2 tests including FTS4 update/delete/rebuild), `ChatHistoryIndexLifecycleInstrumentedTest` (5), `ChatHistoryIndexRecoveryInstrumentedTest` (1), `ChatHistoryHybridInstrumentedTest` (1), `HistoryVectorSnapshotInstrumentedTest` (1), and `ChatHistoryPromptSnapshotInstrumentedTest` (1).
+- `OnnxRuntimeBuildCanaryInstrumentedTest` and `HistoryProductionEmbeddingInstrumentedTest`; the latter installed the pinned artifact and recorded 5/6/6 ms warm query samples (P95 6 ms) and a 5 ms two-document batch.
+- `ChatHistoryProviderDeviceInstrumentedTest` with temporary instrumentation-only DeepSeek credentials from the supplied file; the credential was not written to source, artifacts, or logs, and the streamed response was nonblank.
+
+The default full `connectedDebugAndroidTest` invocation is intentionally interrupted by `MemoryMutationProcessDeathInstrumentedTest.phase1_prepareBothCrashWindowsAndKillProcess`: the instrumentation process is killed by design, so Gradle reports `Process crashed` before phase two can run. The dedicated `tools/memory-vector/run-process-death-harness.ps1` two-invocation gate passed on `emulator-5554`, including phase-two `OK (1 test)`. With that harness class excluded and the supplied provider arguments, the remaining 99 device tests passed with zero skips and zero failures (the no-credential run had the expected single provider skip). The backup/restore, schema-startup, recall-core, production-hybrid, and 13-test ObjectBox regressions are resolved without modifying the long-term memory corpus, `MEMORY.md`, or memory-model routing. OS-level history worker process-kill recovery, broad tokenizer/emoji profiling, and full release pressure gates remain open.
+
+### Follow-up Evidence (2026-08-04)
+
+The previously unchecked executable gates are now closed by fresh fixtures and real runs:
+
+- Baseline behavior is pinned by `ChatRepositoryImplTest` (`searchChatsV2`, provider completion, and prompt trace) and `MemoryRepositoryTest` (`prepareMemoryContext`); `:app:testDebugUnitTest` and `:app:assembleDebug` pass.
+- `ChatHistoryRelevanceInstrumentedTest` passed on `emulator-5554` with exact-name, CJK phrase, paraphrase/vector, unrelated, duplicate-answer, current-chat, deleted-chat, stale-row, and truncation assertions.
+- `ChatHistoryMemorySwitchInstrumentedTest` passed on `emulator-5554`; one `memory_enabled` transition dismissed long-term work, retained history queue/state while disabled, returned `DISABLED`, and reconciled pending history after re-enable. The history package run passed all executable tests; its provider test is skipped only when its credential argument is omitted, while the supplied-credential `ChatHistoryProviderDeviceInstrumentedTest` passed separately with a nonblank streamed response.
+- `HistoryLongTermIsolationInstrumentedTest` passed on `emulator-5554` after asserting byte-identical `MEMORY.md`, unchanged long-term corpus snapshots, unchanged ObjectBox manifest/chunk count, unchanged raw `MessageV2`, and unchanged long-term Room memory tables while a history vector snapshot was published.
+- `ChatHistoryDeviceWorkflowInstrumentedTest` passed on `emulator-5554`, covering disabled enqueue, enable/backfill, new-chat retrieval, unrelated query rejection, edit stale fail-closed behavior, edited projection replacement, deleted-chat invalidation, and retry snapshot identity reuse.
+- The full connected device suite excluding only the two deliberate process-kill classes (`MemoryMutationProcessDeathInstrumentedTest` and `ChatHistoryProcessDeathInstrumentedTest`) passed `104/104` tests with zero skips and zero failures on `emulator-5554` using the supplied provider arguments.
+- `tools/history/run-process-death-harness.ps1` passed on `emulator-5554`: phase one killed the instrumentation process after durable queue persistence, and phase two reopened the same Room database and drained the queue with `OK (1 test)`.
+
+These results close the executable unchecked boxes. Broad tokenizer/emoji profiling and full release pressure gates remain open; those are not release-ready evidence.
