@@ -1,47 +1,91 @@
 package cn.nabr.chatwithchat.data.history
 
+import java.text.Normalizer
 import java.util.Locale
 
+data class HistoryQueryTerms(
+    val normalizedText: String,
+    val tokens: List<String>,
+    val matchQuery: String
+)
+
 object ChatHistoryQueryNormalizer {
-    private val whitespace = Regex("\\s+")
+    fun normalize(text: String): HistoryQueryTerms {
+        val normalized = normalizeText(text)
+        val tokens = indexTerms(normalized)
+        return HistoryQueryTerms(
+            normalizedText = normalized,
+            tokens = tokens,
+            matchQuery = tokens.joinToString(separator = " OR ") { token -> "\"$token\"" }
+        )
+    }
 
-    fun normalize(value: String): String = value
-        .lowercase(Locale.ROOT)
-        .replace(whitespace, " ")
-        .trim()
+    fun indexTerms(text: String): List<String> {
+        val normalized = normalizeText(text)
+        val tokens = LinkedHashSet<String>()
+        val latinToken = StringBuilder()
+        val cjkRun = StringBuilder()
 
-    fun searchTerms(value: String): List<String> {
-        val normalized = normalize(value)
-        if (normalized.isBlank()) return emptyList()
-
-        val terms = linkedSetOf<String>()
-        normalized.split(' ').filter(String::isNotBlank).forEach { token ->
-            if (token.any(::isCjk)) {
-                val cjk = token.filter(::isCjk)
-                cjk.forEach { char -> terms += char.toString() }
-                cjk.windowed(size = 2).forEach(terms::add)
-                cjk.windowed(size = 3).forEach(terms::add)
-            } else {
-                terms += token
+        fun flushLatin() {
+            if (latinToken.isNotEmpty()) {
+                tokens += latinToken.toString()
+                latinToken.clear()
             }
         }
-        return terms.toList()
-    }
 
-    fun searchColumn(vararg values: String): String = values
-        .flatMap(::searchTerms)
-        .distinct()
-        .joinToString(separator = " ")
-
-    fun ftsMatchExpression(value: String): String {
-        val terms = searchTerms(value).take(MAX_QUERY_TERMS)
-        val separator = if (normalize(value).any(::isCjk)) " AND " else " OR "
-        return terms.joinToString(separator = separator) { term ->
-            "\"${term.replace("\"", "\"\"")}\""
+        fun flushCjk() {
+            if (cjkRun.isEmpty()) return
+            val codePoints = cjkRun.toString().codePoints().toArray()
+            codePoints.forEach { codePoint -> tokens += cjkToken(codePoint.toString(16)) }
+            listOf(2, 3).forEach { size ->
+                if (codePoints.size < size) return@forEach
+                codePoints.indices
+                    .take(codePoints.size - size + 1)
+                    .forEach { start ->
+                        val value = buildString {
+                            repeat(size) { offset ->
+                                append(codePoints[start + offset].toString(16))
+                                if (offset != size - 1) append('_')
+                            }
+                        }
+                        tokens += cjkToken(value)
+                    }
+            }
+            cjkRun.clear()
         }
+
+        normalized.codePoints().forEach { codePoint ->
+            when {
+                isHan(codePoint) -> {
+                    flushLatin()
+                    cjkRun.appendCodePoint(codePoint)
+                }
+                Character.isLetterOrDigit(codePoint) || codePoint == '_'.code -> {
+                    flushCjk()
+                    latinToken.appendCodePoint(codePoint)
+                }
+                else -> {
+                    flushCjk()
+                    flushLatin()
+                }
+            }
+        }
+        flushCjk()
+        flushLatin()
+        return tokens.take(MAX_INDEX_TERMS)
     }
 
-    private fun isCjk(char: Char): Boolean = char.code in 0x3400..0x9FFF
+    fun normalizeText(text: String): String = Normalizer.normalize(text, Normalizer.Form.NFKC)
+        .replace(Regex("\\s+"), " ")
+        .trim()
+        .lowercase(Locale.ROOT)
 
-    private const val MAX_QUERY_TERMS = 24
+    private fun cjkToken(value: String): String = "cjk_$value"
+
+    private fun isHan(codePoint: Int): Boolean =
+        codePoint in 0x3400..0x4DBF ||
+            codePoint in 0x4E00..0x9FFF ||
+            codePoint in 0xF900..0xFAFF
+
+    private const val MAX_INDEX_TERMS = 20_000
 }

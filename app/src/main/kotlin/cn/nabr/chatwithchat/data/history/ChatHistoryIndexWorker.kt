@@ -23,30 +23,37 @@ class ChatHistoryIndexWorker(
             return ListenableWorker.Result.retry()
         }
         return try {
-            if (inputData.getBoolean(INPUT_REBUILD, false)) {
-                entryPoint.chatHistoryIndexProcessor().rebuild()
+            val coordinator = entryPoint.chatHistoryIndexCoordinator()
+            var hasMore = true
+            var disabled = false
+            var pass = 0
+            while (hasMore && !disabled && pass < MAX_PASSES) {
+                val result = coordinator.processWork()
+                disabled = result.disabled
+                hasMore = result.hasMore
+                pass++
             }
-            var keepRunning = true
-            var iterations = 0
-            while (keepRunning && iterations++ < MAX_ITERATIONS) {
-                keepRunning = entryPoint.chatHistoryIndexProcessor().process()
+            if (disabled || !hasMore) {
+                ListenableWorker.Result.success()
+            } else {
+                ListenableWorker.Result.retry()
             }
-            ListenableWorker.Result.success()
         } catch (cancellation: CancellationException) {
             throw cancellation
+        } catch (_: IllegalArgumentException) {
+            ListenableWorker.Result.failure()
         } catch (_: Throwable) {
             ListenableWorker.Result.retry()
         }
     }
 
-    companion object {
-        private const val MAX_ITERATIONS = 8
-        const val INPUT_REBUILD = "rebuild"
+    private companion object {
+        const val MAX_PASSES = 32
     }
 }
 
 @EntryPoint
 @InstallIn(SingletonComponent::class)
 interface ChatHistoryWorkerEntryPoint {
-    fun chatHistoryIndexProcessor(): ChatHistoryIndexProcessor
+    fun chatHistoryIndexCoordinator(): ChatHistoryIndexCoordinator
 }

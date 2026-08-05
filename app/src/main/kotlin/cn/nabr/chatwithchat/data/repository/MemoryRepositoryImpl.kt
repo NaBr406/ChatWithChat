@@ -7,9 +7,9 @@ import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.debug.MemoryRecallTrace
 import cn.nabr.chatwithchat.data.debug.PromptTraceStore
 import cn.nabr.chatwithchat.data.history.ChatHistoryIndexCoordinator
-import cn.nabr.chatwithchat.data.history.ChatHistoryRetrievalRequest
 import cn.nabr.chatwithchat.data.history.ChatHistoryRetriever
 import cn.nabr.chatwithchat.data.history.HistoryRecallSnapshot
+import cn.nabr.chatwithchat.data.history.HistoryRetrievalRequest
 import cn.nabr.chatwithchat.data.memory.MemoryActivityLogger
 import cn.nabr.chatwithchat.data.memory.MemoryActivityStatus
 import cn.nabr.chatwithchat.data.memory.MemoryCompletedTurnInput
@@ -57,8 +57,10 @@ class MemoryRepositoryImpl(
 ) : MemoryRepository {
 
     override suspend fun onMemoryEnabledChanged(enabled: Boolean) {
-        runMemoryTransitionStep("history_toggle_failed") {
-            if (enabled) chatHistoryIndexCoordinator?.onMemoryEnabledChanged(true)
+        if (enabled) {
+            runMemoryTransitionStep("history_toggle_reconcile_failed") {
+                chatHistoryIndexCoordinator?.onMemoryEnabledChanged(true)
+            }
         }
         runMemoryTransitionStep("memory_toggle_turn_batch_failed") {
             memoryTurnBatchScheduler?.onMemoryEnabledChanged(enabled)
@@ -126,11 +128,39 @@ class MemoryRepositoryImpl(
             }
         }
         val retriever = memoryRetriever ?: run {
-            recordMemoryRecall(recallKey, MemoryRecallTrace(MemoryRetrievalMode.NONE, 0, emptyList()))
+            recordMemoryRecall(
+                recallKey,
+                MemoryRecallTrace(
+                    MemoryRetrievalMode.NONE,
+                    0,
+                    emptyList(),
+                    historyMode = historySnapshot.mode.name,
+                    historyHitCount = historySnapshot.snippets.size,
+                    historyProjectionGeneration = historySnapshot.projectionGeneration,
+                    historyVectorGeneration = historySnapshot.vectorGeneration,
+                    historyProjectionHash = historySnapshot.projectionHash,
+                    historyVectorHash = historySnapshot.vectorHash,
+                    historyDiagnosticCodes = historySnapshot.diagnostics
+                )
+            )
             return PreparedMemoryContext(historySnapshot = historySnapshot)
         }
         if (query.isBlank()) {
-            recordMemoryRecall(recallKey, MemoryRecallTrace(MemoryRetrievalMode.NONE, 0, emptyList()))
+            recordMemoryRecall(
+                recallKey,
+                MemoryRecallTrace(
+                    MemoryRetrievalMode.NONE,
+                    0,
+                    emptyList(),
+                    historyMode = historySnapshot.mode.name,
+                    historyHitCount = historySnapshot.snippets.size,
+                    historyProjectionGeneration = historySnapshot.projectionGeneration,
+                    historyVectorGeneration = historySnapshot.vectorGeneration,
+                    historyProjectionHash = historySnapshot.projectionHash,
+                    historyVectorHash = historySnapshot.vectorHash,
+                    historyDiagnosticCodes = historySnapshot.diagnostics
+                )
+            )
             return PreparedMemoryContext(historySnapshot = historySnapshot)
         }
         val retrievalRequest = MemoryRetrievalRequest(
@@ -192,7 +222,14 @@ class MemoryRepositoryImpl(
                 canonicalRevision = retrievalReport.canonicalRevision,
                 canonicalSourceHash = retrievalReport.canonicalSourceHash,
                 recallProjectionHash = retrievalReport.recallProjectionHash,
-                promptEstimatedTokens = renderedPrompt.estimatedTokens
+                promptEstimatedTokens = renderedPrompt.estimatedTokens,
+                historyMode = historySnapshot.mode.name,
+                historyHitCount = historySnapshot.snippets.size,
+                historyProjectionGeneration = historySnapshot.projectionGeneration,
+                historyVectorGeneration = historySnapshot.vectorGeneration,
+                historyProjectionHash = historySnapshot.projectionHash,
+                historyVectorHash = historySnapshot.vectorHash,
+                historyDiagnosticCodes = historySnapshot.diagnostics
             )
         )
         return PreparedMemoryContext(
@@ -211,17 +248,17 @@ class MemoryRepositoryImpl(
         if (query.isBlank()) return HistoryRecallSnapshot()
         return runCatching {
             retriever.retrieve(
-                ChatHistoryRetrievalRequest(
+                HistoryRetrievalRequest(
                     currentChatId = chatRoom.id,
                     query = query,
                     recentContext = recentContext
                 )
-            )
-        }.getOrElse {
+            ).snapshot
+        }.getOrElse { throwable ->
+            if (throwable is CancellationException) throw throwable
             HistoryRecallSnapshot(
                 mode = cn.nabr.chatwithchat.data.history.HistoryRecallMode.FAILED,
-                errorCode = "history_retrieval_failed",
-                diagnostics = listOf(cn.nabr.chatwithchat.data.history.HistoryRecallDiagnostic("history_retrieval_failed"))
+                errorCode = "history_retrieval_failed"
             )
         }
     }

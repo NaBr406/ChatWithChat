@@ -4,8 +4,8 @@ import androidx.room.Database
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import cn.nabr.chatwithchat.data.database.dao.ChatPlatformModelV2Dao
-import cn.nabr.chatwithchat.data.database.dao.ChatRoomV2Dao
 import cn.nabr.chatwithchat.data.database.dao.ChatHistoryDao
+import cn.nabr.chatwithchat.data.database.dao.ChatRoomV2Dao
 import cn.nabr.chatwithchat.data.database.dao.MemoryActivityLogDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryLongTermConsolidationDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryMaintenanceJobDao
@@ -18,13 +18,14 @@ import cn.nabr.chatwithchat.data.database.dao.StickerCatalogDao
 import cn.nabr.chatwithchat.data.database.entity.AssistantRevisionListConverter
 import cn.nabr.chatwithchat.data.database.entity.ChatAttachmentListConverter
 import cn.nabr.chatwithchat.data.database.entity.ChatPlatformModelV2
-import cn.nabr.chatwithchat.data.database.entity.ChatRoomV2
 import cn.nabr.chatwithchat.data.database.entity.ChatHistoryBackfillCheckpointEntity
-import cn.nabr.chatwithchat.data.database.entity.ChatHistoryEmbeddingEntity
+import cn.nabr.chatwithchat.data.database.entity.ChatHistoryEmbeddingCacheEntity
 import cn.nabr.chatwithchat.data.database.entity.ChatHistoryIndexQueueEntity
 import cn.nabr.chatwithchat.data.database.entity.ChatHistoryIndexStateEntity
 import cn.nabr.chatwithchat.data.database.entity.ChatHistoryProjectionEntity
-import cn.nabr.chatwithchat.data.database.entity.ChatHistoryProjectionFtsEntity
+import cn.nabr.chatwithchat.data.database.entity.ChatHistoryVectorEntryEntity
+import cn.nabr.chatwithchat.data.database.entity.ChatHistoryVectorSnapshotEntity
+import cn.nabr.chatwithchat.data.database.entity.ChatRoomV2
 import cn.nabr.chatwithchat.data.database.entity.MemoryActivityLog
 import cn.nabr.chatwithchat.data.database.entity.MemoryChatCheckpoint
 import cn.nabr.chatwithchat.data.database.entity.MemoryCorpusState
@@ -68,8 +69,9 @@ import cn.nabr.chatwithchat.data.database.entity.TokenUsageRecordConverter
         ChatHistoryIndexQueueEntity::class,
         ChatHistoryBackfillCheckpointEntity::class,
         ChatHistoryIndexStateEntity::class,
-        ChatHistoryEmbeddingEntity::class,
-        ChatHistoryProjectionFtsEntity::class
+        ChatHistoryEmbeddingCacheEntity::class,
+        ChatHistoryVectorSnapshotEntity::class,
+        ChatHistoryVectorEntryEntity::class
     ],
     version = 20,
     exportSchema = true

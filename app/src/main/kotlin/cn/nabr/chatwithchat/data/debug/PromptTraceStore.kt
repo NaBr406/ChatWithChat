@@ -36,7 +36,14 @@ data class MemoryRecallTrace(
     val canonicalRevision: Long? = null,
     val canonicalSourceHash: String? = null,
     val recallProjectionHash: String? = null,
-    val promptEstimatedTokens: Int = 0
+    val promptEstimatedTokens: Int = 0,
+    val historyMode: String? = null,
+    val historyHitCount: Int = 0,
+    val historyProjectionGeneration: Long? = null,
+    val historyVectorGeneration: Long? = null,
+    val historyProjectionHash: String? = null,
+    val historyVectorHash: String? = null,
+    val historyDiagnosticCodes: List<String> = emptyList()
 )
 
 object PromptTraceStage {

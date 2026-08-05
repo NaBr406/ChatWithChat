@@ -1,5 +1,6 @@
 package cn.nabr.chatwithchat.data.history
 
+import cn.nabr.chatwithchat.data.context.semanticAssistantContent
 import cn.nabr.chatwithchat.data.database.entity.ChatRoomV2
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.effectiveContent
@@ -7,92 +8,118 @@ import cn.nabr.chatwithchat.util.isAssistantErrorMessage
 import cn.nabr.chatwithchat.util.stripAssistantErrorNote
 import java.security.MessageDigest
 
-class ChatHistoryProjectionBuilder {
-    fun buildForChat(
+class ChatHistoryProjectionBuilder(
+    private val clock: () -> Long = { System.currentTimeMillis() / 1000 }
+) {
+    fun buildAll(
         chatRoom: ChatRoomV2,
         messages: List<MessageV2>,
-        preferredPlatformUid: String? = null,
+        preferredPlatformUid: String? = chatRoom.enabledPlatform.firstOrNull(),
         stablePlatformOrder: List<String> = chatRoom.enabledPlatform
     ): List<ChatHistoryProjectionBuildResult> {
-        val assistantsByUser = messages
-            .asSequence()
-            .filter { message -> message.platformType != null && message.linkedMessageId > 0 }
-            .groupBy(MessageV2::linkedMessageId)
-
-        return messages
-            .asSequence()
-            .filter { message -> message.platformType == null }
-            .sortedBy(MessageV2::id)
-            .map { user ->
-                build(
-                    chatRoom = chatRoom,
-                    userMessage = user,
-                    assistantMessages = assistantsByUser[user.id].orEmpty(),
-                    preferredPlatformUid = preferredPlatformUid,
-                    stablePlatformOrder = stablePlatformOrder
-                )
-            }
-            .toList()
+        val orderedMessages = messages.sortedWith(compareBy<MessageV2> { it.createdAt }.thenBy { it.id })
+        return orderedMessages
+            .filter { it.platformType == null }
+            .map { user -> buildForUser(chatRoom, orderedMessages, user, preferredPlatformUid, stablePlatformOrder) }
     }
 
     fun build(
         chatRoom: ChatRoomV2,
-        userMessage: MessageV2,
-        assistantMessages: List<MessageV2>,
-        preferredPlatformUid: String? = null,
+        messages: List<MessageV2>,
+        preferredPlatformUid: String? = chatRoom.enabledPlatform.firstOrNull(),
         stablePlatformOrder: List<String> = chatRoom.enabledPlatform
     ): ChatHistoryProjectionBuildResult {
-        if (chatRoom.id <= 0 || userMessage.id <= 0 || userMessage.chatId != chatRoom.id) {
-            return ChatHistoryProjectionBuildResult(skipCode = "invalid_source")
-        }
-        val userContent = userMessage.effectiveContent().trim().take(MAX_MESSAGE_CHARS)
-        if (userContent.isBlank()) return ChatHistoryProjectionBuildResult(skipCode = "blank_user")
+        val orderedMessages = messages.sortedWith(compareBy<MessageV2> { it.createdAt }.thenBy { it.id })
+        val user = orderedMessages.lastOrNull { it.platformType == null }
+            ?: return ChatHistoryProjectionBuildResult(null, "blank_user")
+        return buildForUser(chatRoom, orderedMessages, user, preferredPlatformUid, stablePlatformOrder)
+    }
 
-        val candidates = assistantMessages.mapNotNull { assistant ->
-            val platformUid = assistant.platformType?.takeIf(String::isNotBlank) ?: return@mapNotNull null
-            val content = stripAssistantErrorNote(assistant.effectiveContent()).trim().take(MAX_MESSAGE_CHARS)
-            if (assistant.id <= 0 || content.isBlank() || isAssistantErrorMessage(content)) return@mapNotNull null
-            AssistantCandidate(assistant, platformUid, content)
+    private fun buildForUser(
+        chatRoom: ChatRoomV2,
+        orderedMessages: List<MessageV2>,
+        userMessage: MessageV2,
+        preferredPlatformUid: String?,
+        stablePlatformOrder: List<String>
+    ): ChatHistoryProjectionBuildResult {
+        if (chatRoom.id <= 0) return ChatHistoryProjectionBuildResult(null, "invalid_chat")
+        if (userMessage.id <= 0 || userMessage.effectiveContent().trim().isBlank()) {
+            return ChatHistoryProjectionBuildResult(null, "blank_user")
         }
-        val canonical = candidates.firstOrNull { candidate -> candidate.platformUid == preferredPlatformUid }
+        val userIndex = orderedMessages.indexOf(userMessage)
+        val assistants = orderedMessages
+            .drop(userIndex + 1)
+            .takeWhile { it.platformType != null }
+            .filter { it.id > 0 }
+        val successful = assistants.mapNotNull { assistant ->
+            val content = stripAssistantErrorNote(assistant.semanticAssistantContent()).trim()
+            if (content.isBlank() || isAssistantErrorMessage(content)) return@mapNotNull null
+            assistant.platformType?.let { platformUid -> assistant to platformUid }
+        }
+        val canonical = successful.firstOrNull { (_, platformUid) -> platformUid == preferredPlatformUid }
             ?: stablePlatformOrder.firstNotNullOfOrNull { platformUid ->
-                candidates.firstOrNull { candidate -> candidate.platformUid == platformUid }
+                successful.firstOrNull { (_, candidateUid) -> candidateUid == platformUid }
             }
-            ?: candidates.minWithOrNull(compareBy(AssistantCandidate::platformUid, { candidate -> candidate.message.id }))
-            ?: return ChatHistoryProjectionBuildResult(skipCode = "no_successful_assistant")
+            ?: successful.minByOrNull { (_, platformUid) -> platformUid }
+            ?: return ChatHistoryProjectionBuildResult(null, "no_successful_assistant")
 
+        val assistant = canonical.first
+        val assistantUid = canonical.second.trim()
+        if (assistantUid.isBlank()) return ChatHistoryProjectionBuildResult(null, "missing_platform")
+        val title = chatRoom.title.normalizeHistoryText(MAX_TITLE_CHARS)
+        val userContent = userMessage.effectiveContent().normalizeHistoryText(MAX_MESSAGE_CHARS)
+        val assistantContent = stripAssistantErrorNote(assistant.semanticAssistantContent())
+            .normalizeHistoryText(MAX_MESSAGE_CHARS)
+        if (userContent.isBlank() || assistantContent.isBlank()) {
+            return ChatHistoryProjectionBuildResult(null, "blank_projection")
+        }
+        val attachmentMetadata = userMessage.attachments.joinToString(" ") { attachment ->
+            "${attachment.resolvedDisplayName} ${attachment.mimeType}"
+        }
+        val searchTerms = ChatHistoryQueryNormalizer.indexTerms(
+            "$title $userContent $assistantContent $attachmentMetadata"
+        ).joinToString(" ")
         val turnKey = "chat:${chatRoom.id}:user:${userMessage.id}"
-        val title = chatRoom.title.trim().take(MAX_TITLE_CHARS)
-        val contentHash = canonicalHash(
-            projectionVersion = ChatHistoryContract.PROJECTION_VERSION,
+        val hash = ChatHistoryProjectionHasher.sha256(
+            projectionVersion = CURRENT_PROJECTION_VERSION,
             turnKey = turnKey,
             title = title,
             userMessageId = userMessage.id,
             userContent = userContent,
-            assistantMessageId = canonical.message.id,
-            assistantPlatformUid = canonical.platformUid,
-            assistantContent = canonical.content
+            assistantMessageId = assistant.id,
+            assistantPlatformUid = assistantUid,
+            assistantContent = assistantContent
         )
+        val now = clock()
         return ChatHistoryProjectionBuildResult(
-            projection = ChatHistoryTurnProjection(
+            projection = ChatHistoryProjection(
                 turnKey = turnKey,
                 chatId = chatRoom.id,
                 userMessageId = userMessage.id,
-                assistantMessageId = canonical.message.id,
-                assistantPlatformUid = canonical.platformUid,
+                assistantMessageId = assistant.id,
+                assistantPlatformUid = assistantUid,
                 title = title,
                 userContent = userContent,
-                assistantContent = canonical.content,
-                searchTerms = ChatHistoryQueryNormalizer.searchColumn(title, userContent, canonical.content),
-                contentHash = contentHash,
-                projectionVersion = ChatHistoryContract.PROJECTION_VERSION,
-                createdAt = minOf(userMessage.createdAt, canonical.message.createdAt),
-                updatedAt = maxOf(chatRoom.updatedAt, userMessage.createdAt, canonical.message.createdAt)
+                assistantContent = assistantContent,
+                searchTerms = searchTerms,
+                contentHash = hash,
+                createdAt = userMessage.createdAt,
+                updatedAt = now
             )
         )
     }
 
-    private fun canonicalHash(
+    private fun String.normalizeHistoryText(maxLength: Int): String =
+        replace(Regex("\\s+"), " ").trim().take(maxLength)
+
+    private companion object {
+        const val MAX_TITLE_CHARS = 200
+        const val MAX_MESSAGE_CHARS = 12_000
+    }
+}
+
+object ChatHistoryProjectionHasher {
+    fun sha256(
         projectionVersion: Int,
         turnKey: String,
         title: String,
@@ -102,37 +129,27 @@ class ChatHistoryProjectionBuilder {
         assistantPlatformUid: String,
         assistantContent: String
     ): String {
+        val fields = listOf(
+            "projection_version" to projectionVersion.toString(),
+            "turn_key" to turnKey,
+            "title" to title,
+            "user_message_id" to userMessageId.toString(),
+            "user_content" to userContent,
+            "assistant_message_id" to assistantMessageId.toString(),
+            "assistant_platform_uid" to assistantPlatformUid,
+            "assistant_content" to assistantContent
+        )
         val payload = buildString {
-            appendFramed("projection_version", projectionVersion.toString())
-            appendFramed("turn_key", turnKey)
-            appendFramed("chat_title", title)
-            appendFramed("user_message_id", userMessageId.toString())
-            appendFramed("user_content", userContent)
-            appendFramed("assistant_message_id", assistantMessageId.toString())
-            appendFramed("assistant_platform_uid", assistantPlatformUid)
-            appendFramed("assistant_content", assistantContent)
+            fields.forEach { (name, value) ->
+                val framed = "$name=$value"
+                append(framed.toByteArray(Charsets.UTF_8).size)
+                append(':')
+                append(framed)
+                append('\n')
+            }
         }
         return MessageDigest.getInstance("SHA-256")
             .digest(payload.toByteArray(Charsets.UTF_8))
-            .joinToString(separator = "") { byte -> "%02x".format(byte) }
-    }
-
-    private fun StringBuilder.appendFramed(fieldName: String, value: String) {
-        val field = "$fieldName=$value"
-        append(field.toByteArray(Charsets.UTF_8).size)
-        append(':')
-        append(field)
-        append('\n')
-    }
-
-    private data class AssistantCandidate(
-        val message: MessageV2,
-        val platformUid: String,
-        val content: String
-    )
-
-    private companion object {
-        const val MAX_TITLE_CHARS = 200
-        const val MAX_MESSAGE_CHARS = 12_000
+            .joinToString("") { byte -> "%02x".format(byte) }
     }
 }

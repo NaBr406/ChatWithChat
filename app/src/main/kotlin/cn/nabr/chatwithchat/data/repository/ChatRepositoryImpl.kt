@@ -3139,12 +3139,12 @@ class ChatRepositoryImpl @Inject constructor(
 
     override suspend fun updateChatTitle(chatRoom: ChatRoomV2, title: String) {
         chatRoomV2Dao.editChatRoom(chatRoom.copy(title = title.replace('\n', ' ').take(50)))
-        chatHistoryIndexCoordinator?.enqueueChatReconciliation(chatRoom.id)
+        enqueueHistoryReconciliation(chatRoom.id)
     }
 
     override suspend fun saveChat(chatRoom: ChatRoomV2, messages: List<MessageV2>, chatPlatformModels: Map<String, ChatPlatformConfig>): ChatRoomV2 {
         if (chatRoom.id == 0) {
-            return runInChatTransaction {
+            val savedChat = runInChatTransaction {
                 val chatId = chatRoomV2Dao.addChatRoom(chatRoom)
                 val updatedMessages = messages.map { it.copy(chatId = chatId.toInt()) }
                 messageV2Dao.addMessages(*updatedMessages.toTypedArray())
@@ -3154,13 +3154,17 @@ class ChatRepositoryImpl @Inject constructor(
                 )
 
                 val savedChatRoom = chatRoom.copy(id = chatId.toInt())
-                updateChatTitle(savedChatRoom, updatedMessages[0].content)
+                chatRoomV2Dao.editChatRoom(
+                    savedChatRoom.copy(title = updatedMessages[0].content.replace('\n', ' ').take(50))
+                )
 
                 savedChatRoom.copy(title = updatedMessages[0].content.replace('\n', ' ').take(50))
             }
+            enqueueHistoryReconciliation(savedChat.id)
+            return savedChat
         }
 
-        return runInChatTransaction {
+        val savedChat = runInChatTransaction {
             val savedMessages = fetchMessagesV2(chatRoom.id)
             val updatedMessages = messages.map { it.copy(chatId = chatRoom.id) }
 
@@ -3182,10 +3186,11 @@ class ChatRepositoryImpl @Inject constructor(
                 chatId = chatRoom.id,
                 models = chatPlatformModels.filterKeys { it in chatRoom.enabledPlatform }
             )
-            chatHistoryIndexCoordinator?.enqueueChatReconciliation(chatRoom.id)
 
             chatRoom
         }
+        enqueueHistoryReconciliation(savedChat.id)
+        return savedChat
     }
 
     private suspend fun <T> runInChatTransaction(block: suspend () -> T): T =
@@ -3213,7 +3218,7 @@ class ChatRepositoryImpl @Inject constructor(
 
         val chatPlatformModels = fetchChatPlatformModels(chatRoom.id)
         saveChatPlatformModels(duplicatedChatId, chatPlatformModels)
-        chatHistoryIndexCoordinator?.enqueueChatReconciliation(duplicatedChatId)
+        enqueueHistoryReconciliation(duplicatedChatId)
 
         return chatRoom.copy(
             id = duplicatedChatId,
@@ -3228,7 +3233,19 @@ class ChatRepositoryImpl @Inject constructor(
     }
 
     override suspend fun deleteChatsV2(chatRooms: List<ChatRoomV2>) {
+        chatRooms.forEach { chatHistoryIndexCoordinator?.invalidateDeletedChat(it.id) }
         chatRoomV2Dao.deleteChatRooms(*chatRooms.toTypedArray())
+    }
+
+    private suspend fun enqueueHistoryReconciliation(chatId: Int) {
+        val coordinator = chatHistoryIndexCoordinator ?: return
+        try {
+            coordinator.enqueueChatReconciliation(chatId)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Throwable) {
+            // History indexing is derived state and must never block chat persistence.
+        }
     }
 }
 

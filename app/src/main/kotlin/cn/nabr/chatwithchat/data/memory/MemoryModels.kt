@@ -2,6 +2,7 @@ package cn.nabr.chatwithchat.data.memory
 
 import cn.nabr.chatwithchat.data.database.entity.ChatRoomV2
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
+import cn.nabr.chatwithchat.data.history.HistoryRecallSnapshot
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -13,12 +14,11 @@ data class MemoryConversationMessage(
 data class PreparedMemoryContext(
     val retrievedMemories: List<MemoryRetrievalResult> = emptyList(),
     val snapshot: TurnRecallSnapshot = TurnRecallSnapshot(),
-    val historySnapshot: cn.nabr.chatwithchat.data.history.HistoryRecallSnapshot =
-        cn.nabr.chatwithchat.data.history.HistoryRecallSnapshot()
+    val historySnapshot: HistoryRecallSnapshot = HistoryRecallSnapshot()
 ) {
     val prompt: String?
-        get() = listOfNotNull(snapshot.prompt, historySnapshot.prompt)
-            .joinToString(separator = "\n\n")
+        get() = listOfNotNull(snapshot.prompt?.takeIf { it.isNotBlank() }, historySnapshot.prompt?.takeIf { it.isNotBlank() })
+            .joinToString("\n\n")
             .takeIf { it.isNotBlank() }
 }
 

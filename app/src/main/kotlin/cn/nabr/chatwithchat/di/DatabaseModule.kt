@@ -49,9 +49,6 @@ object DatabaseModule {
     fun provideChatRoomV2Dao(chatDatabaseV2: ChatDatabaseV2): ChatRoomV2Dao = chatDatabaseV2.chatRoomDao()
 
     @Provides
-    fun provideChatHistoryDao(chatDatabaseV2: ChatDatabaseV2): ChatHistoryDao = chatDatabaseV2.chatHistoryDao()
-
-    @Provides
     fun provideMessageDao(chatDatabase: ChatDatabase): MessageDao = chatDatabase.messageDao()
 
     @Provides
@@ -75,6 +72,9 @@ object DatabaseModule {
 
     @Provides
     fun provideStickerCatalogDao(chatDatabaseV2: ChatDatabaseV2): StickerCatalogDao = chatDatabaseV2.stickerCatalogDao()
+
+    @Provides
+    fun provideChatHistoryDao(chatDatabaseV2: ChatDatabaseV2): ChatHistoryDao = chatDatabaseV2.chatHistoryDao()
 
     @Provides
     @Singleton

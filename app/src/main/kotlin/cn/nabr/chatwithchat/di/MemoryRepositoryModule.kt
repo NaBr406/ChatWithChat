@@ -50,12 +50,12 @@ import cn.nabr.chatwithchat.data.memory.MemoryVectorRecallStateSource
 import cn.nabr.chatwithchat.data.memory.RoomMemoryActivityLogger
 import cn.nabr.chatwithchat.data.memory.RoomMemoryVectorRecallStateSource
 import cn.nabr.chatwithchat.data.memory.WorkEnqueuingMemoryVectorRecallRepairTrigger
-import cn.nabr.chatwithchat.data.history.ChatHistoryIndexCoordinator
-import cn.nabr.chatwithchat.data.history.ChatHistoryRetriever
 import cn.nabr.chatwithchat.data.memory.embedding.MemoryEmbeddingArtifactInstaller
 import cn.nabr.chatwithchat.data.memory.embedding.MemoryEmbeddingCapabilitySource
 import cn.nabr.chatwithchat.data.memory.embedding.MutableMemoryEmbeddingCapabilitySource
 import cn.nabr.chatwithchat.data.memory.embedding.ProductionMemoryEmbeddingProvisioner
+import cn.nabr.chatwithchat.data.history.ChatHistoryIndexCoordinator
+import cn.nabr.chatwithchat.data.history.ChatHistoryRetriever
 import cn.nabr.chatwithchat.data.memory.vector.MemoryVectorStore
 import cn.nabr.chatwithchat.data.memory.vector.MemoryVectorStoreFactory
 import cn.nabr.chatwithchat.data.network.AnthropicAPI

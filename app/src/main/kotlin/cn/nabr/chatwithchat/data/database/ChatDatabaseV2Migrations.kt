@@ -8,6 +8,11 @@ import cn.nabr.chatwithchat.data.database.entity.AssistantRevisionListConverter
 import cn.nabr.chatwithchat.data.database.entity.ChatAttachmentListConverter
 import cn.nabr.chatwithchat.data.model.ChatAttachment
 import cn.nabr.chatwithchat.data.model.ReasoningMode
+import cn.nabr.chatwithchat.data.history.CURRENT_PROJECTION_VERSION
+import cn.nabr.chatwithchat.data.history.HISTORY_BACKFILL_CHECKPOINT_ID
+import cn.nabr.chatwithchat.data.history.HISTORY_INDEX_STATE_ID
+import cn.nabr.chatwithchat.data.history.HistoryBackfillStatus
+import cn.nabr.chatwithchat.data.history.HistoryVectorStatus
 import java.io.File
 
 object ChatDatabaseV2Migrations {
@@ -434,7 +439,15 @@ object ChatDatabaseV2Migrations {
         override fun migrate(db: SupportSQLiteDatabase) {
             createChatHistoryDerivedTables(db)
             createChatHistoryFtsTriggers(db)
+            rebuildChatHistoryFts(db)
+            seedChatHistoryState(db)
         }
+    }
+
+    internal fun ensureChatHistoryRuntimeObjects(db: SupportSQLiteDatabase) {
+        createChatHistoryDerivedTables(db)
+        createChatHistoryFtsTriggers(db)
+        seedChatHistoryState(db)
     }
 
     internal fun legacyFilesToAttachmentsJson(filesValue: String): String {
@@ -495,7 +508,6 @@ object ChatDatabaseV2Migrations {
         db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_chat_history_projection_chat_id_user_message_id` ON `chat_history_projection` (`chat_id`, `user_message_id`)")
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_chat_history_projection_eligibility_state` ON `chat_history_projection` (`eligibility_state`)")
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_chat_history_projection_updated_at` ON `chat_history_projection` (`updated_at`)")
-        createChatHistoryFtsTable(db)
         db.execSQL(
             """
             CREATE TABLE IF NOT EXISTS `chat_history_index_queue` (
@@ -544,21 +556,50 @@ object ChatDatabaseV2Migrations {
                 `turn_key` TEXT NOT NULL,
                 `content_hash` TEXT NOT NULL,
                 `descriptor_hash` TEXT NOT NULL,
-                `embedding_json` TEXT NOT NULL,
+                `embedding` BLOB NOT NULL,
+                `dimension` INTEGER NOT NULL,
                 `updated_at` INTEGER NOT NULL,
-                PRIMARY KEY(`turn_key`),
-                FOREIGN KEY(`turn_key`) REFERENCES `chat_history_projection`(`turn_key`) ON UPDATE NO ACTION ON DELETE CASCADE
+                PRIMARY KEY(`turn_key`, `content_hash`, `descriptor_hash`)
             )
             """.trimIndent()
         )
-        db.execSQL("CREATE INDEX IF NOT EXISTS `index_chat_history_embedding_cache_descriptor_hash` ON `chat_history_embedding_cache` (`descriptor_hash`)")
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_chat_history_embedding_cache_content_hash` ON `chat_history_embedding_cache` (`content_hash`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_chat_history_embedding_cache_descriptor_hash` ON `chat_history_embedding_cache` (`descriptor_hash`)")
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `chat_history_vector_snapshot` (
+                `snapshot_id` TEXT NOT NULL,
+                `generation` INTEGER NOT NULL,
+                `projection_hash` TEXT NOT NULL,
+                `descriptor_hash` TEXT NOT NULL,
+                `dimension` INTEGER NOT NULL,
+                `chunker_version` TEXT NOT NULL,
+                `index_schema_version` INTEGER NOT NULL,
+                `expected_count` INTEGER NOT NULL,
+                `published_at` INTEGER NOT NULL,
+                PRIMARY KEY(`snapshot_id`)
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `chat_history_vector_entry` (
+                `snapshot_id` TEXT NOT NULL,
+                `turn_key` TEXT NOT NULL,
+                `generation` INTEGER NOT NULL,
+                `content_hash` TEXT NOT NULL,
+                `descriptor_hash` TEXT NOT NULL,
+                `dimension` INTEGER NOT NULL,
+                `embedding` BLOB NOT NULL,
+                PRIMARY KEY(`snapshot_id`, `turn_key`)
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_chat_history_vector_entry_turn_key` ON `chat_history_vector_entry` (`turn_key`)")
+        createChatHistoryFtsTable(db)
     }
 
     internal fun createChatHistoryFtsTriggers(db: SupportSQLiteDatabase) {
-        // Keep the migration contract byte-for-byte compatible with Room's generated
-        // external-content Fts4 triggers. The same helper is used by the database
-        // callback for newly-created and reopened databases.
         db.execSQL(
             """
             CREATE TRIGGER IF NOT EXISTS `room_fts_content_sync_chat_history_projection_fts_BEFORE_UPDATE`
@@ -595,16 +636,18 @@ object ChatDatabaseV2Migrations {
         )
     }
 
+    internal fun rebuildChatHistoryFts(db: SupportSQLiteDatabase) {
+        db.execSQL("DELETE FROM `chat_history_projection_fts`")
+        db.execSQL(
+            """
+            INSERT INTO `chat_history_projection_fts`(`docid`, `title`, `user_content`, `assistant_content`, `search_terms`)
+            SELECT `projection_id`, `title`, `user_content`, `assistant_content`, `search_terms`
+            FROM `chat_history_projection`
+            """.trimIndent()
+        )
+    }
+
     private fun createChatHistoryFtsTable(db: SupportSQLiteDatabase) {
-        val existing = db.query(
-            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'chat_history_projection_fts' LIMIT 1"
-        ).use { cursor ->
-            if (cursor.moveToFirst()) cursor.getString(0).orEmpty() else null
-        }
-        if (existing != null) return
-        // Android system SQLite does not guarantee FTS5 on the minimum supported API.
-        // Room's Fts4 contract is the portable runtime fallback and keeps migration
-        // validation aligned with the generated schema.
         db.execSQL(
             """
             CREATE VIRTUAL TABLE IF NOT EXISTS `chat_history_projection_fts` USING FTS4(
@@ -613,6 +656,18 @@ object ChatDatabaseV2Migrations {
                 tokenize=unicode61
             )
             """.trimIndent()
+        )
+    }
+
+    private fun seedChatHistoryState(db: SupportSQLiteDatabase) {
+        val now = System.currentTimeMillis() / 1000
+        db.execSQL(
+            "INSERT OR IGNORE INTO `chat_history_backfill_checkpoint` (`checkpoint_id`, `last_chat_id`, `last_user_message_id`, `projection_version`, `status`, `updated_at`) VALUES (?, NULL, NULL, ?, ?, ?)",
+            arrayOf<Any>(HISTORY_BACKFILL_CHECKPOINT_ID, CURRENT_PROJECTION_VERSION, HistoryBackfillStatus.IDLE, now)
+        )
+        db.execSQL(
+            "INSERT OR IGNORE INTO `chat_history_index_state` (`state_id`, `projection_generation`, `projection_hash`, `vector_published_generation`, `vector_status`, `updated_at`) VALUES (?, 0, NULL, NULL, ?, ?)",
+            arrayOf<Any>(HISTORY_INDEX_STATE_ID, HistoryVectorStatus.MISSING, now)
         )
     }
 

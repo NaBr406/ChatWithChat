@@ -2,7 +2,6 @@ package cn.nabr.chatwithchat.data.database.entity
 
 import androidx.room.ColumnInfo
 import androidx.room.Entity
-import androidx.room.Fts4
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -38,7 +37,6 @@ data class ChatHistoryProjectionEntity(
     val assistantMessageId: Int,
     @ColumnInfo(name = "assistant_platform_uid")
     val assistantPlatformUid: String,
-    @ColumnInfo(name = "title")
     val title: String,
     @ColumnInfo(name = "user_content")
     val userContent: String,
@@ -56,21 +54,6 @@ data class ChatHistoryProjectionEntity(
     val createdAt: Long,
     @ColumnInfo(name = "updated_at")
     val updatedAt: Long
-)
-
-@Fts4(
-    contentEntity = ChatHistoryProjectionEntity::class,
-    tokenizer = "unicode61"
-)
-@Entity(tableName = "chat_history_projection_fts")
-data class ChatHistoryProjectionFtsEntity(
-    val title: String,
-    @ColumnInfo(name = "user_content")
-    val userContent: String,
-    @ColumnInfo(name = "assistant_content")
-    val assistantContent: String,
-    @ColumnInfo(name = "search_terms")
-    val searchTerms: String
 )
 
 @Entity(
@@ -112,7 +95,6 @@ data class ChatHistoryBackfillCheckpointEntity(
     val lastUserMessageId: Int? = null,
     @ColumnInfo(name = "projection_version")
     val projectionVersion: Int,
-    @ColumnInfo(name = "status")
     val status: String,
     @ColumnInfo(name = "updated_at")
     val updatedAt: Long
@@ -137,26 +119,58 @@ data class ChatHistoryIndexStateEntity(
 
 @Entity(
     tableName = "chat_history_embedding_cache",
-    foreignKeys = [
-        ForeignKey(
-            entity = ChatHistoryProjectionEntity::class,
-            parentColumns = ["turn_key"],
-            childColumns = ["turn_key"],
-            onDelete = ForeignKey.CASCADE
-        )
-    ],
-    indices = [Index(value = ["descriptor_hash"]), Index(value = ["content_hash"])]
+    primaryKeys = ["turn_key", "content_hash", "descriptor_hash"],
+    indices = [Index(value = ["content_hash"]), Index(value = ["descriptor_hash"])]
 )
-data class ChatHistoryEmbeddingEntity(
-    @PrimaryKey
+data class ChatHistoryEmbeddingCacheEntity(
     @ColumnInfo(name = "turn_key")
     val turnKey: String,
     @ColumnInfo(name = "content_hash")
     val contentHash: String,
     @ColumnInfo(name = "descriptor_hash")
     val descriptorHash: String,
-    @ColumnInfo(name = "embedding_json")
-    val embeddingJson: String,
+    val embedding: ByteArray,
+    val dimension: Int,
     @ColumnInfo(name = "updated_at")
     val updatedAt: Long
+)
+
+@Entity(tableName = "chat_history_vector_snapshot")
+data class ChatHistoryVectorSnapshotEntity(
+    @PrimaryKey
+    @ColumnInfo(name = "snapshot_id")
+    val snapshotId: String,
+    val generation: Long,
+    @ColumnInfo(name = "projection_hash")
+    val projectionHash: String,
+    @ColumnInfo(name = "descriptor_hash")
+    val descriptorHash: String,
+    val dimension: Int,
+    @ColumnInfo(name = "chunker_version")
+    val chunkerVersion: String,
+    @ColumnInfo(name = "index_schema_version")
+    val indexSchemaVersion: Int,
+    @ColumnInfo(name = "expected_count")
+    val expectedCount: Int,
+    @ColumnInfo(name = "published_at")
+    val publishedAt: Long
+)
+
+@Entity(
+    tableName = "chat_history_vector_entry",
+    primaryKeys = ["snapshot_id", "turn_key"],
+    indices = [Index(value = ["turn_key"])]
+)
+data class ChatHistoryVectorEntryEntity(
+    @ColumnInfo(name = "snapshot_id")
+    val snapshotId: String,
+    @ColumnInfo(name = "turn_key")
+    val turnKey: String,
+    val generation: Long,
+    @ColumnInfo(name = "content_hash")
+    val contentHash: String,
+    @ColumnInfo(name = "descriptor_hash")
+    val descriptorHash: String,
+    val dimension: Int,
+    val embedding: ByteArray
 )
