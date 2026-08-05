@@ -3,8 +3,11 @@ package cn.nabr.chatwithchat.data.repository
 import android.content.ContextWrapper
 import android.net.Uri
 import cn.nabr.chatwithchat.data.context.ContextBuilder
+import cn.nabr.chatwithchat.data.database.dao.ChatRoomV2Dao
 import cn.nabr.chatwithchat.data.database.dao.MemoryMaintenanceJobDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryTurnBatchDao
+import cn.nabr.chatwithchat.data.database.dao.MessageV2Dao
+import cn.nabr.chatwithchat.data.database.entity.ChatRoomV2
 import cn.nabr.chatwithchat.data.database.entity.MessageSourceMetadata
 import cn.nabr.chatwithchat.data.database.entity.MessageStickerRef
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
@@ -3311,6 +3314,46 @@ class ChatRepositoryImplTest {
     }
 
     @Test
+    fun `baseline searchChatsV2 fixed fixture preserves title message union and ordering`() = runBlocking {
+        val titleChat = ChatRoomV2(
+            id = 1,
+            title = "Release notes",
+            enabledPlatform = emptyList(),
+            updatedAt = 10
+        )
+        val messageChat = ChatRoomV2(
+            id = 2,
+            title = "Migration work",
+            enabledPlatform = emptyList(),
+            updatedAt = 20
+        )
+        val chatRoomDao = fixedDao<ChatRoomV2Dao> { methodName ->
+            when (methodName) {
+                "searchChatRoomsByTitle" -> listOf(titleChat)
+                "getChatRooms" -> listOf(titleChat, messageChat)
+                else -> null
+            }
+        }
+        val messageDao = fixedDao<MessageV2Dao> { methodName ->
+            when (methodName) {
+                "searchMessagesByContent" -> listOf(messageChat.id)
+                else -> null
+            }
+        }
+
+        val repository = createRepository(
+            chatRoomV2Dao = chatRoomDao,
+            messageV2Dao = messageDao
+        )
+
+        assertEquals(listOf(messageChat.id, titleChat.id), repository.searchChatsV2("release").map { it.id })
+        assertEquals(
+            listOf(titleChat.id, messageChat.id),
+            repository.searchChatsV2("" ).map { it.id }
+        )
+    }
+
+    @Test
     fun `openrouter chat final request merges memory exactly once with all prompt sections`() = runBlocking {
         val harness = providerPromptHarness()
         val platform = openRouterPlatform(systemPrompt = PROVIDER_BASE_SYSTEM_MARKER)
@@ -3748,6 +3791,18 @@ class ChatRepositoryImplTest {
         val toolResultChars: Int
     )
 
+    @Suppress("UNCHECKED_CAST")
+    private inline fun <reified T> fixedDao(crossinline resultFor: (String) -> Any?): T {
+        val handler = InvocationHandler { _, method, _ ->
+            resultFor(method.name) ?: defaultReturnValue(method.returnType)
+        }
+        return Proxy.newProxyInstance(
+            T::class.java.classLoader,
+            arrayOf(T::class.java),
+            handler
+        ) as T
+    }
+
     private fun createRepository(
         groqAPI: GroqAPI = FakeGroqAPI(emptyFlow()),
         openAIAPI: OpenAIAPI = RecordingOpenAIAPI(),
@@ -3758,13 +3813,15 @@ class ChatRepositoryImplTest {
         toolLoopOrchestrator: ToolLoopOrchestrator = toolLoopOrchestrator(webSearchRepository),
         searchDecisionService: SearchDecisionService? = null,
         promptTraceStore: PromptTraceStore = PromptTraceStore(),
-        memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null
+        memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null,
+        chatRoomV2Dao: ChatRoomV2Dao = proxy(),
+        messageV2Dao: MessageV2Dao = proxy()
     ): ChatRepositoryImpl = ChatRepositoryImpl(
         context = ContextWrapper(null),
         chatRoomDao = proxy(),
         messageDao = proxy(),
-        chatRoomV2Dao = proxy(),
-        messageV2Dao = proxy(),
+        chatRoomV2Dao = chatRoomV2Dao,
+        messageV2Dao = messageV2Dao,
         chatPlatformModelV2Dao = proxy(),
         settingRepository = settingRepository,
         openAIAPI = openAIAPI,
