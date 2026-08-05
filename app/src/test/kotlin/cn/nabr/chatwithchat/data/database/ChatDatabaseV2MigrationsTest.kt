@@ -384,6 +384,25 @@ class ChatDatabaseV2MigrationsTest {
         )
     }
 
+    @Test
+    fun `migration 19 to 20 creates final history projection and fts4 lifecycle`() {
+        val executedSql = mutableListOf<String>()
+        val db = recordingDatabase(executedSql)
+
+        ChatDatabaseV2Migrations.MIGRATION_19_20.migrate(db)
+
+        val migrationSql = executedSql.joinToString(separator = "\n")
+        assertTrue(migrationSql.contains("CREATE TABLE IF NOT EXISTS `chat_history_projection`"))
+        assertTrue(migrationSql.contains("`assistant_message_id` INTEGER NOT NULL"))
+        assertTrue(migrationSql.contains("CREATE TABLE IF NOT EXISTS `chat_history_index_queue`"))
+        assertTrue(migrationSql.contains("PRIMARY KEY(`turn_key`)"))
+        assertTrue(migrationSql.contains("CREATE TABLE IF NOT EXISTS `chat_history_embedding_cache`"))
+        assertTrue(migrationSql.contains("`embedding` BLOB NOT NULL"))
+        assertTrue(migrationSql.contains("CREATE VIRTUAL TABLE IF NOT EXISTS `chat_history_projection_fts` USING FTS4"))
+        assertTrue(migrationSql.contains("room_fts_content_sync_chat_history_projection_fts_AFTER_INSERT"))
+        assertTrue(migrationSql.contains("room_fts_content_sync_chat_history_projection_fts_BEFORE_DELETE"))
+    }
+
     private fun recordingDatabase(executedSql: MutableList<String>): SupportSQLiteDatabase = Proxy.newProxyInstance(
         SupportSQLiteDatabase::class.java.classLoader,
         arrayOf(SupportSQLiteDatabase::class.java),

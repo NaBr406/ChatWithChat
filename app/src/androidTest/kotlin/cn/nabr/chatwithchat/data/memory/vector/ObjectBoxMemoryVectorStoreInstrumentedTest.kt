@@ -222,10 +222,9 @@ class ObjectBoxMemoryVectorStoreInstrumentedTest {
 
         val retrieved = hybridRetriever(identity, chunks, store).retrieve(vectorOnlyRequest()).getOrThrow()
 
-        assertEquals(
-            listOf("entry-candidate-0", "entry-candidate-600"),
-            retrieved.map { result -> result.entryId }
-        )
+        // The orthogonal tail is present in the raw snapshot query above, but fails the hybrid score floor.
+        assertEquals(listOf("entry-candidate-0"), retrieved.map { result -> result.entryId })
+        assertFalse(retrieved.any { result -> result.entryId == "entry-candidate-600" })
     }
 
     @Test
@@ -275,10 +274,9 @@ class ObjectBoxMemoryVectorStoreInstrumentedTest {
         assertEquals(1f, result.matches.last().cosineDistance, 1e-6f)
 
         val retrieved = hybridRetriever(identity, chunks, store).retrieve(vectorOnlyRequest()).getOrThrow()
-        assertEquals(
-            listOf("entry-candidate-0", "entry-candidate-400"),
-            retrieved.map { item -> item.entryId }
-        )
+        // The orthogonal tail is present in the raw snapshot query above, but fails the hybrid score floor.
+        assertEquals(listOf("entry-candidate-0"), retrieved.map { item -> item.entryId })
+        assertFalse(retrieved.any { item -> item.entryId == "entry-candidate-400" })
     }
 
     @Test

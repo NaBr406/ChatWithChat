@@ -6,6 +6,7 @@ import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import cn.nabr.chatwithchat.data.database.ChatDatabaseV2
+import cn.nabr.chatwithchat.data.memory.vector.MemoryVectorIndexDefaults
 import java.io.File
 import java.io.FileOutputStream
 import java.time.Clock
@@ -17,10 +18,13 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
+import org.junit.FixMethodOrder
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.junit.runners.MethodSorters
 
 @RunWith(AndroidJUnit4::class)
+@FixMethodOrder(MethodSorters.NAME_ASCENDING)
 class MemoryMutationProcessDeathInstrumentedTest {
     @Test
     fun phase1_prepareBothCrashWindowsAndKillProcess() = runBlocking {
@@ -243,7 +247,7 @@ class MemoryMutationProcessDeathInstrumentedTest {
                 "<!-- memory:id=mem_process_death type=project_context sensitivity=normal " +
                 "source=explicit_user_statement created=1 updated=1 validity=current recall=query -->\n" +
                 "- Long-term target already renamed before recovery."
-        const val TARGET_INDEX_FINGERPRINT = "process-death-harness-fingerprint-v1"
+        val TARGET_INDEX_FINGERPRINT = MemoryVectorIndexDefaults.configuration.fingerprint()
         const val PROCESS_DEATH_TIMEOUT_MILLIS = 30_000L
         val FIXED_DATE: LocalDate = LocalDate.parse("2026-07-12")
         val FIXED_CLOCK: Clock = Clock.fixed(Instant.parse("2026-07-12T12:00:00Z"), ZoneOffset.UTC)

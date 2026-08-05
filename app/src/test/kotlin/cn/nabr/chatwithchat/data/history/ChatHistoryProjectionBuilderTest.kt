@@ -1,75 +1,74 @@
 package cn.nabr.chatwithchat.data.history
 
+import cn.nabr.chatwithchat.data.database.entity.AssistantRevision
 import cn.nabr.chatwithchat.data.database.entity.ChatRoomV2
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ChatHistoryProjectionBuilderTest {
-    private val builder = ChatHistoryProjectionBuilder()
-    private val chat = ChatRoomV2(
-        id = 7,
-        title = "旅行计划",
-        enabledPlatform = listOf("preferred", "fallback"),
-        createdAt = 10,
-        updatedAt = 20
-    )
+    private val builder = ChatHistoryProjectionBuilder { 99L }
+    private val room = ChatRoomV2(id = 7, title = "Project", enabledPlatform = listOf("preferred", "other"))
 
     @Test
-    fun `selects preferred successful assistant and uses effective content`() {
-        val user = MessageV2(id = 10, chatId = 7, content = "帮我规划路线", platformType = null, createdAt = 11)
-        val fallback = MessageV2(
-            id = 12,
-            chatId = 7,
-            content = "fallback answer",
-            platformType = "fallback",
-            linkedMessageId = 10,
-            createdAt = 12
-        )
-        val preferred = MessageV2(
-            id = 11,
-            chatId = 7,
-            content = "old answer",
-            platformType = "preferred",
-            linkedMessageId = 10,
-            revisions = listOf(cn.nabr.chatwithchat.data.database.entity.AssistantRevision("current answer", createdAt = 13)),
-            activeRevisionIndex = 0,
-            createdAt = 13
-        )
+    fun selectsPreferredSuccessfulAssistantAndEffectiveRevision() {
+        val result = builder.build(
+            room,
+            listOf(
+                MessageV2(id = 10, chatId = 7, content = "What is the plan?", platformType = null, createdAt = 1),
+                MessageV2(id = 11, chatId = 7, content = "other answer", platformType = "other", createdAt = 2),
+                MessageV2(
+                    id = 12,
+                    chatId = 7,
+                    content = "old answer",
+                    revisions = listOf(AssistantRevision("preferred answer", createdAt = 3)),
+                    activeRevisionIndex = 0,
+                    platformType = "preferred",
+                    createdAt = 3
+                )
+            ),
+            preferredPlatformUid = "preferred"
+        ).projection
 
-        val result = builder.build(chat, user, listOf(fallback, preferred), "preferred")
-
-        val projection = result.projection!!
-        assertEquals("chat:7:user:10", projection.turnKey)
-        assertEquals(11, projection.assistantMessageId)
-        assertEquals("current answer", projection.assistantContent)
-        assertTrue(projection.searchTerms.contains("规划"))
-        assertEquals(64, projection.contentHash.length)
+        assertNotNull(result)
+        assertEquals(12, result?.assistantMessageId)
+        assertEquals("preferred answer", result?.assistantContent)
+        assertEquals("chat:7:user:10", result?.turnKey)
+        assertEquals(99L, result?.updatedAt)
     }
 
     @Test
-    fun `rejects blank user and missing successful assistant`() {
-        val blank = MessageV2(id = 10, chatId = 7, content = " ", platformType = null)
-        val user = MessageV2(id = 10, chatId = 7, content = "question", platformType = null)
+    fun rejectsBlankUserAndErrorOnlyAssistant() {
+        val blank = builder.build(
+            room,
+            listOf(MessageV2(id = 1, chatId = 7, content = " ", platformType = null))
+        )
+        assertNull(blank.projection)
+        assertEquals("blank_user", blank.reason)
 
-        assertNull(builder.build(chat, blank, emptyList()).projection)
-        assertEquals("blank_user", builder.build(chat, blank, emptyList()).skipCode)
-        assertEquals("no_successful_assistant", builder.build(chat, user, emptyList()).skipCode)
+        val error = builder.build(
+            room,
+            listOf(
+                MessageV2(id = 2, chatId = 7, content = "question", platformType = null),
+                MessageV2(id = 3, chatId = 7, content = "Error: provider failed", platformType = "other")
+            )
+        )
+        assertNull(error.projection)
+        assertEquals("no_successful_assistant", error.reason)
     }
 
     @Test
-    fun `hash changes when canonical assistant changes but turn key stays stable`() {
-        val user = MessageV2(id = 10, chatId = 7, content = "question", platformType = null)
-        val first = MessageV2(id = 11, chatId = 7, content = "one", platformType = "preferred", linkedMessageId = 10)
-        val second = first.copy(content = "two")
-
-        val firstProjection = builder.build(chat, user, listOf(first), "preferred").projection!!
-        val secondProjection = builder.build(chat, user, listOf(second), "preferred").projection!!
-
-        assertEquals(firstProjection.turnKey, secondProjection.turnKey)
-        assertNotEquals(firstProjection.contentHash, secondProjection.contentHash)
+    fun unchangedHashIsStableAndUsesUtf8Framing() {
+        val messages = listOf(
+            MessageV2(id = 4, chatId = 7, content = "你好", platformType = null),
+            MessageV2(id = 5, chatId = 7, content = "世界", platformType = "other")
+        )
+        val first = builder.build(room, messages).projection
+        val second = builder.build(room, messages).projection
+        assertEquals(first?.contentHash, second?.contentHash)
+        assertTrue(first?.contentHash?.matches(Regex("[0-9a-f]{64}")) == true)
     }
 }

@@ -345,7 +345,7 @@ class MemoryProductionHybridShadowInstrumentedTest {
     )
 
     private fun productionEntries(): List<MarkdownMemoryEntry> = listOf(
-        memoryEntry(TARGET_ID, TARGET_TEXT, "communication_style", updatedAt = 100L),
+        memoryEntry(TARGET_ID, TARGET_TEXT, "project_context", updatedAt = 100L),
         memoryEntry(DELETED_ID, DELETED_TEXT, "communication_style", updatedAt = 95L),
         memoryEntry("mem_android_shadow", "用户经常使用 Kotlin 编写 Android 应用。", "project_context", 80L),
         memoryEntry("mem_travel_shadow", "用户正在规划夏季旅行路线和酒店预订。", "project_context", 70L),

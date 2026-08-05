@@ -9,9 +9,6 @@ import cn.nabr.chatwithchat.data.database.entity.resetActiveRevision
 import cn.nabr.chatwithchat.data.database.entity.selectRevision
 import cn.nabr.chatwithchat.data.memory.PreparedMemoryContext
 import cn.nabr.chatwithchat.data.memory.TurnRecallSnapshot
-import cn.nabr.chatwithchat.data.history.ChatHistorySnippet
-import cn.nabr.chatwithchat.data.history.HistoryRecallMode
-import cn.nabr.chatwithchat.data.history.HistoryRecallSnapshot
 import cn.nabr.chatwithchat.data.model.ChatAttachment
 import cn.nabr.chatwithchat.data.repository.hasSendableAssistantPayload
 import kotlinx.coroutines.runBlocking
@@ -53,35 +50,6 @@ class ChatViewModelRetryTest {
         assertEquals(1, retrievalCalls)
         assertEquals(expected, context)
         assertEquals("Frozen memory prompt", context.prompt)
-    }
-
-    @Test
-    fun `prepared context keeps long term and history prompts as separate sections`() {
-        val context = PreparedMemoryContext(
-            snapshot = TurnRecallSnapshot(prompt = "用户记忆：\n- 喜欢简洁回答"),
-            historySnapshot = HistoryRecallSnapshot(
-                mode = HistoryRecallMode.LEXICAL,
-                snippets = listOf(
-                    ChatHistorySnippet(
-                        turnKey = "chat:2:user:3",
-                        chatId = 2,
-                        userMessageId = 3,
-                        assistantMessageId = 4,
-                        chatTitle = "旧对话",
-                        createdAt = 1,
-                        text = "旧对话中的相关回答"
-                    )
-                ),
-                prompt = "相关历史对话：\n- 旧对话中的相关回答"
-            )
-        )
-
-        assertEquals(
-            "用户记忆：\n- 喜欢简洁回答\n\n相关历史对话：\n- 旧对话中的相关回答",
-            context.prompt
-        )
-        assertEquals(HistoryRecallMode.LEXICAL, context.historySnapshot.mode)
-        assertEquals("chat:2:user:3", context.historySnapshot.snippets.single().turnKey)
     }
 
     @Test

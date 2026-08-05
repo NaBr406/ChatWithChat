@@ -95,7 +95,11 @@ class MemoryBackupRestoreSimulationInstrumentedTest {
             val initial = harness.open()
             val sourceJob = initial.enqueueSourceJob("restore-committed-source")
             val canonicalBefore = initial.fileStore.readLongTermMemory().getOrThrow()
-            val target = "# ChatWithChat Memory\n\n- Canonical target survived restore"
+            val target = "# ChatWithChat Memory\n\n" +
+                "<!-- memory:id=mem_restore_committed type=project_context sensitivity=normal " +
+                "source=explicit_user_statement created=1 updated=2 validity=current recall=query " +
+                "canonical_key=project.restore_committed scope=general -->\n" +
+                "- Canonical target survived restore"
             val prepared = initial.coordinator.prepare(
                 semanticJobId = sourceJob.jobId,
                 semanticBatchId = "restore-committed-batch",
