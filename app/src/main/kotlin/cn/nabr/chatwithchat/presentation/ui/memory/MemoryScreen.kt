@@ -89,6 +89,11 @@ import cn.nabr.chatwithchat.data.memory.MemoryActivityPhaseHistory
 import cn.nabr.chatwithchat.data.memory.MemoryActivityPhaseSummary
 import cn.nabr.chatwithchat.data.memory.MemoryActivityStatus
 import cn.nabr.chatwithchat.data.memory.MemoryModelPreference
+import cn.nabr.chatwithchat.data.memory.MemoryRecallState
+import cn.nabr.chatwithchat.data.memory.MemoryScope
+import cn.nabr.chatwithchat.data.memory.MemorySensitivity
+import cn.nabr.chatwithchat.data.memory.MemorySource
+import cn.nabr.chatwithchat.data.memory.MemoryValidity
 import cn.nabr.chatwithchat.presentation.common.SettingsMaterialGroup
 import cn.nabr.chatwithchat.presentation.common.SettingsTopAppBar
 import cn.nabr.chatwithchat.presentation.common.settingsDropdownMenuItemColors
@@ -308,8 +313,11 @@ fun MemoryScreen(
             if (selectedTab == MEMORY_TAB) {
                 MemoryContent(
                     memoryEnabled = uiState.memoryEnabled,
-                    markdown = uiState.displayMarkdown,
-                    emptyMarkdownText = emptyMarkdownText
+                    markdown = uiState.markdown,
+                    sections = uiState.sections,
+                    historyEntries = uiState.historyEntries,
+                    hiddenHistoryCount = uiState.hiddenHistoryCount,
+                    parseStatus = uiState.parseStatus
                 )
             } else {
                 MemoryActivityLogList(uiState.activityLogs)
@@ -384,7 +392,10 @@ private fun ForceLongTermConsolidationConfirmationDialog(
 private fun MemoryContent(
     memoryEnabled: Boolean,
     markdown: String,
-    emptyMarkdownText: String
+    sections: List<MemoryProjectionSection>,
+    historyEntries: List<MemoryProjectionEntry>,
+    hiddenHistoryCount: Int,
+    parseStatus: MemoryProjectionParseStatus
 ) {
     val materialColors = settingsMaterialColors()
     LazyColumn(
@@ -397,21 +408,272 @@ private fun MemoryContent(
                 SettingsMaterialGroup { MemoryDisabledNotice() }
             }
         }
-        item {
-            SettingsMaterialGroup {
-                SelectionContainer {
+        if (parseStatus == MemoryProjectionParseStatus.PARTIAL ||
+            parseStatus == MemoryProjectionParseStatus.FAILED
+        ) {
+            item {
+                MemoryProjectionNotice(parseStatus)
+            }
+        }
+        if (sections.isNotEmpty()) {
+            items(sections, key = { section -> section.type }) { section ->
+                MemoryProjectionSectionGroup(section)
+            }
+        } else if (markdown.isBlank()) {
+            item {
+                SettingsMaterialGroup {
                     Text(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        text = markdown.ifBlank { emptyMarkdownText },
+                        modifier = Modifier.padding(16.dp),
+                        text = stringResource(R.string.memory_empty),
                         style = MaterialTheme.typography.bodyMedium,
-                        color = if (markdown.isBlank()) materialColors.secondaryLabel else materialColors.primaryLabel
+                        color = materialColors.secondaryLabel
                     )
                 }
             }
+        } else {
+            item {
+                MemoryProjectionNoActiveEntriesNotice()
+            }
+        }
+        if (hiddenHistoryCount > 0) {
+            item {
+                MemoryHistoryGroup(historyEntries)
+            }
         }
     }
+}
+
+@Composable
+private fun MemoryProjectionNoActiveEntriesNotice() {
+    val materialColors = settingsMaterialColors()
+    SettingsMaterialGroup {
+        ListItem(
+            colors = ListItemDefaults.colors(
+                containerColor = Color.Transparent,
+                headlineColor = materialColors.primaryLabel,
+                supportingColor = materialColors.secondaryLabel
+            ),
+            headlineContent = {
+                Text(text = stringResource(R.string.memory_projection_no_active_title))
+            },
+            supportingContent = {
+                Text(text = stringResource(R.string.memory_projection_no_active_description))
+            }
+        )
+    }
+}
+
+@Composable
+private fun MemoryProjectionNotice(status: MemoryProjectionParseStatus) {
+    val materialColors = settingsMaterialColors()
+    SettingsMaterialGroup {
+        ListItem(
+            colors = ListItemDefaults.colors(
+                containerColor = Color.Transparent,
+                headlineColor = materialColors.primaryLabel,
+                supportingColor = materialColors.secondaryLabel,
+                leadingIconColor = materialColors.secondaryLabel
+            ),
+            leadingContent = {
+                Icon(
+                    imageVector = Icons.Outlined.Info,
+                    contentDescription = null
+                )
+            },
+            headlineContent = {
+                Text(
+                    text = stringResource(
+                        if (status == MemoryProjectionParseStatus.FAILED) {
+                            R.string.memory_projection_parse_failed_title
+                        } else {
+                            R.string.memory_projection_partial_title
+                        }
+                    )
+                )
+            },
+            supportingContent = {
+                Text(
+                    text = stringResource(
+                        if (status == MemoryProjectionParseStatus.FAILED) {
+                            R.string.memory_projection_parse_failed_description
+                        } else {
+                            R.string.memory_projection_partial_description
+                        }
+                    )
+                )
+            }
+        )
+    }
+}
+
+@Composable
+private fun MemoryProjectionSectionGroup(section: MemoryProjectionSection) {
+    var expanded by rememberSaveable(section.type) { mutableStateOf(true) }
+    val materialColors = settingsMaterialColors()
+    SettingsMaterialGroup {
+        MemoryProjectionGroupHeader(
+            title = memoryTypeTitle(section.type),
+            count = section.entries.size,
+            expanded = expanded,
+            onClick = { expanded = !expanded }
+        )
+        if (expanded) {
+            HorizontalDivider(thickness = 0.5.dp, color = materialColors.separator)
+            section.entries.forEachIndexed { index, entry ->
+                if (index > 0) {
+                    HorizontalDivider(thickness = 0.5.dp, color = materialColors.separator)
+                }
+                MemoryProjectionEntryRow(entry)
+            }
+        }
+    }
+}
+
+@Composable
+private fun MemoryHistoryGroup(historyEntries: List<MemoryProjectionEntry>) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    val materialColors = settingsMaterialColors()
+    SettingsMaterialGroup {
+        MemoryProjectionGroupHeader(
+            title = stringResource(R.string.memory_projection_history_title),
+            count = historyEntries.size,
+            expanded = expanded,
+            onClick = { expanded = !expanded }
+        )
+        if (expanded) {
+            HorizontalDivider(thickness = 0.5.dp, color = materialColors.separator)
+            historyEntries.forEachIndexed { index, entry ->
+                if (index > 0) {
+                    HorizontalDivider(thickness = 0.5.dp, color = materialColors.separator)
+                }
+                MemoryProjectionEntryRow(entry, historyStatus = memoryHistoryStatus(entry))
+            }
+        }
+    }
+}
+
+@Composable
+private fun MemoryProjectionGroupHeader(
+    title: String,
+    count: Int?,
+    expanded: Boolean,
+    onClick: () -> Unit
+) {
+    val materialColors = settingsMaterialColors()
+    ListItem(
+        modifier = Modifier.clickable(onClick = onClick),
+        colors = ListItemDefaults.colors(
+            containerColor = Color.Transparent,
+            headlineColor = materialColors.primaryLabel,
+            supportingColor = materialColors.secondaryLabel,
+            trailingIconColor = materialColors.tertiaryLabel
+        ),
+        headlineContent = {
+            Text(
+                text = title,
+                fontWeight = FontWeight.SemiBold
+            )
+        },
+        supportingContent = {
+            count?.let { value ->
+                Text(stringResource(R.string.memory_projection_count, value))
+            }
+        },
+        trailingContent = {
+            Icon(
+                imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                contentDescription = stringResource(
+                    if (expanded) R.string.memory_projection_collapse else R.string.memory_projection_expand
+                ),
+                modifier = Modifier.rotate(if (expanded) 90f else 0f)
+            )
+        }
+    )
+}
+
+@Composable
+private fun MemoryProjectionEntryRow(
+    entry: MemoryProjectionEntry,
+    historyStatus: String? = null
+) {
+    val materialColors = settingsMaterialColors()
+    val metadata = buildList {
+        historyStatus?.let(::add)
+        add(memorySourceLabel(entry.source))
+        add(memorySensitivityLabel(entry.sensitivity))
+        add(memoryScopeLabel(entry.scope))
+    }.joinToString(" · ")
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+    ) {
+        SelectionContainer {
+            Text(
+                text = entry.text,
+                style = MaterialTheme.typography.bodyMedium,
+                color = materialColors.primaryLabel
+            )
+        }
+        Text(
+            modifier = Modifier.padding(top = 6.dp),
+            text = metadata,
+            style = MaterialTheme.typography.bodySmall,
+            color = materialColors.secondaryLabel
+        )
+    }
+}
+
+@Composable
+private fun memoryTypeTitle(type: String): String = when (type) {
+    "stable_profile" -> stringResource(R.string.memory_type_stable_profile)
+    "communication_style" -> stringResource(R.string.memory_type_communication_style)
+    "boundary" -> stringResource(R.string.memory_type_boundary)
+    "project_context" -> stringResource(R.string.memory_type_project_context)
+    "interest" -> stringResource(R.string.memory_type_interest)
+    "important_event" -> stringResource(R.string.memory_type_important_event)
+    "important_person" -> stringResource(R.string.memory_type_important_person)
+    "emotional_pattern" -> stringResource(R.string.memory_type_emotional_pattern)
+    "life_context" -> stringResource(R.string.memory_type_life_context)
+    "recurring_theme" -> stringResource(R.string.memory_type_recurring_theme)
+    "light_productivity_preference" -> stringResource(R.string.memory_type_light_productivity_preference)
+    else -> stringResource(R.string.memory_type_other)
+}
+
+@Composable
+private fun memorySourceLabel(source: String): String = when (source) {
+    MemorySource.EXPLICIT_USER_STATEMENT -> stringResource(R.string.memory_source_explicit_user_statement)
+    MemorySource.ASSISTANT_INFERRED -> stringResource(R.string.memory_source_assistant_inferred)
+    MemorySource.USER_CONFIRMED -> stringResource(R.string.memory_source_user_confirmed)
+    else -> stringResource(R.string.memory_source_other)
+}
+
+@Composable
+private fun memorySensitivityLabel(sensitivity: String): String = when (sensitivity) {
+    MemorySensitivity.NORMAL -> stringResource(R.string.memory_sensitivity_normal)
+    MemorySensitivity.PRIVATE -> stringResource(R.string.memory_sensitivity_private)
+    MemorySensitivity.SENSITIVE -> stringResource(R.string.memory_sensitivity_sensitive)
+    else -> stringResource(R.string.memory_sensitivity_uncategorized)
+}
+
+@Composable
+private fun memoryScopeLabel(scope: String): String = when (scope) {
+    MemoryScope.GENERAL -> stringResource(R.string.memory_scope_general)
+    MemoryScope.WORK -> stringResource(R.string.memory_scope_work)
+    MemoryScope.PERSONAL -> stringResource(R.string.memory_scope_personal)
+    else -> stringResource(R.string.memory_scope_other)
+}
+
+@Composable
+private fun memoryHistoryStatus(entry: MemoryProjectionEntry): String = when {
+    entry.validity == MemoryValidity.CONTESTED -> stringResource(R.string.memory_status_pending)
+    entry.validity == MemoryValidity.OBSOLETE && entry.supersededBy != null ->
+        stringResource(R.string.memory_status_superseded)
+    entry.validity == MemoryValidity.CURRENT && entry.recallState in setOf(
+        MemoryRecallState.CORE,
+        MemoryRecallState.QUERY
+    ) -> stringResource(R.string.memory_status_active)
+    else -> stringResource(R.string.memory_status_unknown)
 }
 
 @Composable

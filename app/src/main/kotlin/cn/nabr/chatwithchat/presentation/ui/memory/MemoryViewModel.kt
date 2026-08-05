@@ -42,6 +42,12 @@ class MemoryViewModel @Inject constructor(
     data class UiState(
         val markdown: String = "",
         val displayMarkdown: String = "",
+        val sections: List<MemoryProjectionSection> = emptyList(),
+        val entries: List<MemoryProjectionEntry> = emptyList(),
+        val historyEntries: List<MemoryProjectionEntry> = emptyList(),
+        val hiddenHistoryCount: Int = 0,
+        val parseStatus: MemoryProjectionParseStatus = MemoryProjectionParseStatus.NOT_PARSED,
+        val hasUnclassifiedContent: Boolean = false,
         val exportMarkdown: String? = null,
         val memoryEnabled: Boolean = false,
         val memoryModelPreference: MemoryModelPreference = MemoryModelPreference.Auto,
@@ -69,10 +75,17 @@ class MemoryViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             memoryRepository.observeLongTermMarkdown().collect { markdown ->
+                val projected = withContext(Dispatchers.Default) { projectMarkdown(markdown) }
                 _uiState.update {
                     it.copy(
                         markdown = markdown,
-                        displayMarkdown = markdownMemoryCodec.renderLongTermActiveProjection(markdown)
+                        displayMarkdown = projected.displayMarkdown,
+                        sections = projected.projection.sections,
+                        entries = projected.projection.entries,
+                        historyEntries = projected.projection.historyEntries,
+                        hiddenHistoryCount = projected.projection.hiddenHistoryCount,
+                        parseStatus = projected.projection.parseStatus,
+                        hasUnclassifiedContent = projected.projection.hasUnclassifiedContent
                     )
                 }
             }
@@ -89,10 +102,17 @@ class MemoryViewModel @Inject constructor(
     fun exportMarkdown() {
         viewModelScope.launch {
             val markdown = memoryRepository.getLongTermMarkdown()
+            val projected = withContext(Dispatchers.Default) { projectMarkdown(markdown) }
             _uiState.update {
                 it.copy(
                     markdown = markdown,
-                    displayMarkdown = markdownMemoryCodec.renderLongTermActiveProjection(markdown),
+                    displayMarkdown = projected.displayMarkdown,
+                    sections = projected.projection.sections,
+                    entries = projected.projection.entries,
+                    historyEntries = projected.projection.historyEntries,
+                    hiddenHistoryCount = projected.projection.hiddenHistoryCount,
+                    parseStatus = projected.projection.parseStatus,
+                    hasUnclassifiedContent = projected.projection.hasUnclassifiedContent,
                     exportMarkdown = markdown
                 )
             }
@@ -224,7 +244,23 @@ class MemoryViewModel @Inject constructor(
             }
         }
     }
+
+    private fun projectMarkdown(markdown: String): ProjectedMarkdown {
+        val projection = MemoryProjectionMapper.project(markdown, markdownMemoryCodec)
+        val displayMarkdown = runCatching {
+            markdownMemoryCodec.renderLongTermActiveProjection(markdown)
+        }.getOrDefault(markdown)
+        return ProjectedMarkdown(
+            projection = projection,
+            displayMarkdown = displayMarkdown
+        )
+    }
 }
+
+private data class ProjectedMarkdown(
+    val projection: MemoryProjection,
+    val displayMarkdown: String
+)
 
 data class MemoryModelOption(
     val platformUid: String,
