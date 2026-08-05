@@ -31,6 +31,9 @@ ChatWithChat 不提供项目方托管的账号、模型或 API 中转服务。�
 > [!IMPORTANT]
 > 当前稳定版为 `v1.0.0`，可从 [GitHub Release](https://github.com/NaBr406/ChatWithChat/releases/tag/v1.0.0) 下载 `1.0.0.apk`。APK 的 SHA-256 为 `446c645efeed83b9948fce9bc56435e716d44701c647b123fb1cc0adec5f0347`。项目尚未上架 Google Play 或 F-Droid，安装 GitHub APK 时需要允许浏览器或文件管理器安装未知来源应用。
 
+> [!NOTE]
+> 公开的 `v1.0.0` APK 早于当前源码。`main` 已包含 Room schema 20、参考聊天历史和近期长期记忆召回改动；这些改动尚未作为新的 GitHub Release 发布，需要从源码构建才能使用。
+
 ## 核心能力
 
 | 能力 | 当前实现 |
@@ -40,9 +43,10 @@ ChatWithChat 不提供项目方托管的账号、模型或 API 中转服务。�
 | 推理流展示 | 统一接收 Responses reasoning summary、`reasoning_content`、`reasoning`、`<think>` 与 `<thinking>`，流式写入可折叠思考区 |
 | 工具调用 | 统一的工具循环、参数校验、调用额度、权限检查和结果来源展示 |
 | 联网搜索 | 通过用户配置的 SearXNG 搜索公开网页，并按需读取网页正文 |
-| 长期记忆 | schema 17 记忆流水线，以 `MEMORY.md` 为权威事实源，结合端侧 ONNX、ObjectBox HNSW、混合召回和可恢复的原子写入 |
+| 长期记忆 | Room schema 20 记忆流水线，以 `MEMORY.md` 为权威事实源，结合端侧 ONNX、ObjectBox HNSW、混合召回和可恢复的原子写入 |
+| 参考聊天历史 | 在同一“启用记忆”开关下，按需从其他会话召回有界的历史片段；使用独立的 Room 投影、FTS 和本地向量索引，不替代 `MEMORY.md` |
 | 丰富消息 | 流式回复、Markdown、代码块复制、数学公式、思考过程、来源链接和 Token 用量 |
-| 会话操作 | 搜索、复制与批量删除历史会话，编辑消息、重试回答、切换回答版本并导出会话 |
+| 会话操作 | 搜索标题和消息并按最近更新时间排序，复制与批量删除历史会话，编辑消息、重试回答、切换回答版本并导出会话 |
 | 图片附件 | 从相册或相机添加图片；单文件与单次附件总量上限均为 50 MiB，发送前会检查格式并压缩大图 |
 | 表情库 | 管理内置和自定义静态表情；AI 仅接收标题、替代文本和标签，可在回复中按需搜索并发送 |
 
@@ -54,11 +58,12 @@ ChatWithChat 不只是更换了名称和图标。相较于 GPT Mobile 上游基�
 | --- | --- |
 | 独立项目身份 | Android `namespace`、`applicationId`、资源、链接与构建产物迁移到 `cn.nabr.chatwithchat` / `NaBr406/ChatWithChat` |
 | 模型与推理控制 | 统一模型发现和启用流程，按提供商映射自动、关闭、低、中、高、最高思考强度，并记住模型与思考模式选择 |
-| 推理流兼容 | 新增跨 SSE 分片的 `ReasoningStreamParser`，处理结构化推理字段和思考标签，抑制重复来源，并让未闭合标签仍可见 |
+| 推理流兼容 | 新增跨 SSE 分片的 `ReasoningStreamParser`，按完整 UTF-8 行解码，处理结构化推理字段和思考标签，抑制重复来源，并让未闭合标签仍可见 |
 | 聊天交互 | 增加回答轮次导航、回答版本切换、按平台与轮次统计 Token、用户/助手消息编辑、重试、导出，以及新建会话附件接力 |
 | 附件链路 | 支持相册多选、相机拍照、本地缩略图、格式与容量准入、图片压缩，以及兼容端点不支持 Files API 时的内联回退 |
 | 工具平台 | 建立统一工具注册、schema 校验、执行预算、超时、权限与来源展示，内置搜索、网页读取、设备时间和按需定位 |
-| 长期记忆 | 新增完整的本地记忆子系统，包括五轮批处理、日记忆蒸馏、schema 17 恢复状态、原子 Markdown 提交、端侧向量索引与 Hybrid recall |
+| 长期记忆 | 新增完整的本地记忆子系统，包括五轮批处理、日记忆蒸馏、schema 20 恢复状态、默认 `ignore` 的质量门禁、可恢复的 `retire` 整理、原子 Markdown 提交、端侧向量索引与 Top8 Hybrid recall |
+| 参考聊天历史 | 新增可重建的会话轮次投影、异步回填与队列、FTS 检索、独立历史向量快照、混合排序、去重、当前会话排除和进程终止恢复 |
 | 构建与交付 | 增加单 ABI 构建、APK 包名/版本/签名/ABI 校验、固定哈希记忆模型供应，以及 16 KB ZIP/ELF 兼容门禁 |
 
 ## 界面预览
@@ -139,7 +144,7 @@ ChatWithChat 不只是更换了名称和图标。相较于 GPT Mobile 上游基�
 1. 选择提供商类型并填写平台名称、API URL 与凭据。
 2. 等待应用同步模型列表，然后启用至少一个模型。
 3. 回到聊天首页，从顶部模型选择器选择模型与思考强度。
-4. 如有需要，在设置中单独开启长期记忆、联网搜索或其他工具。
+4. 如有需要，在设置中开启“启用记忆”（同时控制长期记忆和参考聊天历史），再按需开启联网搜索或其他工具。
 
 如果 Android 设备需要连接电脑上运行的 Ollama，请填写电脑在局域网中的地址；Android 设备里的 `localhost` 指向设备自身。
 
@@ -162,15 +167,15 @@ ChatWithChat 不只是更换了名称和图标。相较于 GPT Mobile 上游基�
 
 ## 长期记忆
 
-长期记忆默认关闭，并且不是简单地把完整聊天记录拼回提示词。开启后，应用只记录包含成功助手回答的已完成轮次，将其存入 Room 的待处理队列；每个不可变批次最多 5 轮，在达到 5 轮、用户空闲 30 分钟或发生上下文压缩时进入后台维护流程。
+长期记忆默认关闭，并且不是简单地把完整聊天记录拼回提示词。开启“启用记忆”后，应用只记录包含成功助手回答的已完成轮次，将其存入 Room 的待处理队列；每个不可变批次最多 5 轮，在达到 5 轮、用户空闲 30 分钟或发生上下文压缩时进入后台维护流程。这个开关也控制下方独立的参考聊天历史索引与召回。
 
 ### 实现分层
 
 | 层级 | 实现与职责 |
 | --- | --- |
 | 权威内容 | `filesDir/memory_store/MEMORY.md` 是普通聊天召回的唯一事实源；`memory/YYYY-MM-DD.md` 只作为维护输入，蒸馏进入 `MEMORY.md` 前不会参与普通召回 |
-| 调度状态 | Room schema 17 保存待处理轮次、聊天检查点、维护任务、活动日志、变更组、变更回执、语料代次和日蒸馏检查点 |
-| 语义整理 | 使用平台列表中首个已启用且已选择模型的兼容平台，把对话批次转换为受约束的 `create`、`replace`、`remove` 或 `ignore` 操作 |
+| 调度状态 | Room schema 20 保存待处理轮次、聊天检查点、维护任务、活动日志、变更组、变更回执、语料代次和日蒸馏检查点；参考聊天历史的派生表、队列和回填状态也在同一数据库中 |
+| 语义整理 | 使用平台列表中首个已启用且已选择模型的兼容平台，把对话批次转换为受约束的 `create`、`replace`、`remove` 或 `ignore` 操作；全语料整理还支持可恢复的 `retire` |
 | 一致性提交 | `MemoryMutationCoordinator` 通过幂等键、目标哈希、暂存文件、原子替换和 Room compare-and-set 状态推进提交，避免进程终止后重复写入或回滚新内容 |
 | 本地向量化 | 校验固定版本和 SHA-256 的 `bge-small-zh-v1.5` ONNX 资产，在设备上生成 512 维 CLS/L2 向量；该步骤不会调用云端 embedding 服务 |
 | 派生索引 | ObjectBox 5.4.2 HNSW 位于 `noBackupFilesDir/memory_vector_index`，只保存可从当前 Markdown 重建的派生状态，不拥有权威内容 |
@@ -182,7 +187,7 @@ flowchart TD
     TURN["成功完成的对话轮次"] --> PENDING["Room 待处理轮次"]
     PENDING --> BATCH["最多 5 轮的不可变批次"]
     BATCH --> LLM["已配置模型生成受约束操作"]
-    LLM --> RECEIPT["schema 17 变更组与回执"]
+    LLM --> RECEIPT["schema 20 变更组与回执"]
     RECEIPT --> MARKDOWN["原子提交 MEMORY.md / daily Markdown"]
     MARKDOWN --> DISTILL["跨日蒸馏稳定事实"]
     DISTILL --> MARKDOWN
@@ -202,7 +207,21 @@ flowchart TD
 
 ObjectBox 索引可以安全删除并从 Markdown 重建。模型资产缺失、损坏、版本不匹配，或者向量快照不新鲜时，embedding capability 保持 `NOT_PROVISIONED`，普通聊天仍使用当前 Markdown 的关键词结果；不会联网下载模型、调用云端 embedding 或使用伪向量替代。
 
-语义整理和日蒸馏仍会调用已配置的对话模型，因此可能产生额外 API 请求与用量。更完整的 schema 17、进程恢复、备份模拟、生产 Hybrid shadow 与 16 KB 验证证据见 [端侧向量记忆就绪文档](./docs/architecture/on-device-vector-memory-readiness.md)，固定模型来源与哈希见 [端侧记忆模型资产契约](./docs/architecture/on-device-vector-memory-artifact-contract.md)。
+语义整理和日蒸馏仍会调用已配置的对话模型，因此可能产生额外 API 请求与用量。更完整的记忆进程恢复、备份模拟、生产 Hybrid shadow 与 16 KB 验证证据见 [端侧向量记忆就绪文档](./docs/architecture/on-device-vector-memory-readiness.md)，固定模型来源与哈希见 [端侧记忆模型资产契约](./docs/architecture/on-device-vector-memory-artifact-contract.md)。
+
+## 参考聊天历史
+
+参考聊天历史是独立于长期记忆的派生上下文层：它保留可重建的历史投影，用于在新会话中找回相关的过往问答；它不会替换、改写或直接读取 `MEMORY.md` 的权威事实。
+
+| 层级 | 当前实现 |
+| --- | --- |
+| 隐私开关 | 不新增单独的历史开关，复用“启用记忆”。关闭后不向新请求注入历史，也不消费或写入新的历史索引；已有派生数据保留，重新开启时异步校准 |
+| 收录边界 | 只收录有用户消息和成功助手回答的已完成轮次；编辑、删除或不完整的轮次不会进入可用召回，旧投影在重建前会失效，当前会话默认不参与结果 |
+| 索引生命周期 | Room schema 20 保存轮次投影、FTS、异步队列、回填检查点、索引代次、embedding 缓存和独立历史向量快照；WorkManager 负责回填、增量修复和重建 |
+| 召回路径 | 中文感知的词法检索与端侧语义向量检索融合、去重并按会话分散；最多注入 4 个片段、约 400 Token，每个来源会话最多 2 个片段 |
+| 降级与提示 | 向量资产不可用、快照过期或损坏时回退到词法检索；只注入有界的自然语言片段，并标记为不可信历史证据，不包含内部 ID、路径、哈希、诊断字段或附件字节 |
+
+历史召回与长期记忆在同一轮使用冻结的上下文快照，但始终保持独立语料、索引和诊断边界。历史片段只有在相关时才会作为额外上下文发送给所选模型。
 
 ## 数据与隐私边界
 
@@ -217,6 +236,7 @@ ObjectBox 索引可以安全删除并从 Markdown 重建。模型资产缺失、
 | 联网搜索 | 查询发送到用户配置的 SearXNG；网页正文由应用从公开 URL 读取 |
 | 长期记忆语义整理 | 完成轮次、已有记忆和受约束整理提示会发送到已配置的模型服务；模型返回的操作在本地校验后才允许提交 |
 | 长期记忆召回 | Markdown、Room 控制状态、ONNX embedding 和 ObjectBox 检索均在设备端运行；普通召回不会调用云端 embedding |
+| 参考聊天历史 | 轮次投影、FTS、队列和历史向量快照在设备端派生；启用后只有经过相关性筛选的有界片段会进入模型请求，向量失败时回退到本地词法检索 |
 | 表情库 | 图片和元数据保存在应用私有存储；模型仅接收标题、替代文本和标签，不会收到图片字节或本地路径 |
 | 设备位置 | 仅在用户主动启用并授权后读取；调用结果会进入所选模型的对话上下文 |
 | Android 备份 | `MEMORY.md`、日记忆、Room 和 DataStore 当前符合系统备份条件；暂存/回滚目录、ObjectBox 索引和运行时模型副本不进入备份 |
@@ -249,6 +269,9 @@ Set-Location ChatWithChat
 
 # 连接设备后的 instrumented tests
 .\gradlew.bat :app:connectedDebugAndroidTest
+
+# 历史索引进程终止与恢复测试（需要恰好一个已连接设备）
+.\tools\history\run-process-death-harness.ps1
 ```
 
 macOS / Linux 下将 `.\gradlew.bat` 替换为 `./gradlew`。代码格式由 ktlint 1.3.1 按 `.editorconfig` 在 Pull Request 中检查。
@@ -311,7 +334,7 @@ flowchart LR
     subgraph APP["Android 应用"]
         UI["Compose UI"] --> VM["ViewModel / StateFlow"]
         VM --> CHAT["聊天 Repository"]
-        CHAT --> ROOM["Room schema 17<br/>聊天、平台、任务与回执"]
+        CHAT --> ROOM["Room schema 20<br/>聊天、平台、任务、回执与历史投影"]
         CHAT --> DATASTORE["DataStore<br/>应用偏好"]
         CHAT --> TOOLS["统一工具循环"]
         CHAT --> RECORDER["完成轮次记录"]
@@ -324,6 +347,11 @@ flowchart LR
         LEXICAL --> HYBRID["Hybrid recall"]
         VECTOR --> HYBRID
         HYBRID --> CHAT
+        CHAT --> HISTORY["参考聊天历史<br/>Room 投影 + FTS"]
+        HISTORY --> HISTORY_VECTOR["HistoryVectorStore<br/>独立本地向量快照"]
+        HISTORY --> HISTORY_RECALL["历史 lexical / semantic / hybrid"]
+        HISTORY_VECTOR --> HISTORY_RECALL
+        HISTORY_RECALL --> CHAT
         TOOLS --> DEVICE["设备时间 / 位置"]
     end
 
@@ -340,7 +368,8 @@ flowchart LR
 - `app/src/main/kotlin/cn/nabr/chatwithchat/data/tool/`：工具注册、执行、安全策略与 provider adapter。
 - `app/src/main/kotlin/cn/nabr/chatwithchat/data/websearch/`：SearXNG 搜索、网页提取与网络安全策略。
 - `app/src/main/kotlin/cn/nabr/chatwithchat/data/memory/`：批次整理、日蒸馏、原子变更、恢复、Markdown、端侧 embedding、ObjectBox 与 Hybrid recall。
-- `app/src/main/kotlin/cn/nabr/chatwithchat/data/database/`：Room entity、DAO、schema migration，以及记忆任务、回执和语料代次状态。
+- `app/src/main/kotlin/cn/nabr/chatwithchat/data/history/`：历史轮次投影、FTS/向量召回、索引队列、回填与 WorkManager 调度。
+- `app/src/main/kotlin/cn/nabr/chatwithchat/data/database/`：Room entity、DAO、schema migration，以及记忆任务、历史索引、回执和语料代次状态。
 - `app/src/test/kotlin/`、`app/src/androidTest/kotlin/`：JVM 与设备测试。
 
 技术栈包括 Kotlin、Jetpack Compose、Material 3、Hilt、Room、DataStore、WorkManager、Ktor CIO、kotlinx.serialization、ObjectBox 与 ONNX Runtime。

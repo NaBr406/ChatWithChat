@@ -101,7 +101,7 @@ extensions.configure<ApplicationExtension> {
         minSdk = 31
         targetSdk = 36
         versionCode = 23
-        versionName = "1.0.0"
+        versionName = "1.1.0"
 
         testInstrumentationRunner = memoryTestInstrumentationRunner
         vectorDrawables {
