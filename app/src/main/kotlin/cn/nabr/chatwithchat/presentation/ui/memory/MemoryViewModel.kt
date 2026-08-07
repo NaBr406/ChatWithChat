@@ -5,6 +5,9 @@ import androidx.lifecycle.viewModelScope
 import cn.nabr.chatwithchat.data.database.dao.MemoryActivityLogDao
 import cn.nabr.chatwithchat.data.database.entity.MemoryActivityLog
 import cn.nabr.chatwithchat.data.memory.MarkdownMemoryCodec
+import cn.nabr.chatwithchat.data.memory.MemoryImportException
+import cn.nabr.chatwithchat.data.memory.MemoryImportOutcome
+import cn.nabr.chatwithchat.data.memory.MemoryImportService
 import cn.nabr.chatwithchat.data.memory.MemoryLongTermConsolidationRunResult
 import cn.nabr.chatwithchat.data.memory.MemoryLongTermConsolidationRunner
 import cn.nabr.chatwithchat.data.memory.MemoryLongTermConsolidationScheduler
@@ -34,7 +37,8 @@ class MemoryViewModel @Inject constructor(
     private val memoryModelResolver: MemoryModelResolver,
     private val memoryLongTermConsolidationScheduler: MemoryLongTermConsolidationScheduler? = null,
     memoryActivityLogDao: MemoryActivityLogDao,
-    private val memoryLongTermConsolidationRunner: MemoryLongTermConsolidationRunner? = null
+    private val memoryLongTermConsolidationRunner: MemoryLongTermConsolidationRunner? = null,
+    private val memoryImportService: MemoryImportService? = null
 ) : ViewModel() {
 
     private val markdownMemoryCodec = MarkdownMemoryCodec()
@@ -58,12 +62,22 @@ class MemoryViewModel @Inject constructor(
         val memoryModelError: MemoryModelUiError? = null,
         val isLongTermConsolidationScheduling: Boolean = false,
         val isForceLongTermConsolidationConfirmationOpen: Boolean = false,
+        val isMemoryImportSourcePickerOpen: Boolean = false,
+        val isMemoryImporting: Boolean = false,
         val activityLogs: List<MemoryActivityLog> = emptyList()
     )
 
     sealed interface Event {
         data class LongTermConsolidationFeedback(
             val result: LongTermConsolidationUiResult
+        ) : Event
+
+        data class MemoryImportCompleted(
+            val outcome: MemoryImportOutcome.Imported
+        ) : Event
+
+        data class MemoryImportFailed(
+            val error: MemoryImportUiError
         ) : Event
     }
 
@@ -121,6 +135,50 @@ class MemoryViewModel @Inject constructor(
 
     fun closeExport() {
         _uiState.update { it.copy(exportMarkdown = null) }
+    }
+
+    fun openMemoryImportSourcePicker() {
+        if (_uiState.value.isMemoryImporting) return
+        _uiState.update { it.copy(isMemoryImportSourcePickerOpen = true) }
+    }
+
+    fun closeMemoryImportSourcePicker() {
+        if (_uiState.value.isMemoryImporting) return
+        _uiState.update { it.copy(isMemoryImportSourcePickerOpen = false) }
+    }
+
+    fun importMemory(source: MemoryImportSource, content: String) {
+        if (_uiState.value.isMemoryImporting) return
+        _uiState.update { it.copy(isMemoryImportSourcePickerOpen = false, isMemoryImporting = true) }
+        viewModelScope.launch {
+            try {
+                val outcome = withContext(Dispatchers.IO) {
+                    val importService = memoryImportService
+                        ?: throw MemoryImportException(MemoryImportException.Reason.WRITE_FAILED)
+                    when (source) {
+                        MemoryImportSource.APP -> importService.importAppMemory(content)
+                        MemoryImportSource.EXTERNAL -> importService.importExternalMemory(content)
+                    }
+                }
+                val imported = outcome as? MemoryImportOutcome.Imported
+                    ?: throw MemoryImportException(MemoryImportException.Reason.WRITE_FAILED)
+                _events.emit(Event.MemoryImportCompleted(imported))
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (exception: MemoryImportException) {
+                _events.emit(Event.MemoryImportFailed(exception.reason.toUiError()))
+            } catch (_: Throwable) {
+                _events.emit(Event.MemoryImportFailed(MemoryImportUiError.WRITE_FAILED))
+            } finally {
+                _uiState.update { it.copy(isMemoryImporting = false) }
+            }
+        }
+    }
+
+    fun reportMemoryImportFileReadFailed() {
+        viewModelScope.launch {
+            _events.emit(Event.MemoryImportFailed(MemoryImportUiError.FILE_READ_FAILED))
+        }
     }
 
     fun refreshMemoryEnabled() {
@@ -275,6 +333,33 @@ data class MemoryModelOption(
 enum class MemoryModelUiError {
     LOAD_FAILED,
     SAVE_FAILED
+}
+
+enum class MemoryImportSource {
+    APP,
+    EXTERNAL
+}
+
+enum class MemoryImportUiError {
+    FILE_READ_FAILED,
+    INPUT_TOO_LARGE,
+    INVALID_APP_FORMAT,
+    CURRENT_MEMORY_INVALID,
+    MODEL_UNAVAILABLE,
+    MODEL_REWRITE_FAILED,
+    CONFLICT,
+    WRITE_FAILED
+}
+
+private fun MemoryImportException.Reason.toUiError(): MemoryImportUiError = when (this) {
+    MemoryImportException.Reason.EMPTY_INPUT,
+    MemoryImportException.Reason.INPUT_TOO_LARGE -> MemoryImportUiError.INPUT_TOO_LARGE
+    MemoryImportException.Reason.INVALID_APP_FORMAT -> MemoryImportUiError.INVALID_APP_FORMAT
+    MemoryImportException.Reason.CURRENT_MEMORY_INVALID -> MemoryImportUiError.CURRENT_MEMORY_INVALID
+    MemoryImportException.Reason.MODEL_UNAVAILABLE -> MemoryImportUiError.MODEL_UNAVAILABLE
+    MemoryImportException.Reason.MODEL_REWRITE_FAILED -> MemoryImportUiError.MODEL_REWRITE_FAILED
+    MemoryImportException.Reason.CONFLICT -> MemoryImportUiError.CONFLICT
+    MemoryImportException.Reason.WRITE_FAILED -> MemoryImportUiError.WRITE_FAILED
 }
 
 enum class LongTermConsolidationUiResult {

@@ -751,22 +751,35 @@ class MemoryBatchConsolidationService(
     ): MemoryBatchOperation {
         val canonicalKey = checkNotNull(operation.canonicalKey)
         val scope = checkNotNull(operation.scope)
+        val normalizedCanonicalKey = MemoryCanonicalIdentityPolicy.normalizeCanonicalKey(canonicalKey, scope)
         val recallState = checkNotNull(operation.recallState)
         val evidenceAt = operation.evidenceTurnKeys.maxOf { key -> turnsByKey.getValue(key).completedAt }
-        check(MarkdownMemoryMetadataPolicy.isCanonicalKey(canonicalKey))
+        check(MarkdownMemoryMetadataPolicy.isCanonicalKey(normalizedCanonicalKey))
         check(MarkdownMemoryMetadataPolicy.isScope(scope))
         check(operation.evidenceAt == evidenceAt)
         check(evidenceAt >= 0L)
         check(recallState in ACTIVE_RECALL_STATES)
-        target?.let { existing ->
-            check(existing.type == operation.type)
-            check(existing.canonicalKey == null || existing.canonicalKey == canonicalKey)
-            check(existing.canonicalKey == null || existing.scope == scope)
-        }
+        // Obsolete ids are recoverable history. Their own metadata may describe an old merge;
+        // the full canonical document contains the successor and performs final validation.
+        target
+            ?.takeIf { existing -> existing.validity != MemoryValidity.OBSOLETE }
+            ?.let { existing ->
+                check(existing.type == operation.type)
+                check(
+                    existing.canonicalKey == null ||
+                        MemoryCanonicalIdentityPolicy.allowsRebinding(
+                            fromKey = existing.canonicalKey,
+                            fromScope = existing.scope,
+                            toKey = normalizedCanonicalKey,
+                            toScope = scope
+                        )
+                )
+                check(existing.canonicalKey == null || existing.scope == scope)
+            }
         return operation.copy(
             text = operation.text.trim(),
             evidenceTurnKeys = operation.evidenceTurnKeys.sorted(),
-            canonicalKey = canonicalKey,
+            canonicalKey = normalizedCanonicalKey,
             scope = scope,
             evidenceAt = evidenceAt,
             recallState = recallState,

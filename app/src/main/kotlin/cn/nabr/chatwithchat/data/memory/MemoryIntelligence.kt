@@ -5,6 +5,11 @@ import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.repository.SettingRepository
 
 interface MemoryIntelligence {
+    suspend fun rewriteImportedMemory(
+        request: MemoryImportRequest,
+        resolvedPlatform: PlatformV2
+    ): MemoryImportProposal? = null
+
     suspend fun consolidateMemoryBatch(
         request: MemoryBatchConsolidationRequest,
         resolvedPlatform: PlatformV2

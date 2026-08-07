@@ -236,6 +236,73 @@ class MemoryLongTermConsolidationPolicyTest {
     }
 
     @Test
+    fun `preferred address and assistant name share one addressing bucket`() {
+        val entries = listOf(
+            entry(
+                id = "preferred_address",
+                text = "Address the user as Captain",
+                canonicalKey = MemoryCanonicalIdentityPolicy.PREFERRED_ADDRESS_KEY
+            ),
+            entry(
+                id = "assistant_name",
+                text = "The assistant name is Small C",
+                canonicalKey = MemoryCanonicalIdentityPolicy.ASSISTANT_NAME_KEY
+            ),
+            entry(
+                id = "response_style",
+                text = "Keep responses concise",
+                canonicalKey = "communication.response_style"
+            )
+        )
+        val partition = policy.nextPartition(entries, cursor = 0)
+
+        val groups = policy.candidateGroups(entries, partition, emptySet())
+
+        assertEquals(1, groups.size)
+        assertEquals(
+            setOf("preferred_address", "assistant_name"),
+            groups.single().entries.map(MemoryLongTermCandidateEntry::memoryId).toSet()
+        )
+    }
+
+    @Test
+    fun `two obsolete addressing histories pointing to one survivor are recoverable`() {
+        val survivor = entry(
+            id = "addressing_survivor",
+            text = "Address the user as Captain",
+            type = "communication_style",
+            canonicalKey = MemoryCanonicalIdentityPolicy.PREFERRED_ADDRESS_KEY,
+            recallState = MemoryRecallState.CORE
+        )
+        val preferredHistory = entry(
+            id = "preferred_history",
+            text = "Address the user as Captain",
+            type = "communication_style",
+            validity = MemoryValidity.OBSOLETE,
+            recallState = MemoryRecallState.MAINTENANCE_ONLY,
+            canonicalKey = MemoryCanonicalIdentityPolicy.PREFERRED_ADDRESS_KEY
+        ).copy(supersededBy = survivor.id)
+        val assistantHistory = entry(
+            id = "assistant_history",
+            text = "The assistant name is Small C",
+            type = "communication_style",
+            validity = MemoryValidity.OBSOLETE,
+            recallState = MemoryRecallState.MAINTENANCE_ONLY,
+            canonicalKey = MemoryCanonicalIdentityPolicy.PREFERRED_ADDRESS_KEY
+        ).copy(supersededBy = survivor.id)
+
+        val candidates = policy.locallyDeterministicCandidates(
+            listOf(survivor, preferredHistory, assistantHistory)
+        )
+
+        assertEquals(
+            setOf(preferredHistory.id, assistantHistory.id),
+            candidates.mapNotNull(CanonicalMemoryCandidate::targetMemoryId).toSet()
+        )
+        assertTrue(candidates.all { candidate -> candidate.canonicalKey == MemoryCanonicalIdentityPolicy.PREFERRED_ADDRESS_KEY })
+    }
+
+    @Test
     fun `low overlap sample memories share one review bucket without crossing scope`() {
         val entries = listOf(
             entry(

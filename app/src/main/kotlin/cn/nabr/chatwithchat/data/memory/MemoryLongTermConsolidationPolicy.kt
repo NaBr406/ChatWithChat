@@ -237,16 +237,27 @@ internal class MemoryLongTermConsolidationPolicy {
                 "decision mixed incompatible memory types"
             }
             if (decision.action == MemoryLongTermDecisionAction.RETIRE) {
-                val canonicalKey = decision.canonicalKey ?: entries.mapNotNull(MemoryLongTermCandidateEntry::canonicalKey)
+                val requestedCanonicalKey = decision.canonicalKey ?: entries.mapNotNull(MemoryLongTermCandidateEntry::canonicalKey)
                     .distinct()
                     .singleOrNull()
                     ?: "maintenance.retired.${memoryIds.joinToString("_").sha256Utf8().take(16)}"
                 val scope = decision.scope ?: entries.map(MemoryLongTermCandidateEntry::scope).distinct().single()
+                val canonicalKey = MemoryCanonicalIdentityPolicy.normalizeCanonicalKey(requestedCanonicalKey, scope)
                 require(MarkdownMemoryMetadataPolicy.isCanonicalKey(canonicalKey)) {
                     "invalid retired memory canonical key"
                 }
                 require(MarkdownMemoryMetadataPolicy.isScope(scope)) { "invalid retired memory scope" }
-                require(entries.all { entry -> entry.canonicalKey == null || entry.canonicalKey == canonicalKey }) {
+                require(
+                    entries.all { entry ->
+                        entry.canonicalKey == null ||
+                            MemoryCanonicalIdentityPolicy.allowsRebinding(
+                                fromKey = entry.canonicalKey,
+                                fromScope = entry.scope,
+                                toKey = canonicalKey,
+                                toScope = scope
+                            )
+                    }
+                ) {
                     "retirement changed canonical identity"
                 }
                 require(entries.all { entry -> entry.scope == scope }) {
@@ -262,15 +273,30 @@ internal class MemoryLongTermConsolidationPolicy {
                     reason = decision.reason.trim().take(MAX_REASON_CHARS)
                 )
             }
-            val canonicalKey = requireNotNull(decision.canonicalKey)
+            val requestedCanonicalKey = requireNotNull(decision.canonicalKey)
             val scope = requireNotNull(decision.scope)
+            val canonicalKey = MemoryCanonicalIdentityPolicy.normalizeCanonicalKey(requestedCanonicalKey, scope)
             val recallState = requireNotNull(decision.recallState)
             require(MarkdownMemoryMetadataPolicy.isCanonicalKey(canonicalKey)) { "invalid canonical memory key" }
             require(MarkdownMemoryMetadataPolicy.isScope(scope)) { "invalid canonical memory scope" }
             require(recallState in ACTIVE_RECALL_STATES) { "invalid canonical recall state" }
             val reboundEntries = entries.filter { entry ->
-                entry.canonicalKey != null && (entry.canonicalKey != canonicalKey || entry.scope != scope)
+                entry.canonicalKey != null &&
+                    (
+                        entry.scope != scope ||
+                            MemoryCanonicalIdentityPolicy.normalizeCanonicalKey(entry.canonicalKey, entry.scope) != canonicalKey
+                        )
             }
+            require(
+                reboundEntries.all { entry ->
+                    MemoryCanonicalIdentityPolicy.allowsRebinding(
+                        fromKey = entry.canonicalKey,
+                        fromScope = entry.scope,
+                        toKey = canonicalKey,
+                        toScope = scope
+                    )
+                }
+            ) { "decision changed unrelated canonical identity" }
             if (reboundEntries.isNotEmpty()) {
                 require(memoryIds.size >= 2) { "single canonical memory cannot be rebound" }
                 require(entries.map(MemoryLongTermCandidateEntry::scope).distinct() == listOf(scope)) {
@@ -298,25 +324,66 @@ internal class MemoryLongTermConsolidationPolicy {
         return MemoryLongTermPersistedProposal(decisions)
     }
 
-    fun locallyDeterministicCandidates(entries: List<MarkdownMemoryEntry>): List<CanonicalMemoryCandidate> = entries
-        .filter { entry -> entry.isEligibleForCanonicalConsolidation() }
-        .filter { entry -> entry.canonicalKey != null }
-        .groupBy { entry -> checkNotNull(entry.canonicalKey) to entry.scope }
-        .toSortedMap(compareBy<Pair<String, String>> { pair -> pair.first }.thenBy { pair -> pair.second })
-        .filterValues { identityEntries ->
-            identityEntries.size > 1 || identityEntries.any { entry -> entry.requiresCoreRecallRepair() }
-        }
-        .values
-        .flatten()
-        .map { entry ->
-            entry.toCanonicalCandidate(
-                recallState = consolidationRecallState(
-                    canonicalKey = checkNotNull(entry.canonicalKey),
-                    scope = entry.scope,
-                    recallState = entry.recallState
+    fun locallyDeterministicCandidates(entries: List<MarkdownMemoryEntry>): List<CanonicalMemoryCandidate> {
+        val currentCandidates = entries
+            .filter { entry -> entry.isEligibleForCanonicalConsolidation() }
+            .filter { entry -> entry.canonicalKey != null }
+            .groupBy { entry -> checkNotNull(entry.canonicalKey) to entry.scope }
+            .toSortedMap(compareBy<Pair<String, String>> { pair -> pair.first }.thenBy { pair -> pair.second })
+            .filterValues { identityEntries ->
+                identityEntries.size > 1 || identityEntries.any { entry -> entry.requiresCoreRecallRepair() }
+            }
+            .values
+            .flatten()
+            .map { entry ->
+                entry.toCanonicalCandidate(
+                    recallState = consolidationRecallState(
+                        canonicalKey = checkNotNull(entry.canonicalKey),
+                        scope = entry.scope,
+                        recallState = entry.recallState
+                    )
                 )
-            )
-        }
+            }
+        val recoveredAddressCandidates = recoverableAddressHistoryCandidates(entries)
+        return (currentCandidates + recoveredAddressCandidates)
+            .distinctBy { candidate ->
+                candidate.targetMemoryId to candidate.canonicalKey to candidate.scope
+            }
+    }
+
+    private fun recoverableAddressHistoryCandidates(
+        entries: List<MarkdownMemoryEntry>
+    ): List<CanonicalMemoryCandidate> {
+        val entriesById = entries.associateBy(MarkdownMemoryEntry::id)
+        return entries
+            .filter { entry ->
+                entry.validity == MemoryValidity.OBSOLETE &&
+                    entry.recallState == MemoryRecallState.MAINTENANCE_ONLY &&
+                    entry.supersededBy != null &&
+                    MemoryCanonicalIdentityPolicy.isAddressingIdentity(entry.canonicalKey, entry.scope)
+            }
+            .groupBy { entry -> entry.supersededBy!! }
+            .filter { (successorId, histories) ->
+                histories.size >= MIN_ADDRESS_HISTORY_COMPONENTS &&
+                    entriesById[successorId]?.let { successor ->
+                        successor.validity == MemoryValidity.CURRENT &&
+                            MemoryCanonicalIdentityPolicy.isAddressingIdentity(
+                                successor.canonicalKey,
+                                successor.scope
+                            )
+                    } == true
+            }
+            .values
+            .flatten()
+            .sortedBy(MarkdownMemoryEntry::id)
+            .map { entry ->
+                entry.toCanonicalCandidate(
+                    canonicalKey = MemoryCanonicalIdentityPolicy.PREFERRED_ADDRESS_KEY,
+                    scope = MemoryScope.GENERAL,
+                    recallState = MemoryRecallState.CORE
+                )
+            }
+    }
 
     fun proposalCandidates(
         entries: List<MarkdownMemoryEntry>,
@@ -441,7 +508,26 @@ internal class MemoryLongTermConsolidationPolicy {
     }
 
     private fun MarkdownMemoryEntry.canShareSemanticGroupWith(other: MarkdownMemoryEntry): Boolean =
-        canonicalKey == null || other.canonicalKey == null || canonicalKey != other.canonicalKey
+        when {
+            canonicalKey == null || other.canonicalKey == null -> true
+            canonicalKey == other.canonicalKey -> false
+            MemoryCanonicalIdentityPolicy.allowsRebinding(
+                fromKey = canonicalKey,
+                fromScope = scope,
+                toKey = other.canonicalKey,
+                toScope = other.scope
+            ) -> true
+            MemoryCanonicalIdentityPolicy.allowsRebinding(
+                fromKey = other.canonicalKey,
+                fromScope = other.scope,
+                toKey = canonicalKey,
+                toScope = scope
+            ) -> true
+            MemoryCanonicalIdentityPolicy.isIdentityKey(canonicalKey) ||
+                MemoryCanonicalIdentityPolicy.isIdentityKey(other.canonicalKey) -> false
+            else -> MemoryCanonicalIdentityPolicy.canonicalNamespace(canonicalKey) ==
+                MemoryCanonicalIdentityPolicy.canonicalNamespace(other.canonicalKey)
+        }
 
     private fun groupingAffinity(
         anchor: MarkdownMemoryEntry,
@@ -563,12 +649,11 @@ internal class MemoryLongTermConsolidationPolicy {
         "lt_group_${ids.joinToString("|").sha256Utf8().take(ID_HASH_LENGTH)}"
 
     companion object {
-        private const val PREFERRED_ADDRESS_CANONICAL_KEY = "identity.preferred_address"
-        private const val ASSISTANT_NAME_CANONICAL_KEY = "identity.assistant_name"
         private val CORE_IDENTITY_CANONICAL_KEYS = setOf(
-            PREFERRED_ADDRESS_CANONICAL_KEY,
-            ASSISTANT_NAME_CANONICAL_KEY
+            MemoryCanonicalIdentityPolicy.PREFERRED_ADDRESS_KEY,
+            MemoryCanonicalIdentityPolicy.ASSISTANT_NAME_KEY
         )
+        private const val MIN_ADDRESS_HISTORY_COMPONENTS = 2
         const val MAX_PARTITION_ENTRIES = 24
         const val MAX_PARTITION_CHARS = 12_000
         const val MAX_SERIALIZED_REQUEST_CHARS = 12_000

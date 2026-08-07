@@ -1,5 +1,9 @@
 package cn.nabr.chatwithchat.presentation.ui.memory
 
+import android.content.Context
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -28,6 +32,7 @@ import androidx.compose.material.icons.outlined.AutoFixHigh
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.FileDownload
+import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Tune
@@ -57,6 +62,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -98,10 +104,15 @@ import cn.nabr.chatwithchat.presentation.common.SettingsMaterialGroup
 import cn.nabr.chatwithchat.presentation.common.SettingsTopAppBar
 import cn.nabr.chatwithchat.presentation.common.settingsDropdownMenuItemColors
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
+import java.io.ByteArrayOutputStream
+import java.nio.charset.StandardCharsets
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -113,10 +124,27 @@ fun MemoryScreen(
     val emptyMarkdownText = stringResource(R.string.memory_export_empty_markdown)
     var selectedTab by rememberSaveable { mutableIntStateOf(MEMORY_TAB) }
     var isActionsMenuOpen by remember { mutableStateOf(false) }
+    var pendingImportSource by rememberSaveable { mutableStateOf<MemoryImportSource?>(null) }
     val lifecycleOwner = LocalLifecycleOwner.current
     val context = LocalContext.current
     val materialColors = settingsMaterialColors()
     val snackbarHostState = remember { SnackbarHostState() }
+    val importScope = rememberCoroutineScope()
+    val importFileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        val source = pendingImportSource
+        pendingImportSource = null
+        if (uri == null || source == null) return@rememberLauncherForActivityResult
+        importScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                readMemoryImportText(context, uri)
+            }
+            result
+                .onSuccess { text -> memoryViewModel.importMemory(source, text) }
+                .onFailure { memoryViewModel.reportMemoryImportFileReadFailed() }
+        }
+    }
 
     LaunchedEffect(memoryViewModel, context) {
         memoryViewModel.events.collect { event ->
@@ -129,6 +157,14 @@ fun MemoryScreen(
                         LongTermConsolidationUiResult.MEMORY_DISABLED -> R.string.memory_consolidation_memory_disabled
                         LongTermConsolidationUiResult.FAILED -> R.string.memory_consolidation_failed
                     }
+                )
+                is MemoryViewModel.Event.MemoryImportCompleted -> if (event.outcome.importedCount > 0) {
+                    context.getString(R.string.memory_import_completed, event.outcome.importedCount)
+                } else {
+                    context.getString(R.string.memory_import_no_changes)
+                }
+                is MemoryViewModel.Event.MemoryImportFailed -> context.getString(
+                    memoryImportErrorString(event.error)
                 )
             }
             snackbarHostState.showSnackbar(message)
@@ -154,10 +190,10 @@ fun MemoryScreen(
                 actions = {
                     Box {
                         IconButton(
-                            enabled = !uiState.isLongTermConsolidationScheduling,
+                            enabled = !uiState.isLongTermConsolidationScheduling && !uiState.isMemoryImporting,
                             onClick = { isActionsMenuOpen = true }
                         ) {
-                            if (uiState.isLongTermConsolidationScheduling) {
+                            if (uiState.isLongTermConsolidationScheduling || uiState.isMemoryImporting) {
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(22.dp),
                                     strokeWidth = 2.dp,
@@ -178,6 +214,27 @@ fun MemoryScreen(
                             containerColor = materialColors.grouped,
                             tonalElevation = 0.dp
                         ) {
+                            DropdownMenuItem(
+                                colors = settingsDropdownMenuItemColors(),
+                                text = {
+                                    Text(
+                                        text = stringResource(R.string.memory_import),
+                                        color = materialColors.primaryLabel
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Outlined.FileUpload,
+                                        contentDescription = null,
+                                        tint = materialColors.primaryLabel
+                                    )
+                                },
+                                enabled = !uiState.isMemoryImporting,
+                                onClick = {
+                                    isActionsMenuOpen = false
+                                    memoryViewModel.openMemoryImportSourcePicker()
+                                }
+                            )
                             DropdownMenuItem(
                                 colors = settingsDropdownMenuItemColors(),
                                 text = {
@@ -344,10 +401,75 @@ fun MemoryScreen(
         )
     }
 
+    if (uiState.isMemoryImportSourcePickerOpen) {
+        MemoryImportSourceDialog(
+            onSelect = { source ->
+                memoryViewModel.closeMemoryImportSourcePicker()
+                pendingImportSource = source
+                importFileLauncher.launch(arrayOf("text/*", "application/octet-stream", "*/*"))
+            },
+            onDismiss = memoryViewModel::closeMemoryImportSourcePicker
+        )
+    }
+
     if (uiState.isForceLongTermConsolidationConfirmationOpen) {
         ForceLongTermConsolidationConfirmationDialog(
             onConfirm = memoryViewModel::forceLongTermConsolidationNow,
             onDismiss = memoryViewModel::dismissForceLongTermConsolidationConfirmation
+        )
+    }
+}
+
+@Composable
+private fun MemoryImportSourceDialog(
+    onSelect: (MemoryImportSource) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val materialColors = settingsMaterialColors()
+    MemoryDialogFrame(onDismissRequest = onDismiss) {
+        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 18.dp)) {
+            Text(
+                text = stringResource(R.string.memory_import_title),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = materialColors.primaryLabel
+            )
+            Text(
+                modifier = Modifier.padding(top = 10.dp),
+                text = stringResource(R.string.memory_import_description),
+                style = MaterialTheme.typography.bodyMedium,
+                color = materialColors.secondaryLabel
+            )
+        }
+        HorizontalDivider(thickness = 0.5.dp, color = materialColors.separatorStrong)
+        MemoryDialogAction(
+            label = stringResource(R.string.memory_import_app),
+            enabled = true,
+            onClick = { onSelect(MemoryImportSource.APP) }
+        )
+        Text(
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp),
+            text = stringResource(R.string.memory_import_app_description),
+            style = MaterialTheme.typography.bodySmall,
+            color = materialColors.secondaryLabel
+        )
+        HorizontalDivider(thickness = 0.5.dp, color = materialColors.separatorStrong)
+        MemoryDialogAction(
+            label = stringResource(R.string.memory_import_external),
+            enabled = true,
+            onClick = { onSelect(MemoryImportSource.EXTERNAL) }
+        )
+        Text(
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp),
+            text = stringResource(R.string.memory_import_external_description),
+            style = MaterialTheme.typography.bodySmall,
+            color = materialColors.secondaryLabel
+        )
+        HorizontalDivider(thickness = 0.5.dp, color = materialColors.separatorStrong)
+        MemoryDialogAction(
+            label = stringResource(R.string.cancel),
+            enabled = true,
+            onClick = onDismiss
         )
     }
 }
@@ -1206,6 +1328,35 @@ private fun memoryActivityDurationLabel(startedAt: Long, completedAt: Long): Str
 
 private fun formatLogTime(epochSeconds: Long): String = LOG_TIME_FORMATTER.format(Instant.ofEpochSecond(epochSeconds))
 
+private fun readMemoryImportText(context: Context, uri: Uri): Result<String> = runCatching {
+    val bytes = context.contentResolver.openInputStream(uri)?.use { input ->
+        val output = ByteArrayOutputStream(MAX_IMPORT_FILE_BYTES)
+        val buffer = ByteArray(8 * 1024)
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) break
+            if (read == 0) continue
+            require(output.size() + read <= MAX_IMPORT_FILE_BYTES) {
+                "Selected memory file is too large"
+            }
+            output.write(buffer, 0, read)
+        }
+        output.toByteArray()
+    } ?: error("Unable to open selected memory file")
+    String(bytes, StandardCharsets.UTF_8)
+}
+
+private fun memoryImportErrorString(error: MemoryImportUiError): Int = when (error) {
+    MemoryImportUiError.FILE_READ_FAILED -> R.string.memory_import_file_failed
+    MemoryImportUiError.INPUT_TOO_LARGE -> R.string.memory_import_input_too_large
+    MemoryImportUiError.INVALID_APP_FORMAT -> R.string.memory_import_invalid_app_format
+    MemoryImportUiError.CURRENT_MEMORY_INVALID -> R.string.memory_import_current_memory_invalid
+    MemoryImportUiError.MODEL_UNAVAILABLE -> R.string.memory_import_model_unavailable
+    MemoryImportUiError.MODEL_REWRITE_FAILED -> R.string.memory_import_model_failed
+    MemoryImportUiError.CONFLICT -> R.string.memory_import_conflict
+    MemoryImportUiError.WRITE_FAILED -> R.string.memory_import_failed
+}
+
 @Composable
 private fun MemoryDisabledNotice() {
     val materialColors = settingsMaterialColors()
@@ -1249,6 +1400,7 @@ private fun MemoryDisabledNotice() {
 
 private const val MEMORY_TAB = 0
 private const val LOG_TAB = 1
+private const val MAX_IMPORT_FILE_BYTES = 256 * 1024
 internal const val MEMORY_ACTIVITY_ROW_TEST_TAG = "memory_activity_row"
 internal const val MEMORY_ACTIVITY_PHASE_TEST_TAG = "memory_activity_phase"
 private val LOG_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")

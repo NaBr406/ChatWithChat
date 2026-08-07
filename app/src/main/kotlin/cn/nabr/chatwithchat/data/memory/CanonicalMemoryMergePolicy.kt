@@ -74,13 +74,22 @@ internal class CanonicalMemoryMergePolicy(
                     hasMoreMutations = true
                     return@forEach
                 }
+                val addressingIdentity = MemoryCanonicalIdentityPolicy.isAddressingIdentity(
+                    canonicalKey = identity.canonicalKey,
+                    scope = identity.scope
+                )
                 val targetIds = identityCandidates.mapNotNull(CanonicalMemoryCandidate::targetMemoryId).toSet()
                 val candidateTexts = identityCandidates
                     .map { candidate -> normalizeExactMemoryText(candidate.text) }
                     .toSet()
                 val identityEntries = parsed.entries.filter { entry ->
-                    entry.identityOrNull() == identity ||
+                    entry.matchesIdentity(identity) ||
                         entry.id in targetIds ||
+                        (
+                            addressingIdentity &&
+                                entry.scope == identity.scope &&
+                                MemoryCanonicalIdentityPolicy.isAddressingKey(entry.canonicalKey)
+                            ) ||
                         (
                             entry.canonicalKey == null &&
                                 entry.validity == MemoryValidity.CURRENT &&
@@ -91,25 +100,48 @@ internal class CanonicalMemoryMergePolicy(
                 if (!allowCanonicalRebinding) {
                     require(
                         identityEntries.all { entry ->
-                            entry.canonicalKey == null || entry.identityOrNull() == identity
+                            entry.canonicalKey == null ||
+                                entry.matchesIdentity(identity) ||
+                                (entry.validity == MemoryValidity.OBSOLETE && entry.id in targetIds)
                         }
                     ) { "canonical target identity mismatch" }
                 }
                 val currentEntries = identityEntries
                     .filter { entry -> entry.validity == MemoryValidity.CURRENT }
                     .sortedBy(MarkdownMemoryEntry::id)
-                val existingVariants = currentEntries.toExistingVariants()
-                existingVariants.sortedWith(variantComparator).firstOrNull()?.type?.let { existingType ->
-                    require(identityCandidates.all { candidate -> candidate.type == existingType }) {
+                val candidateTypes = identityCandidates
+                    .map(CanonicalMemoryCandidate::type)
+                    .distinct()
+                require(candidateTypes.isNotEmpty()) { "canonical candidates have incompatible types" }
+                val candidateType = candidateTypes.singleOrNull()
+                    ?: identityCandidates.sortedWith(candidateComparator).first().type
+                if (!addressingIdentity) {
+                    require(candidateTypes.size == 1) { "canonical candidates have incompatible types" }
+                    require(currentEntries.all { entry -> entry.type == candidateType }) {
                         "canonical candidate type mismatch"
                     }
                 }
-                require(identityCandidates.map(CanonicalMemoryCandidate::type).distinct().size == 1) {
-                    "canonical candidates have incompatible types"
+                val reactivatableObsoleteEntries = if (currentEntries.isEmpty()) {
+                    identityCandidates
+                        .mapNotNull { candidate -> candidate.targetMemoryId?.let(entriesById::get) }
+                        .filter { entry ->
+                            entry.validity == MemoryValidity.OBSOLETE &&
+                                currentSuccessor(entry, entriesById)?.matchesIdentity(identity) != true
+                        }
+                        .distinctBy(MarkdownMemoryEntry::id)
+                        .sortedBy(MarkdownMemoryEntry::id)
+                } else {
+                    emptyList()
                 }
+                val activeEntries = (currentEntries + reactivatableObsoleteEntries)
+                    .distinctBy(MarkdownMemoryEntry::id)
+                    .sortedBy(MarkdownMemoryEntry::id)
+                val existingVariants = (currentEntries + reactivatableObsoleteEntries.filter { entry ->
+                    addressingIdentity || entry.type == candidateType
+                }).toExistingVariants()
                 val promotedRecallState = if (
                     promoteRecallState &&
-                    (currentEntries.any { entry -> entry.recallState == MemoryRecallState.CORE } ||
+                    (activeEntries.any { entry -> entry.recallState == MemoryRecallState.CORE } ||
                         identityCandidates.any { candidate -> candidate.recallState == MemoryRecallState.CORE })
                 ) {
                     MemoryRecallState.CORE
@@ -119,12 +151,41 @@ internal class CanonicalMemoryMergePolicy(
 
                 val candidateVariants = identityCandidates.toCandidateVariants()
                 val winningVariant = (existingVariants + candidateVariants).sortedWith(variantComparator).first()
-                val acceptedCandidates = identityCandidates.filter { candidate ->
-                    normalizeExactMemoryText(candidate.text) == winningVariant.normalizedText
+                val targetedAddressingHistory = if (addressingIdentity) {
+                    identityEntries.filter { entry ->
+                        entry.validity == MemoryValidity.OBSOLETE && entry.id in targetIds
+                    }
+                } else {
+                    emptyList()
+                }
+                val composedAddressingText = if (addressingIdentity) {
+                    composeAddressingText(
+                        existingTexts = (activeEntries + targetedAddressingHistory)
+                            .map(MarkdownMemoryEntry::text),
+                        candidateTexts = identityCandidates.map(CanonicalMemoryCandidate::text),
+                        preferredText = winningVariant.text
+                    )
+                } else {
+                    winningVariant.text
+                }
+                val composedAddressing = addressingIdentity &&
+                    normalizeExactMemoryText(composedAddressingText) != winningVariant.normalizedText
+                val selectedText = composedAddressingText
+                require(selectedText.length <= MemoryControlledOperationPolicy.MAX_MEMORY_TEXT_CHARS) {
+                    "combined addressing memory text is too large"
+                }
+                val selectedNormalizedText = normalizeExactMemoryText(selectedText)
+                val acceptedCandidates = if (composedAddressing) {
+                    identityCandidates
+                } else {
+                    identityCandidates.filter { candidate ->
+                        normalizeExactMemoryText(candidate.text) == winningVariant.normalizedText
+                    }
                 }
                 acceptedCandidateCount += acceptedCandidates.size
 
-                val survivor = currentEntries.firstOrNull()
+                val survivor = activeEntries.firstOrNull()
+                val survivorWasReactivated = survivor?.validity == MemoryValidity.OBSOLETE
                 val identityReplacements = linkedMapOf<String, MarkdownMemoryEntry>()
                 val identityRemovals = linkedSetOf<String>()
                 val identityAppends = linkedMapOf<String, MarkdownMemoryEntry>()
@@ -135,8 +196,9 @@ internal class CanonicalMemoryMergePolicy(
                 var identityRequiresIndexSync = false
                 if (
                     survivor != null &&
-                    currentEntries.size == 1 &&
-                    winningVariant.normalizedText == normalizeExactMemoryText(survivor.text)
+                    !survivorWasReactivated &&
+                    activeEntries.size == 1 &&
+                    selectedNormalizedText == normalizeExactMemoryText(survivor.text)
                 ) {
                     activeId = survivor.id
                     losingCurrentIds = emptySet()
@@ -171,16 +233,26 @@ internal class CanonicalMemoryMergePolicy(
                     if (survivor == null) {
                         require(reservedIds.add(activeId)) { "generated canonical active id conflict" }
                     }
-                    val winningExistingEntries = currentEntries.filter { entry ->
-                        normalizeExactMemoryText(entry.text) == winningVariant.normalizedText
+                    val winningExistingEntries = activeEntries.filter { entry ->
+                        normalizeExactMemoryText(entry.text) == selectedNormalizedText
                     }
-                    val winningText = winningExistingEntries.firstOrNull()?.text ?: winningVariant.text
+                    val winningText = winningExistingEntries.firstOrNull()?.text ?: selectedText
                     val evidenceRefs = mergeEvidenceRefs(
-                        existing = winningExistingEntries.flatMap(MarkdownMemoryEntry::evidenceRefs),
+                        existing = if (addressingIdentity) {
+                            (activeEntries + targetedAddressingHistory)
+                                .flatMap(MarkdownMemoryEntry::evidenceRefs)
+                        } else {
+                            winningExistingEntries.flatMap(MarkdownMemoryEntry::evidenceRefs)
+                        },
                         additions = acceptedCandidates.flatMap(CanonicalMemoryCandidate::evidenceRefs)
                     )
                     val lastObservedAt = maxOf(
-                        winningVariant.evidenceAt,
+                        if (addressingIdentity) {
+                            (activeEntries + targetedAddressingHistory)
+                                .maxOfOrNull(MarkdownMemoryEntry::lastObservedAt) ?: 0L
+                        } else {
+                            winningVariant.evidenceAt
+                        },
                         acceptedCandidates.maxOfOrNull(CanonicalMemoryCandidate::evidenceAt) ?: 0L
                     )
                     val activeBase = survivor ?: MarkdownMemoryEntry(
@@ -215,8 +287,8 @@ internal class CanonicalMemoryMergePolicy(
                             evidenceRefs = survivor.evidenceRefs
                         ) != survivor
                     val survivorAlreadyStable = survivor != null &&
-                        currentEntries.drop(1).all { loser -> survivor.updatedAt > loser.updatedAt }
-                    val shouldRefreshStableTimestamp = currentEntries.size > 1 && !survivorAlreadyStable
+                        activeEntries.drop(1).all { loser -> survivor.updatedAt > loser.updatedAt }
+                    val shouldRefreshStableTimestamp = activeEntries.size > 1 && !survivorAlreadyStable
                     val shouldReplaceActive = materialActiveChanged || shouldRefreshStableTimestamp
                     val activeEntry = activeAtExistingTimestamp.copy(
                         updatedAt = if (shouldReplaceActive) mutationAt else activeAtExistingTimestamp.updatedAt
@@ -237,9 +309,9 @@ internal class CanonicalMemoryMergePolicy(
                         )
                     }
 
-                    losingCurrentIds = currentEntries.drop(1).map(MarkdownMemoryEntry::id).toSet()
-                    currentEntries.drop(1).forEach { loser ->
-                        if (normalizeExactMemoryText(loser.text) == winningVariant.normalizedText) {
+                    losingCurrentIds = activeEntries.drop(1).map(MarkdownMemoryEntry::id).toSet()
+                    activeEntries.drop(1).forEach { loser ->
+                        if (normalizeExactMemoryText(loser.text) == selectedNormalizedText) {
                             identityRemovals += loser.id
                         } else {
                             identityReplacements[loser.id] = loser.toHistory(activeId, identity, mutationAt)
@@ -254,7 +326,7 @@ internal class CanonicalMemoryMergePolicy(
                         }
 
                     survivor?.takeIf { entry ->
-                        normalizeExactMemoryText(entry.text) != winningVariant.normalizedText
+                        normalizeExactMemoryText(entry.text) != selectedNormalizedText
                     }?.let { replacedFact ->
                         val oldNormalizedText = normalizeExactMemoryText(replacedFact.text)
                         val oldFactAlreadyPreserved = identityEntries.any { entry ->
@@ -266,7 +338,7 @@ internal class CanonicalMemoryMergePolicy(
                             val historyId = generatedHistoryId(identity, activeId, replacedFact)
                             entriesById[historyId]?.let { existingHistory ->
                                 require(
-                                    existingHistory.identityOrNull() == identity &&
+                                    existingHistory.matchesIdentity(identity) &&
                                         normalizeExactMemoryText(existingHistory.text) == oldNormalizedText &&
                                         existingHistory.validity == MemoryValidity.OBSOLETE &&
                                         existingHistory.supersededBy == activeId
@@ -281,6 +353,26 @@ internal class CanonicalMemoryMergePolicy(
                             }
                         }
                     }
+                    identityMaterialMutationCount = 1
+                    identityRequiresIndexSync = true
+                }
+
+                if (!survivorWasReactivated) {
+                    identityEntries
+                        .filter { entry ->
+                            entry.validity == MemoryValidity.OBSOLETE &&
+                                !entry.matchesIdentity(identity) &&
+                                currentSuccessor(entry, entriesById)?.matchesIdentity(identity) == true
+                        }
+                        .forEach { obsolete ->
+                            identityReplacements[obsolete.id] = obsolete.copy(
+                                canonicalKey = identity.canonicalKey,
+                                scope = identity.scope
+                            )
+                        }
+                }
+
+                if (identityReplacements.isNotEmpty() && identityMaterialMutationCount == 0) {
                     identityMaterialMutationCount = 1
                     identityRequiresIndexSync = true
                 }
@@ -387,8 +479,12 @@ internal class CanonicalMemoryMergePolicy(
             "invalid canonical memory sensitivity"
         }
         require(candidate.source in MemoryControlledOperationPolicy.validSources) { "invalid canonical memory source" }
-        require(MarkdownMemoryMetadataPolicy.isCanonicalKey(candidate.canonicalKey)) { "invalid canonical memory key" }
         require(MarkdownMemoryMetadataPolicy.isScope(candidate.scope)) { "invalid canonical memory scope" }
+        val canonicalKey = MemoryCanonicalIdentityPolicy.normalizeCanonicalKey(
+            canonicalKey = candidate.canonicalKey,
+            scope = candidate.scope
+        )
+        require(MarkdownMemoryMetadataPolicy.isCanonicalKey(canonicalKey)) { "invalid canonical memory key" }
         require(candidate.evidenceAt >= 0L) { "invalid canonical evidence time" }
         require(candidate.recallState in ACTIVE_RECALL_STATES) { "invalid canonical recall state" }
         val evidenceRefs = candidate.evidenceRefs.distinct().sorted()
@@ -396,18 +492,38 @@ internal class CanonicalMemoryMergePolicy(
         candidate.targetMemoryId?.let { targetId ->
             require(MarkdownMemoryMetadataPolicy.isSafeReference(targetId)) { "invalid canonical target id" }
             val target = requireNotNull(entriesById[targetId]) { "unknown canonical target" }
-            require(target.type == candidate.type) { "canonical target type mismatch" }
-            if (!allowCanonicalRebinding) {
-                require(target.canonicalKey == null || target.canonicalKey == candidate.canonicalKey) {
-                    "canonical target key mismatch"
-                }
-                require(target.canonicalKey == null || target.scope == candidate.scope) {
-                    "canonical target scope mismatch"
+            require(target.validity == MemoryValidity.OBSOLETE || target.type == candidate.type) {
+                "canonical target type mismatch"
+            }
+            if (target.validity != MemoryValidity.OBSOLETE) {
+                if (!allowCanonicalRebinding) {
+                    require(
+                        target.canonicalKey == null ||
+                            MemoryCanonicalIdentityPolicy.allowsRebinding(
+                                fromKey = target.canonicalKey,
+                                fromScope = target.scope,
+                                toKey = canonicalKey,
+                                toScope = candidate.scope
+                            )
+                    ) { "canonical target key mismatch" }
+                    require(target.canonicalKey == null || target.scope == candidate.scope) {
+                        "canonical target scope mismatch"
+                    }
+                } else {
+                    require(
+                        MemoryCanonicalIdentityPolicy.allowsRebinding(
+                            fromKey = target.canonicalKey,
+                            fromScope = target.scope,
+                            toKey = canonicalKey,
+                            toScope = candidate.scope
+                        )
+                    ) { "canonical target identity rebinding is not allowed" }
                 }
             }
         }
         return candidate.copy(
             text = text,
+            canonicalKey = canonicalKey,
             evidenceRefs = evidenceRefs
         )
     }
@@ -600,19 +716,20 @@ internal class CanonicalMemoryMergePolicy(
         completedIdentities.forEach { identity ->
             require(
                 parsed.entries.count { entry ->
-                    entry.identityOrNull() == identity && entry.validity == MemoryValidity.CURRENT
+                    entry.matchesIdentity(identity) && entry.validity == MemoryValidity.CURRENT
                 } <= 1
             ) { "duplicate current canonical identity" }
         }
         val entriesById = parsed.entries.associateBy(MarkdownMemoryEntry::id)
         parsed.entries
             .filter { entry ->
-                entry.identityOrNull() in touchedIdentities && entry.validity == MemoryValidity.OBSOLETE
+                touchedIdentities.any { identity -> entry.matchesIdentity(identity) } &&
+                    entry.validity == MemoryValidity.OBSOLETE
             }
             .forEach { obsolete ->
                 val successor = obsolete.supersededBy?.let(entriesById::get)
                 if (successor != null) {
-                    require(successor.validity == MemoryValidity.CURRENT && successor.identityOrNull() == obsolete.identityOrNull()) {
+                    require(successor.validity == MemoryValidity.CURRENT && successor.hasSameCanonicalIdentity(obsolete)) {
                         "canonical history successor mismatch"
                     }
                 } else {
@@ -713,8 +830,84 @@ internal class CanonicalMemoryMergePolicy(
     private fun CanonicalMemoryCandidate.identity(): CanonicalMemoryIdentity =
         CanonicalMemoryIdentity(canonicalKey = canonicalKey, scope = scope)
 
+    private fun MarkdownMemoryEntry.matchesIdentity(identity: CanonicalMemoryIdentity): Boolean {
+        val key = canonicalKey ?: return false
+        return scope == identity.scope &&
+            MemoryCanonicalIdentityPolicy.normalizeCanonicalKey(key, scope) == identity.canonicalKey
+    }
+
+    private fun MarkdownMemoryEntry.hasSameCanonicalIdentity(other: MarkdownMemoryEntry): Boolean {
+        val leftKey = canonicalKey ?: return other.canonicalKey == null && scope == other.scope
+        val rightKey = other.canonicalKey ?: return false
+        return scope == other.scope &&
+            MemoryCanonicalIdentityPolicy.normalizeCanonicalKey(leftKey, scope) ==
+            MemoryCanonicalIdentityPolicy.normalizeCanonicalKey(rightKey, other.scope)
+    }
+
     private fun MarkdownMemoryEntry.identityOrNull(): CanonicalMemoryIdentity? = canonicalKey?.let { key ->
         CanonicalMemoryIdentity(canonicalKey = key, scope = scope)
+    }
+
+    private fun composeAddressingText(
+        existingTexts: List<String>,
+        candidateTexts: List<String>,
+        preferredText: String
+    ): String {
+        val normalizedExisting = existingTexts
+            .map(::normalizeExactMemoryText)
+            .distinct()
+        val normalizedCandidates = candidateTexts
+            .map(::normalizeExactMemoryText)
+            .distinct()
+
+        if (normalizedExisting.isEmpty() && normalizedCandidates.isEmpty()) return preferredText
+        val candidateCoveringExisting = candidateTexts
+            .distinctBy(::normalizeExactMemoryText)
+            .sortedWith(compareByDescending<String>(String::length).thenBy(::normalizeExactMemoryText))
+            .firstOrNull { candidate ->
+                val normalizedCandidate = normalizeExactMemoryText(candidate)
+                normalizedExisting.all { existing ->
+                    existing == normalizedCandidate || normalizedCandidate.contains(existing)
+                } && normalizedCandidates.all { known ->
+                    known == normalizedCandidate || normalizedCandidate.contains(known)
+                }
+            }
+        if (candidateCoveringExisting != null) return candidateCoveringExisting.trim()
+
+        val existingContainingAllCandidates = existingTexts
+            .distinctBy(::normalizeExactMemoryText)
+            .sortedWith(compareByDescending<String>(String::length).thenBy(::normalizeExactMemoryText))
+            .firstOrNull { existing ->
+                val normalizedExistingText = normalizeExactMemoryText(existing)
+                normalizedExisting.all { known ->
+                    known == normalizedExistingText || normalizedExistingText.contains(known)
+                } && normalizedCandidates.all { candidate ->
+                    candidate == normalizedExistingText || normalizedExistingText.contains(candidate)
+                }
+            }
+        if (existingContainingAllCandidates != null) return existingContainingAllCandidates.trim()
+
+        return (existingTexts + candidateTexts)
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .distinctBy(::normalizeExactMemoryText)
+            .sortedBy(::normalizeExactMemoryText)
+            .joinToString(separator = " ; ")
+            .ifBlank { preferredText }
+    }
+
+    private fun currentSuccessor(
+        entry: MarkdownMemoryEntry,
+        entriesById: Map<String, MarkdownMemoryEntry>
+    ): MarkdownMemoryEntry? {
+        val visited = mutableSetOf<String>()
+        var current = entry
+        while (current.validity == MemoryValidity.OBSOLETE) {
+            val successorId = current.supersededBy ?: return null
+            if (!visited.add(current.id)) return null
+            current = entriesById[successorId] ?: return null
+        }
+        return current.takeIf { candidate -> candidate.validity == MemoryValidity.CURRENT }
     }
 
     private fun sourceRank(value: String): Int = when (value) {

@@ -95,16 +95,27 @@ class MemoryDailyDistillationOperationController(
                     ) { "assistant_inferred_long_term_create_requires_repeated_evidence" }
                     val canonicalKey = requireNotNull(operation.canonicalKey)
                     val scope = requireNotNull(operation.scope)
+                    val normalizedCanonicalKey = MemoryCanonicalIdentityPolicy.normalizeCanonicalKey(canonicalKey, scope)
                     val evidenceAt = evidence.maxOf { item -> maxOf(item.createdAt, item.updatedAt) }
                     val recallState = requireNotNull(operation.recallState)
-                    require(MarkdownMemoryMetadataPolicy.isCanonicalKey(canonicalKey))
+                    require(MarkdownMemoryMetadataPolicy.isCanonicalKey(normalizedCanonicalKey))
                     require(MarkdownMemoryMetadataPolicy.isScope(scope))
                     require(operation.evidenceAt == evidenceAt)
                     require(recallState in ACTIVE_RECALL_STATES)
                     target?.let { existing ->
-                        require(existing.type == operation.type)
-                        require(existing.canonicalKey == null || existing.canonicalKey == canonicalKey)
-                        require(existing.canonicalKey == null || existing.scope == scope)
+                        if (existing.validity != MemoryValidity.OBSOLETE) {
+                            require(existing.type == operation.type)
+                            require(
+                                existing.canonicalKey == null ||
+                                    MemoryCanonicalIdentityPolicy.allowsRebinding(
+                                        fromKey = existing.canonicalKey,
+                                        fromScope = existing.scope,
+                                        toKey = normalizedCanonicalKey,
+                                        toScope = scope
+                                    )
+                            )
+                            require(existing.canonicalKey == null || existing.scope == scope)
+                        }
                     }
                     operation.copy(
                         targetMemoryId = target?.id,
@@ -112,7 +123,7 @@ class MemoryDailyDistillationOperationController(
                         sensitivity = derivedSensitivity(evidence, target),
                         source = derivedSource(evidence),
                         evidenceKeys = operation.evidenceKeys.sorted(),
-                        canonicalKey = canonicalKey,
+                        canonicalKey = normalizedCanonicalKey,
                         scope = scope,
                         evidenceAt = evidenceAt,
                         recallState = recallState,

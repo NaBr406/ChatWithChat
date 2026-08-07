@@ -6,15 +6,26 @@ class FakeMemoryIntelligence(
     var batchProposal: MemoryBatchConsolidationProposal? = null,
     var distillationProposal: MemoryDailyDistillationProposal? = null,
     var longTermProposal: MemoryLongTermConsolidationProposal? = null,
+    var importProposal: MemoryImportProposal? = null,
     var onConsolidate: suspend () -> Unit = {}
 ) : MemoryIntelligence {
     var lastBatchRequest: MemoryBatchConsolidationRequest? = null
     var lastLongTermRequest: MemoryLongTermConsolidationPartitionRequest? = null
     var lastPreferredPlatform: PlatformV2? = null
     var lastResolvedPlatform: PlatformV2? = null
+    var lastImportRequest: MemoryImportRequest? = null
     var consolidateCalls = 0
     var distillationCalls = 0
     var longTermConsolidationCalls = 0
+
+    override suspend fun rewriteImportedMemory(
+        request: MemoryImportRequest,
+        resolvedPlatform: PlatformV2
+    ): MemoryImportProposal? {
+        lastImportRequest = request
+        lastResolvedPlatform = resolvedPlatform
+        return importProposal
+    }
 
     override suspend fun consolidateMemoryBatch(
         request: MemoryBatchConsolidationRequest,

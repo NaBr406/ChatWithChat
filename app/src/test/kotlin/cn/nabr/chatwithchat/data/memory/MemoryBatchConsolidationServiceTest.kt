@@ -1184,6 +1184,73 @@ class MemoryBatchConsolidationServiceTest {
     }
 
     @Test
+    fun `replace through incorrectly merged obsolete id restores the full addressing bundle`() = runBlocking {
+        val preferredEntry = MarkdownMemoryEntry(
+            id = "mem_preferred",
+            text = "Address the user as Captain.",
+            type = "communication_style",
+            sensitivity = MemorySensitivity.NORMAL,
+            source = MemorySource.EXPLICIT_USER_STATEMENT,
+            createdAt = 10L,
+            updatedAt = 20L,
+            section = "Stable Preferences",
+            canonicalKey = MemoryCanonicalIdentityPolicy.PREFERRED_ADDRESS_KEY,
+            scope = MemoryScope.GENERAL,
+            lastObservedAt = 20L,
+            recallState = MemoryRecallState.QUERY
+        )
+        val incorrectlyMergedHistory = MarkdownMemoryEntry(
+            id = "mem_assistant_history",
+            text = "The assistant name is Small C.",
+            type = "communication_style",
+            sensitivity = MemorySensitivity.NORMAL,
+            source = MemorySource.EXPLICIT_USER_STATEMENT,
+            createdAt = 11L,
+            updatedAt = 21L,
+            section = "Stable Preferences",
+            canonicalKey = MemoryCanonicalIdentityPolicy.PREFERRED_ADDRESS_KEY,
+            scope = MemoryScope.GENERAL,
+            lastObservedAt = 21L,
+            validity = MemoryValidity.OBSOLETE,
+            supersededBy = preferredEntry.id,
+            recallState = MemoryRecallState.MAINTENANCE_ONLY
+        )
+        val fixture = fixture(
+            proposal = MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        action = MemoryBatchAction.REPLACE,
+                        targetMemoryId = incorrectlyMergedHistory.id,
+                        text = incorrectlyMergedHistory.text,
+                        type = incorrectlyMergedHistory.type,
+                        canonicalKey = MemoryCanonicalIdentityPolicy.ASSISTANT_NAME_KEY,
+                        scope = MemoryScope.GENERAL,
+                        evidenceAt = 11L
+                    )
+                )
+            ),
+            retrievalResults = listOf(retrievalResult(incorrectlyMergedHistory))
+        )
+        fixture.fileStore.replaceLongTermMemory(
+            MarkdownMemoryCodec().renderLongTerm(listOf(preferredEntry, incorrectlyMergedHistory))
+        ).getOrThrow()
+        val job = fixture.createFiveTurnBatch()
+
+        val result = fixture.service.process(job)
+        val parsed = MarkdownMemoryCodec().parse(fixture.fileStore.readLongTermMemory().getOrThrow())
+        val current = parsed.entries.filter { entry -> entry.validity == MemoryValidity.CURRENT }
+
+        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertTrue(parsed.skippedEntries.isEmpty())
+        assertEquals(1, current.size)
+        assertEquals(MemoryCanonicalIdentityPolicy.PREFERRED_ADDRESS_KEY, current.single().canonicalKey)
+        assertTrue(current.single().text.contains(preferredEntry.text))
+        assertTrue(current.single().text.contains(incorrectlyMergedHistory.text))
+        assertTrue(parsed.entries.any { entry -> entry.id == incorrectlyMergedHistory.id })
+    }
+
+    @Test
     fun `index scheduling failure keeps committed markdown and advances checkpoint`() = runBlocking {
         val fixture = fixture(
             proposal = MemoryBatchConsolidationProposal(

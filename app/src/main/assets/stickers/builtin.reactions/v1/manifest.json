@@ -104,31 +104,6 @@
       "height": 240
     },
     {
-      "stickerId": "builtin.reactions.happy_dog",
-      "assetPath": "stickers/builtin.reactions/v1/happy_dog.png",
-      "sha256": "581e5b2bb0c03f63d991b3879cc2b2a4b12ad30f0241bf096a6df4d6ef53339f",
-      "mimeType": "image/png",
-      "mediaKind": "static_raster",
-      "title": "星星眼开心小狗",
-      "altText": "一只白色小狗睁着闪闪发光的大眼睛微笑，显得开心又满足",
-      "tags": [
-        "开心",
-        "高兴",
-        "快乐",
-        "可爱",
-        "治愈",
-        "满足"
-      ],
-      "aliases": [
-        "快乐小狗",
-        "开心狗",
-        "happy puppy"
-      ],
-      "byteSize": 49073,
-      "width": 240,
-      "height": 240
-    },
-    {
       "stickerId": "builtin.reactions.scared_crying",
       "assetPath": "stickers/builtin.reactions/v1/scared_crying.png",
       "sha256": "875c65c13e2b8ae3478a1e85d22884ec8793bca855456e3cb870b89357d69e19",

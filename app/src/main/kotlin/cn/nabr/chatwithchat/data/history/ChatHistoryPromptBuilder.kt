@@ -1,5 +1,7 @@
 package cn.nabr.chatwithchat.data.history
 
+import cn.nabr.chatwithchat.data.memory.containsInternalMemoryMetadata
+
 data class HistoryPromptRenderResult(
     val prompt: String?,
     val snippets: List<ChatHistorySnippet>,
@@ -54,7 +56,7 @@ class ChatHistoryPromptBuilder {
     }
 
     private fun renderCandidate(candidate: ChatHistorySnippet, budget: Int): String {
-        if (budget <= 0) return ""
+        if (budget <= 0 || !candidate.isProviderSafe()) return ""
         val title = candidate.title.trim().take(MAX_TITLE_CHARS)
         val user = truncate(candidate.userContent, (budget * 2 / 5).coerceAtLeast(1))
         val assistant = truncate(candidate.assistantContent, (budget * 3 / 5).coerceAtLeast(1))
@@ -84,6 +86,11 @@ class ChatHistoryPromptBuilder {
     }
 
     private fun normalize(text: String): String = text.lowercase().replace(Regex("\\s+"), " ").trim()
+
+    private fun ChatHistorySnippet.isProviderSafe(): Boolean =
+        !title.containsInternalMemoryMetadata() &&
+            !userContent.containsInternalMemoryMetadata() &&
+            !assistantContent.containsInternalMemoryMetadata()
 
     private companion object {
         const val DEFAULT_TOKEN_BUDGET = 400

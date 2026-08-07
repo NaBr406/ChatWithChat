@@ -35,6 +35,29 @@ import org.junit.Test
 class LlmMemoryIntelligenceTest {
 
     @Test
+    fun `external memory import uses strict rewrite protocol`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatChunks = chatChunks(
+                """{"operations":[{"action":"create","text":"用户偏好简洁回答。","type":"communication_style","sensitivity":"normal","source":"explicit_user_statement","canonicalKey":"communication.response_style","scope":"general","recallState":"query","reason":"稳定偏好"}]}"""
+            )
+        )
+        val intelligence = intelligence(openAIAPI = openAIAPI)
+
+        val result = intelligence.rewriteImportedMemory(
+            request = MemoryImportRequest(
+                importedText = "我喜欢简洁的回答",
+                existingMemories = emptyList()
+            ),
+            resolvedPlatform = platform(ClientType.OPENROUTER, "model")
+        )
+
+        assertEquals(1, result?.operations?.size)
+        assertEquals(MemoryImportAction.CREATE, result?.operations?.single()?.action)
+        assertEquals("communication.response_style", result?.operations?.single()?.canonicalKey)
+        assertTrue(checkNotNull(openAIAPI.lastSystemPrompt).contains("外部记忆资料"))
+    }
+
+    @Test
     fun `memory generation prompts enforce conservative quality gates and retirement contract`() = runBlocking {
         val openAIAPI = RecordingOpenAIAPI(chatChunks = chatChunks(EMPTY_PROPOSAL_JSON))
         val intelligence = intelligence(openAIAPI = openAIAPI)
@@ -47,6 +70,8 @@ class LlmMemoryIntelligenceTest {
         assertTrue(batchPrompt.contains("one isolated assistant inference", ignoreCase = true))
         assertTrue(batchPrompt.contains("current task progress"))
         assertTrue(batchPrompt.contains("application tool-calling policy"))
+        assertTrue(batchPrompt.contains("single addressing bundle"))
+        assertTrue(batchPrompt.contains("must not drop the other side"))
 
         intelligence.distillDailyMemory(dailyRequest(), platform)
         val dailyPrompt = checkNotNull(openAIAPI.lastSystemPrompt)
@@ -61,6 +86,7 @@ class LlmMemoryIntelligenceTest {
         assertTrue(longTermPrompt.contains("recoverable corpus-quality action"))
         assertTrue(longTermPrompt.contains("singleton decision"))
         assertTrue(longTermPrompt.contains("do not invent a supersession target"))
+        assertTrue(longTermPrompt.contains("one addressing bundle"))
     }
 
     @Test

@@ -12,6 +12,15 @@ class MarkdownMemoryCodec {
             defaultSection = null
         )
 
+    /**
+     * Returns whether [markdown] is a complete long-term document emitted by this codec.
+     * Import uses this stricter check so arbitrary Markdown is never silently treated as app data.
+     */
+    fun isValidLongTermDocument(markdown: String): Boolean {
+        val parsed = parse(markdown)
+        return parsed.skippedEntries.isEmpty() && isFullyManagedLongTermDocument(markdown, parsed.entries.size)
+    }
+
     fun renderLongTermActiveProjection(markdown: String): String {
         val parsed = parse(markdown)
         if (

@@ -360,7 +360,12 @@ New-Item -ItemType Directory -Force -Path $outputPath | Out-Null
 
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $sourceFileName = Split-Path -Leaf $apkPath
-$packageKind = if ($sourceFileName -match "unsigned") { "$variant-$TargetAbi-debug-signed" } else { "$variant-$TargetAbi" }
+$signingLabel = if ($Release -and -not [string]::IsNullOrWhiteSpace($Keystore)) {
+    "release-signed"
+} else {
+    "debug-signed"
+}
+$packageKind = if ($sourceFileName -match "unsigned") { "$variant-$TargetAbi-$signingLabel" } else { "$variant-$TargetAbi" }
 $destinationPath = Join-Path $outputPath "ChatWithChat-$packageKind-$timestamp.apk"
 try {
     Copy-InstallableApk -SourceApk $apkPath -DestinationApk $destinationPath -Variant $variant

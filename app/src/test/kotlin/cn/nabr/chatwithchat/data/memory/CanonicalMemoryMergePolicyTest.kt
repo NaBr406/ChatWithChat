@@ -515,7 +515,7 @@ class CanonicalMemoryMergePolicyTest {
     }
 
     @Test
-    fun `canonical rebinding is restricted to the explicit whole corpus mode`() {
+    fun `legacy addressing aliases merge in the regular path`() {
         val legacy = canonicalEntry(
             id = "legacy_address",
             text = "Address the user as Captain.",
@@ -539,26 +539,156 @@ class CanonicalMemoryMergePolicyTest {
             )
         }
 
-        assertThrows(IllegalArgumentException::class.java) {
-            policy.merge(base, candidates, mutationAt = 50)
-        }
-
         val merged = policy.merge(
             baseMarkdown = base,
             candidates = candidates,
             mutationAt = 50,
-            allowCanonicalRebinding = true
+            allowCanonicalRebinding = false
         )
         val parsed = codec.parse(merged.markdown)
         val active = parsed.entries.filter { entry -> entry.validity == MemoryValidity.CURRENT }
 
         assertEquals(1, active.size)
         assertEquals("identity.preferred_address", active.single().canonicalKey)
+        assertTrue(active.single().text.contains("Address the user as Captain."))
+        assertTrue(active.single().text.contains("The user's preferred address is Captain."))
         assertTrue(
             parsed.entries
                 .filter { entry -> entry.validity == MemoryValidity.OBSOLETE }
                 .all { entry -> entry.canonicalKey == active.single().canonicalKey }
         )
+    }
+
+    @Test
+    fun `whole corpus rebinding merges assistant name into preferred address bundle`() {
+        val preferred = canonicalEntry(
+            id = "preferred",
+            text = "Address the user as Captain.",
+            canonicalKey = MemoryCanonicalIdentityPolicy.PREFERRED_ADDRESS_KEY
+        )
+        val assistant = canonicalEntry(
+            id = "assistant",
+            text = "The assistant name is Small C.",
+            canonicalKey = MemoryCanonicalIdentityPolicy.ASSISTANT_NAME_KEY
+        )
+        val candidate = candidate(
+            text = assistant.text,
+            targetMemoryId = assistant.id,
+            canonicalKey = MemoryCanonicalIdentityPolicy.PREFERRED_ADDRESS_KEY
+        )
+
+        val result = policy.merge(
+            baseMarkdown = codec.renderLongTerm(listOf(preferred, assistant)),
+            candidates = listOf(candidate),
+            mutationAt = 30,
+            allowCanonicalRebinding = true
+        )
+        val active = currentEntries(result.markdown).single()
+        assertEquals(MemoryCanonicalIdentityPolicy.PREFERRED_ADDRESS_KEY, active.canonicalKey)
+        assertTrue(active.text.contains(preferred.text))
+        assertTrue(active.text.contains(assistant.text))
+    }
+
+    @Test
+    fun `same preferred address key keeps both current addressing facts`() {
+        val preferred = canonicalEntry(
+            id = "preferred",
+            text = "Address the user as Captain.",
+            canonicalKey = MemoryCanonicalIdentityPolicy.PREFERRED_ADDRESS_KEY,
+            source = MemorySource.EXPLICIT_USER_STATEMENT
+        )
+        val assistant = canonicalEntry(
+            id = "assistant",
+            text = "The assistant name is Small C.",
+            canonicalKey = MemoryCanonicalIdentityPolicy.PREFERRED_ADDRESS_KEY,
+            source = MemorySource.EXPLICIT_USER_STATEMENT
+        )
+        val result = policy.merge(
+            baseMarkdown = codec.renderLongTerm(listOf(preferred, assistant)),
+            candidates = listOf(
+                candidate(
+                    text = preferred.text,
+                    canonicalKey = MemoryCanonicalIdentityPolicy.PREFERRED_ADDRESS_KEY,
+                    targetMemoryId = preferred.id
+                ),
+                candidate(
+                    text = assistant.text,
+                    canonicalKey = MemoryCanonicalIdentityPolicy.PREFERRED_ADDRESS_KEY,
+                    targetMemoryId = assistant.id
+                )
+            ),
+            mutationAt = 30
+        )
+
+        val current = currentEntries(result.markdown)
+        assertEquals(1, current.size)
+        assertTrue(current.single().text.contains(preferred.text))
+        assertTrue(current.single().text.contains(assistant.text))
+        assertTrue(result.requiresIndexSync)
+    }
+
+    @Test
+    fun `partial addressing replacement cannot discard the other name`() {
+        val existing = canonicalEntry(
+            id = "addressing",
+            text = "Address the user as Captain. ; The assistant name is Small C.",
+            canonicalKey = MemoryCanonicalIdentityPolicy.PREFERRED_ADDRESS_KEY,
+            source = MemorySource.EXPLICIT_USER_STATEMENT
+        )
+        val result = policy.merge(
+            baseMarkdown = codec.renderLongTerm(listOf(existing)),
+            candidates = listOf(
+                candidate(
+                    text = "Address the user as Commander.",
+                    canonicalKey = MemoryCanonicalIdentityPolicy.PREFERRED_ADDRESS_KEY,
+                    targetMemoryId = existing.id,
+                    evidenceAt = 40
+                )
+            ),
+            mutationAt = 50
+        )
+
+        val active = currentEntries(result.markdown).single()
+        assertTrue(active.text.contains("The assistant name is Small C."))
+        assertTrue(active.text.contains("Address the user as Commander."))
+    }
+
+    @Test
+    fun `obsolete history from an old address merge restores the full bundle`() {
+        val preferred = canonicalEntry(
+            id = "preferred",
+            text = "Address the user as Captain.",
+            canonicalKey = MemoryCanonicalIdentityPolicy.PREFERRED_ADDRESS_KEY
+        )
+        val incorrectlyMergedAssistant = canonicalEntry(
+            id = "assistant_history",
+            text = "The assistant name is Small C.",
+            canonicalKey = MemoryCanonicalIdentityPolicy.PREFERRED_ADDRESS_KEY,
+            validity = MemoryValidity.OBSOLETE,
+            supersededBy = preferred.id,
+            recallState = MemoryRecallState.MAINTENANCE_ONLY
+        )
+        val candidate = candidate(
+            text = "The assistant name is Small C.",
+            targetMemoryId = incorrectlyMergedAssistant.id,
+            canonicalKey = MemoryCanonicalIdentityPolicy.ASSISTANT_NAME_KEY,
+            evidenceAt = 40
+        )
+
+        val result = policy.merge(
+            baseMarkdown = codec.renderLongTerm(listOf(preferred, incorrectlyMergedAssistant)),
+            candidates = listOf(candidate),
+            mutationAt = 50
+        )
+        val parsed = codec.parse(result.markdown)
+        val current = parsed.entries.filter { entry -> entry.validity == MemoryValidity.CURRENT }
+
+        assertTrue(parsed.skippedEntries.isEmpty())
+        assertEquals(1, current.size)
+        assertEquals(MemoryCanonicalIdentityPolicy.PREFERRED_ADDRESS_KEY, current.single().canonicalKey)
+        assertTrue(current.single().text.contains(preferred.text))
+        assertTrue(current.single().text.contains(incorrectlyMergedAssistant.text))
+        assertTrue(parsed.entries.any { entry -> entry.id == incorrectlyMergedAssistant.id })
     }
 
     private fun currentEntries(markdown: String): List<MarkdownMemoryEntry> = codec

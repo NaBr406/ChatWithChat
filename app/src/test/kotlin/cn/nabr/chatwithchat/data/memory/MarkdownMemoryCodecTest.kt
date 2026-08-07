@@ -11,6 +11,31 @@ class MarkdownMemoryCodecTest {
     private val codec = MarkdownMemoryCodec()
 
     @Test
+    fun `valid long term document is accepted while ordinary markdown is rejected`() {
+        val valid = codec.renderLongTerm(
+            listOf(
+                MarkdownMemoryEntry(
+                    id = "mem_import_valid",
+                    text = "The user prefers concise answers.",
+                    type = "communication_style",
+                    sensitivity = MemorySensitivity.NORMAL,
+                    source = MemorySource.EXPLICIT_USER_STATEMENT,
+                    createdAt = 1L,
+                    updatedAt = 1L
+                )
+            )
+        )
+
+        assertTrue(codec.isValidLongTermDocument(valid))
+        assertTrue(!codec.isValidLongTermDocument("# Notes\n\nThe user likes tea."))
+        assertTrue(
+            !codec.isValidLongTermDocument(
+                valid.replace("source=explicit_user_statement", "source=unknown_source")
+            )
+        )
+    }
+
+    @Test
     fun `render and parse long term entries keeps metadata and text`() {
         val markdown = codec.renderLongTerm(
             listOf(
