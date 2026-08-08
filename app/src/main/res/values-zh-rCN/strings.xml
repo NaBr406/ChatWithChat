@@ -288,6 +288,13 @@
     <string name="timeout_seconds_label">超时（秒）</string>
     <string name="timeout_setting_description">流式响应分块之间允许的最大空闲时间。设为 0 可关闭超时。</string>
     <string name="timeout_invalid">请输入 0 或正数秒数。</string>
+    <string name="context_strategy">上下文管理</string>
+    <string name="context_strategy_icon">上下文管理图标</string>
+    <string name="context_strategy_description">决定发送给该供应商的历史如何组织。两种方式都不会删除任何消息，只影响每次请求实际携带的内容。</string>
+    <string name="context_strategy_auto_compact">自动压缩</string>
+    <string name="context_strategy_auto_compact_description">始终用已保存的摘要加最近若干回合原文组装请求，长对话下更省 token。</string>
+    <string name="context_strategy_raw_preferred">原文优先</string>
+    <string name="context_strategy_raw_preferred_description">容量允许时按原文发送所选回合；超出预算后自动压缩较早内容。</string>
     <string name="about">关于</string>
     <string name="about_description">版本、许可、反馈</string>
     <string name="version">版本</string>

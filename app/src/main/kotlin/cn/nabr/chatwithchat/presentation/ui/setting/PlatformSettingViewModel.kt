@@ -4,6 +4,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import cn.nabr.chatwithchat.data.context.ContextStrategy
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.repository.SettingRepository
 import javax.inject.Inject
@@ -76,6 +77,21 @@ class PlatformSettingViewModel @Inject constructor(
     fun openTimeoutDialog() = _dialogState.update { it.copy(isTimeoutDialogOpen = true) }
     fun closeTimeoutDialog() = _dialogState.update { it.copy(isTimeoutDialogOpen = false) }
 
+    fun openContextStrategyDialog() = _dialogState.update { it.copy(isContextStrategyDialogOpen = true) }
+    fun closeContextStrategyDialog() = _dialogState.update { it.copy(isContextStrategyDialogOpen = false) }
+
+    /**
+     * Persists the provider default only. The per-chat range lives in the checkpoint store keyed by
+     * `chatRoomId + platformUid` and is deliberately untouched here: changing the default must not
+     * silently rewrite ranges the user picked for individual conversations.
+     */
+    fun updateContextStrategy(strategy: ContextStrategy) {
+        _platformState.value?.let { platform ->
+            updatePlatform(platform.copy(contextStrategy = strategy.name))
+            closeContextStrategyDialog()
+        }
+    }
+
     fun updatePlatformName(name: String) {
         _platformState.value?.let { platform ->
             updatePlatform(platform.copy(name = name.trim()))
@@ -147,6 +163,7 @@ class PlatformSettingViewModel @Inject constructor(
         val isTopPDialogOpen: Boolean = false,
         val isSystemPromptDialogOpen: Boolean = false,
         val isTimeoutDialogOpen: Boolean = false,
+        val isContextStrategyDialogOpen: Boolean = false,
         val isDeleteDialogOpen: Boolean = false
     )
 

@@ -22,6 +22,7 @@ import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Thermostat
 import androidx.compose.material.icons.outlined.Timer
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -45,12 +46,14 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.nabr.chatwithchat.R
+import cn.nabr.chatwithchat.data.context.ContextStrategy
 import cn.nabr.chatwithchat.presentation.common.SettingItem
 import cn.nabr.chatwithchat.presentation.common.SettingsMaterialGroup
 import cn.nabr.chatwithchat.presentation.common.SettingsTopAppBar
 import cn.nabr.chatwithchat.presentation.common.settingsDropdownMenuItemColors
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.common.settingsSwitchColors
+import cn.nabr.chatwithchat.presentation.common.titleRes
 import cn.nabr.chatwithchat.util.formatPlatformTimeout
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -205,10 +208,27 @@ fun PlatformSettingScreen(
                         onItemClick = settingViewModel::openTimeoutDialog,
                         showTrailingIcon = true,
                         showLeadingIcon = true,
+                        showDivider = true,
                         leadingIcon = {
                             Icon(
                                 imageVector = Icons.Outlined.Timer,
                                 contentDescription = stringResource(R.string.timeout_icon)
+                            )
+                        }
+                    )
+                    val contextStrategy = ContextStrategy.fromStorage(platformData.contextStrategy)
+                    SettingItem(
+                        modifier = Modifier.height(64.dp),
+                        title = stringResource(R.string.context_strategy),
+                        description = stringResource(contextStrategy.titleRes()),
+                        enabled = platformData.enabled,
+                        onItemClick = settingViewModel::openContextStrategyDialog,
+                        showTrailingIcon = true,
+                        showLeadingIcon = true,
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Outlined.Tune,
+                                contentDescription = stringResource(R.string.context_strategy_icon)
                             )
                         }
                     )
@@ -221,6 +241,11 @@ fun PlatformSettingScreen(
                 TopPDialog(dialogState, platformData.topP, settingViewModel)
                 SystemPromptDialog(dialogState, platformData.systemPrompt ?: "", settingViewModel)
                 TimeoutDialog(dialogState, platformData.timeout, settingViewModel)
+                ContextStrategyDialog(
+                    dialogState = dialogState,
+                    strategy = ContextStrategy.fromStorage(platformData.contextStrategy),
+                    settingViewModel = settingViewModel
+                )
                 DeletePlatformDialog(dialogState, settingViewModel)
             }
         }

@@ -31,10 +31,14 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import cn.nabr.chatwithchat.R
+import cn.nabr.chatwithchat.data.context.ContextStrategy
+import cn.nabr.chatwithchat.presentation.common.RadioItem
+import cn.nabr.chatwithchat.presentation.common.descriptionRes
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.common.settingsSliderColors
 import cn.nabr.chatwithchat.presentation.common.settingsTextButtonColors
 import cn.nabr.chatwithchat.presentation.common.settingsTextFieldColors
+import cn.nabr.chatwithchat.presentation.common.titleRes
 import cn.nabr.chatwithchat.util.isValidUrl
 import kotlin.math.roundToInt
 
@@ -647,6 +651,71 @@ private fun SystemPromptDialog(
                 onClick = onDismissRequest,
                 colors = settingsTextButtonColors()
             ) {
+                Text(stringResource(R.string.cancel))
+            }
+        }
+    )
+}
+
+@Composable
+fun ContextStrategyDialog(
+    dialogState: PlatformSettingViewModel.DialogState,
+    strategy: ContextStrategy,
+    settingViewModel: PlatformSettingViewModel
+) {
+    if (dialogState.isContextStrategyDialogOpen) {
+        ContextStrategyDialog(
+            selected = strategy,
+            onDismissRequest = settingViewModel::closeContextStrategyDialog,
+            onConfirmRequest = settingViewModel::updateContextStrategy
+        )
+    }
+}
+
+@Composable
+private fun ContextStrategyDialog(
+    selected: ContextStrategy,
+    onDismissRequest: () -> Unit,
+    onConfirmRequest: (strategy: ContextStrategy) -> Unit
+) {
+    val configuration = LocalWindowInfo.current
+    val screenWidth = with(LocalDensity.current) { configuration.containerSize.width.toDp() }
+    val screenHeight = with(LocalDensity.current) { configuration.containerSize.height.toDp() }
+    var choice by remember { mutableStateOf(selected) }
+
+    AlertDialog(
+        containerColor = settingsMaterialColors().grouped,
+        titleContentColor = settingsMaterialColors().primaryLabel,
+        textContentColor = settingsMaterialColors().secondaryLabel,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+        modifier = Modifier
+            .widthIn(max = screenWidth - 40.dp)
+            .heightIn(max = screenHeight - 80.dp),
+        title = { Text(text = stringResource(R.string.context_strategy)) },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState())
+            ) {
+                Text(stringResource(R.string.context_strategy_description))
+                ContextStrategy.entries.forEach { option ->
+                    RadioItem(
+                        value = option.name,
+                        selected = choice == option,
+                        title = stringResource(option.titleRes()),
+                        description = stringResource(option.descriptionRes()),
+                        onSelected = { choice = option }
+                    )
+                }
+            }
+        },
+        onDismissRequest = onDismissRequest,
+        confirmButton = {
+            TextButton(onClick = { onConfirmRequest(choice) }, colors = settingsTextButtonColors()) {
+                Text(stringResource(R.string.confirm))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismissRequest, colors = settingsTextButtonColors()) {
                 Text(stringResource(R.string.cancel))
             }
         }
