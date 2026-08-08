@@ -76,6 +76,334 @@ class ContextBuilder @Inject constructor() {
         )
     }
 
+    /**
+     * The context-management build: range and strategy in, [ContextBuildResult] out.
+     *
+     * Kept alongside the legacy [buildContext] rather than replacing it, because the two answer
+     * different questions. [buildContext] fits turns into [ProviderContextPolicy.maxContextTokens],
+     * a small local construction budget; this one fits them into the *model's* real window via
+     * [ContextBudget] and knows about stored checkpoints. Both share the turn pairing, sanitization
+     * and attachment-window helpers below, so a fix to how a message becomes context lands in both.
+     *
+     * This function is pure: no network, no database, no suspension. Everything it needs about
+     * previously folded state arrives in [ContextAssemblyRequest], which is what lets the entire
+     * strategy matrix be unit-tested without a provider or a Room instance.
+     */
+    fun buildManagedContext(request: ContextAssemblyRequest): ContextBuildResult {
+        val emptyResult = ContextBuildResult(
+            strategy = request.strategy,
+            range = request.range,
+            budget = request.budget
+        )
+        if (request.userMessages.isEmpty()) return emptyResult
+
+        val pairedTurns = pairManagedTurns(
+            userMessages = request.userMessages,
+            assistantMessages = request.assistantMessages,
+            platformUid = request.platform.uid
+        )
+        if (pairedTurns.isEmpty()) return emptyResult
+
+        val tokenCounter = ContextTokenCounter.forPlatform(request.platform)
+        val rangeResolution = resolveRange(pairedTurns, request.range, request.assistantMessages)
+
+        return if (request.usesNativeCompaction()) {
+            buildNativeManagedContext(request, rangeResolution, tokenCounter)
+        } else {
+            buildAppSideManagedContext(request, rangeResolution, tokenCounter)
+        }
+    }
+
+    /**
+     * A model that folds server-side takes the native path — unless the provider has already answered
+     * `unsupported_parameter` for it, in which case the gate guessed wrong and the app-side path is
+     * authoritative from then on.
+     */
+    private fun ContextAssemblyRequest.usesNativeCompaction(): Boolean =
+        NativeCompactionModelGate.supportsServerSideCompaction(platform.compatibleType, platform.model) &&
+            nativeState?.nativeUnsupported != true
+
+    private fun buildAppSideManagedContext(
+        request: ContextAssemblyRequest,
+        rangeResolution: RangeResolution,
+        tokenCounter: ContextTokenCounter
+    ): ContextBuildResult {
+        val budget = request.budget
+        val checkpointBody = request.chain.checkpointBody
+        val foldedThroughUserMessageId = request.chain.foldedThroughUserMessageId
+
+        // Turns the checkpoint already covers must not also be replayed verbatim, or the model sees
+        // the same exchange twice — once summarised, once in full — and treats the repetition as
+        // emphasis.
+        val unfoldedTurns = rangeResolution.turns.dropFoldedPrefix(foldedThroughUserMessageId)
+
+        val checkpointTokens = checkpointBody?.let { body ->
+            tokenCounter.estimateText(ContextBuildResult.HISTORICAL_CONTEXT_HEADER) + tokenCounter.estimateText(body)
+        } ?: 0
+        val rawTail = selectRawTail(
+            turns = unfoldedTurns,
+            maxTokens = rawTailBudgetFor(request.strategy, budget, checkpointTokens),
+            tokenCounter = tokenCounter
+        )
+
+        // Overflow is never dropped. It has not reached a checkpoint yet — that is the background
+        // fold's job and it has not landed — so the deterministic summarizer stands in until it does.
+        val deterministicSummary = ConversationContextSummarizer.build(
+            turns = rawTail.overflow.map { it.turn },
+            maxTokens = budget.summaryTarget,
+            maxTurns = request.policy.maxSummaryTurns,
+            tokenCounter = tokenCounter
+        )
+
+        // What a background fold should consume. Under AUTO_COMPACT the raw tail is already sized to
+        // recentRawTail so the overflow is exactly that batch; under RAW_PREFERRED the tail is much
+        // larger, so the same boundary has to be computed separately — folding must not wait until
+        // the conversation is over budget.
+        val pendingFoldTurns = when (request.strategy) {
+            ContextStrategy.AUTO_COMPACT -> rawTail.overflow
+            ContextStrategy.RAW_PREFERRED ->
+                selectRawTail(unfoldedTurns, budget.recentRawTail, tokenCounter).overflow
+        }
+
+        val selectedTurns = rawTail.selected.map { it.turn }
+        val estimatedTokens = checkpointTokens +
+            tokenCounter.estimateTurns(selectedTurns) +
+            tokenCounter.estimateText(deterministicSummary.orEmpty())
+
+        return ContextBuildResult(
+            strategy = request.strategy,
+            range = request.range,
+            budget = budget,
+            turns = applyAttachmentWindow(selectedTurns, request.policy),
+            checkpointBody = checkpointBody,
+            checkpointBoundaryUserMessageId = foldedThroughUserMessageId,
+            deterministicSummary = deterministicSummary,
+            pendingFoldTurns = pendingFoldTurns.map { it.turn },
+            estimatedTokens = estimatedTokens,
+            compactionState = when {
+                rawTail.overflow.isNotEmpty() -> ContextCompactionState.DETERMINISTIC_FALLBACK
+                !request.chain.isEmpty -> ContextCompactionState.REUSED_CHECKPOINT
+                else -> ContextCompactionState.NONE
+            },
+            crossProviderDegradedTurnCount = rawTail.selected.count { it.isCrossProviderDegraded },
+            rangeCorrection = rangeResolution.correction
+        )
+    }
+
+    /**
+     * The OpenAI native path: replay the stored opaque window, then every complete turn after it.
+     *
+     * There is no app-side checkpoint here and no background pre-fold. Folding happens server-side
+     * inside the request the user was already making, so the only local responsibility is deciding
+     * what still has to be sent alongside the window.
+     */
+    private fun buildNativeManagedContext(
+        request: ContextAssemblyRequest,
+        rangeResolution: RangeResolution,
+        tokenCounter: ContextTokenCounter
+    ): ContextBuildResult {
+        val budget = request.budget
+        val nativeState = request.nativeState?.takeIf { it.isUsable }
+        val replayTurns = rangeResolution.turns.dropFoldedPrefix(nativeState?.boundaryUserMessageId)
+
+        val windowTokens = nativeState?.estimatedTokens ?: 0
+        val rawTail = selectRawTail(
+            turns = replayTurns,
+            maxTokens = (budget.effectiveInputBudget - windowTokens).coerceAtLeast(MIN_RAW_TAIL_TOKENS),
+            tokenCounter = tokenCounter
+        )
+
+        // Overflow here means the range no longer fits one request, which is the one situation the
+        // standalone /v1/responses/compact endpoint exists for. An extractive summary is still
+        // produced as the floor: if that initialization call fails, the turns must reach the model in
+        // some form rather than vanish.
+        val deterministicSummary = ConversationContextSummarizer.build(
+            turns = rawTail.overflow.map { it.turn },
+            maxTokens = budget.summaryTarget,
+            maxTurns = request.policy.maxSummaryTurns,
+            tokenCounter = tokenCounter
+        )
+
+        val selectedTurns = rawTail.selected.map { it.turn }
+        return ContextBuildResult(
+            strategy = request.strategy,
+            range = request.range,
+            budget = budget,
+            turns = applyAttachmentWindow(selectedTurns, request.policy),
+            nativeCompactionItemsJson = nativeState?.compactionItemsJson,
+            deterministicSummary = deterministicSummary,
+            nativeInitializationRequired = rawTail.overflow.isNotEmpty(),
+            estimatedTokens = windowTokens +
+                tokenCounter.estimateTurns(selectedTurns) +
+                tokenCounter.estimateText(deterministicSummary.orEmpty()),
+            compactionState = if (nativeState != null) {
+                ContextCompactionState.REUSED_NATIVE_STATE
+            } else {
+                ContextCompactionState.NATIVE_SERVER_SIDE
+            },
+            crossProviderDegradedTurnCount = rawTail.selected.count { it.isCrossProviderDegraded },
+            rangeCorrection = rangeResolution.correction
+        )
+    }
+
+    /**
+     * How much of the budget may go out verbatim.
+     *
+     * [ContextStrategy.RAW_PREFERRED] means "raw while capacity allows", so it gets everything left
+     * after the checkpoint. [ContextStrategy.AUTO_COMPACT] deliberately takes far less than it could:
+     * a bounded tail keeps request size stable and cheap instead of letting it grow until it has no
+     * choice but to fold.
+     */
+    private fun rawTailBudgetFor(
+        strategy: ContextStrategy,
+        budget: ContextBudget,
+        checkpointTokens: Int
+    ): Int = when (strategy) {
+        ContextStrategy.RAW_PREFERRED -> budget.effectiveInputBudget - checkpointTokens
+        ContextStrategy.AUTO_COMPACT -> budget.recentRawTail
+    }.coerceAtLeast(MIN_RAW_TAIL_TOKENS)
+
+    /**
+     * Walks backwards from the newest turn, keeping whatever fits.
+     *
+     * The newest turn is admitted unconditionally. It carries the question being asked, and a request
+     * assembled without it is not the request the user made — better to exceed the budget and let the
+     * provider complain than to silently ask something else.
+     */
+    private fun selectRawTail(
+        turns: List<PairedTurn>,
+        maxTokens: Int,
+        tokenCounter: ContextTokenCounter
+    ): RawTailSelection {
+        if (turns.isEmpty()) return RawTailSelection()
+
+        var selectedCount = 0
+        var usedTokens = 0
+        for (index in turns.indices.reversed()) {
+            val cost = tokenCounter.estimateTurn(turns[index].turn)
+            if (index != turns.lastIndex && usedTokens + cost > maxTokens) break
+
+            selectedCount += 1
+            usedTokens += cost
+        }
+
+        return RawTailSelection(
+            selected = turns.takeLast(selectedCount),
+            overflow = turns.dropLast(selectedCount)
+        )
+    }
+
+    /**
+     * Drops every turn up to and including [foldedThroughUserMessageId].
+     *
+     * Compares ids rather than looking the boundary up, so a boundary turn that has since been
+     * deleted still cleanly separates folded history from the raw tail instead of falling back to
+     * replaying everything.
+     *
+     * The current turn stops the walk unconditionally. A background fold only ever consumes turns
+     * older than the raw tail, so a boundary at or past the current turn should be impossible — but
+     * "impossible" here would mean sending a request without the message the user just typed, and a
+     * stale checkpoint racing a retry is exactly the kind of thing that produces it.
+     */
+    private fun List<PairedTurn>.dropFoldedPrefix(foldedThroughUserMessageId: Int?): List<PairedTurn> {
+        val boundary = foldedThroughUserMessageId ?: return this
+        return dropWhile { !it.turn.isCurrentTurn && it.turn.userMessage.id <= boundary }
+    }
+
+    private fun pairManagedTurns(
+        userMessages: List<MessageV2>,
+        assistantMessages: List<List<MessageV2>>,
+        platformUid: String
+    ): List<PairedTurn> = userMessages
+        .mapIndexed { index, userMessage ->
+            val candidates = assistantMessages.getOrNull(index).orEmpty()
+            val ownReply = candidates.firstValidAssistantCandidate(platformUid)
+            val foreignReply = if (ownReply == null) candidates.firstForeignAssistantCandidate(platformUid) else null
+
+            PairedTurn(
+                turn = ConversationTurn(
+                    userMessage = userMessage,
+                    assistantMessage = ownReply ?: foreignReply,
+                    isCurrentTurn = index == userMessages.lastIndex
+                ),
+                isCrossProviderDegraded = foreignReply != null
+            )
+        }
+        .filter { paired ->
+            val turn = paired.turn
+            when {
+                turn.isCurrentTurn -> true
+                turn.assistantMessage == null -> false
+                turn.assistantMessage.semanticAssistantContent().isBlank() &&
+                    turn.assistantMessage.attachments.isEmpty() -> false
+                else -> true
+            }
+        }
+
+    /**
+     * A reply produced by a *different* provider, reduced to plain text.
+     *
+     * The legacy path drops these outright, which also deletes the user's half of the turn, because a
+     * turn with no assistant message is filtered out entirely — so switching provider mid-chat
+     * silently erases the conversation that led up to the switch. Provider-specific structure genuinely
+     * cannot be replayed (a file uploaded to one provider is meaningless to another), so attachments
+     * are stripped and only the semantic text survives. `platformType` is deliberately left alone:
+     * rewriting it would make a degraded turn indistinguishable from a native one everywhere else.
+     */
+    private fun List<MessageV2>.firstForeignAssistantCandidate(platformUid: String): MessageV2? =
+        firstNotNullOfOrNull { message ->
+            if (message.platformType == null || message.platformType == platformUid) {
+                return@firstNotNullOfOrNull null
+            }
+
+            val sanitizedMessage = sanitizeAssistantMessageForContext(message)
+            when {
+                sanitizedMessage.semanticAssistantContent().isBlank() -> null
+                isAssistantErrorMessage(sanitizedMessage.content) -> null
+                else -> sanitizedMessage.copy(attachments = emptyList())
+            }
+        }
+
+    private fun resolveRange(
+        turns: List<PairedTurn>,
+        range: ContextRange,
+        assistantMessages: List<List<MessageV2>>
+    ): RangeResolution {
+        val anchor = range.startUserMessageId ?: return RangeResolution(turns, ContextRangeCorrection.NONE)
+
+        val anchorIndex = turns.indexOfFirst { it.turn.userMessage.id == anchor }
+        if (anchorIndex >= 0) return RangeResolution(turns.drop(anchorIndex), ContextRangeCorrection.NONE)
+
+        // Correction always widens back toward full history and never narrows: a stale anchor must
+        // not be able to hide turns the user can still see in the transcript.
+        val anchorIsAssistantMessage = assistantMessages.any { candidates ->
+            candidates.any { candidate -> candidate.id == anchor }
+        }
+        return RangeResolution(
+            turns = turns,
+            correction = if (anchorIsAssistantMessage) {
+                ContextRangeCorrection.ANCHOR_NOT_A_TURN_BOUNDARY
+            } else {
+                ContextRangeCorrection.ANCHOR_MISSING
+            }
+        )
+    }
+
+    private data class PairedTurn(
+        val turn: ConversationTurn,
+        val isCrossProviderDegraded: Boolean
+    )
+
+    private data class RawTailSelection(
+        val selected: List<PairedTurn> = emptyList(),
+        val overflow: List<PairedTurn> = emptyList()
+    )
+
+    private data class RangeResolution(
+        val turns: List<PairedTurn>,
+        val correction: ContextRangeCorrection
+    )
+
     private fun selectHistoryTurns(
         historyTurns: List<ConversationTurn>,
         currentTurn: ConversationTurn,
@@ -236,5 +564,11 @@ class ContextBuilder @Inject constructor() {
         const val MIN_SUMMARY_TOKEN_BUDGET = 48
         const val MAX_CONTEXT_SOURCES = 5
         const val MAX_SOURCE_SNIPPET_CHARS = 240
+
+        /**
+         * Floor for the verbatim tail, so a checkpoint that has grown larger than the whole budget
+         * cannot drive the raw allowance to zero and leave the model with a summary and nothing else.
+         */
+        const val MIN_RAW_TAIL_TOKENS = 512
     }
 }

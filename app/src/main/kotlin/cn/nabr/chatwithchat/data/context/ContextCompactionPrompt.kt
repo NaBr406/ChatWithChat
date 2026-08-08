@@ -95,7 +95,7 @@ internal object ContextCompactionPrompt {
         sections += NEW_TURNS_HEADER
 
         val overhead = tokenCounter.estimateText(sections.joinToString("\n"))
-        val messageCount = turns.sumOf { turn -> if (turn.assistantMessage == null) 1 else 2 }
+        val messageCount: Int = turns.sumOf { turn -> if (turn.assistantMessage == null) 1 else 2 }
         val turnsBudget = (maxTokens - overhead).coerceAtLeast(MIN_MESSAGE_TOKENS * messageCount.coerceAtLeast(1))
         var remainingBudget = turnsBudget
         var remainingMessages = messageCount.coerceAtLeast(1)
