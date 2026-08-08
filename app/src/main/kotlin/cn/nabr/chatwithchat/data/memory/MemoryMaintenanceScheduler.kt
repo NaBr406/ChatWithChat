@@ -783,6 +783,7 @@ object MemoryMaintenanceJobFamily {
         MemoryMaintenanceJobType.PROMOTE_LONG_TERM_CANDIDATE,
         MemoryMaintenanceJobType.COMPACTION_FLUSH,
         MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH,
+        MemoryMaintenanceJobType.FOLD_CONTEXT_CHECKPOINT,
         MemoryMaintenanceJobType.CONSOLIDATE_LONG_TERM_MEMORY -> SEMANTIC
         else -> REPAIR
     }
@@ -801,6 +802,19 @@ object MemoryMaintenanceJobType {
     const val COMPACTION_FLUSH = "compaction_flush"
     const val CONSOLIDATE_TURN_BATCH = "consolidate_turn_batch"
     const val CONSOLIDATE_LONG_TERM_MEMORY = "consolidate_long_term_memory"
+
+    /**
+     * Background context-checkpoint fold. **Not a memory job**, despite living in this registry.
+     *
+     * It borrows the `semantic` family for two concrete properties an LLM fold needs and the other
+     * families do not offer: the `NetworkType.CONNECTED` work constraint and the long lease. It is
+     * therefore dispatched *before* the memory-enabled gate in `MemoryMaintenanceProcessor`, because
+     * context management is a separate feature and must keep working when long-term memory is off.
+     *
+     * Deliberately distinct from [COMPACTION_FLUSH], which despite the name is a memory job: it
+     * flushes pending memory turns when the context is compacted. The two are unrelated.
+     */
+    const val FOLD_CONTEXT_CHECKPOINT = "fold_context_checkpoint"
 }
 
 object MemoryMaintenanceJobStatus {

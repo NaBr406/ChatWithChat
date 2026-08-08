@@ -1,12 +1,20 @@
 package cn.nabr.chatwithchat.di
 
+import cn.nabr.chatwithchat.data.context.ContextBuilder
 import cn.nabr.chatwithchat.data.context.ContextCheckpointRepository
 import cn.nabr.chatwithchat.data.context.ContextCheckpointRepositoryImpl
 import cn.nabr.chatwithchat.data.context.ContextCompactionModelClient
 import cn.nabr.chatwithchat.data.context.ContextCompactionService
+import cn.nabr.chatwithchat.data.context.ContextFoldScheduler
+import cn.nabr.chatwithchat.data.context.ContextFoldService
+import cn.nabr.chatwithchat.data.context.ContextWindowResolver
 import cn.nabr.chatwithchat.data.context.OpenAINativeCompactionService
 import cn.nabr.chatwithchat.data.context.ProviderContextCompactionModelClient
 import cn.nabr.chatwithchat.data.database.dao.ContextManagementDao
+import cn.nabr.chatwithchat.data.database.dao.MessageV2Dao
+import cn.nabr.chatwithchat.data.database.dao.PlatformV2Dao
+import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceScheduler
+import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceWorkEnqueuer
 import cn.nabr.chatwithchat.data.network.AnthropicAPI
 import cn.nabr.chatwithchat.data.network.GoogleAPI
 import cn.nabr.chatwithchat.data.network.GroqAPI
@@ -84,5 +92,42 @@ object ContextManagementModule {
     ): OpenAINativeCompactionService = OpenAINativeCompactionService(
         openAIAPI = openAIAPI,
         clientMutex = clientLock
+    )
+
+    @Provides
+    @Singleton
+    fun provideContextFoldScheduler(
+        memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
+        contextCheckpointRepository: ContextCheckpointRepository,
+        memoryMaintenanceWorkEnqueuer: MemoryMaintenanceWorkEnqueuer
+    ): ContextFoldScheduler = ContextFoldScheduler(
+        maintenanceScheduler = memoryMaintenanceScheduler,
+        checkpointRepository = contextCheckpointRepository,
+        workEnqueuer = memoryMaintenanceWorkEnqueuer
+    )
+
+    /**
+     * Bound non-null even though `MemoryMaintenanceProcessor` requests it as nullable: the nullable
+     * parameter exists so tests can construct a processor without the context stack, not to make the
+     * dependency optional in the app. A missing binding here would silently defer every fold.
+     */
+    @Provides
+    @Singleton
+    fun provideContextFoldService(
+        messageV2Dao: MessageV2Dao,
+        platformV2Dao: PlatformV2Dao,
+        contextBuilder: ContextBuilder,
+        contextCheckpointRepository: ContextCheckpointRepository,
+        contextCompactionService: ContextCompactionService,
+        contextWindowResolver: ContextWindowResolver,
+        memoryMaintenanceScheduler: MemoryMaintenanceScheduler
+    ): ContextFoldService = ContextFoldService(
+        messageDao = messageV2Dao,
+        platformDao = platformV2Dao,
+        contextBuilder = contextBuilder,
+        checkpointRepository = contextCheckpointRepository,
+        compactionService = contextCompactionService,
+        contextWindowResolver = contextWindowResolver,
+        maintenanceScheduler = memoryMaintenanceScheduler
     )
 }

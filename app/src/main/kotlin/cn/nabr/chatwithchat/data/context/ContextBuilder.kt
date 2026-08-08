@@ -115,6 +115,22 @@ class ContextBuilder @Inject constructor() {
     }
 
     /**
+     * The turns of a conversation, paired and sanitized exactly as [buildManagedContext] would pair
+     * them, with no range, budget or checkpoint applied.
+     *
+     * Exists for the background fold, which re-reads messages from Room and must reproduce the very
+     * same [ConversationTurn] values that [ContextBuildResult.pendingFoldTurns] was hashed from.
+     * Assistant text is sanitized before it is hashed, so a caller that paired messages by hand would
+     * compute a different digest and every fold would abort as "batch changed".
+     */
+    fun buildFoldableTurns(
+        userMessages: List<MessageV2>,
+        assistantMessages: List<List<MessageV2>>,
+        platformUid: String
+    ): List<ConversationTurn> =
+        pairManagedTurns(userMessages, assistantMessages, platformUid).map { it.turn }
+
+    /**
      * A model that folds server-side takes the native path — unless the provider has already answered
      * `unsupported_parameter` for it, in which case the gate guessed wrong and the app-side path is
      * authoritative from then on.

@@ -1,5 +1,7 @@
 package cn.nabr.chatwithchat.data.memory
 
+import cn.nabr.chatwithchat.data.context.ContextFoldProcessResult
+import cn.nabr.chatwithchat.data.context.ContextFoldService
 import cn.nabr.chatwithchat.data.database.entity.MemoryMaintenanceJob
 import cn.nabr.chatwithchat.data.repository.SettingRepository
 import java.util.UUID
@@ -22,6 +24,12 @@ class MemoryMaintenanceProcessor @Inject constructor(
     private val memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler? = null,
     private val memoryDailyDistillationService: MemoryDailyDistillationService? = null,
     private val memoryLongTermConsolidationService: MemoryLongTermConsolidationService? = null,
+    /**
+     * Nullable and defaulted like its siblings so the many test constructions of this class keep
+     * compiling. A null here only ever defers a fold — it can never drop one, because the job row
+     * stays queued.
+     */
+    private val contextFoldService: ContextFoldService? = null,
     private val activityLogger: MemoryActivityLogger = MemoryActivityLogger.None
 ) {
     suspend fun processRunnableJobs(
@@ -108,6 +116,12 @@ class MemoryMaintenanceProcessor @Inject constructor(
     }
 
     private suspend fun processSemanticJob(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome {
+        // Dispatched ahead of the memory-enabled gate on purpose. Context folding is not a memory
+        // feature; it borrows this family for its NetworkType.CONNECTED constraint and long lease, and
+        // must keep working for users who have long-term memory switched off.
+        if (job.type == MemoryMaintenanceJobType.FOLD_CONTEXT_CHECKPOINT) {
+            return contextFoldService?.process(job)?.toOutcome() ?: unavailableContextFold(job)
+        }
         if (!settingRepository.fetchMemoryEnabled()) {
             maintenanceScheduler.markDismissed(job, "memory_disabled")
             finishUnavailableSemanticRun(
@@ -294,6 +308,13 @@ class MemoryMaintenanceProcessor @Inject constructor(
         return failedJob.toFailureOutcome()
     }
 
+    /**
+     * No memory-activity run is recorded here, unlike the sibling helpers: the memory activity log is
+     * a user-facing view of what long-term memory did, and a context fold did not do any of it.
+     */
+    private suspend fun unavailableContextFold(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome =
+        maintenanceScheduler.markFailedRetryable(job, "context_fold_service_not_available").toFailureOutcome()
+
     private suspend fun unavailableDistillation(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome {
         val failedJob = maintenanceScheduler.markFailedRetryable(job, "daily_distillation_not_available")
         finishUnavailableSemanticRun(job, MemoryActivityStatus.FAILED, "daily_distillation_not_available")
@@ -363,6 +384,19 @@ class MemoryMaintenanceProcessor @Inject constructor(
     private suspend fun dismissUnknownJob(job: MemoryMaintenanceJob): MemoryMaintenanceOutcome {
         maintenanceScheduler.markDismissed(job, "unsupported_memory_job_type:${job.type}")
         return MemoryMaintenanceOutcome.TERMINAL
+    }
+
+    /**
+     * A superseded fold is reported as SUCCEEDED because the job did exactly what it should: it found
+     * the batch already folded, or the conversation edited underneath it, and declined to write. There
+     * is nothing to retry and nothing wrong.
+     */
+    private fun ContextFoldProcessResult.toOutcome(): MemoryMaintenanceOutcome = when (status) {
+        ContextFoldProcessResult.STATUS_SUCCEEDED,
+        ContextFoldProcessResult.STATUS_SUPERSEDED -> MemoryMaintenanceOutcome.SUCCEEDED
+        ContextFoldProcessResult.STATUS_BLOCKED -> MemoryMaintenanceOutcome.BLOCKED
+        ContextFoldProcessResult.STATUS_TERMINAL -> MemoryMaintenanceOutcome.TERMINAL
+        else -> MemoryMaintenanceOutcome.RETRYABLE
     }
 
     private fun MemoryBatchProcessResult.toOutcome(): MemoryMaintenanceOutcome = when (status) {
