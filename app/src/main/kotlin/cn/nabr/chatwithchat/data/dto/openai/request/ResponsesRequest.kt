@@ -65,7 +65,81 @@ data class ResponsesRequest(
 
     @SerialName("tool_choice")
     @EncodeDefault(EncodeDefault.Mode.NEVER)
-    val toolChoice: ResponseToolChoice? = null
+    val toolChoice: ResponseToolChoice? = null,
+
+    /**
+     * Server-side context compaction. Only ever set for the official `ClientType.OPENAI` provider:
+     * every other client type must omit it, and third-party OpenAI-compatible gateways reached via
+     * `CUSTOM` are explicitly included in "every other".
+     */
+    @SerialName("context_management")
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val contextManagement: List<ResponseContextManagement>? = null,
+
+    /**
+     * Set to `false` alongside [contextManagement] so the compaction chain never depends on
+     * server-retained history. The full user-visible transcript lives in local Room storage.
+     */
+    @SerialName("store")
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val store: Boolean? = null
+)
+
+/**
+ * One entry of the Responses API `context_management` array.
+ *
+ * Only `compaction` exists today. When the streamed context crosses [compactThreshold] the server
+ * runs a compaction pass, emits an opaque `compaction` output item in the same stream, and continues
+ * inference against the pruned context.
+ */
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+data class ResponseContextManagement(
+    @SerialName("type")
+    val type: String = TYPE_COMPACTION,
+
+    @SerialName("compact_threshold")
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val compactThreshold: Int? = null
+) {
+    companion object {
+        const val TYPE_COMPACTION = "compaction"
+
+        /**
+         * A compaction-enabled request must either omit `max_output_tokens` or leave at least this
+         * much room; smaller values are rejected by the API. Callers that set an explicit output cap
+         * must therefore raise it to at least this, or drop it.
+         */
+        const val MIN_MAX_OUTPUT_TOKENS_WITH_COMPACTION = 20_000
+
+        fun compaction(compactThreshold: Int): ResponseContextManagement =
+            ResponseContextManagement(type = TYPE_COMPACTION, compactThreshold = compactThreshold)
+    }
+}
+
+/**
+ * Request body for the standalone `POST /v1/responses/compact` endpoint.
+ *
+ * Used only to initialise native state for a range that is already too large to submit as a single
+ * `/v1/responses` input — never as a general-purpose summarizer, and never as a fallback when
+ * server-side compaction fails. V1 stays stateless, so `previous_response_id` and `conversation` are
+ * deliberately not modelled.
+ */
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+data class ResponsesCompactRequest(
+    @SerialName("model")
+    val model: String,
+
+    @SerialName("input")
+    val input: List<ResponseInputItem>,
+
+    // Nullable rather than defaulting to `false`, because @EncodeDefault(NEVER) omits a field that
+    // equals its default: a `false` default would mean `store` was never actually sent. Callers pass
+    // `store = false` explicitly.
+    @SerialName("store")
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val store: Boolean? = null
 )
 
 @OptIn(ExperimentalSerializationApi::class)

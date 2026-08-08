@@ -2,10 +2,14 @@ package cn.nabr.chatwithchat.data.network
 
 import cn.nabr.chatwithchat.data.ModelConstants
 import cn.nabr.chatwithchat.data.dto.openai.request.ChatCompletionRequest
+import cn.nabr.chatwithchat.data.dto.openai.request.ResponsesCompactRequest
 import cn.nabr.chatwithchat.data.dto.openai.request.ResponsesRequest
 import cn.nabr.chatwithchat.data.dto.openai.response.ChatCompletionChunk
 import cn.nabr.chatwithchat.data.dto.openai.response.ErrorDetail
+import cn.nabr.chatwithchat.data.dto.openai.response.OutputItemSerializer
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponseErrorEvent
+import cn.nabr.chatwithchat.data.dto.openai.response.ResponsesCompactResponse
+import cn.nabr.chatwithchat.data.dto.openai.response.ResponsesCompactResult
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponsesStreamEvent
 import cn.nabr.chatwithchat.data.dto.openai.response.UnknownEvent
 import cn.nabr.chatwithchat.util.applyPlatformStreamingTimeout
@@ -30,7 +34,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
 
 class OpenAIAPIImpl @Inject constructor(
     private val networkClient: NetworkClient
@@ -229,8 +235,65 @@ class OpenAIAPIImpl @Inject constructor(
         }
     }.flowOn(Dispatchers.IO)
 
+    override suspend fun compactResponses(
+        request: ResponsesCompactRequest,
+        timeoutSeconds: Int
+    ): ResponsesCompactResult = withContext(Dispatchers.IO) {
+        val endpoint = joinApiEndpoint(apiUrl, "v1/responses/compact")
+
+        val responseBody = networkClient().preparePost(endpoint) {
+            applyPlatformStreamingTimeout(timeoutSeconds)
+            contentType(ContentType.Application.Json)
+            setBody(NetworkClient.openAIJson.encodeToString(request))
+            accept(ContentType.Application.Json)
+            token?.let { bearerAuth(it) }
+        }.execute { response ->
+            val body = response.body<String>()
+            if (!response.status.isSuccess()) {
+                throw OpenAICompactionException(
+                    message = parseOpenAIErrorMessage(body)
+                        ?: "HTTP ${response.status.value}: ${body.take(MAX_ERROR_BODY_LENGTH)}",
+                    code = parseOpenAIErrorCode(body) ?: response.status.value.toString()
+                )
+            }
+            body
+        }
+
+        val parsed = NetworkClient.openAIJson.decodeFromString<ResponsesCompactResponse>(responseBody)
+        parsed.error?.let {
+            throw OpenAICompactionException(message = it.message, code = it.code)
+        }
+        if (parsed.output.isEmpty()) {
+            // A window with no items cannot be replayed. Failing here keeps the caller from
+            // persisting an empty native state that would silently drop the whole range.
+            throw OpenAICompactionException(
+                message = "compact 返回了空的 output window。",
+                code = "empty_output"
+            )
+        }
+
+        // Re-serialize rather than substring the body: the items are opaque and must round-trip
+        // exactly, and OutputItem is backed by a raw JsonObject so nothing is lost or reordered.
+        val windowJson = NetworkClient.openAIJson.encodeToString(
+            ListSerializer(OutputItemSerializer),
+            parsed.output
+        )
+
+        ResponsesCompactResult(
+            outputWindowJson = windowJson,
+            outputItemCount = parsed.output.size,
+            usage = parsed.usage
+        )
+    }
+
     private fun parseOpenAIErrorMessage(errorBody: String): String? = try {
         NetworkClient.openAIJson.decodeFromString<OpenAIErrorResponse>(errorBody).error.message
+    } catch (_: Exception) {
+        null
+    }
+
+    private fun parseOpenAIErrorCode(errorBody: String): String? = try {
+        NetworkClient.openAIJson.decodeFromString<OpenAIErrorResponse>(errorBody).error.code
     } catch (_: Exception) {
         null
     }
