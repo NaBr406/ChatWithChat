@@ -5,6 +5,7 @@ import cn.nabr.chatwithchat.data.context.ContextCheckpointRepository
 import cn.nabr.chatwithchat.data.context.ContextCheckpointRepositoryImpl
 import cn.nabr.chatwithchat.data.context.ContextCompactionModelClient
 import cn.nabr.chatwithchat.data.context.ContextCompactionService
+import cn.nabr.chatwithchat.data.context.ContextFoldDegradationRegistry
 import cn.nabr.chatwithchat.data.context.ContextFoldScheduler
 import cn.nabr.chatwithchat.data.context.ContextFoldService
 import cn.nabr.chatwithchat.data.context.ContextWindowResolver
@@ -97,14 +98,21 @@ object ContextManagementModule {
 
     @Provides
     @Singleton
+    fun provideContextFoldDegradationRegistry(): ContextFoldDegradationRegistry =
+        ContextFoldDegradationRegistry()
+
+    @Provides
+    @Singleton
     fun provideContextFoldScheduler(
         memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
         contextCheckpointRepository: ContextCheckpointRepository,
-        memoryMaintenanceWorkEnqueuer: MemoryMaintenanceWorkEnqueuer
+        memoryMaintenanceWorkEnqueuer: MemoryMaintenanceWorkEnqueuer,
+        contextFoldDegradationRegistry: ContextFoldDegradationRegistry
     ): ContextFoldScheduler = ContextFoldScheduler(
         maintenanceScheduler = memoryMaintenanceScheduler,
         checkpointRepository = contextCheckpointRepository,
-        workEnqueuer = memoryMaintenanceWorkEnqueuer
+        workEnqueuer = memoryMaintenanceWorkEnqueuer,
+        degradationRegistry = contextFoldDegradationRegistry
     )
 
     /**
@@ -122,7 +130,8 @@ object ContextManagementModule {
         contextCompactionService: ContextCompactionService,
         contextWindowResolver: ContextWindowResolver,
         memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
-        memoryTurnBatchScheduler: MemoryTurnBatchScheduler
+        memoryTurnBatchScheduler: MemoryTurnBatchScheduler,
+        contextFoldDegradationRegistry: ContextFoldDegradationRegistry
     ): ContextFoldService = ContextFoldService(
         messageDao = messageV2Dao,
         platformDao = platformV2Dao,
@@ -131,6 +140,7 @@ object ContextManagementModule {
         compactionService = contextCompactionService,
         contextWindowResolver = contextWindowResolver,
         maintenanceScheduler = memoryMaintenanceScheduler,
-        memoryTurnBatchScheduler = memoryTurnBatchScheduler
+        memoryTurnBatchScheduler = memoryTurnBatchScheduler,
+        degradationRegistry = contextFoldDegradationRegistry
     )
 }

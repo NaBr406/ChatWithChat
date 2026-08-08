@@ -76,6 +76,11 @@ class ContextFoldService(
      * does not silently disappear. Null-safe because folding must keep working without it.
      */
     private val memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null,
+    /**
+     * Where "this pair ran out of retries" is recorded, so the degradation is observable instead of
+     * being felt only as compaction quietly never happening again.
+     */
+    private val degradationRegistry: ContextFoldDegradationRegistry? = null,
     private val json: Json = Json { ignoreUnknownKeys = true }
 ) {
 
@@ -156,6 +161,9 @@ class ContextFoldService(
             )
         )
         maintenanceScheduler.markSucceeded(job)
+        // A pair that folds again is no longer degraded, whatever it did before. Cleared before the
+        // memory nudge so a scheduler that throws cannot leave a healthy chat marked as failing.
+        degradationRegistry?.clear(payload.chatRoomId, payload.platformUid)
         notifyMemoryOfFoldedBatch(payload)
         return ContextFoldProcessResult(
             status = ContextFoldProcessResult.STATUS_SUCCEEDED,
@@ -214,7 +222,19 @@ class ContextFoldService(
             ContextCompactionFailure.TIMED_OUT,
             ContextCompactionFailure.INVALID_OUTPUT -> {
                 val failedJob = maintenanceScheduler.markFailedRetryable(job, detail)
-                val status = if (failedJob.status == MemoryMaintenanceJobStatus.FAILED_TERMINAL) {
+                val exhausted = failedJob.status == MemoryMaintenanceJobStatus.FAILED_TERMINAL
+                if (exhausted) {
+                    // Retries are over for this job, and the next turn would otherwise queue an
+                    // identical one against the same broken provider. Recording it here is what turns
+                    // "compaction silently stopped" into a state something can look at, and what lets
+                    // ContextFoldScheduler hold the next attempt back until the cooldown elapses.
+                    degradationRegistry?.recordBackgroundFoldExhausted(
+                        chatRoomId = payload.chatRoomId,
+                        platformUid = payload.platformUid,
+                        reason = reason.code
+                    )
+                }
+                val status = if (exhausted) {
                     ContextFoldProcessResult.STATUS_TERMINAL
                 } else {
                     ContextFoldProcessResult.STATUS_RETRYABLE

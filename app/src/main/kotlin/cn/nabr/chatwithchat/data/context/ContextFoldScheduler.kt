@@ -26,6 +26,12 @@ class ContextFoldScheduler(
     private val maintenanceScheduler: MemoryMaintenanceScheduler,
     private val checkpointRepository: ContextCheckpointRepository,
     private val workEnqueuer: MemoryMaintenanceWorkEnqueuer,
+    /**
+     * Consulted so a pair whose folds have exhausted their retries stops queuing a fresh job every
+     * turn. Null-safe: without it the scheduler behaves exactly as it did before, which is correct but
+     * wasteful against a provider that is down.
+     */
+    private val degradationRegistry: ContextFoldDegradationRegistry? = null,
     private val clock: Clock = Clock.systemDefaultZone(),
     private val json: Json = Json { encodeDefaults = true }
 ) {
@@ -57,6 +63,13 @@ class ContextFoldScheduler(
         val startUserMessageId = turns.firstOrNull()?.userMessage?.id ?: return null
         val endUserMessageId = turns.lastOrNull()?.userMessage?.id ?: return null
         if (startUserMessageId <= 0 || endUserMessageId <= 0) return null
+
+        // Claimed last among the cheap checks, because claiming refreshes the cooldown: a request
+        // that was going to bail out for some other reason must not consume the one probe the
+        // cooldown window allows. The request still assembles correctly without a fold — the
+        // deterministic extractive summary covers the same turns — so declining here degrades cost,
+        // not correctness.
+        if (degradationRegistry?.claimBackgroundFoldSlot(chatRoomId, platform.uid) == false) return null
 
         // Reloaded rather than taken from `result`, because the result may have been assembled a
         // moment ago and a fold queued since then would already have advanced the chain.

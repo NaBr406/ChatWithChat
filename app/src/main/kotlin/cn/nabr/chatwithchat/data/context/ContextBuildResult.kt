@@ -81,6 +81,19 @@ data class ContextBuildResult(
     val isNearBudgetLimit: Boolean
         get() = strategy == ContextStrategy.RAW_PREFERRED && estimatedTokens >= budget.rawWarningThreshold
 
+    /**
+     * True when the assembled request still does not fit, *after* the checkpoint and the extractive
+     * fallback have both done what they can.
+     *
+     * Reaching this means one turn is on its own larger than the window: the current turn is admitted
+     * unconditionally, so it is the only thing left that the budget cannot shrink. The request is sent
+     * anyway rather than refused locally — the provider's own limit is authoritative and its error
+     * names the real problem, whereas a client-side refusal would be a guess derived from an estimated
+     * token count. This exists so that decision is observable and asserted rather than implicit.
+     */
+    val exceedsEffectiveInputBudget: Boolean
+        get() = estimatedTokens > budget.effectiveInputBudget
+
     val didCompact: Boolean
         get() = compactionState != ContextCompactionState.NONE &&
             compactionState != ContextCompactionState.PENDING_BACKGROUND_FOLD
