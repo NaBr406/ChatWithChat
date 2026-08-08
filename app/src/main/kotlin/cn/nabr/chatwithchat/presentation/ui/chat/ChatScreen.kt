@@ -48,6 +48,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.IosShare
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -137,6 +138,8 @@ fun ChatScreen(
     val isChatTitleDialogOpen by chatViewModel.isChatTitleDialogOpen.collectAsStateWithLifecycle()
     val messageEditSession by chatViewModel.messageEditSession.collectAsStateWithLifecycle()
     val isSelectTextSheetOpen by chatViewModel.isSelectTextSheetOpen.collectAsStateWithLifecycle()
+    val contextRangeSheet by chatViewModel.contextRangeSheet.collectAsStateWithLifecycle()
+    val isContextCompacted by chatViewModel.isContextCompacted.collectAsStateWithLifecycle()
     val isLoaded by chatViewModel.isLoaded.collectAsStateWithLifecycle()
     val selectedAttachments by chatViewModel.selectedAttachments.collectAsStateWithLifecycle()
     val attachmentNotice by chatViewModel.attachmentNotice.collectAsStateWithLifecycle()
@@ -173,6 +176,7 @@ fun ChatScreen(
         currentModelOptions = currentModelOptions,
         currentReasoningMode = currentReasoningMode,
         isMenuItemEnabled = chatRoom.id > 0,
+        isContextCompacted = isContextCompacted,
         groupedMessages = groupedMessages,
         indexStates = indexStates,
         loadingStates = loadingStates,
@@ -189,6 +193,7 @@ fun ChatScreen(
         stickerAssetResolver = stickerAssetViewModel,
         onBackAction = onBackAction,
         onChatTitleItemClick = chatViewModel::openChatTitleDialog,
+        onContextRangeItemClick = chatViewModel::openContextRangeSheet,
         onExportChatItemClick = { exportChat(context, chatViewModel) },
         onEditQuestion = chatViewModel::openUserMessageEditDialog,
         onEditAssistant = chatViewModel::openAssistantMessageEditDialog,
@@ -266,6 +271,14 @@ fun ChatScreen(
         )
     }
 
+    contextRangeSheet?.let { sheetState ->
+        ContextRangeSheet(
+            state = sheetState,
+            onSelectStart = chatViewModel::selectContextRangeStart,
+            onDismissRequest = chatViewModel::closeContextRangeSheet
+        )
+    }
+
     if (isSelectTextSheetOpen) {
         val selectedText by chatViewModel.selectedText.collectAsStateWithLifecycle()
         val materialColors = settingsMaterialColors()
@@ -295,6 +308,7 @@ private fun ChatContent(
     currentModelOptions: List<ModelSelectionOption>,
     currentReasoningMode: ReasoningMode,
     isMenuItemEnabled: Boolean,
+    isContextCompacted: Boolean,
     groupedMessages: ChatViewModel.GroupedMessages,
     indexStates: List<Int>,
     loadingStates: List<ChatViewModel.LoadingState>,
@@ -311,6 +325,7 @@ private fun ChatContent(
     stickerAssetResolver: StickerAssetResolver,
     onBackAction: () -> Unit,
     onChatTitleItemClick: () -> Unit,
+    onContextRangeItemClick: () -> Unit,
     onModelOptionSelected: (ModelSelectionOption) -> Unit,
     onReasoningModeSelected: (ReasoningMode) -> Unit,
     onExportChatItemClick: () -> Unit,
@@ -525,12 +540,14 @@ private fun ChatContent(
                 roundCount = roundNavigationItems.size,
                 isRoundNavigatorOpen = isRoundNavigatorOpen,
                 isMenuItemEnabled = isMenuItemEnabled,
+                isContextCompacted = isContextCompacted,
                 onBackAction = onBackAction,
                 navigationIcon = navigationIcon,
                 navigationIconContentDescription = navigationIconContentDescription,
                 scrollBehavior = scrollBehavior,
                 onRoundCountClick = { isRoundNavigatorOpen = !isRoundNavigatorOpen },
                 onChatTitleItemClick = onChatTitleItemClick,
+                onContextRangeItemClick = onContextRangeItemClick,
                 onModelOptionSelected = onModelOptionSelected,
                 onReasoningModeSelected = onReasoningModeSelected,
                 onExportChatItemClick = onExportChatItemClick
@@ -893,12 +910,14 @@ private fun ChatTopBar(
     roundCount: Int,
     isRoundNavigatorOpen: Boolean,
     isMenuItemEnabled: Boolean,
+    isContextCompacted: Boolean,
     onBackAction: () -> Unit,
     navigationIcon: ImageVector,
     navigationIconContentDescription: String,
     scrollBehavior: TopAppBarScrollBehavior,
     onRoundCountClick: () -> Unit,
     onChatTitleItemClick: () -> Unit,
+    onContextRangeItemClick: () -> Unit,
     onModelOptionSelected: (ModelSelectionOption) -> Unit,
     onReasoningModeSelected: (ReasoningMode) -> Unit,
     onExportChatItemClick: () -> Unit
@@ -963,9 +982,14 @@ private fun ChatTopBar(
                 ChatDropdownMenu(
                     isDropdownMenuExpanded = isDropDownMenuExpanded,
                     isMenuItemEnabled = isMenuItemEnabled,
+                    isContextCompacted = isContextCompacted,
                     onDismissRequest = { isDropDownMenuExpanded = false },
                     onChatTitleItemClick = {
                         onChatTitleItemClick()
+                        isDropDownMenuExpanded = false
+                    },
+                    onContextRangeItemClick = {
+                        onContextRangeItemClick()
                         isDropDownMenuExpanded = false
                     },
                     onExportChatItemClick = onExportChatItemClick
@@ -980,8 +1004,10 @@ private fun ChatTopBar(
 fun ChatDropdownMenu(
     isDropdownMenuExpanded: Boolean,
     isMenuItemEnabled: Boolean,
+    isContextCompacted: Boolean,
     onDismissRequest: () -> Unit,
     onChatTitleItemClick: () -> Unit,
+    onContextRangeItemClick: () -> Unit,
     onExportChatItemClick: () -> Unit
 ) {
     val materialColors = settingsMaterialColors()
@@ -1014,6 +1040,41 @@ fun ChatDropdownMenu(
                 )
             },
             onClick = onChatTitleItemClick
+        )
+        HorizontalDivider(
+            modifier = Modifier.padding(start = 56.dp, end = 12.dp),
+            thickness = 0.5.dp,
+            color = materialColors.separator
+        )
+        DropdownMenuItem(
+            modifier = Modifier.heightIn(min = 52.dp),
+            enabled = isMenuItemEnabled,
+            colors = settingsDropdownMenuItemColors(),
+            leadingIcon = {
+                Icon(
+                    imageVector = Icons.Outlined.Tune,
+                    contentDescription = null
+                )
+            },
+            text = {
+                Column {
+                    Text(
+                        text = stringResource(R.string.context_range),
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Medium
+                    )
+                    // The threshold status lives here rather than in a dialog: compaction is
+                    // automatic and must never interrupt the user to be acknowledged.
+                    if (isContextCompacted) {
+                        Text(
+                            text = stringResource(R.string.context_range_compacted_notice),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = materialColors.secondaryLabel
+                        )
+                    }
+                }
+            },
+            onClick = onContextRangeItemClick
         )
         HorizontalDivider(
             modifier = Modifier.padding(start = 56.dp, end = 12.dp),

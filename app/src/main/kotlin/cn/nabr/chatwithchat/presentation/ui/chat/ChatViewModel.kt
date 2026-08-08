@@ -10,6 +10,10 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cn.nabr.chatwithchat.R
+import cn.nabr.chatwithchat.data.context.ContextCheckpointRepository
+import cn.nabr.chatwithchat.data.context.ContextRange
+import cn.nabr.chatwithchat.data.context.ContextRangeCorrection
+import cn.nabr.chatwithchat.data.context.ContextStrategy
 import cn.nabr.chatwithchat.data.context.semanticAssistantContent
 import cn.nabr.chatwithchat.data.database.entity.ACTIVE_REVISION_LATEST
 import cn.nabr.chatwithchat.data.database.entity.ChatRoomV2
@@ -66,6 +70,7 @@ class ChatViewModel @Inject constructor(
     private val memoryRepository: MemoryRepository,
     private val attachmentUploadCoordinator: AttachmentUploadCoordinator,
     private val toolApprovalBroker: ToolApprovalBroker,
+    private val contextCheckpointRepository: ContextCheckpointRepository,
     @param:ApplicationScope private val applicationScope: CoroutineScope
 ) : ViewModel() {
     sealed class LoadingState {
@@ -209,6 +214,19 @@ class ChatViewModel @Inject constructor(
     private val _isLoaded = MutableStateFlow(false)
     val isLoaded = _isLoaded.asStateFlow()
 
+    // Null while the chat-level context range sheet is closed.
+    private val _contextRangeSheet = MutableStateFlow<ContextRangeSheetState?>(null)
+    val contextRangeSheet = _contextRangeSheet.asStateFlow()
+
+    /**
+     * Lightweight "earlier context was folded" indicator for the overflow menu.
+     *
+     * Read from the durable checkpoint store rather than from the last request, so it stays correct
+     * after process death and never depends on a send having happened in this session.
+     */
+    private val _isContextCompacted = MutableStateFlow(false)
+    val isContextCompacted = _isContextCompacted.asStateFlow()
+
     private var pendingQuestionText: String? = null
     private var pendingMemoryTurnActivityAt: Long? = null
     private var isInitialRequestInFlight = false
@@ -337,6 +355,169 @@ class ChatViewModel @Inject constructor(
     fun openSelectTextSheet(content: String) {
         _selectedText.update { content }
         _isSelectTextSheetOpen.update { true }
+    }
+
+    /**
+     * Opens the chat-level range sheet for whichever provider is currently selected.
+     *
+     * The sheet is published in its loading state first so the entry point stays instant: the stored
+     * range and the fold status are two database reads, and making the menu wait for them would turn
+     * a glance into a stall.
+     */
+    fun openContextRangeSheet() {
+        val platform = currentContextPlatform() ?: return
+        _contextRangeSheet.update {
+            ContextRangeSheetState(
+                platformUid = platform.uid,
+                platformName = platform.name,
+                strategy = ContextStrategy.fromStorage(platform.contextStrategy),
+                isLoading = true
+            )
+        }
+        loadContextRangeSheet(platform)
+    }
+
+    fun closeContextRangeSheet() = _contextRangeSheet.update { null }
+
+    /**
+     * Records the first turn that participates in context assembly for this chat and provider.
+     *
+     * `null` clears the row back to full history. Neither branch touches `messages_v2`: a range
+     * decides what a request carries, never what the conversation contains.
+     *
+     * Applied optimistically to the sheet so the radio button responds immediately; the write that
+     * follows is the same value, and a failed write simply leaves the previous range in place for
+     * the next send to use.
+     */
+    fun selectContextRangeStart(userMessageId: Int?) {
+        val sheet = _contextRangeSheet.value ?: return
+        if (!sheet.isRangeSelectable) return
+        if (userMessageId != null && sheet.turns.none { it.userMessageId == userMessageId }) return
+
+        _contextRangeSheet.update { current ->
+            current?.copy(
+                selectedStartUserMessageId = userMessageId,
+                correction = ContextRangeCorrection.NONE
+            )
+        }
+
+        val chatId = _chatRoom.value.id
+        if (chatId <= 0) return
+        val platformUid = sheet.platformUid
+        viewModelScope.launch {
+            readContextStore {
+                if (userMessageId == null) {
+                    contextCheckpointRepository.clearRange(chatId, platformUid)
+                } else {
+                    contextCheckpointRepository.saveRange(
+                        ContextRange(
+                            chatRoomId = chatId,
+                            platformUid = platformUid,
+                            startUserMessageId = userMessageId
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    private fun loadContextRangeSheet(platform: PlatformV2) {
+        val chatId = _chatRoom.value.id
+        val grouped = _groupedMessages.value
+        viewModelScope.launch {
+            val turns = buildContextRangeTurns(grouped.userMessages)
+            val assistantMessageIds = grouped.assistantMessages
+                .flatten()
+                .mapTo(mutableSetOf()) { it.id }
+            val storedRange = if (chatId > 0) {
+                readContextStore { contextCheckpointRepository.loadRange(chatId, platform.uid) }
+            } else {
+                null
+            }
+            val resolution = resolveContextRangeAnchor(
+                storedStartUserMessageId = storedRange?.startUserMessageId,
+                turns = turns,
+                assistantMessageIds = assistantMessageIds
+            )
+            if (chatId > 0 && resolution.correction != ContextRangeCorrection.NONE) {
+                // Persist the widening now so the next send does not have to correct it again. The
+                // messages the stale anchor pointed at are untouched — only the range row goes.
+                readContextStore { contextCheckpointRepository.clearRange(chatId, platform.uid) }
+            }
+            val foldedThrough = if (chatId > 0) {
+                loadFoldedThroughUserMessageId(chatId, platform.uid)
+            } else {
+                null
+            }
+
+            _contextRangeSheet.update { current ->
+                // The user may have switched provider or dismissed the sheet while this was loading.
+                if (current == null || current.platformUid != platform.uid) {
+                    current
+                } else {
+                    current.copy(
+                        turns = turns,
+                        selectedStartUserMessageId = resolution.startUserMessageId,
+                        correction = resolution.correction,
+                        foldedTurnCount = countFoldedTurns(turns, foldedThrough),
+                        isLoading = false
+                    )
+                }
+            }
+            _isContextCompacted.update { foldedThrough != null }
+        }
+    }
+
+    private fun refreshContextCompactionNotice() {
+        val platform = currentContextPlatform()
+        val chatId = _chatRoom.value.id
+        if (platform == null || chatId <= 0) {
+            _isContextCompacted.update { false }
+            return
+        }
+        viewModelScope.launch {
+            val foldedThrough = loadFoldedThroughUserMessageId(chatId, platform.uid)
+            _isContextCompacted.update { foldedThrough != null }
+        }
+    }
+
+    /**
+     * Re-reads everything keyed by `chatRoomId + platformUid` after the selection moved to another
+     * provider, because a range belongs to one provider and must never be reinterpreted under
+     * another's numbering.
+     */
+    private fun refreshContextStateForCurrentPlatform() {
+        refreshContextCompactionNotice()
+        if (_contextRangeSheet.value != null) openContextRangeSheet()
+    }
+
+    private suspend fun loadFoldedThroughUserMessageId(chatId: Int, platformUid: String): Int? {
+        val chain = readContextStore { contextCheckpointRepository.loadChain(chatId, platformUid) }
+        chain?.foldedThroughUserMessageId?.let { return it }
+        val nativeState = readContextStore { contextCheckpointRepository.loadNativeState(chatId, platformUid) }
+        return nativeState?.takeIf { it.isUsable }?.boundaryUserMessageId
+    }
+
+    /**
+     * Context-store reads are advisory: a database hiccup degrades the sheet to "nothing folded, no
+     * range", which is the same conservative answer the request assembly falls back to. Cancellation
+     * is rethrown so a closed screen still tears its coroutines down.
+     */
+    private suspend fun <T> readContextStore(block: suspend () -> T): T? =
+        try {
+            block()
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Throwable) {
+            null
+        }
+
+    private fun currentContextPlatform(): PlatformV2? {
+        val selectedUid = _lastSelectedModel.value?.platformUid
+            ?: enabledPlatformsInChat.firstOrNull()
+            ?: return null
+        return _enabledPlatformsInApp.value.firstOrNull { it.uid == selectedUid }
+            ?: _platformsInApp.value.firstOrNull { it.uid == selectedUid }
     }
 
     fun generateDefaultChatTitle(): String? = chatRepository.generateDefaultChatTitle(_groupedMessages.value.userMessages)
@@ -776,6 +957,7 @@ class ChatViewModel @Inject constructor(
                 chatRepository.saveChatPlatformModels(_chatRoom.value.id, _chatPlatformModels.value)
             }
         }
+        refreshContextStateForCurrentPlatform()
     }
 
     fun updateChatReasoningModeAndRemember(reasoningMode: ReasoningMode) {
@@ -1253,6 +1435,7 @@ class ChatViewModel @Inject constructor(
                 _chatRoom.update { it.copy(enabledPlatform = listOf(selectedPlatformUid)) }
             }
             maybeSendInitialQuestion()
+            refreshContextCompactionNotice()
         }
     }
 
@@ -1265,6 +1448,7 @@ class ChatViewModel @Inject constructor(
             _availableChatModels.update { availableModels }
             initializeChatPlatformModels(availableModels)
             maybeSendInitialQuestion()
+            refreshContextCompactionNotice()
         }
     }
 
@@ -1463,6 +1647,7 @@ class ChatViewModel @Inject constructor(
 
                         // Sync message ids
                         _groupedMessages.value = persistedGroupedMessages
+                        refreshContextCompactionNotice()
                     } catch (error: CancellationException) {
                         throw error
                     } catch (error: Throwable) {
