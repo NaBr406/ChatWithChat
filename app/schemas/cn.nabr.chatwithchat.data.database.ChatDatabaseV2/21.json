@@ -160,7 +160,7 @@
       },
       {
         "tableName": "platform_v2",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`platform_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `uid` TEXT NOT NULL, `name` TEXT NOT NULL, `compatible_type` TEXT NOT NULL, `enabled` INTEGER NOT NULL, `api_url` TEXT NOT NULL, `token` TEXT, `model` TEXT NOT NULL, `temperature` REAL, `top_p` REAL, `system_prompt` TEXT, `stream` INTEGER NOT NULL, `reasoning` INTEGER NOT NULL, `timeout` INTEGER NOT NULL, `model_refresh_status` TEXT NOT NULL, `model_refresh_error` TEXT, `model_refreshed_at` INTEGER)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`platform_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `uid` TEXT NOT NULL, `name` TEXT NOT NULL, `compatible_type` TEXT NOT NULL, `enabled` INTEGER NOT NULL, `api_url` TEXT NOT NULL, `token` TEXT, `model` TEXT NOT NULL, `temperature` REAL, `top_p` REAL, `system_prompt` TEXT, `stream` INTEGER NOT NULL, `reasoning` INTEGER NOT NULL, `timeout` INTEGER NOT NULL, `model_refresh_status` TEXT NOT NULL, `model_refresh_error` TEXT, `model_refreshed_at` INTEGER, `context_strategy` TEXT NOT NULL DEFAULT 'AUTO_COMPACT')",
         "fields": [
           {
             "fieldPath": "id",
@@ -257,6 +257,13 @@
             "fieldPath": "modelRefreshedAt",
             "columnName": "model_refreshed_at",
             "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "contextStrategy",
+            "columnName": "context_strategy",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'AUTO_COMPACT'"
           }
         ],
         "primaryKey": {

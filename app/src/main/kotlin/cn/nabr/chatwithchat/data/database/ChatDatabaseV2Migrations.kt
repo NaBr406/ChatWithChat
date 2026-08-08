@@ -449,6 +449,12 @@ object ChatDatabaseV2Migrations {
             // Task 0: provider-reported model input window. Existing rows get NULL and are backfilled
             // naturally on the next model refresh.
             db.execSQL("ALTER TABLE platform_model_v2 ADD COLUMN context_window INTEGER")
+            // Task 5: per-provider context strategy. NOT NULL with a default so every existing
+            // provider lands on AUTO_COMPACT without a separate backfill.
+            db.execSQL(
+                "ALTER TABLE platform_v2 ADD COLUMN context_strategy TEXT NOT NULL " +
+                    "DEFAULT 'AUTO_COMPACT'"
+            )
             createContextManagementTables(db)
         }
     }

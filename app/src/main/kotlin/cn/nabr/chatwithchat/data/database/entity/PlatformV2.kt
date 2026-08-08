@@ -62,7 +62,17 @@ data class PlatformV2(
     val modelRefreshError: String? = null,
 
     @ColumnInfo(name = "model_refreshed_at")
-    val modelRefreshedAt: Long? = null
+    val modelRefreshedAt: Long? = null,
+
+    /**
+     * Serialized [cn.nabr.chatwithchat.data.context.ContextStrategy]. Kept per provider rather than
+     * in the global settings store, because whether raw history fits is a property of the provider's
+     * model and window, not of the user's account.
+     *
+     * Non-null with a default so every existing row migrates to AUTO_COMPACT without a backfill pass.
+     */
+    @ColumnInfo(name = "context_strategy", defaultValue = "AUTO_COMPACT")
+    val contextStrategy: String = "AUTO_COMPACT"
 )
 
 object PlatformModelRefreshStatus {
