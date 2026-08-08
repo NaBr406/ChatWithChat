@@ -273,7 +273,8 @@ class ContextBuilderTest {
         preferProviderFileRefs = false,
         maxContextTokens = maxContextTokens,
         summaryTokenBudget = summaryTokenBudget,
-        maxSummaryTurns = maxSummaryTurns
+        maxSummaryTurns = maxSummaryTurns,
+        fallbackModelContextWindow = 6_000
     )
 
     private fun platform() = PlatformV2(

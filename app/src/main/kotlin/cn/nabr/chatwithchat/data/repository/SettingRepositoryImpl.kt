@@ -408,6 +408,7 @@ class SettingRepositoryImpl @Inject constructor(
                     description = apiModel.description,
                     enabled = existingModel?.enabled ?: true,
                     isDefault = existingModel?.isDefault ?: false,
+                    contextWindow = apiModel.contextWindow ?: existingModel?.contextWindow,
                     updatedAt = refreshedAt
                 )
             }

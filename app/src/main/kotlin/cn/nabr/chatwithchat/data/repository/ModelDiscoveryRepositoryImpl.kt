@@ -66,7 +66,8 @@ class ModelDiscoveryRepositoryImpl @Inject constructor(
             APIModel(
                 name = model.name?.takeIf { it.isNotBlank() } ?: model.id,
                 description = model.description?.takeIf { it.isNotBlank() } ?: model.ownedBy.orEmpty(),
-                aliasValue = model.id
+                aliasValue = model.id,
+                contextWindow = (model.contextWindow ?: model.contextLength)?.takeIf { it > 0 }
             )
         }
     }
@@ -75,7 +76,11 @@ class ModelDiscoveryRepositoryImpl @Inject constructor(
         val tagsModels = runCatching { fetchOllamaTags(apiUrl, token) }.getOrDefault(emptyList())
         if (tagsModels.isNotEmpty()) return tagsModels
 
-        return fetchOpenAICompatibleModels(apiUrl, token)
+        // Ollama reports the model's architectural limit, not the num_ctx the server actually
+        // allocates (default 4096). The OpenAI-compatible endpoint cannot pass num_ctx, so any
+        // window we read here would make us confidently overflow and be silently truncated
+        // server-side. Discard it and let ContextWindowResolver use the conservative fallback.
+        return fetchOpenAICompatibleModels(apiUrl, token).map { it.copy(contextWindow = null) }
     }
 
     private suspend fun fetchOllamaTags(apiUrl: String, token: String?): List<APIModel> {
@@ -114,7 +119,8 @@ class ModelDiscoveryRepositoryImpl @Inject constructor(
                 APIModel(
                     name = model.displayName?.takeIf { it.isNotBlank() } ?: id,
                     description = model.description.orEmpty(),
-                    aliasValue = id
+                    aliasValue = id,
+                    contextWindow = model.inputTokenLimit?.takeIf { it > 0 }
                 )
             }
     }
@@ -135,7 +141,8 @@ class ModelDiscoveryRepositoryImpl @Inject constructor(
             APIModel(
                 name = model.displayName?.takeIf { it.isNotBlank() } ?: model.id,
                 description = model.type.orEmpty(),
-                aliasValue = model.id
+                aliasValue = model.id,
+                contextWindow = model.maxInputTokens?.takeIf { it > 0 }
             )
         }
     }
@@ -185,58 +192,67 @@ class ModelDiscoveryRepositoryImpl @Inject constructor(
 }
 
 @Serializable
-private data class OpenAIModelListResponse(
+internal data class OpenAIModelListResponse(
     val data: List<OpenAIModelResponse> = emptyList()
 )
 
 @Serializable
-private data class OpenAIModelResponse(
+internal data class OpenAIModelResponse(
     val id: String,
     val name: String? = null,
     val description: String? = null,
     @SerialName("owned_by")
-    val ownedBy: String? = null
+    val ownedBy: String? = null,
+    // Groq reports `context_window`; OpenRouter reports `context_length`. Official OpenAI reports
+    // neither. All three share this DTO, so both fields are parsed and the first non-null wins.
+    @SerialName("context_window")
+    val contextWindow: Int? = null,
+    @SerialName("context_length")
+    val contextLength: Int? = null
 )
 
 @Serializable
-private data class OllamaTagsResponse(
+internal data class OllamaTagsResponse(
     val models: List<OllamaModelResponse> = emptyList()
 )
 
 @Serializable
-private data class OllamaModelResponse(
+internal data class OllamaModelResponse(
     val name: String,
     val details: OllamaModelDetails? = null
 )
 
 @Serializable
-private data class OllamaModelDetails(
+internal data class OllamaModelDetails(
     @SerialName("parameter_size")
     val parameterSize: String? = null
 )
 
 @Serializable
-private data class GoogleModelListResponse(
+internal data class GoogleModelListResponse(
     val models: List<GoogleModelResponse> = emptyList()
 )
 
 @Serializable
-private data class GoogleModelResponse(
+internal data class GoogleModelResponse(
     val name: String,
     val displayName: String? = null,
     val description: String? = null,
-    val supportedGenerationMethods: List<String> = emptyList()
+    val supportedGenerationMethods: List<String> = emptyList(),
+    val inputTokenLimit: Int? = null
 )
 
 @Serializable
-private data class AnthropicModelListResponse(
+internal data class AnthropicModelListResponse(
     val data: List<AnthropicModelResponse> = emptyList()
 )
 
 @Serializable
-private data class AnthropicModelResponse(
+internal data class AnthropicModelResponse(
     val id: String,
     @SerialName("display_name")
     val displayName: String? = null,
-    val type: String? = null
+    val type: String? = null,
+    @SerialName("max_input_tokens")
+    val maxInputTokens: Int? = null
 )

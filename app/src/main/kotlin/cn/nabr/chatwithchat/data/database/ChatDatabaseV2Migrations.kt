@@ -444,6 +444,19 @@ object ChatDatabaseV2Migrations {
         }
     }
 
+    val MIGRATION_20_21 = object : Migration(20, 21) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            // Task 0: provider-reported model input window. Existing rows get NULL and are backfilled
+            // naturally on the next model refresh.
+            db.execSQL("ALTER TABLE platform_model_v2 ADD COLUMN context_window INTEGER")
+            createContextManagementTables(db)
+        }
+    }
+
+    internal fun createContextManagementTables(db: SupportSQLiteDatabase) {
+        // Placeholder: context checkpoint / range / native-state tables are created here by Task 2.
+    }
+
     internal fun ensureChatHistoryRuntimeObjects(db: SupportSQLiteDatabase) {
         createChatHistoryDerivedTables(db)
         createChatHistoryFtsTriggers(db)

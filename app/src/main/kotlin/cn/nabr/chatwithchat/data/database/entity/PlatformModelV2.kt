@@ -37,6 +37,12 @@ data class PlatformModelV2(
     @ColumnInfo("is_default")
     val isDefault: Boolean = false,
 
+    // Provider-reported input context window, in tokens. Null means unknown: the provider did not
+    // report it, or the value was deliberately not trusted (Ollama). Consumers must fall back to
+    // ContextWindowResolver rather than assuming a default here.
+    @ColumnInfo("context_window")
+    val contextWindow: Int? = null,
+
     @ColumnInfo("updated_at")
     val updatedAt: Long = System.currentTimeMillis() / 1000
 )

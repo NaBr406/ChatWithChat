@@ -73,7 +73,7 @@ import cn.nabr.chatwithchat.data.database.entity.TokenUsageRecordConverter
         ChatHistoryVectorSnapshotEntity::class,
         ChatHistoryVectorEntryEntity::class
     ],
-    version = 20,
+    version = 21,
     exportSchema = true
 )
 @TypeConverters(
