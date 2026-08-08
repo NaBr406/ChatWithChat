@@ -6,6 +6,7 @@ import androidx.room.TypeConverters
 import cn.nabr.chatwithchat.data.database.dao.ChatPlatformModelV2Dao
 import cn.nabr.chatwithchat.data.database.dao.ChatHistoryDao
 import cn.nabr.chatwithchat.data.database.dao.ChatRoomV2Dao
+import cn.nabr.chatwithchat.data.database.dao.ContextManagementDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryActivityLogDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryLongTermConsolidationDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryMaintenanceJobDao
@@ -26,6 +27,9 @@ import cn.nabr.chatwithchat.data.database.entity.ChatHistoryProjectionEntity
 import cn.nabr.chatwithchat.data.database.entity.ChatHistoryVectorEntryEntity
 import cn.nabr.chatwithchat.data.database.entity.ChatHistoryVectorSnapshotEntity
 import cn.nabr.chatwithchat.data.database.entity.ChatRoomV2
+import cn.nabr.chatwithchat.data.database.entity.ContextCheckpointSegment
+import cn.nabr.chatwithchat.data.database.entity.ContextNativeCompactionState
+import cn.nabr.chatwithchat.data.database.entity.ContextRangeState
 import cn.nabr.chatwithchat.data.database.entity.MemoryActivityLog
 import cn.nabr.chatwithchat.data.database.entity.MemoryChatCheckpoint
 import cn.nabr.chatwithchat.data.database.entity.MemoryCorpusState
@@ -71,7 +75,10 @@ import cn.nabr.chatwithchat.data.database.entity.TokenUsageRecordConverter
         ChatHistoryIndexStateEntity::class,
         ChatHistoryEmbeddingCacheEntity::class,
         ChatHistoryVectorSnapshotEntity::class,
-        ChatHistoryVectorEntryEntity::class
+        ChatHistoryVectorEntryEntity::class,
+        ContextCheckpointSegment::class,
+        ContextRangeState::class,
+        ContextNativeCompactionState::class
     ],
     version = 21,
     exportSchema = true
@@ -98,4 +105,5 @@ abstract class ChatDatabaseV2 : RoomDatabase() {
     abstract fun memoryLongTermConsolidationDao(): MemoryLongTermConsolidationDao
     abstract fun stickerCatalogDao(): StickerCatalogDao
     abstract fun chatHistoryDao(): ChatHistoryDao
+    abstract fun contextManagementDao(): ContextManagementDao
 }

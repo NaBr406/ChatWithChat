@@ -19,7 +19,7 @@ data class ContextBuildResult(
      */
     val checkpointBody: String? = null,
     /** Last user message id already folded into [checkpointBody]. Null when nothing is folded. */
-    val checkpointBoundaryUserMessageId: Long? = null,
+    val checkpointBoundaryUserMessageId: Int? = null,
     /**
      * Opaque OpenAI compaction items replayed as input items. Never parsed or displayed.
      */

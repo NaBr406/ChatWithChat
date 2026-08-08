@@ -13,7 +13,7 @@ package cn.nabr.chatwithchat.data.context
  * transcript remains `messages_v2`.
  */
 data class OpenAINativeCompactionState(
-    val chatRoomId: Long,
+    val chatRoomId: Int,
     val platformUid: String,
     /**
      * Raw JSON array of the canonical output window: the newest compaction item followed by the
@@ -22,7 +22,7 @@ data class OpenAINativeCompactionState(
      */
     val compactionItemsJson: String,
     /** Last user message id covered by this native window, so invalidation can be located. */
-    val boundaryUserMessageId: Long,
+    val boundaryUserMessageId: Int,
     /** Version identifier over the turns this window covers, mirroring [ConversationCheckpoint]. */
     val sourceTurnsHash: String,
     val estimatedTokens: Int,

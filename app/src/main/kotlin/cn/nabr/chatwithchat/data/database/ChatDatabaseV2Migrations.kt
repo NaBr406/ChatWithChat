@@ -454,7 +454,77 @@ object ChatDatabaseV2Migrations {
     }
 
     internal fun createContextManagementTables(db: SupportSQLiteDatabase) {
-        // Placeholder: context checkpoint / range / native-state tables are created here by Task 2.
+        // Column order, types, defaults and index names below must match what Room generates for
+        // ContextCheckpointSegment / ContextRangeState / ContextNativeCompactionState, or
+        // MigrationTestHelper's validateMigration will fail against 21.json.
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `context_checkpoint_segment` (
+                `chat_id` INTEGER NOT NULL,
+                `platform_uid` TEXT NOT NULL,
+                `segment_index` INTEGER NOT NULL,
+                `start_user_message_id` INTEGER NOT NULL,
+                `end_user_message_id` INTEGER NOT NULL,
+                `body` TEXT NOT NULL,
+                `source_turns_hash` TEXT NOT NULL,
+                `estimated_tokens` INTEGER NOT NULL,
+                `compaction_usage` TEXT,
+                `status` TEXT NOT NULL,
+                `created_at` INTEGER NOT NULL,
+                `updated_at` INTEGER NOT NULL,
+                PRIMARY KEY(`chat_id`, `platform_uid`, `segment_index`),
+                FOREIGN KEY(`chat_id`) REFERENCES `chats_v2`(`chat_id`) ON UPDATE NO ACTION ON DELETE CASCADE
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_context_checkpoint_segment_chat_id_platform_uid` " +
+                "ON `context_checkpoint_segment` (`chat_id`, `platform_uid`)"
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_context_checkpoint_segment_chat_id_platform_uid_status` " +
+                "ON `context_checkpoint_segment` (`chat_id`, `platform_uid`, `status`)"
+        )
+
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `context_range_state` (
+                `chat_id` INTEGER NOT NULL,
+                `platform_uid` TEXT NOT NULL,
+                `start_user_message_id` INTEGER,
+                `end_user_message_id` INTEGER,
+                `updated_at` INTEGER NOT NULL,
+                PRIMARY KEY(`chat_id`, `platform_uid`),
+                FOREIGN KEY(`chat_id`) REFERENCES `chats_v2`(`chat_id`) ON UPDATE NO ACTION ON DELETE CASCADE
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_context_range_state_chat_id` " +
+                "ON `context_range_state` (`chat_id`)"
+        )
+
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `context_native_compaction_state` (
+                `chat_id` INTEGER NOT NULL,
+                `platform_uid` TEXT NOT NULL,
+                `compaction_items_json` TEXT NOT NULL,
+                `boundary_user_message_id` INTEGER NOT NULL,
+                `source_turns_hash` TEXT NOT NULL,
+                `estimated_tokens` INTEGER NOT NULL,
+                `is_ready_for_input` INTEGER NOT NULL,
+                `native_unsupported` INTEGER NOT NULL,
+                `updated_at` INTEGER NOT NULL,
+                PRIMARY KEY(`chat_id`, `platform_uid`),
+                FOREIGN KEY(`chat_id`) REFERENCES `chats_v2`(`chat_id`) ON UPDATE NO ACTION ON DELETE CASCADE
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_context_native_compaction_state_chat_id` " +
+                "ON `context_native_compaction_state` (`chat_id`)"
+        )
     }
 
     internal fun ensureChatHistoryRuntimeObjects(db: SupportSQLiteDatabase) {

@@ -15,14 +15,14 @@ import cn.nabr.chatwithchat.data.token.TokenUsageRecord
  * stay usable while the tail is replayed raw.
  */
 data class ConversationCheckpoint(
-    val chatRoomId: Long,
+    val chatRoomId: Int,
     val platformUid: String,
     /** Zero-based position in the chain. Segment N's compaction input included segment N-1's body. */
     val segmentIndex: Int,
     /** First user message id folded into this segment, inclusive. */
-    val startUserMessageId: Long,
+    val startUserMessageId: Int,
     /** Last user message id folded into this segment, inclusive. Also this segment's boundary turn. */
-    val endUserMessageId: Long,
+    val endUserMessageId: Int,
     /** Semantic checkpoint text. Never a provider-opaque blob — see [OpenAINativeCompactionState]. */
     val body: String,
     /**
@@ -81,7 +81,7 @@ data class CheckpointChainView(
      * Last user message id already folded by the usable prefix. Turns after this participate raw.
      * Null when no segment is usable, meaning the whole range is raw.
      */
-    val foldedThroughUserMessageId: Long?
+    val foldedThroughUserMessageId: Int?
         get() = validSegments.lastOrNull()?.endUserMessageId
 
     val estimatedTokens: Int get() = validSegments.sumOf { it.estimatedTokens }

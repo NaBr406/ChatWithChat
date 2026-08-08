@@ -14,18 +14,18 @@ package cn.nabr.chatwithchat.data.context
  * Keeping tool calls paired is therefore a request-assembly concern, not a range concern.
  */
 data class ContextRange(
-    val chatRoomId: Long,
+    val chatRoomId: Int,
     val platformUid: String,
     /**
      * User message id of the first turn in the range, inclusive. `null` means "from the beginning of
      * the conversation", which is also the default for a chat the user has never adjusted.
      */
-    val startUserMessageId: Long? = null
+    val startUserMessageId: Int? = null
 ) {
     val isFullHistory: Boolean get() = startUserMessageId == null
 
     companion object {
-        fun fullHistory(chatRoomId: Long, platformUid: String): ContextRange = ContextRange(
+        fun fullHistory(chatRoomId: Int, platformUid: String): ContextRange = ContextRange(
             chatRoomId = chatRoomId,
             platformUid = platformUid,
             startUserMessageId = null

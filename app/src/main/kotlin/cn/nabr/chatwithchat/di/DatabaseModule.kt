@@ -10,6 +10,7 @@ import cn.nabr.chatwithchat.data.database.dao.ChatPlatformModelV2Dao
 import cn.nabr.chatwithchat.data.database.dao.ChatHistoryDao
 import cn.nabr.chatwithchat.data.database.dao.ChatRoomDao
 import cn.nabr.chatwithchat.data.database.dao.ChatRoomV2Dao
+import cn.nabr.chatwithchat.data.database.dao.ContextManagementDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryActivityLogDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryLongTermConsolidationDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryMaintenanceJobDao
@@ -75,6 +76,9 @@ object DatabaseModule {
 
     @Provides
     fun provideChatHistoryDao(chatDatabaseV2: ChatDatabaseV2): ChatHistoryDao = chatDatabaseV2.chatHistoryDao()
+
+    @Provides
+    fun provideContextManagementDao(chatDatabaseV2: ChatDatabaseV2): ContextManagementDao = chatDatabaseV2.contextManagementDao()
 
     @Provides
     @Singleton
