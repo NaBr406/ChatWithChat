@@ -14,6 +14,8 @@ import cn.nabr.chatwithchat.data.context.ContextStrategy
 import cn.nabr.chatwithchat.data.context.ContextWindowResolver
 import cn.nabr.chatwithchat.data.context.ConversationContext
 import cn.nabr.chatwithchat.data.context.ConversationTurn
+import cn.nabr.chatwithchat.data.context.NativeCompactionExchange
+import cn.nabr.chatwithchat.data.context.OpenAINativeCompactionService
 import cn.nabr.chatwithchat.data.context.ProviderContextPolicy
 import cn.nabr.chatwithchat.data.context.semanticAssistantContent
 import cn.nabr.chatwithchat.data.database.ChatDatabaseV2
@@ -76,6 +78,7 @@ import cn.nabr.chatwithchat.data.dto.openai.request.ChatCompletionToolChoice
 import cn.nabr.chatwithchat.data.dto.openai.request.ChatMessage
 import cn.nabr.chatwithchat.data.dto.openai.request.ReasoningConfig
 import cn.nabr.chatwithchat.data.dto.openai.request.ResponseContentPart
+import cn.nabr.chatwithchat.data.dto.openai.request.ResponseContextManagement
 import cn.nabr.chatwithchat.data.dto.openai.request.ResponseInputContent
 import cn.nabr.chatwithchat.data.dto.openai.request.ResponseInputItem
 import cn.nabr.chatwithchat.data.dto.openai.request.ResponseInputMessage
@@ -214,7 +217,13 @@ class ChatRepositoryImpl @Inject constructor(
      * who navigates away mid-send would otherwise cancel the fold and the next request would rebuild
      * the same oversized context.
      */
-    @param:ApplicationScope private val applicationScope: CoroutineScope? = null
+    @param:ApplicationScope private val applicationScope: CoroutineScope? = null,
+    /**
+     * Only the official OpenAI Responses paths consult this. Null degrades those paths to ordinary
+     * requests without `context_management`, which is exactly what every other provider already
+     * sends — never to a broken request.
+     */
+    private val openAINativeCompactionService: OpenAINativeCompactionService? = null
 ) : ChatRepository {
 
     private fun isImageFile(extension: String): Boolean = extension in setOf("jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff", "svg")
@@ -908,6 +917,7 @@ class ChatRepositoryImpl @Inject constructor(
         val conversationSnapshot = withContext(Dispatchers.Default) {
             buildProviderConversationSnapshot(userMessages, assistantMessages, platform)
         }
+        val nativeExchange = nativeCompactionExchangeFor(userMessages, platform, conversationSnapshot)
         val prepared = withContext(Dispatchers.Default) {
             val inputMessages = buildResponsesInputMessages(conversationSnapshot.context.turns, platform.uid)
             val instructions = mergePromptSections(
@@ -1001,7 +1011,10 @@ class ChatRepositoryImpl @Inject constructor(
                     extraInstruction = mergePromptSections(
                         nativeToolScopeInstruction(roundState.definitions),
                         stickerContinuationInstruction(allResults, roundState.allowedToolNames)
-                    )
+                    ),
+                    nativePrefixItems = nativeExchange.replayItems,
+                    contextManagement = nativeExchange.contextManagement,
+                    assembledInputSuperseded = nativeExchange.supersedesAssembledInput
                 ),
                 timeoutSeconds = platform.timeout,
                 platform = platform,
@@ -1010,9 +1023,11 @@ class ChatRepositoryImpl @Inject constructor(
                 traceStage = PromptTraceStage.toolRequest(roundIndex + 1),
                 config = config
             )
+            nativeExchange.recordRound(round.events)
             round.usage?.let { toolUsageRecords += it }
             hasToolInteraction = hasToolInteraction || openAIResponsesToolAdapter.hasToolCallIntent(round.events)
             if (round.errorMessage != null) {
+                nativeExchange.abandon()
                 if (!hasToolInteraction) {
                     val fallback = completeChatWithOpenAIResponses(
                         userMessages,
@@ -1041,6 +1056,9 @@ class ChatRepositoryImpl @Inject constructor(
                 openAIResponsesToolAdapter.toolCallsFromEvents(round.events, config)
             )
             if (calls.isEmpty()) {
+                // The model answered instead of calling a tool, so this round ended the exchange and
+                // any compaction item it emitted is final.
+                nativeExchange.commit()
                 val usage = if (hasToolInteraction || searchDecisionExecution?.usage != null) {
                     aggregateToolUsage(round.usage, toolUsageRecords)
                 } else {
@@ -1073,6 +1091,14 @@ class ChatRepositoryImpl @Inject constructor(
                 continuationItems.clear()
             }
             continuationItems += roundContinuation
+            // The tool call and its output move into the window together, so a successful write can
+            // safely drop the local copy. Order is the whole point: `commit` persists first and only
+            // reports true afterwards, so a failed write leaves `continuationItems` untouched and the
+            // loop continues exactly as it would have without native compaction.
+            nativeExchange.recordContinuationItems(roundContinuation)
+            if (nativeExchange.commit()) {
+                continuationItems.clear()
+            }
             if (results.hasSuccessfulToolDiscovery() &&
                 discoveryRounds < toolScope.maxDiscoveryRounds
             ) {
@@ -1083,7 +1109,11 @@ class ChatRepositoryImpl @Inject constructor(
             if (roundStateMachine.current.isFinalOnly) break
         }
 
-        if (continuationItems.isEmpty()) {
+        // `supersedesAssembledInput` is part of the condition because a committed window absorbs the
+        // continuation items it was built from: without it, a loop that folded on its last round
+        // would look like a loop that never called a tool and would answer from the bare snapshot,
+        // discarding every tool result.
+        if (continuationItems.isEmpty() && !nativeExchange.supersedesAssembledInput) {
             emitProviderStatesSkippingLoading(
                 completeChatWithOpenAIResponses(
                     userMessages,
@@ -1102,7 +1132,10 @@ class ChatRepositoryImpl @Inject constructor(
                 continuationItems = continuationItems,
                 tools = null,
                 toolChoice = null,
-                extraInstruction = nativeFinalToolInstruction(allResults)
+                extraInstruction = nativeFinalToolInstruction(allResults),
+                nativePrefixItems = nativeExchange.replayItems,
+                contextManagement = nativeExchange.contextManagement,
+                assembledInputSuperseded = nativeExchange.supersedesAssembledInput
             ),
             timeoutSeconds = platform.timeout,
             platform = platform,
@@ -1111,6 +1144,12 @@ class ChatRepositoryImpl @Inject constructor(
             traceStage = PromptTraceStage.TOOL_FINAL_ANSWER,
             config = config
         )
+        if (finalRound.errorMessage == null) {
+            nativeExchange.recordRound(finalRound.events)
+            nativeExchange.commit()
+        } else {
+            nativeExchange.abandon()
+        }
         finalRound.usage?.let { toolUsageRecords += it }
         finalRound.errorMessage?.let { message ->
             emit(ApiState.Error(message))
@@ -2193,6 +2232,11 @@ class ChatRepositoryImpl @Inject constructor(
         openAIAPI.setToken(platform.token)
         openAIAPI.setAPIUrl(platform.apiUrl)
         val traceContext = promptTraceContext(userMessages, platform)
+        // Captured by `prepare` and read back by `stream`. `streamPreparedApiState` runs the two in
+        // that order on the same coroutine, so the assignment is visible without extra
+        // synchronisation — and the exchange has to be the very same instance, because it carries the
+        // window this request replayed.
+        var nativeExchange: NativeCompactionExchange? = null
 
         streamPreparedApiState(
             prepare = {
@@ -2201,11 +2245,15 @@ class ChatRepositoryImpl @Inject constructor(
                     ?: buildProviderConversationSnapshot(userMessages, assistantMessages, platform)
                 val conversationContext = frozenConversation.context
                 val inputMessages = buildResponsesInputMessages(conversationContext.turns, platform.uid)
+                val exchange = nativeCompactionExchangeFor(userMessages, platform, frozenConversation)
+                nativeExchange = exchange
 
                 ProviderRequestWithSources(
                     request = ResponsesRequest(
                         model = platform.model,
-                        input = inputMessages,
+                        // The stored opaque window stands in for everything already folded, so it has
+                        // to precede the turns that came after it.
+                        input = exchange.replayItems + inputMessages,
                         stream = true,
                         instructions = mergePromptSections(
                             platform.systemPrompt,
@@ -2221,7 +2269,9 @@ class ChatRepositoryImpl @Inject constructor(
                                 effort = effort,
                                 summary = "auto"
                             )
-                        }
+                        },
+                        contextManagement = exchange.contextManagement,
+                        store = if (exchange.isEnabled) false else null
                     ),
                     sources = emptyList()
                 )
@@ -2236,6 +2286,7 @@ class ChatRepositoryImpl @Inject constructor(
                     val events = mutableListOf<ResponsesStreamEvent>()
                     val outputText = StringBuilder()
                     var emittedOutputTextDelta = false
+                    var streamFailed = false
                     openAIAPI.streamResponses(prepared.request, platform.timeout).collect { event ->
                         events += event
                         when (event) {
@@ -2255,11 +2306,13 @@ class ChatRepositoryImpl @Inject constructor(
                             }
 
                             is ResponseFailedEvent -> {
+                                streamFailed = true
                                 val errorMessage = event.response.error?.message ?: "响应失败"
                                 emit(ApiState.Error(errorMessage))
                             }
 
                             is ResponseErrorEvent -> {
+                                streamFailed = true
                                 emit(ApiState.Error(event.message))
                             }
 
@@ -2273,6 +2326,13 @@ class ChatRepositoryImpl @Inject constructor(
                         platform = platform,
                         label = "OpenAI Responses"
                     )
+                    // After the stream, never during it: a window is only valid once the response it
+                    // came from finished, and a compaction item captured from a stream that then
+                    // failed would describe a context the model never actually answered from.
+                    nativeExchange?.let { exchange ->
+                        exchange.recordRound(events)
+                        if (streamFailed) exchange.abandon() else exchange.commit()
+                    }
                     if (outputText.isNotBlank() || !usage.isEstimated || emitEstimatedUsageWithoutOutput) {
                         emit(ApiState.UsageUpdated(usage))
                     }
@@ -2539,6 +2599,29 @@ class ChatRepositoryImpl @Inject constructor(
             managedContext = managed
         )
     }
+
+    /**
+     * Builds the native-compaction bookkeeping for one OpenAI Responses exchange.
+     *
+     * Created from the snapshot rather than from the platform alone so it agrees with the assembly
+     * that actually went out: the snapshot already decided whether this turn takes the native path,
+     * and rebuilding that decision here could disagree with the input array being sent.
+     *
+     * Returns a disabled instance — not null — for every other provider, so the Responses call sites
+     * stay branch-free.
+     */
+    private suspend fun nativeCompactionExchangeFor(
+        userMessages: List<MessageV2>,
+        platform: PlatformV2,
+        snapshot: ProviderConversationSnapshot
+    ): NativeCompactionExchange = NativeCompactionExchange.create(
+        platform = platform,
+        chatRoomId = userMessages.lastOrNull()?.chatId ?: 0,
+        managed = snapshot.managedContext,
+        service = openAINativeCompactionService,
+        checkpointRepository = contextCheckpointRepository,
+        memoryTurnBatchScheduler = memoryTurnBatchScheduler
+    )
 
     /**
      * Loads the stored context state and asks [ContextBuilder] how this request should be assembled.
@@ -3486,18 +3569,44 @@ private data class OpenAIResponsesNativeToolRequest(
         continuationItems: List<ResponseInputItem>,
         tools: List<ResponseTool>?,
         toolChoice: ResponseToolChoice?,
-        extraInstruction: String? = null
+        extraInstruction: String? = null,
+        /** The stored opaque compaction window, replayed ahead of everything else. */
+        nativePrefixItems: List<ResponseInputItem> = emptyList(),
+        contextManagement: List<ResponseContextManagement>? = null,
+        /**
+         * True once a compaction item covering [input] has been persisted, so the assembled turns
+         * would only be re-sending history the server already folded.
+         */
+        assembledInputSuperseded: Boolean = false
     ): ResponsesRequest = ResponsesRequest(
         model = model,
-        input = input + continuationItems,
+        input = nativePrefixItems +
+            (if (assembledInputSuperseded) input.currentUserMessageTail() else input) +
+            continuationItems,
         stream = true,
         instructions = mergePromptSections(instructions, extraInstruction),
         temperature = temperature,
         topP = topP,
         reasoning = reasoning,
         tools = tools,
-        toolChoice = toolChoice
+        toolChoice = toolChoice,
+        contextManagement = contextManagement,
+        // Stateless chaining: the window travels in the input array, so nothing needs to be retained
+        // server-side. See ResponsesRequest.store.
+        store = if (contextManagement != null) false else null
     )
+}
+
+/**
+ * The trailing slice of an assembled input array starting at the newest user message.
+ *
+ * Kept verbatim even when a compaction item already covers it. The window is opaque, so there is no
+ * way to verify from here that the question the user just asked survived the fold intact — and the
+ * one thing a request must never do is drop the message it is supposed to be answering.
+ */
+private fun List<ResponseInputItem>.currentUserMessageTail(): List<ResponseInputItem> {
+    val index = indexOfLast { item -> item is ResponseInputMessage && item.role == "user" }
+    return if (index < 0) emptyList() else drop(index)
 }
 
 private data class OpenAIResponsesNativeRound(

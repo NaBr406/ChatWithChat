@@ -10,6 +10,7 @@ import cn.nabr.chatwithchat.data.context.ContextBuilder
 import cn.nabr.chatwithchat.data.context.ContextCheckpointRepository
 import cn.nabr.chatwithchat.data.context.ContextFoldScheduler
 import cn.nabr.chatwithchat.data.context.ContextWindowResolver
+import cn.nabr.chatwithchat.data.context.OpenAINativeCompactionService
 import cn.nabr.chatwithchat.data.database.ChatDatabaseV2
 import cn.nabr.chatwithchat.data.database.dao.ChatPlatformModelV2Dao
 import cn.nabr.chatwithchat.data.database.dao.ChatRoomDao
@@ -60,6 +61,7 @@ object ChatRepositoryModule {
         contextCheckpointRepository: ContextCheckpointRepository,
         contextWindowResolver: ContextWindowResolver,
         contextFoldScheduler: ContextFoldScheduler,
+        openAINativeCompactionService: OpenAINativeCompactionService,
         @ApplicationScope applicationScope: CoroutineScope
     ): ChatRepository = ChatRepositoryImpl(
         context,
@@ -84,6 +86,7 @@ object ChatRepositoryModule {
         contextCheckpointRepository = contextCheckpointRepository,
         contextWindowResolver = contextWindowResolver,
         contextFoldScheduler = contextFoldScheduler,
-        applicationScope = applicationScope
+        applicationScope = applicationScope,
+        openAINativeCompactionService = openAINativeCompactionService
     )
 }
