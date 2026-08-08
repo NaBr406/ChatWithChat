@@ -7,6 +7,7 @@ import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceJobStatus
 import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceJobType
 import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceScheduler
+import cn.nabr.chatwithchat.data.memory.MemoryTurnBatchScheduler
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 
@@ -69,6 +70,12 @@ class ContextFoldService(
     private val compactionService: ContextCompactionService,
     private val contextWindowResolver: ContextWindowResolver,
     private val maintenanceScheduler: MemoryMaintenanceScheduler,
+    /**
+     * Long-term memory's trigger, not a dependency of folding. Before this plan, context compaction
+     * was what told memory a batch of turns had aged out; folding inherits that role so the signal
+     * does not silently disappear. Null-safe because folding must keep working without it.
+     */
+    private val memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null,
     private val json: Json = Json { ignoreUnknownKeys = true }
 ) {
 
@@ -149,6 +156,7 @@ class ContextFoldService(
             )
         )
         maintenanceScheduler.markSucceeded(job)
+        notifyMemoryOfFoldedBatch(payload)
         return ContextFoldProcessResult(
             status = ContextFoldProcessResult.STATUS_SUCCEEDED,
             chatRoomId = payload.chatRoomId,
@@ -156,6 +164,29 @@ class ContextFoldService(
             segmentIndex = payload.segmentIndex,
             foldedTurnCount = turns.size
         )
+    }
+
+    /**
+     * Tells long-term memory that a complete batch of turns has aged out of the raw context.
+     *
+     * Fires here and nowhere else, which is what makes it exactly-once per batch: a superseded or
+     * failed fold never reaches this point, and a rebuild of the same context does not re-enter it
+     * because the job is already gone. `markCompactionUrgent` gates on the memory switch itself, so
+     * folding stays correct for users who have long-term memory turned off.
+     *
+     * Failures are swallowed on purpose — the checkpoint is already committed, and losing one memory
+     * nudge is far better than reporting a successful fold as failed and folding the batch twice.
+     */
+    private suspend fun notifyMemoryOfFoldedBatch(payload: ContextFoldJobPayload) {
+        val scheduler = memoryTurnBatchScheduler ?: return
+        if (payload.chatRoomId <= 0 || payload.endUserMessageId <= 0) return
+        try {
+            scheduler.markCompactionUrgent(payload.chatRoomId, payload.endUserMessageId)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Throwable) {
+            // See the KDoc: the fold is already committed and must not be reported as failed.
+        }
     }
 
     /**

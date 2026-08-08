@@ -7,6 +7,9 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import cn.nabr.chatwithchat.data.context.ContextBuilder
+import cn.nabr.chatwithchat.data.context.ContextCheckpointRepository
+import cn.nabr.chatwithchat.data.context.ContextFoldScheduler
+import cn.nabr.chatwithchat.data.context.ContextWindowResolver
 import cn.nabr.chatwithchat.data.database.ChatDatabaseV2
 import cn.nabr.chatwithchat.data.database.dao.ChatPlatformModelV2Dao
 import cn.nabr.chatwithchat.data.database.dao.ChatRoomDao
@@ -26,6 +29,7 @@ import cn.nabr.chatwithchat.data.repository.SettingRepository
 import cn.nabr.chatwithchat.data.tool.ToolLoopOrchestrator
 import cn.nabr.chatwithchat.data.websearch.SearchDecisionService
 import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineScope
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -52,7 +56,11 @@ object ChatRepositoryModule {
         searchDecisionService: SearchDecisionService,
         memoryTurnBatchScheduler: MemoryTurnBatchScheduler,
         promptTraceStore: PromptTraceStore,
-        chatHistoryIndexCoordinator: ChatHistoryIndexCoordinator
+        chatHistoryIndexCoordinator: ChatHistoryIndexCoordinator,
+        contextCheckpointRepository: ContextCheckpointRepository,
+        contextWindowResolver: ContextWindowResolver,
+        contextFoldScheduler: ContextFoldScheduler,
+        @ApplicationScope applicationScope: CoroutineScope
     ): ChatRepository = ChatRepositoryImpl(
         context,
         chatRoomDao,
@@ -72,6 +80,10 @@ object ChatRepositoryModule {
         memoryTurnBatchScheduler = memoryTurnBatchScheduler,
         chatDatabaseV2 = chatDatabaseV2,
         promptTraceStore = promptTraceStore,
-        chatHistoryIndexCoordinator = chatHistoryIndexCoordinator
+        chatHistoryIndexCoordinator = chatHistoryIndexCoordinator,
+        contextCheckpointRepository = contextCheckpointRepository,
+        contextWindowResolver = contextWindowResolver,
+        contextFoldScheduler = contextFoldScheduler,
+        applicationScope = applicationScope
     )
 }

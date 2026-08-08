@@ -15,6 +15,7 @@ import cn.nabr.chatwithchat.data.database.dao.MessageV2Dao
 import cn.nabr.chatwithchat.data.database.dao.PlatformV2Dao
 import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceScheduler
 import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceWorkEnqueuer
+import cn.nabr.chatwithchat.data.memory.MemoryTurnBatchScheduler
 import cn.nabr.chatwithchat.data.network.AnthropicAPI
 import cn.nabr.chatwithchat.data.network.GoogleAPI
 import cn.nabr.chatwithchat.data.network.GroqAPI
@@ -120,7 +121,8 @@ object ContextManagementModule {
         contextCheckpointRepository: ContextCheckpointRepository,
         contextCompactionService: ContextCompactionService,
         contextWindowResolver: ContextWindowResolver,
-        memoryMaintenanceScheduler: MemoryMaintenanceScheduler
+        memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
+        memoryTurnBatchScheduler: MemoryTurnBatchScheduler
     ): ContextFoldService = ContextFoldService(
         messageDao = messageV2Dao,
         platformDao = platformV2Dao,
@@ -128,6 +130,7 @@ object ContextManagementModule {
         checkpointRepository = contextCheckpointRepository,
         compactionService = contextCompactionService,
         contextWindowResolver = contextWindowResolver,
-        maintenanceScheduler = memoryMaintenanceScheduler
+        maintenanceScheduler = memoryMaintenanceScheduler,
+        memoryTurnBatchScheduler = memoryTurnBatchScheduler
     )
 }

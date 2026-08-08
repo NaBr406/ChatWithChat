@@ -2,7 +2,16 @@ package cn.nabr.chatwithchat.data.repository
 
 import android.content.Context
 import androidx.room.withTransaction
+import cn.nabr.chatwithchat.data.context.CheckpointChainView
+import cn.nabr.chatwithchat.data.context.ContextAssemblyRequest
+import cn.nabr.chatwithchat.data.context.ContextBudget
+import cn.nabr.chatwithchat.data.context.ContextBuildResult
 import cn.nabr.chatwithchat.data.context.ContextBuilder
+import cn.nabr.chatwithchat.data.context.ContextCheckpointRepository
+import cn.nabr.chatwithchat.data.context.ContextFoldScheduler
+import cn.nabr.chatwithchat.data.context.ContextRange
+import cn.nabr.chatwithchat.data.context.ContextStrategy
+import cn.nabr.chatwithchat.data.context.ContextWindowResolver
 import cn.nabr.chatwithchat.data.context.ConversationContext
 import cn.nabr.chatwithchat.data.context.ConversationTurn
 import cn.nabr.chatwithchat.data.context.ProviderContextPolicy
@@ -135,6 +144,7 @@ import cn.nabr.chatwithchat.data.tool.toolProtocolJson
 import cn.nabr.chatwithchat.data.websearch.SearchDecision
 import cn.nabr.chatwithchat.data.websearch.SearchDecisionService
 import cn.nabr.chatwithchat.data.websearch.WebSearchMode
+import cn.nabr.chatwithchat.di.ApplicationScope
 import cn.nabr.chatwithchat.util.AttachmentPayloadCache
 import cn.nabr.chatwithchat.util.FileUtils
 import cn.nabr.chatwithchat.util.isAssistantErrorMessage
@@ -146,6 +156,7 @@ import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -153,6 +164,7 @@ import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.onCompletion
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonPrimitive
@@ -185,7 +197,24 @@ class ChatRepositoryImpl @Inject constructor(
     private val memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null,
     private val chatDatabaseV2: ChatDatabaseV2? = null,
     private val promptTraceStore: PromptTraceStore = PromptTraceStore(),
-    private val chatHistoryIndexCoordinator: ChatHistoryIndexCoordinator? = null
+    private val chatHistoryIndexCoordinator: ChatHistoryIndexCoordinator? = null,
+    /**
+     * The context-management stack. Nullable and defaulted purely so the existing repository tests —
+     * which construct this class directly and care about provider request shapes, not about
+     * checkpoints — keep compiling. Hilt always supplies all three, so in the app the managed path is
+     * the only path; a null here degrades to the legacy single-shot [ContextBuilder.buildContext]
+     * assembly rather than sending an empty context.
+     */
+    private val contextCheckpointRepository: ContextCheckpointRepository? = null,
+    private val contextWindowResolver: ContextWindowResolver? = null,
+    private val contextFoldScheduler: ContextFoldScheduler? = null,
+    /**
+     * Used only to enqueue background folds. It must outlive the request that discovered the fold was
+     * needed, which is exactly why the enqueue is not simply launched on the caller's scope: a user
+     * who navigates away mid-send would otherwise cancel the fold and the next request would rebuild
+     * the same oversized context.
+     */
+    @param:ApplicationScope private val applicationScope: CoroutineScope? = null
 ) : ChatRepository {
 
     private fun isImageFile(extension: String): Boolean = extension in setOf("jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff", "svg")
@@ -786,6 +815,14 @@ class ChatRepositoryImpl @Inject constructor(
         if (isDone) emit(ApiState.Done)
     }
 
+    /**
+     * The only history assembly that deliberately bypasses [buildProviderConversationSnapshot].
+     *
+     * This is not conversation context: it is a two-turn, 400-character-per-message hint handed to
+     * the search-decision model so it can tell "it" and "that" apart. Routing it through the funnel
+     * would make a routing decision depend on the checkpoint chain and could trigger a fold, which
+     * is a lot of machinery for a snippet whose entire purpose is to be cheap.
+     */
     private fun searchDecisionRecentContext(
         userMessages: List<MessageV2>,
         assistantMessages: List<List<MessageV2>>,
@@ -2465,10 +2502,15 @@ class ChatRepositoryImpl @Inject constructor(
     private suspend fun buildConversationContext(
         userMessages: List<MessageV2>,
         assistantMessages: List<List<MessageV2>>,
-        platform: PlatformV2
+        platform: PlatformV2,
+        managed: ContextBuildResult?
     ): ConversationContext {
         val policy = ProviderContextPolicy.forClientType(platform.compatibleType)
-        val conversationContext = contextBuilder.buildContext(userMessages, assistantMessages, platform, policy)
+        val conversationContext = managed?.toConversationContext()
+            ?: contextBuilder.buildContext(userMessages, assistantMessages, platform, policy)
+        // No-op on the managed path, where `omittedTurns` is always empty and the memory trigger has
+        // moved to the moment a fold actually lands. Kept for the legacy fallback so that path does
+        // not silently stop feeding long-term memory.
         scheduleMemoryConsolidationForCompactionIfNeeded(conversationContext)
         if (!policy.preferProviderFileRefs || conversationContext.turns.isEmpty()) {
             return conversationContext
@@ -2479,13 +2521,108 @@ class ChatRepositoryImpl @Inject constructor(
         )
     }
 
+    /**
+     * The single entry point every provider family goes through, and therefore the only place the
+     * strategy and range decision is made. Adding a provider path that assembles history some other
+     * way would reintroduce exactly the per-provider divergence this funnel exists to prevent.
+     */
     private suspend fun buildProviderConversationSnapshot(
         userMessages: List<MessageV2>,
         assistantMessages: List<List<MessageV2>>,
         platform: PlatformV2
-    ): ProviderConversationSnapshot = ProviderConversationSnapshot(
-        context = buildConversationContext(userMessages, assistantMessages, platform),
-        runtimeContextPrompt = currentRuntimeContextPrompt()
+    ): ProviderConversationSnapshot {
+        val managed = buildManagedContextResult(userMessages, assistantMessages, platform)
+        enqueueBackgroundFoldIfNeeded(userMessages, platform, managed)
+        return ProviderConversationSnapshot(
+            context = buildConversationContext(userMessages, assistantMessages, platform, managed),
+            runtimeContextPrompt = currentRuntimeContextPrompt(),
+            managedContext = managed
+        )
+    }
+
+    /**
+     * Loads the stored context state and asks [ContextBuilder] how this request should be assembled.
+     *
+     * Every read is failure-tolerant: a database hiccup degrades to "nothing was ever folded", which
+     * assembles a correct — merely longer — request, whereas propagating the failure would abort a
+     * send the user has already committed to.
+     *
+     * @return null when the context stack is not wired (tests only), meaning the caller should use
+     *   the legacy assembly.
+     */
+    private suspend fun buildManagedContextResult(
+        userMessages: List<MessageV2>,
+        assistantMessages: List<List<MessageV2>>,
+        platform: PlatformV2
+    ): ContextBuildResult? {
+        val checkpointRepository = contextCheckpointRepository ?: return null
+        val chatRoomId = userMessages.lastOrNull()?.chatId ?: return null
+        if (chatRoomId <= 0) return null
+
+        val policy = ProviderContextPolicy.forClientType(platform.compatibleType)
+        val modelContextWindow = contextWindowResolver
+            ?.let { resolver -> runCatching { resolver.resolve(platform) }.getOrNull() }
+            ?: policy.fallbackModelContextWindow
+
+        return contextBuilder.buildManagedContext(
+            ContextAssemblyRequest(
+                platform = platform,
+                strategy = ContextStrategy.fromStorage(platform.contextStrategy),
+                userMessages = userMessages,
+                assistantMessages = assistantMessages,
+                budget = ContextBudget.of(modelContextWindow, policy),
+                range = runCatching { checkpointRepository.loadRange(chatRoomId, platform.uid) }
+                    .getOrNull()
+                    ?: ContextRange.fullHistory(chatRoomId, platform.uid),
+                chain = runCatching { checkpointRepository.loadChain(chatRoomId, platform.uid) }
+                    .getOrDefault(CheckpointChainView()),
+                nativeState = runCatching { checkpointRepository.loadNativeState(chatRoomId, platform.uid) }
+                    .getOrNull(),
+                policy = policy
+            )
+        )
+    }
+
+    /**
+     * Fires the background fold and returns immediately.
+     *
+     * Deliberately not awaited: enqueuing touches the database, and the whole point of pre-folding at
+     * [ContextBudget.preFoldTrigger] is that the user never waits for compaction. A failure here is
+     * silent by design — the fold is an optimisation, and the request being assembled right now is
+     * already within budget without it.
+     */
+    private fun enqueueBackgroundFoldIfNeeded(
+        userMessages: List<MessageV2>,
+        platform: PlatformV2,
+        managed: ContextBuildResult?
+    ) {
+        val result = managed ?: return
+        if (!result.shouldEnqueueBackgroundFold) return
+        val scheduler = contextFoldScheduler ?: return
+        val scope = applicationScope ?: return
+        val chatRoomId = userMessages.lastOrNull()?.chatId ?: return
+
+        scope.launch {
+            try {
+                scheduler.enqueueFoldIfNeeded(chatRoomId, platform, result)
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Throwable) {
+                // Best effort by contract — see the KDoc. The next request re-evaluates and, if the
+                // context is still over the line, enqueues again under the same idempotency key.
+            }
+        }
+    }
+
+    private fun ContextBuildResult.toConversationContext(): ConversationContext = ConversationContext(
+        turns = turns,
+        // The checkpoint travels in the same slot the legacy extractive summary used, so every
+        // provider path picks it up unchanged. Framing lives in `contextPromptBlock`.
+        summary = contextPromptBlock,
+        estimatedTokens = estimatedTokens,
+        // Always empty: under this plan a turn is either sent raw or represented by the checkpoint,
+        // so there is no third "dropped" category left to report.
+        omittedTurns = emptyList()
     )
 
     private suspend fun scheduleMemoryConsolidationForCompactionIfNeeded(
@@ -3318,7 +3455,13 @@ private data class SearchDecisionExecution(
 
 private data class ProviderConversationSnapshot(
     val context: ConversationContext,
-    val runtimeContextPrompt: String
+    val runtimeContextPrompt: String,
+    /**
+     * The assembly decision behind [context]. Null only on the legacy fallback path. Carried so the
+     * OpenAI native path can reach `nativeCompactionItemsJson` without rebuilding the context, and so
+     * the UI can report what was compacted.
+     */
+    val managedContext: ContextBuildResult? = null
 )
 
 private data class NativeToolRequestTemplates<T>(
