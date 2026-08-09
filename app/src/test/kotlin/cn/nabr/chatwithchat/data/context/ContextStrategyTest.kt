@@ -3,6 +3,7 @@ package cn.nabr.chatwithchat.data.context
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.model.ClientType
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
@@ -18,7 +19,7 @@ class ContextStrategyTest {
 
     @Test
     fun `default strategy is auto compact`() {
-        assertEquals(ContextStrategy.AUTO_COMPACT, ContextStrategy.DEFAULT)
+        assertEquals(ContextStrategy.AUTO_COMPACT_BALANCED, ContextStrategy.DEFAULT)
     }
 
     @Test
@@ -45,7 +46,7 @@ class ContextStrategyTest {
         assertEquals(ContextStrategy.RAW_PREFERRED, ContextStrategy.fromStorage("raw_preferred"))
         assertEquals(ContextStrategy.RAW_PREFERRED, ContextStrategy.fromStorage("  RAW_PREFERRED  "))
         assertEquals(ContextStrategy.RAW_PREFERRED, ContextStrategy.fromStorage("Raw_Preferred"))
-        assertEquals(ContextStrategy.AUTO_COMPACT, ContextStrategy.fromStorage(" auto_compact\n"))
+        assertEquals(ContextStrategy.AUTO_COMPACT_BALANCED, ContextStrategy.fromStorage(" auto_compact\n"))
     }
 
     @Test
@@ -56,7 +57,7 @@ class ContextStrategyTest {
     }
 
     @Test
-    fun `new platform rows default to auto compact`() {
+    fun `new platform rows still carry the legacy column default`() {
         val platform = PlatformV2(
             name = "Fresh",
             compatibleType = ClientType.CUSTOM,
@@ -64,8 +65,49 @@ class ContextStrategyTest {
             model = "custom-model"
         )
 
-        assertEquals(ContextStrategy.AUTO_COMPACT.name, platform.contextStrategy)
-        assertEquals(ContextStrategy.AUTO_COMPACT, ContextStrategy.fromStorage(platform.contextStrategy))
+        // Deliberately the legacy string, not AUTO_COMPACT_BALANCED.name: `platform_v2` declares
+        // `DEFAULT 'AUTO_COMPACT'` and that literal is part of schema 21's identity hash. Adding tiers
+        // must not become a schema-22 migration, so the aliasing lives in fromStorage instead. If this
+        // assertion is ever "fixed" to the enum name, the column default and the enum have diverged.
+        assertEquals("AUTO_COMPACT", platform.contextStrategy)
+        assertEquals(ContextStrategy.AUTO_COMPACT_BALANCED, ContextStrategy.fromStorage(platform.contextStrategy))
+    }
+
+    @Test
+    fun `legacy auto compact value maps onto the balanced tier`() {
+        assertEquals(ContextStrategy.AUTO_COMPACT_BALANCED, ContextStrategy.fromStorage("AUTO_COMPACT"))
+        assertEquals(ContextStrategy.AUTO_COMPACT_BALANCED, ContextStrategy.fromStorage("auto_compact"))
+        assertEquals(ContextStrategy.AUTO_COMPACT_BALANCED, ContextStrategy.fromStorage(" Auto_Compact \n"))
+    }
+
+    @Test
+    fun `balanced tier reproduces the behaviour the legacy value had`() {
+        // The upgrade contract: a provider row written before tiers existed must not change behaviour
+        // just because the enum grew. BALANCED holds the previously hard-coded ceilings.
+        val legacy = ContextStrategy.fromStorage("AUTO_COMPACT")
+
+        assertEquals(ContextBudgetTier.BALANCED, legacy.budgetTier)
+        assertEquals(ContextBudgetTier.DEFAULT, legacy.budgetTier)
+        assertFalse(legacy.sendsRawWhileCapacityAllows)
+    }
+
+    @Test
+    fun `every auto compact value organises history the same way and differs only by tier`() {
+        val autoCompact = ContextStrategy.entries.filter { it.isAutoCompact }
+
+        assertEquals(4, autoCompact.size)
+        autoCompact.forEach { strategy ->
+            assertFalse(strategy.name, strategy.sendsRawWhileCapacityAllows)
+        }
+        // Four distinct tiers, so no two entries in the picker do the same thing.
+        assertEquals(autoCompact.size, autoCompact.map { it.budgetTier }.distinct().size)
+    }
+
+    @Test
+    fun `raw preferred is the only value that hands the whole budget to verbatim turns`() {
+        val rawStrategies = ContextStrategy.entries.filter { it.sendsRawWhileCapacityAllows }
+
+        assertEquals(listOf(ContextStrategy.RAW_PREFERRED), rawStrategies)
     }
 
     @Test
@@ -87,7 +129,7 @@ class ContextStrategyTest {
         )
 
         assertEquals(ContextStrategy.RAW_PREFERRED, ContextStrategy.fromStorage(rawProvider.contextStrategy))
-        assertEquals(ContextStrategy.AUTO_COMPACT, ContextStrategy.fromStorage(autoProvider.contextStrategy))
+        assertEquals(ContextStrategy.AUTO_COMPACT_BALANCED, ContextStrategy.fromStorage(autoProvider.contextStrategy))
         assertNotEquals(rawProvider.contextStrategy, autoProvider.contextStrategy)
     }
 }

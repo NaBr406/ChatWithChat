@@ -69,7 +69,7 @@ class ContextBuilderManagedContextTest {
             request(users, assistants, strategy = ContextStrategy.RAW_PREFERRED)
         )
         val auto = builder.buildManagedContext(
-            request(users, assistants, strategy = ContextStrategy.AUTO_COMPACT)
+            request(users, assistants, strategy = ContextStrategy.AUTO_COMPACT_BALANCED)
         )
 
         // Same conversation, same budget: only the strategy differs.
@@ -101,7 +101,7 @@ class ContextBuilderManagedContextTest {
         val (users, assistants) = conversation(5) { chunkyText("turn-$it") }
 
         val result = builder.buildManagedContext(
-            request(users, assistants, strategy = ContextStrategy.AUTO_COMPACT)
+            request(users, assistants, strategy = ContextStrategy.AUTO_COMPACT_BALANCED)
         )
 
         // Every turn is either sent verbatim or handed to the fold batch that the extractive summary
@@ -461,7 +461,7 @@ class ContextBuilderManagedContextTest {
     private fun request(
         userMessages: List<MessageV2>,
         assistantMessages: List<List<MessageV2>>,
-        strategy: ContextStrategy = ContextStrategy.AUTO_COMPACT,
+        strategy: ContextStrategy = ContextStrategy.AUTO_COMPACT_BALANCED,
         platform: PlatformV2 = platform(),
         budget: ContextBudget = SMALL_BUDGET,
         range: ContextRange = ContextRange.fullHistory(CHAT_ID, PLATFORM_UID),

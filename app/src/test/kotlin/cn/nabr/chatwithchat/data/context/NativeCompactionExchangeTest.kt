@@ -735,7 +735,7 @@ class NativeCompactionExchangeTest {
             nativeItems: String? = null,
             lastUserMessageId: Int = LAST_USER_MESSAGE_ID
         ) = ContextBuildResult(
-            strategy = ContextStrategy.AUTO_COMPACT,
+            strategy = ContextStrategy.AUTO_COMPACT_BALANCED,
             range = ContextRange.fullHistory(CHAT_ID, PLATFORM_UID),
             budget = BUDGET,
             turns = listOf(

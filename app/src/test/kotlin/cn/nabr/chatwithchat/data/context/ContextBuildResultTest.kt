@@ -29,8 +29,8 @@ class ContextBuildResultTest {
     fun `auto compact never raises the raw budget warning`() {
         // Under AUTO_COMPACT the tail is bounded by design, so approaching the window is not a
         // condition the user has to act on — surfacing it would be noise on every long chat.
-        assertFalse(result(ContextStrategy.AUTO_COMPACT, BUDGET.rawWarningThreshold).isNearBudgetLimit)
-        assertFalse(result(ContextStrategy.AUTO_COMPACT, BUDGET.effectiveInputBudget).isNearBudgetLimit)
+        assertFalse(result(ContextStrategy.AUTO_COMPACT_BALANCED, BUDGET.rawWarningThreshold).isNearBudgetLimit)
+        assertFalse(result(ContextStrategy.AUTO_COMPACT_BALANCED, BUDGET.effectiveInputBudget).isNearBudgetLimit)
     }
 
     @Test
@@ -117,7 +117,7 @@ class ContextBuildResultTest {
     }
 
     private fun result(
-        strategy: ContextStrategy = ContextStrategy.AUTO_COMPACT,
+        strategy: ContextStrategy = ContextStrategy.AUTO_COMPACT_BALANCED,
         estimatedTokens: Int = 0,
         compactionState: ContextCompactionState = ContextCompactionState.NONE,
         pendingFoldTurns: List<ConversationTurn> = emptyList(),

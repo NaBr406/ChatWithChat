@@ -54,8 +54,8 @@ data class ContextRangeSheetState(
             return if (index < 0) turns.size else turns.size - index
         }
 
-    /** Range selection is a `RAW_PREFERRED` affordance; `AUTO_COMPACT` decides the window itself. */
-    val isRangeSelectable: Boolean get() = strategy == ContextStrategy.RAW_PREFERRED
+    /** Range selection is a `RAW_PREFERRED` affordance; the auto-compact tiers pick the window. */
+    val isRangeSelectable: Boolean get() = strategy.sendsRawWhileCapacityAllows
 }
 
 data class ContextRangeAnchorResolution(

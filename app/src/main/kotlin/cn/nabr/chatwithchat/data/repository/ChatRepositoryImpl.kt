@@ -2646,14 +2646,17 @@ class ChatRepositoryImpl @Inject constructor(
         val modelContextWindow = contextWindowResolver
             ?.let { resolver -> runCatching { resolver.resolve(platform) }.getOrNull() }
             ?: policy.fallbackModelContextWindow
+        val strategy = ContextStrategy.fromStorage(platform.contextStrategy)
 
         return contextBuilder.buildManagedContext(
             ContextAssemblyRequest(
                 platform = platform,
-                strategy = ContextStrategy.fromStorage(platform.contextStrategy),
+                strategy = strategy,
                 userMessages = userMessages,
                 assistantMessages = assistantMessages,
-                budget = ContextBudget.of(modelContextWindow, policy),
+                // The tier travels with the strategy: one persisted column decides both how history is
+                // organised and how much of the window one request may spend.
+                budget = ContextBudget.of(modelContextWindow, policy, strategy.budgetTier),
                 range = runCatching { checkpointRepository.loadRange(chatRoomId, platform.uid) }
                     .getOrNull()
                     ?: ContextRange.fullHistory(chatRoomId, platform.uid),

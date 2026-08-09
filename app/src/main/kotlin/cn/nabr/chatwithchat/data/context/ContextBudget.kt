@@ -24,7 +24,9 @@ data class ContextBudget(
     val compactTrigger: Int,
     /** How much of the budget the most recent verbatim turns may occupy. */
     val recentRawTail: Int,
-    val summaryTarget: Int
+    val summaryTarget: Int,
+    /** Which ceilings produced this budget. Carried so the UI and tests can name the choice. */
+    val tier: ContextBudgetTier = ContextBudgetTier.DEFAULT
 ) {
     /** RAW_PREFERRED warns here (Task 7) without changing any user setting. */
     val rawWarningThreshold: Int get() = (effectiveInputBudget * RAW_WARNING_RATIO).toInt()
@@ -64,13 +66,10 @@ data class ContextBudget(
         const val MIN_INPUT_BUDGET = 2_048
 
         /**
-         * Cost control, **not** a protocol constraint. The official compaction example uses 200_000;
-         * this plan deliberately picks a lower ceiling so a single request on a 400k/1M-window model
-         * cannot quietly become enormously expensive. Raise it here — in one place — if that
-         * trade-off ever changes.
+         * Cost control, **not** a protocol constraint, and no longer a single constant: the ceilings
+         * now come from [ContextBudgetTier] so the trade-off is the user's to make per provider.
+         * [ContextBudgetTier.BALANCED] holds the value this constant used to have.
          */
-        const val COMPACT_TRIGGER_CEILING = 96_000
-
         private const val OUTPUT_RESERVE_RATIO = 0.15
         private const val OUTPUT_RESERVE_CEILING = 8_192
         private const val SAFETY_MARGIN_RATIO = 0.05
@@ -78,15 +77,14 @@ data class ContextBudget(
         private const val PRE_FOLD_RATIO = 0.60
         private const val COMPACT_TRIGGER_RATIO = 0.75
         private const val RECENT_RAW_TAIL_RATIO = 0.30
-        private const val RECENT_RAW_TAIL_CEILING = 16_000
         private const val RAW_WARNING_RATIO = 0.80
 
         private const val SUMMARY_TARGET_MIN = 768
-        private const val SUMMARY_TARGET_MAX = 2_048
 
         fun of(
             modelContextWindow: Int,
-            providerSummaryTarget: Int
+            providerSummaryTarget: Int,
+            tier: ContextBudgetTier = ContextBudgetTier.DEFAULT
         ): ContextBudget {
             val window = modelContextWindow.coerceAtLeast(MIN_INPUT_BUDGET)
             val outputReserve = min(window * OUTPUT_RESERVE_RATIO, OUTPUT_RESERVE_CEILING.toDouble()).toInt()
@@ -96,31 +94,45 @@ data class ContextBudget(
             // already misconfigured, and a zero or negative budget would be strictly worse.
             val effectiveInputBudget = (window - outputReserve - safetyMargin).coerceAtLeast(MIN_INPUT_BUDGET)
 
-            val compactTriggerRaw = min(
-                effectiveInputBudget * COMPACT_TRIGGER_RATIO,
-                COMPACT_TRIGGER_CEILING.toDouble()
-            )
+            val uncappedCompactTriggerRaw = effectiveInputBudget * COMPACT_TRIGGER_RATIO
+            // A null ceiling is FOLLOW_WINDOW: the ratio applies to the real window untouched.
+            val compactTriggerRaw = tier.compactTriggerCeiling
+                ?.let { ceiling -> min(uncappedCompactTriggerRaw, ceiling.toDouble()) }
+                ?: uncappedCompactTriggerRaw
             val compactTrigger = compactTriggerRaw.toInt().coerceAtMost(effectiveInputBudget)
-            // On a large window COMPACT_TRIGGER_CEILING binds, and a plain
-            // `effectiveInputBudget * 0.60` would land far above compactTrigger. Clamping it to
-            // 1 below would technically satisfy the invariant while leaving the background job no
-            // time at all, so the ratio between the two lines is preserved instead: whenever the
-            // ceiling binds, preFoldTrigger keeps the same 0.60/0.75 proportion of compactTrigger.
-            // The *un-truncated* trigger is used here so that when the ceiling does not bind this
-            // reduces exactly to the plan's `effectiveInputBudget * 0.60` rather than one token below.
-            val preFoldTrigger = min(
-                effectiveInputBudget * PRE_FOLD_RATIO,
-                compactTriggerRaw * (PRE_FOLD_RATIO / COMPACT_TRIGGER_RATIO)
-            ).toInt().coerceIn(1, (compactTrigger - 1).coerceAtLeast(1))
-            val recentRawTail = min(
-                effectiveInputBudget * RECENT_RAW_TAIL_RATIO,
-                RECENT_RAW_TAIL_CEILING.toDouble()
-            ).toInt().coerceAtLeast(1)
+            // On a large window the tier's ceiling binds, and a plain `effectiveInputBudget * 0.60`
+            // would land far above compactTrigger. Clamping it to 1 below would technically satisfy
+            // the invariant while leaving the background job no time at all, so the ratio between the
+            // two lines is preserved instead: whenever a ceiling binds, preFoldTrigger keeps the same
+            // 0.60/0.75 proportion of compactTrigger. The *un-truncated* trigger is used here so that
+            // when no ceiling binds — every tier on a small window, and FOLLOW_WINDOW always — this
+            // reduces exactly to `effectiveInputBudget * 0.60` rather than one token below.
+            val preFoldTrigger = if (compactTriggerRaw == uncappedCompactTriggerRaw) {
+                // Keep the non-ceiling path exact; floating-point 0.60 / 0.75 can truncate one
+                // token below the documented effective-budget ratio.
+                (effectiveInputBudget * PRE_FOLD_RATIO).toInt()
+            } else {
+                (compactTriggerRaw * (PRE_FOLD_RATIO / COMPACT_TRIGGER_RATIO)).toInt()
+            }.coerceIn(1, (compactTrigger - 1).coerceAtLeast(1))
+            val uncappedRecentRawTail = effectiveInputBudget * RECENT_RAW_TAIL_RATIO
+            val recentRawTail = (
+                tier.recentRawTailCeiling
+                    ?.let { ceiling -> min(uncappedRecentRawTail, ceiling.toDouble()) }
+                    ?: uncappedRecentRawTail
+                ).toInt().coerceAtLeast(1)
 
-            // summaryTarget is clamped by the plan, then squeezed further if a very small window
+            // The provider's own summary budget is only ever 700..1_200, so a tier that merely raised
+            // a ceiling would change nothing. Scaling first is what makes a higher tier buy a more
+            // detailed checkpoint; the tier ceiling then bounds the result.
+            val summaryCeiling = tier.summaryTargetCeiling.coerceAtLeast(SUMMARY_TARGET_MIN)
+            val scaledSummaryTarget = (providerSummaryTarget * tier.summaryScale).toInt()
+
+            // summaryTarget is clamped by the tier, then squeezed further if a very small window
             // would otherwise break `recentRawTail + summaryTarget < compactTrigger`. The raw tail
-            // is what the user actually reads back, so the summary yields, never the tail.
-            val clampedSummaryTarget = providerSummaryTarget.coerceIn(SUMMARY_TARGET_MIN, SUMMARY_TARGET_MAX)
+            // is what the user actually reads back, so the summary yields, never the tail. This is
+            // reachable on ordinary windows now, not just pathological ones: a small-window provider
+            // on FOLLOW_WINDOW scales its summary 4x while its compactTrigger stays ratio-bound.
+            val clampedSummaryTarget = scaledSummaryTarget.coerceIn(SUMMARY_TARGET_MIN, summaryCeiling)
             val summaryHeadroom = compactTrigger - recentRawTail - 1
             val summaryTarget = clampedSummaryTarget.coerceAtMost(summaryHeadroom.coerceAtLeast(1))
 
@@ -140,11 +152,15 @@ data class ContextBudget(
                 preFoldTrigger = preFoldTrigger,
                 compactTrigger = compactTrigger,
                 recentRawTail = adjustedRawTail,
-                summaryTarget = summaryTarget
+                summaryTarget = summaryTarget,
+                tier = tier
             ).check()
         }
 
-        fun of(modelContextWindow: Int, policy: ProviderContextPolicy): ContextBudget =
-            of(modelContextWindow, policy.summaryTokenBudget)
+        fun of(
+            modelContextWindow: Int,
+            policy: ProviderContextPolicy,
+            tier: ContextBudgetTier = ContextBudgetTier.DEFAULT
+        ): ContextBudget = of(modelContextWindow, policy.summaryTokenBudget, tier)
     }
 }

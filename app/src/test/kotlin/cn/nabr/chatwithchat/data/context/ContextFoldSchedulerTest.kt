@@ -299,7 +299,7 @@ class ContextFoldSchedulerTest {
             estimatedTokens: Int = BUDGET.preFoldTrigger,
             pendingFoldTurns: List<ConversationTurn> = listOf(turn(10), turn(11))
         ) = ContextBuildResult(
-            strategy = ContextStrategy.AUTO_COMPACT,
+            strategy = ContextStrategy.AUTO_COMPACT_BALANCED,
             range = ContextRange.fullHistory(CHAT_ID, PLATFORM_UID),
             budget = BUDGET,
             pendingFoldTurns = pendingFoldTurns,

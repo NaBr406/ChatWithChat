@@ -79,7 +79,7 @@ data class ContextBuildResult(
 ) {
     /** RAW_PREFERRED approaching its limit — surfaced as a warning, never as a blocking prompt. */
     val isNearBudgetLimit: Boolean
-        get() = strategy == ContextStrategy.RAW_PREFERRED && estimatedTokens >= budget.rawWarningThreshold
+        get() = strategy.sendsRawWhileCapacityAllows && estimatedTokens >= budget.rawWarningThreshold
 
     /**
      * True when the assembled request still does not fit, *after* the checkpoint and the extractive

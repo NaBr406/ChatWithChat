@@ -13,12 +13,18 @@ import cn.nabr.chatwithchat.data.context.ContextStrategy
  */
 @StringRes
 fun ContextStrategy.titleRes(): Int = when (this) {
-    ContextStrategy.AUTO_COMPACT -> R.string.context_strategy_auto_compact
+    ContextStrategy.AUTO_COMPACT_ECONOMY -> R.string.context_strategy_economy
+    ContextStrategy.AUTO_COMPACT_BALANCED -> R.string.context_strategy_balanced
+    ContextStrategy.AUTO_COMPACT_GENEROUS -> R.string.context_strategy_generous
+    ContextStrategy.AUTO_COMPACT_FOLLOW_WINDOW -> R.string.context_strategy_follow_window
     ContextStrategy.RAW_PREFERRED -> R.string.context_strategy_raw_preferred
 }
 
 @StringRes
 fun ContextStrategy.descriptionRes(): Int = when (this) {
-    ContextStrategy.AUTO_COMPACT -> R.string.context_strategy_auto_compact_description
+    ContextStrategy.AUTO_COMPACT_ECONOMY -> R.string.context_strategy_economy_description
+    ContextStrategy.AUTO_COMPACT_BALANCED -> R.string.context_strategy_balanced_description
+    ContextStrategy.AUTO_COMPACT_GENEROUS -> R.string.context_strategy_generous_description
+    ContextStrategy.AUTO_COMPACT_FOLLOW_WINDOW -> R.string.context_strategy_follow_window_description
     ContextStrategy.RAW_PREFERRED -> R.string.context_strategy_raw_preferred_description
 }

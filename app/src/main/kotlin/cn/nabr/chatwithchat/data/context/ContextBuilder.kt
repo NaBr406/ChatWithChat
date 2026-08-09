@@ -171,14 +171,14 @@ class ContextBuilder @Inject constructor() {
             tokenCounter = tokenCounter
         )
 
-        // What a background fold should consume. Under AUTO_COMPACT the raw tail is already sized to
-        // recentRawTail so the overflow is exactly that batch; under RAW_PREFERRED the tail is much
-        // larger, so the same boundary has to be computed separately — folding must not wait until
+        // What a background fold should consume. Under the AUTO_COMPACT family the raw tail is already
+        // sized to recentRawTail so the overflow is exactly that batch; under RAW_PREFERRED the tail is
+        // much larger, so the same boundary has to be computed separately — folding must not wait until
         // the conversation is over budget.
-        val pendingFoldTurns = when (request.strategy) {
-            ContextStrategy.AUTO_COMPACT -> rawTail.overflow
-            ContextStrategy.RAW_PREFERRED ->
-                selectRawTail(unfoldedTurns, budget.recentRawTail, tokenCounter).overflow
+        val pendingFoldTurns = if (request.strategy.sendsRawWhileCapacityAllows) {
+            selectRawTail(unfoldedTurns, budget.recentRawTail, tokenCounter).overflow
+        } else {
+            rawTail.overflow
         }
 
         val selectedTurns = rawTail.selected.map { it.turn }
@@ -266,18 +266,23 @@ class ContextBuilder @Inject constructor() {
      * How much of the budget may go out verbatim.
      *
      * [ContextStrategy.RAW_PREFERRED] means "raw while capacity allows", so it gets everything left
-     * after the checkpoint. [ContextStrategy.AUTO_COMPACT] deliberately takes far less than it could:
-     * a bounded tail keeps request size stable and cheap instead of letting it grow until it has no
-     * choice but to fold.
+     * after the checkpoint. The `AUTO_COMPACT_*` family deliberately takes far less than it could: a
+     * bounded tail keeps request size stable and cheap instead of letting it grow until it has no
+     * choice but to fold. Which bound applies is the user's tier choice, already baked into
+     * [ContextBudget.recentRawTail] by [ContextBudgetTier].
      */
     private fun rawTailBudgetFor(
         strategy: ContextStrategy,
         budget: ContextBudget,
         checkpointTokens: Int
-    ): Int = when (strategy) {
-        ContextStrategy.RAW_PREFERRED -> budget.effectiveInputBudget - checkpointTokens
-        ContextStrategy.AUTO_COMPACT -> budget.recentRawTail
-    }.coerceAtLeast(MIN_RAW_TAIL_TOKENS)
+    ): Int {
+        val allowance = if (strategy.sendsRawWhileCapacityAllows) {
+            budget.effectiveInputBudget - checkpointTokens
+        } else {
+            budget.recentRawTail
+        }
+        return allowance.coerceAtLeast(MIN_RAW_TAIL_TOKENS)
+    }
 
     /**
      * Walks backwards from the newest turn, keeping whatever fits.
