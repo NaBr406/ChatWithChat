@@ -365,7 +365,17 @@ internal class NativeCompactionExchange private constructor(
             )
         }
 
-        private val DEFAULT_JSON = Json { ignoreUnknownKeys = true }
+        /**
+         * `encodeDefaults` is required, not cosmetic: `type` on the tool-item classes is a plain
+         * default, and without it a `function_call` encoded into the window would lose its
+         * discriminator. That single field is what [withBalancedToolItems] pairs on and what the
+         * provider dispatches on when the window is replayed, so dropping it would silently store a
+         * window that fails the next request.
+         */
+        private val DEFAULT_JSON = Json {
+            ignoreUnknownKeys = true
+            encodeDefaults = true
+        }
 
         private fun ContextBuildResult.usesNativeCompaction(): Boolean =
             compactionState == ContextCompactionState.NATIVE_SERVER_SIDE ||
