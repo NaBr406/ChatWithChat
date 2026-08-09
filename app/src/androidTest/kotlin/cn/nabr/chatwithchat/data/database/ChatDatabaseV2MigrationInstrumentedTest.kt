@@ -161,7 +161,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 ChatDatabaseV2Migrations.MIGRATION_16_17,
                 ChatDatabaseV2Migrations.MIGRATION_17_18,
                 ChatDatabaseV2Migrations.MIGRATION_18_19,
-                ChatDatabaseV2Migrations.MIGRATION_19_20
+                ChatDatabaseV2Migrations.MIGRATION_19_20,
+                ChatDatabaseV2Migrations.MIGRATION_20_21
             )
             .addCallback(ChatHistoryDatabaseCallback())
             .build()
@@ -279,7 +280,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 ChatDatabaseV2Migrations.MIGRATION_16_17,
                 ChatDatabaseV2Migrations.MIGRATION_17_18,
                 ChatDatabaseV2Migrations.MIGRATION_18_19,
-                ChatDatabaseV2Migrations.MIGRATION_19_20
+                ChatDatabaseV2Migrations.MIGRATION_19_20,
+                ChatDatabaseV2Migrations.MIGRATION_20_21
             )
             .addCallback(ChatHistoryDatabaseCallback())
             .build()
@@ -331,7 +333,7 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                     assertEquals("dismissed", roomDatabase.memoryMaintenanceJobDao().getById(jobId)?.status)
                 }
             }
-            assertEquals(SCHEMA_20_TABLES, roomDatabase.openHelper.writableDatabase.userTableNames())
+            assertEquals(SCHEMA_21_TABLES, roomDatabase.openHelper.writableDatabase.userTableNames())
             assertLegacySemanticTablesAbsent(roomDatabase.openHelper.writableDatabase)
         } finally {
             roomDatabase.close()
@@ -470,7 +472,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
             .addMigrations(
                 ChatDatabaseV2Migrations.MIGRATION_17_18,
                 ChatDatabaseV2Migrations.MIGRATION_18_19,
-                ChatDatabaseV2Migrations.MIGRATION_19_20
+                ChatDatabaseV2Migrations.MIGRATION_19_20,
+                ChatDatabaseV2Migrations.MIGRATION_20_21
             )
             .addCallback(ChatHistoryDatabaseCallback())
             .build()
@@ -746,7 +749,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
         val roomDatabase = Room.databaseBuilder(context, ChatDatabaseV2::class.java, TEST_DATABASE)
             .addMigrations(
                 ChatDatabaseV2Migrations.MIGRATION_18_19,
-                ChatDatabaseV2Migrations.MIGRATION_19_20
+                ChatDatabaseV2Migrations.MIGRATION_19_20,
+                ChatDatabaseV2Migrations.MIGRATION_20_21
             )
             .build()
         try {
@@ -797,8 +801,151 @@ class ChatDatabaseV2MigrationInstrumentedTest {
         }
     }
 
+    /**
+     * Migration 20→21 adds context management: a nullable `context_window` on models, a defaulted
+     * `context_strategy` on providers, and the three checkpoint tables.
+     *
+     * The two column additions are asserted from opposite directions on purpose. `context_window`
+     * must arrive NULL, because a provider-reported window that the app invented would silently size
+     * every later budget wrongly; it is backfilled on the next model refresh instead.
+     * `context_strategy` must arrive populated, because the column is NOT NULL and an existing
+     * provider has no row-level value to migrate — the default is the entire backfill.
+     */
     @Test
-    fun freshSchema19_opensAndReopensWithLongTermConsolidationState() {
+    fun migration20To21_preservesProviderRowsAndCreatesContextManagementState() {
+        var expectedUnchangedRows = emptyMap<String, List<List<String>>>()
+        migrationHelper.createDatabase(TEST_DATABASE, 20).apply {
+            insertSchema20ContextRows(this)
+            expectedUnchangedRows = UNCHANGED_SCHEMA_20_TO_21_TABLES.associateWith { tableName ->
+                snapshotRows(tableName)
+            }
+            close()
+        }
+
+        migrationHelper.runMigrationsAndValidate(
+            TEST_DATABASE,
+            21,
+            true,
+            ChatDatabaseV2Migrations.MIGRATION_20_21
+        ).use { database ->
+            assertEquals(SCHEMA_21_TABLES, database.userTableNames())
+
+            // Nothing outside the two altered tables may shift.
+            expectedUnchangedRows.forEach { (tableName, rows) ->
+                assertEquals("$tableName changed across 20→21", rows, database.snapshotRows(tableName))
+            }
+
+            assertEquals("kept chat", database.singleString("SELECT title FROM chats_v2 WHERE chat_id = 7"))
+            assertEquals(
+                "kept message",
+                database.singleString("SELECT content FROM messages_v2 WHERE message_id = 11")
+            )
+            assertEquals(
+                "model-1",
+                database.singleString("SELECT model_id FROM platform_model_v2 WHERE platform_uid = 'provider-1'")
+            )
+
+            // An unreported window stays unknown rather than being guessed at.
+            database.query("SELECT context_window FROM platform_model_v2 WHERE platform_uid = 'provider-1'")
+                .use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertTrue(cursor.isNull(0))
+                }
+
+            // The NOT NULL default is the whole backfill for existing providers.
+            assertEquals(
+                "AUTO_COMPACT",
+                database.singleString("SELECT context_strategy FROM platform_v2 WHERE uid = 'provider-1'")
+            )
+
+            assertEquals(0L, database.singleLong("SELECT COUNT(*) FROM context_checkpoint_segment"))
+            assertEquals(0L, database.singleLong("SELECT COUNT(*) FROM context_range_state"))
+            assertEquals(0L, database.singleLong("SELECT COUNT(*) FROM context_native_compaction_state"))
+
+            insertContextManagementFixtures(database)
+
+            assertEquals(
+                "checkpoint body",
+                database.singleString(
+                    "SELECT body FROM context_checkpoint_segment WHERE chat_id = 7 AND segment_index = 0"
+                )
+            )
+            assertEquals(
+                12L,
+                database.singleLong(
+                    "SELECT start_user_message_id FROM context_range_state WHERE chat_id = 7"
+                )
+            )
+            assertEquals(
+                "[]",
+                database.singleString(
+                    "SELECT compaction_items_json FROM context_native_compaction_state WHERE chat_id = 7"
+                )
+            )
+
+            database.query("PRAGMA foreign_key_check").use { cursor ->
+                assertEquals(0, cursor.count)
+            }
+            assertEquals("ok", database.singleString("PRAGMA integrity_check"))
+        }
+
+        // The DAOs must read back what the hand-written DDL created, which is what catches a column
+        // that migrated with the right name but the wrong affinity.
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val roomDatabase = Room.databaseBuilder(context, ChatDatabaseV2::class.java, TEST_DATABASE)
+            .addMigrations(ChatDatabaseV2Migrations.MIGRATION_20_21)
+            .addCallback(ChatHistoryDatabaseCallback())
+            .build()
+        try {
+            runBlocking {
+                val dao = roomDatabase.contextManagementDao()
+                val segment = dao.getCheckpointChain(7, "provider-1").single()
+                assertEquals(0, segment.segmentIndex)
+                assertEquals("checkpoint body", segment.body)
+                assertEquals("VALID", segment.status)
+                assertEquals(12, dao.getRange(7, "provider-1")?.startUserMessageId)
+                val nativeState = dao.getNativeState(7, "provider-1")
+                assertEquals("[]", nativeState?.compactionItemsJson)
+                assertTrue(nativeState?.isReadyForInput == true)
+                assertTrue(nativeState?.nativeUnsupported == false)
+                assertNull(
+                    roomDatabase.platformModelDao().getModelsForPlatform("provider-1").single().contextWindow
+                )
+            }
+        } finally {
+            roomDatabase.close()
+        }
+    }
+
+    /**
+     * Deleting the owning chat must take its context state with it: a checkpoint that outlived its
+     * conversation would be replayed as history for whatever chat id got reused.
+     */
+    @Test
+    fun migration20To21_contextStateIsDeletedWithItsChat() {
+        migrationHelper.createDatabase(TEST_DATABASE, 20).apply {
+            insertSchema20ContextRows(this)
+            close()
+        }
+
+        migrationHelper.runMigrationsAndValidate(
+            TEST_DATABASE,
+            21,
+            true,
+            ChatDatabaseV2Migrations.MIGRATION_20_21
+        ).use { database ->
+            insertContextManagementFixtures(database)
+            database.execSQL("PRAGMA foreign_keys = ON")
+            database.execSQL("DELETE FROM chats_v2 WHERE chat_id = 7")
+
+            assertEquals(0L, database.singleLong("SELECT COUNT(*) FROM context_checkpoint_segment"))
+            assertEquals(0L, database.singleLong("SELECT COUNT(*) FROM context_range_state"))
+            assertEquals(0L, database.singleLong("SELECT COUNT(*) FROM context_native_compaction_state"))
+        }
+    }
+
+    @Test
+    fun freshSchema21_opensAndReopensWithContextManagementState() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val freshDatabase = Room.databaseBuilder(context, ChatDatabaseV2::class.java, TEST_DATABASE)
             .addCallback(ChatHistoryDatabaseCallback())
@@ -806,9 +953,9 @@ class ChatDatabaseV2MigrationInstrumentedTest {
         try {
             val database = freshDatabase
             val sqliteDatabase = database.openHelper.writableDatabase
-            assertEquals(SCHEMA_20_TABLES, sqliteDatabase.userTableNames())
+            assertEquals(SCHEMA_21_TABLES, sqliteDatabase.userTableNames())
             assertLegacySemanticTablesAbsent(sqliteDatabase)
-            assertEquals(20L, sqliteDatabase.singleLong("PRAGMA user_version"))
+            assertEquals(21L, sqliteDatabase.singleLong("PRAGMA user_version"))
             sqliteDatabase.query("PRAGMA foreign_key_check").use { cursor ->
                 assertEquals(0, cursor.count)
             }
@@ -823,9 +970,9 @@ class ChatDatabaseV2MigrationInstrumentedTest {
         try {
             val database = reopenedDatabase
             val sqliteDatabase = database.openHelper.writableDatabase
-            assertEquals(SCHEMA_20_TABLES, sqliteDatabase.userTableNames())
+            assertEquals(SCHEMA_21_TABLES, sqliteDatabase.userTableNames())
             assertLegacySemanticTablesAbsent(sqliteDatabase)
-            assertEquals(20L, sqliteDatabase.singleLong("PRAGMA user_version"))
+            assertEquals(21L, sqliteDatabase.singleLong("PRAGMA user_version"))
             assertEquals("ok", sqliteDatabase.singleString("PRAGMA integrity_check"))
             runBlocking {
                 assertTrue(database.chatRoomDao().getChatRooms().isEmpty())
@@ -836,6 +983,9 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 assertNull(database.memoryTurnBatchDao().getCheckpoint(1))
                 assertTrue(database.memoryActivityLogDao().observeLatest(10).first().isEmpty())
                 assertNull(database.memoryLongTermConsolidationDao().getById("missing"))
+                assertTrue(database.contextManagementDao().getCheckpointChain(1, "provider-1").isEmpty())
+                assertNull(database.contextManagementDao().getRange(1, "provider-1"))
+                assertNull(database.contextManagementDao().getNativeState(1, "provider-1"))
             }
         } finally {
             reopenedDatabase.close()
@@ -1305,6 +1455,80 @@ class ChatDatabaseV2MigrationInstrumentedTest {
         )
     }
 
+    /**
+     * The minimum a 20→21 migration has to carry across: one chat, one message, and the provider and
+     * model rows whose tables both gain a column.
+     */
+    private fun insertSchema20ContextRows(database: SupportSQLiteDatabase) {
+        database.execSQL(
+            "INSERT INTO chats_v2 (chat_id, title, enabled_platform, created_at, updated_at) " +
+                "VALUES (7, 'kept chat', '', 10, 11)"
+        )
+        database.execSQL(
+            """
+            INSERT INTO messages_v2 (
+                message_id, chat_id, thoughts, content, attachments, sticker_refs, revisions,
+                active_revision_index, source_metadata, token_usage, linked_message_id,
+                platform_type, created_at
+            ) VALUES (11, 7, '', 'kept message', '', '', '[]', -1, '', NULL, 0, 'provider-1', 12)
+            """.trimIndent()
+        )
+        database.execSQL(
+            """
+            INSERT INTO platform_v2 (
+                platform_id, uid, name, compatible_type, enabled, api_url, token, model,
+                temperature, top_p, system_prompt, stream, reasoning, timeout,
+                model_refresh_status, model_refresh_error, model_refreshed_at
+            ) VALUES (
+                3, 'provider-1', 'Provider', 'openai', 1, 'https://example.invalid', NULL,
+                'model-1', NULL, NULL, NULL, 1, 1, 60, 'success', NULL, 19
+            )
+            """.trimIndent()
+        )
+        database.execSQL(
+            """
+            INSERT INTO platform_model_v2 (
+                platform_uid, model_id, display_name, description, enabled, is_default, updated_at
+            ) VALUES ('provider-1', 'model-1', 'Model One', '', 1, 1, 19)
+            """.trimIndent()
+        )
+        database.execSQL(
+            """
+            INSERT INTO chat_platform_model_v2 (
+                chat_id, platform_uid, model, reasoning_mode, updated_at
+            ) VALUES (7, 'provider-1', 'model-1', 'medium', 19)
+            """.trimIndent()
+        )
+    }
+
+    /** One row in each new table, written through raw SQL so the DDL is what is under test. */
+    private fun insertContextManagementFixtures(database: SupportSQLiteDatabase) {
+        database.execSQL(
+            """
+            INSERT INTO context_checkpoint_segment (
+                chat_id, platform_uid, segment_index, start_user_message_id, end_user_message_id,
+                body, source_turns_hash, estimated_tokens, compaction_usage, status,
+                created_at, updated_at
+            ) VALUES (7, 'provider-1', 0, 11, 12, 'checkpoint body', 'turns-hash', 24, NULL, 'VALID', 20, 20)
+            """.trimIndent()
+        )
+        database.execSQL(
+            """
+            INSERT INTO context_range_state (
+                chat_id, platform_uid, start_user_message_id, end_user_message_id, updated_at
+            ) VALUES (7, 'provider-1', 12, NULL, 20)
+            """.trimIndent()
+        )
+        database.execSQL(
+            """
+            INSERT INTO context_native_compaction_state (
+                chat_id, platform_uid, compaction_items_json, boundary_user_message_id,
+                source_turns_hash, estimated_tokens, is_ready_for_input, native_unsupported, updated_at
+            ) VALUES (7, 'provider-1', '[]', 12, 'turns-hash', 8, 1, 0, 20)
+            """.trimIndent()
+        )
+    }
+
     private fun insertSchema14Rows(database: SupportSQLiteDatabase) {
         database.execSQL(
             "INSERT INTO chats_v2 (chat_id, title, enabled_platform, created_at, updated_at) VALUES (7, 'kept chat', '', 10, 11)"
@@ -1630,6 +1854,22 @@ class ChatDatabaseV2MigrationInstrumentedTest {
             "chat_history_projection_fts_segdir",
             "chat_history_projection_fts_segments",
             "chat_history_projection_fts_stat"
+        )
+        private val SCHEMA_21_TABLES = SCHEMA_20_TABLES + setOf(
+            "context_checkpoint_segment",
+            "context_range_state",
+            "context_native_compaction_state"
+        )
+
+        /**
+         * Everything 20→21 must leave byte-identical. The two tables that gain a column are excluded
+         * because their row snapshots legitimately grow a value; they are asserted column by column
+         * instead.
+         */
+        private val UNCHANGED_SCHEMA_20_TO_21_TABLES = setOf(
+            "chats_v2",
+            "messages_v2",
+            "chat_platform_model_v2"
         )
         private val UNCHANGED_SCHEMA_18_TO_19_TABLES = SCHEMA_18_TABLES - setOf(
             "memory_maintenance_job",
