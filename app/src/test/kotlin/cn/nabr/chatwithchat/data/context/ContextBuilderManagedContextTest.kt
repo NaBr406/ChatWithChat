@@ -120,11 +120,42 @@ class ContextBuilderManagedContextTest {
             request(users, assistants, strategy = ContextStrategy.RAW_PREFERRED)
         )
 
-        // Everything is sent raw, yet the pre-fold boundary is still computed against recentRawTail.
-        // Otherwise a RAW_PREFERRED chat would only ever start folding once it was already in trouble.
+        // Everything is sent raw, yet the batch boundary is still computed against recentRawTail, so
+        // the material is identified and costed up front. Whether to spend a call folding it is a
+        // separate decision that RAW_PREFERRED defers until capacity is actually in sight — see
+        // `raw preferred waits for the conversation itself to approach the line` in ContextBuildResultTest.
         assertEquals(5, result.turns.size)
         assertTrue(result.pendingFoldTurns.isNotEmpty())
         assertTrue(result.pendingFoldTurns.none { it.isCurrentTurn })
+        assertTrue(result.pendingFoldTokens > 0)
+    }
+
+    @Test
+    fun `the fold batch carries its own token cost`() {
+        // The cost has to travel with the batch: it is what decides whether a fold is worth running,
+        // and recomputing it downstream would mean a second encoder pass over the same turns.
+        val (users, assistants) = conversation(5) { chunkyText("turn-$it") }
+
+        val result = builder.buildManagedContext(
+            request(users, assistants, strategy = ContextStrategy.AUTO_COMPACT_BALANCED)
+        )
+
+        assertTrue(result.pendingFoldTurns.isNotEmpty())
+        assertEquals(
+            ContextTokenCounter.forPlatform(platform()).estimateTurns(result.pendingFoldTurns),
+            result.pendingFoldTokens
+        )
+    }
+
+    @Test
+    fun `an empty fold batch reports no cost`() {
+        val (users, assistants) = conversation(3) { "turn-$it short question" }
+
+        val result = builder.buildManagedContext(request(users, assistants))
+
+        assertTrue(result.pendingFoldTurns.isEmpty())
+        assertEquals(0, result.pendingFoldTokens)
+        assertFalse(result.shouldEnqueueBackgroundFold)
     }
 
     @Test

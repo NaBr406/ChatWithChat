@@ -2672,10 +2672,10 @@ class ChatRepositoryImpl @Inject constructor(
     /**
      * Fires the background fold and returns immediately.
      *
-     * Deliberately not awaited: enqueuing touches the database, and the whole point of pre-folding at
-     * [ContextBudget.preFoldTrigger] is that the user never waits for compaction. A failure here is
-     * silent by design — the fold is an optimisation, and the request being assembled right now is
-     * already within budget without it.
+     * Deliberately not awaited: enqueuing touches the database, and the whole point of folding in the
+     * background is that the user never waits for compaction. A failure here is silent by design —
+     * the fold is an optimisation, and the request being assembled right now is already within budget
+     * without it.
      */
     private fun enqueueBackgroundFoldIfNeeded(
         userMessages: List<MessageV2>,

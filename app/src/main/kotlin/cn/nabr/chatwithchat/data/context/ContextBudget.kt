@@ -20,7 +20,15 @@ data class ContextBudget(
     val effectiveInputBudget: Int,
     /** Background pre-fold starts here. Strictly below [compactTrigger]; the gap is the async window. */
     val preFoldTrigger: Int,
-    /** Synchronous last-resort line. Rarely reached once background pre-folding is working. */
+    /**
+     * The upper line: history past this point must already be folded.
+     *
+     * App-side there is no synchronous fold-before-send — the deterministic extractive summary is the
+     * floor instead, so nothing blocks the send path and this line is never *acted* on locally. It is
+     * still the app's stated limit, which is why it is what gets handed to OpenAI as the server-side
+     * compaction threshold (see [OpenAINativeCompactionService.compactThresholdFor]) and why the
+     * invariants in [check] keep the other quantities below it.
+     */
     val compactTrigger: Int,
     /** How much of the budget the most recent verbatim turns may occupy. */
     val recentRawTail: Int,
@@ -31,9 +39,35 @@ data class ContextBudget(
     /** RAW_PREFERRED warns here (Task 7) without changing any user setting. */
     val rawWarningThreshold: Int get() = (effectiveInputBudget * RAW_WARNING_RATIO).toInt()
 
-    fun shouldPreFold(estimatedTokens: Int): Boolean = estimatedTokens >= preFoldTrigger
+    /**
+     * Whether an *unclamped* history size has grown past the pre-fold line.
+     *
+     * The argument must be a figure that grows with the conversation. Only [ContextStrategy]s where
+     * [ContextStrategy.sendsRawWhileCapacityAllows] holds can supply one, because only there does the
+     * assembled request keep growing with the history. Under the AUTO_COMPACT family the request is
+     * deliberately bounded by [recentRawTail] + [summaryTarget], which on any real window sits far
+     * below [preFoldTrigger] — passing that here is what kept background folding from ever running,
+     * and it cannot be fixed by moving the line, since every tier scales both sides together.
+     */
+    fun shouldPreFold(unclampedHistoryTokens: Int): Boolean = unclampedHistoryTokens >= preFoldTrigger
 
-    fun shouldCompactNow(estimatedTokens: Int): Boolean = estimatedTokens >= compactTrigger
+    /**
+     * Smallest unfolded batch worth spending a background provider call on.
+     *
+     * A fold replaces the batch with a checkpoint segment of at most [summaryTarget] tokens, so a
+     * batch no larger than that buys nothing: it would pay for an LLM call and leave the context the
+     * same size. Twice the target is the smallest multiple that still guarantees a real reduction,
+     * and it keeps folding proportional to fidelity — a tier that buys richer checkpoints also waits
+     * for correspondingly larger batches, so the number of calls per conversation stays flat.
+     *
+     * Capped below [compactTrigger] for the pathological windows where [of] had to squeeze
+     * [summaryTarget] up against the compaction line: doubling it there would push the threshold past
+     * the point the history is supposed to be folded by, and folding would only ever start after the
+     * extractive fallback had permanently taken over. [check] guarantees the cap still leaves the
+     * threshold above [summaryTarget], so the "a fold must shrink something" property survives it.
+     */
+    val backgroundFoldMinBatchTokens: Int
+        get() = (summaryTarget * BACKGROUND_FOLD_MIN_BATCH_MULTIPLE).coerceAtMost(compactTrigger - 1)
 
     fun exceedsBudget(estimatedTokens: Int): Boolean = estimatedTokens > effectiveInputBudget
 
@@ -78,6 +112,12 @@ data class ContextBudget(
         private const val COMPACT_TRIGGER_RATIO = 0.75
         private const val RECENT_RAW_TAIL_RATIO = 0.30
         private const val RAW_WARNING_RATIO = 0.80
+
+        /**
+         * How many times [summaryTarget] a pending batch must reach before a fold is worth paying
+         * for. See [backgroundFoldMinBatchTokens].
+         */
+        private const val BACKGROUND_FOLD_MIN_BATCH_MULTIPLE = 2
 
         private const val SUMMARY_TARGET_MIN = 768
 

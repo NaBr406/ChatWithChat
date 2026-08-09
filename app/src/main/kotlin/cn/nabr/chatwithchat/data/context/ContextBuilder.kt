@@ -175,11 +175,12 @@ class ContextBuilder @Inject constructor() {
         // sized to recentRawTail so the overflow is exactly that batch; under RAW_PREFERRED the tail is
         // much larger, so the same boundary has to be computed separately — folding must not wait until
         // the conversation is over budget.
-        val pendingFoldTurns = if (request.strategy.sendsRawWhileCapacityAllows) {
+        val pendingFoldBatch = if (request.strategy.sendsRawWhileCapacityAllows) {
             selectRawTail(unfoldedTurns, budget.recentRawTail, tokenCounter).overflow
         } else {
             rawTail.overflow
         }
+        val pendingFoldTurns = pendingFoldBatch.map { it.turn }
 
         val selectedTurns = rawTail.selected.map { it.turn }
         val estimatedTokens = checkpointTokens +
@@ -194,7 +195,10 @@ class ContextBuilder @Inject constructor() {
             checkpointBody = checkpointBody,
             checkpointBoundaryUserMessageId = foldedThroughUserMessageId,
             deterministicSummary = deterministicSummary,
-            pendingFoldTurns = pendingFoldTurns.map { it.turn },
+            pendingFoldTurns = pendingFoldTurns,
+            // Unlike estimatedTokens this is not clamped by the budget, which is exactly why the fold
+            // decision reads it: it keeps growing until a fold actually removes the turns.
+            pendingFoldTokens = tokenCounter.estimateTurns(pendingFoldTurns),
             estimatedTokens = estimatedTokens,
             compactionState = when {
                 rawTail.overflow.isNotEmpty() -> ContextCompactionState.DETERMINISTIC_FALLBACK

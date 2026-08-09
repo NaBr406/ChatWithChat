@@ -62,6 +62,18 @@ data class ContextBuildResult(
      */
     val pendingFoldTurns: List<ConversationTurn> = emptyList(),
     /**
+     * Token cost of [pendingFoldTurns].
+     *
+     * Carried rather than left to the consumer because pricing turns needs the platform-specific
+     * encoder, which only the builder holds. Recomputing it in [shouldEnqueueBackgroundFold] or in
+     * the scheduler would mean pushing a tokenizer into layers that otherwise only read decisions.
+     *
+     * Unlike [estimatedTokens] this figure is *not* clamped by the budget: it grows with the
+     * conversation, which is what makes it the right input to a "has enough accumulated to fold"
+     * decision.
+     */
+    val pendingFoldTokens: Int = 0,
+    /**
      * True when the native window plus the turns after it no longer fit one request, so a standalone
      * `/v1/responses/compact` initialization is needed. Only ever set on the native path.
      */
@@ -121,12 +133,35 @@ data class ContextBuildResult(
     /**
      * Whether a background fold should be enqueued after this build.
      *
-     * Both halves matter: over the line *and* something to fold. Without the second check a chat
-     * whose raw tail alone exceeds [ContextBudget.preFoldTrigger] would enqueue a job on every single
-     * turn that could never do any work.
+     * The primary question is "how much history is not yet in a checkpoint", which is
+     * [pendingFoldTokens] — the batch stranded between the checkpoint boundary and the raw tail. It is
+     * deliberately *not* [estimatedTokens] against [ContextBudget.preFoldTrigger] under the
+     * AUTO_COMPACT family: every component of the assembled request is already clamped by the budget
+     * (checkpoint by `summaryTarget`, tail by `recentRawTail`), so that comparison sits roughly 4x
+     * below the line on a 128k window and never fires. Keeping request size bounded is precisely what
+     * auto-compaction is for, so the bound cannot also be the signal that it is needed.
+     *
+     * [ContextBudget.backgroundFoldMinBatchTokens] rather than a bare non-empty check because a fold
+     * costs a provider call: below roughly one checkpoint's worth of material the new segment would
+     * be no smaller than the turns it replaces.
+     *
+     * The turn-list check is kept as well, since a job needs concrete boundary message ids to claim.
+     * It is also what excludes the native path, which folds server-side and never fills either field.
      */
     val shouldEnqueueBackgroundFold: Boolean
-        get() = pendingFoldTurns.isNotEmpty() && budget.shouldPreFold(estimatedTokens)
+        get() {
+            if (pendingFoldTurns.isEmpty()) return false
+            if (pendingFoldTokens < budget.backgroundFoldMinBatchTokens) return false
+            if (!strategy.sendsRawWhileCapacityAllows) return true
+
+            // RAW_PREFERRED is still sending every one of these turns verbatim, so the checkpoint a
+            // fold would build is speculative — the conversation may well end before capacity runs
+            // out, and the user chose this strategy to avoid paying for compaction. Waiting for the
+            // conversation itself to grow is what keeps that promise. Here, and only here,
+            // estimatedTokens is the right operand: the raw tail is budgeted at the whole
+            // effectiveInputBudget, so it tracks the history instead of being clamped away from it.
+            return budget.shouldPreFold(estimatedTokens)
+        }
 
     companion object {
         const val HISTORICAL_CONTEXT_HEADER: String =

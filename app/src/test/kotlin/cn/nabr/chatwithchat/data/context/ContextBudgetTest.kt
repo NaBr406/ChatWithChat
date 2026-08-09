@@ -257,21 +257,75 @@ class ContextBudgetTest {
         assertFalse(budget.shouldPreFold(budget.preFoldTrigger - 1))
         assertTrue(budget.shouldPreFold(budget.preFoldTrigger))
 
-        assertFalse(budget.shouldCompactNow(budget.compactTrigger - 1))
-        assertTrue(budget.shouldCompactNow(budget.compactTrigger))
-
         assertFalse(budget.exceedsBudget(budget.effectiveInputBudget))
         assertTrue(budget.exceedsBudget(budget.effectiveInputBudget + 1))
     }
 
     @Test
-    fun `pre folding starts before synchronous compaction becomes necessary`() {
-        // The whole design depends on this ordering: the background job gets to run in the gap, and
-        // compactTrigger degrades into a rarely-reached fallback.
+    fun `pre folding starts well before the compaction line`() {
+        // The whole design depends on this ordering: the background job gets to run in the gap, so
+        // history never actually arrives at compactTrigger with nothing folded.
         val budget = ContextBudget.of(128_000, 1_200)
 
         assertTrue(budget.shouldPreFold(budget.preFoldTrigger))
-        assertFalse(budget.shouldCompactNow(budget.preFoldTrigger))
+        assertTrue(budget.preFoldTrigger < budget.compactTrigger)
+    }
+
+    @Test
+    fun `the minimum fold batch is large enough to actually shrink the context`() {
+        // A fold trades an LLM call for a segment of at most summaryTarget tokens. If the batch were
+        // merely non-empty, the call could produce a summary the same size as its input. This is the
+        // property that has to survive every window and tier, including the squeezed ones below.
+        val windows = listOf(2_048, 8_192, 32_768, 128_000, 1_000_000)
+
+        windows.forEach { window ->
+            ContextBudgetTier.entries.forEach { tier ->
+                val budget = ContextBudget.of(window, 1_200, tier)
+                val label = "window=$window tier=${tier.name}"
+
+                assertTrue(
+                    "$label: threshold ${budget.backgroundFoldMinBatchTokens} must exceed " +
+                        "summaryTarget ${budget.summaryTarget}",
+                    budget.backgroundFoldMinBatchTokens > budget.summaryTarget
+                )
+                assertTrue(
+                    "$label: threshold ${budget.backgroundFoldMinBatchTokens} must stay under " +
+                        "compactTrigger ${budget.compactTrigger}",
+                    budget.backgroundFoldMinBatchTokens < budget.compactTrigger
+                )
+                assertEquals(
+                    label,
+                    minOf(budget.summaryTarget * 2, budget.compactTrigger - 1),
+                    budget.backgroundFoldMinBatchTokens
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `the fold threshold is plain double the summary target once the window has room`() {
+        // The cap in backgroundFoldMinBatchTokens exists only for windows too small to hold two
+        // checkpoints' worth of history. On anything normal the simple rule is what applies, and this
+        // pins that so the cap cannot quietly become the common case.
+        val budget = ContextBudget.of(128_000, 1_200)
+
+        assertEquals(1_200, budget.summaryTarget)
+        assertEquals(2_400, budget.backgroundFoldMinBatchTokens)
+    }
+
+    @Test
+    fun `a squeezed window caps the fold threshold instead of pushing it past the compaction line`() {
+        // 8k on FOLLOW_WINDOW is the real case: the 4x summary scale drives summaryTarget up against
+        // compactTrigger, so doubling it unclamped would mean folding could never start before the
+        // extractive fallback had already taken over for good.
+        val budget = ContextBudget.of(8_192, 1_200, ContextBudgetTier.FOLLOW_WINDOW)
+
+        assertTrue(
+            "this window must actually trigger the cap, otherwise the test proves nothing",
+            budget.summaryTarget * 2 > budget.compactTrigger - 1
+        )
+        assertEquals(budget.compactTrigger - 1, budget.backgroundFoldMinBatchTokens)
+        assertTrue(budget.backgroundFoldMinBatchTokens > budget.summaryTarget)
     }
 
     private fun assertInvariants(label: String, budget: ContextBudget) {

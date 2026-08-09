@@ -56,26 +56,126 @@ class ContextBuildResultTest {
     }
 
     @Test
-    fun `a background fold is enqueued only when there is something to fold`() {
-        val overTheLine = BUDGET.preFoldTrigger
+    fun `a background fold is enqueued only when there is a batch worth folding`() {
+        val enough = BUDGET.backgroundFoldMinBatchTokens
 
         assertFalse(
             "nothing to fold",
-            result(estimatedTokens = overTheLine, pendingFoldTurns = emptyList()).shouldEnqueueBackgroundFold
+            result(pendingFoldTokens = enough, pendingFoldTurns = emptyList()).shouldEnqueueBackgroundFold
         )
         assertFalse(
-            "not over the pre-fold line",
+            "batch too small to pay for a provider call",
             result(
-                estimatedTokens = overTheLine - 1,
+                pendingFoldTokens = enough - 1,
                 pendingFoldTurns = listOf(turn(1))
             ).shouldEnqueueBackgroundFold
         )
         assertTrue(
             result(
-                estimatedTokens = overTheLine,
+                pendingFoldTokens = enough,
                 pendingFoldTurns = listOf(turn(1))
             ).shouldEnqueueBackgroundFold
         )
+    }
+
+    @Test
+    fun `the fold decision ignores the assembled request size`() {
+        // The defect this guards: the predicate used to compare estimatedTokens against
+        // preFoldTrigger. Every part of estimatedTokens is already clamped by the budget under the
+        // AUTO_COMPACT family, so it sat permanently below the line and no fold was ever enqueued —
+        // which in turn meant the checkpoint chain was never written and the extractive fallback
+        // became the only path. A request at the very top of its budget with nothing stranded behind
+        // it must still not fold, and a small request with a large backlog must.
+        assertFalse(
+            "a full request is not evidence of unfolded history",
+            result(
+                estimatedTokens = BUDGET.effectiveInputBudget,
+                pendingFoldTokens = 0,
+                pendingFoldTurns = emptyList()
+            ).shouldEnqueueBackgroundFold
+        )
+        assertTrue(
+            "a bounded request can still have a long backlog behind it",
+            result(
+                estimatedTokens = 0,
+                pendingFoldTokens = BUDGET.backgroundFoldMinBatchTokens,
+                pendingFoldTurns = listOf(turn(1))
+            ).shouldEnqueueBackgroundFold
+        )
+    }
+
+    @Test
+    fun `a realistic auto compact request would never have folded under the old rule`() {
+        // Concrete form of the same bug, so the regression is legible without re-deriving the ratios:
+        // the largest request AUTO_COMPACT can assemble is the raw tail plus a checkpoint, and even
+        // that stays far below preFoldTrigger.
+        val largestPossibleRequest = BUDGET.recentRawTail + BUDGET.summaryTarget
+
+        assertTrue(
+            "if this ever stops holding, the old predicate was not the bug it is documented as",
+            largestPossibleRequest < BUDGET.preFoldTrigger
+        )
+    }
+
+    @Test
+    fun `raw preferred waits for the conversation itself to approach the line`() {
+        // The user picked RAW_PREFERRED to avoid paying for compaction, so a fold whose checkpoint may
+        // never be needed is not free — it is the cost they opted out of. Under this strategy the raw
+        // tail is budgeted at the whole effectiveInputBudget, so estimatedTokens really does track the
+        // history and can carry the decision, which it cannot do under AUTO_COMPACT.
+        val bigBatch = BUDGET.backgroundFoldMinBatchTokens
+
+        assertFalse(
+            "still far from capacity, so folding would be speculative",
+            result(
+                strategy = ContextStrategy.RAW_PREFERRED,
+                estimatedTokens = BUDGET.preFoldTrigger - 1,
+                pendingFoldTokens = bigBatch,
+                pendingFoldTurns = listOf(turn(1))
+            ).shouldEnqueueBackgroundFold
+        )
+        assertTrue(
+            "at the line the checkpoint is about to be needed",
+            result(
+                strategy = ContextStrategy.RAW_PREFERRED,
+                estimatedTokens = BUDGET.preFoldTrigger,
+                pendingFoldTokens = bigBatch,
+                pendingFoldTurns = listOf(turn(1))
+            ).shouldEnqueueBackgroundFold
+        )
+    }
+
+    @Test
+    fun `raw preferred still requires a batch worth folding`() {
+        // The size floor applies to every strategy: being near capacity is no reason to pay for a
+        // provider call that cannot shrink anything.
+        assertFalse(
+            result(
+                strategy = ContextStrategy.RAW_PREFERRED,
+                estimatedTokens = BUDGET.effectiveInputBudget,
+                pendingFoldTokens = BUDGET.backgroundFoldMinBatchTokens - 1,
+                pendingFoldTurns = listOf(turn(1))
+            ).shouldEnqueueBackgroundFold
+        )
+    }
+
+    @Test
+    fun `every auto compact tier folds on the batch alone`() {
+        // The bug was strategy-wide, so the fix has to be too: no tier may reintroduce a dependency on
+        // the assembled request size, since every tier clamps that size by construction.
+        ContextStrategy.entries
+            .filter { it.isAutoCompact }
+            .forEach { strategy ->
+                assertTrue(
+                    strategy.name,
+                    result(
+                        strategy = strategy,
+                        estimatedTokens = 0,
+                        pendingFoldTokens = BUDGET.backgroundFoldMinBatchTokens,
+                        pendingFoldTurns = listOf(turn(1))
+                    ).shouldEnqueueBackgroundFold
+                )
+            }
     }
 
     @Test
@@ -121,6 +221,7 @@ class ContextBuildResultTest {
         estimatedTokens: Int = 0,
         compactionState: ContextCompactionState = ContextCompactionState.NONE,
         pendingFoldTurns: List<ConversationTurn> = emptyList(),
+        pendingFoldTokens: Int = 0,
         checkpointBody: String? = null,
         deterministicSummary: String? = null
     ) = ContextBuildResult(
@@ -130,6 +231,7 @@ class ContextBuildResultTest {
         checkpointBody = checkpointBody,
         deterministicSummary = deterministicSummary,
         pendingFoldTurns = pendingFoldTurns,
+        pendingFoldTokens = pendingFoldTokens,
         estimatedTokens = estimatedTokens,
         compactionState = compactionState
     )

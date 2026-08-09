@@ -15,8 +15,12 @@ import kotlinx.serialization.json.Json
  *
  * Enqueuing is all this does. It never compacts, never calls a provider and never writes a
  * checkpoint, so it stays cheap enough to run alongside a send without delaying it — which is the
- * point of pre-folding at [ContextBudget.preFoldTrigger] rather than waiting for
+ * point of folding in the background as soon as a batch is worth it, rather than waiting for
  * [ContextBudget.compactTrigger] and having to fold while the user waits.
+ *
+ * "Worth it" is [ContextBuildResult.shouldEnqueueBackgroundFold], measured on the unfolded batch
+ * rather than on the assembled request: under the AUTO_COMPACT family the request size is clamped by
+ * the budget by design, so it can never signal that the history behind it has grown.
  *
  * It reuses the `memory_maintenance_job` queue wholesale: job-type registry, three-layer idempotency,
  * lease claim and watchdog, per-family WorkManager wake-up. See
@@ -40,8 +44,8 @@ class ContextFoldScheduler(
      * Queues a fold for the batch [result] identified as foldable, if there is one.
      *
      * Callers must not await this on the synchronous send path — it performs database work — and must
-     * not treat a null return as an error. Null is the ordinary outcome: most turns are nowhere near
-     * the pre-fold line.
+     * not treat a null return as an error. Null is the ordinary outcome: most turns leave nothing
+     * outside the raw tail worth folding.
      *
      * @return the queued job, or null when nothing needed folding or the request is ineligible.
      */

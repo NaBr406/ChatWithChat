@@ -137,11 +137,11 @@ class ContextFoldSchedulerTest {
     }
 
     @Test
-    fun `nothing is queued below the pre-fold line`() = runBlocking {
+    fun `nothing is queued for a batch too small to be worth a provider call`() = runBlocking {
         val fixture = Fixture()
 
         val job = fixture.enqueue(
-            result = foldableResult(estimatedTokens = BUDGET.preFoldTrigger - 1)
+            result = foldableResult(pendingFoldTokens = BUDGET.backgroundFoldMinBatchTokens - 1)
         )
 
         assertNull(job)
@@ -227,9 +227,13 @@ class ContextFoldSchedulerTest {
         degradation.recordBackgroundFoldExhausted(CHAT_ID, PLATFORM_UID, "context_compaction_call_failed")
         clock.advanceSeconds(COOLDOWN)
 
-        // Below the line, so this send was never going to fold. Claiming the slot here would refresh
-        // the cooldown and burn the one probe the window allows on a request that did nothing.
-        assertNull(fixture.enqueue(result = foldableResult(estimatedTokens = BUDGET.preFoldTrigger - 1)))
+        // Too small a batch, so this send was never going to fold. Claiming the slot here would
+        // refresh the cooldown and burn the one probe the window allows on a request that did nothing.
+        assertNull(
+            fixture.enqueue(
+                result = foldableResult(pendingFoldTokens = BUDGET.backgroundFoldMinBatchTokens - 1)
+            )
+        )
 
         assertNotNull(fixture.enqueue(result = foldableResult()))
     }
@@ -296,14 +300,17 @@ class ContextFoldSchedulerTest {
         fun registry(clock: Clock) = ContextFoldDegradationRegistry(clock = clock, cooldownSeconds = COOLDOWN)
 
         fun foldableResult(
-            estimatedTokens: Int = BUDGET.preFoldTrigger,
+            pendingFoldTokens: Int = BUDGET.backgroundFoldMinBatchTokens,
             pendingFoldTurns: List<ConversationTurn> = listOf(turn(10), turn(11))
         ) = ContextBuildResult(
             strategy = ContextStrategy.AUTO_COMPACT_BALANCED,
             range = ContextRange.fullHistory(CHAT_ID, PLATFORM_UID),
             budget = BUDGET,
             pendingFoldTurns = pendingFoldTurns,
-            estimatedTokens = estimatedTokens,
+            pendingFoldTokens = pendingFoldTokens,
+            // Deliberately a bounded, unremarkable request size: what decides a fold is the backlog in
+            // pendingFoldTokens, never how large the request being sent happens to be.
+            estimatedTokens = BUDGET.recentRawTail,
             compactionState = ContextCompactionState.PENDING_BACKGROUND_FOLD
         )
 
