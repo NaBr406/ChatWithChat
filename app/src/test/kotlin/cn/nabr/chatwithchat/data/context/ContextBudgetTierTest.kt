@@ -76,11 +76,19 @@ class ContextBudgetTierTest {
     fun `the raw tail ceiling always leaves room under the compaction ceiling`() {
         // If these ever crossed, the tail alone would exceed the compaction line and ContextBudget
         // would have to shrink it back, making the tier mean something other than what it says.
-        ContextBudgetTier.entries.forEach { tier ->
-            assertTrue(
-                tier.name,
-                ceilingOf(tier.recentRawTailCeiling) < ceilingOf(tier.compactTriggerCeiling)
-            )
+        //
+        // Only meaningful where both ceilings exist. FOLLOW_WINDOW has neither, and encoding "no
+        // ceiling" as Int.MAX_VALUE here would compare the tier against itself and always fail; the
+        // ordering it relies on instead is RECENT_RAW_TAIL_RATIO < COMPACT_TRIGGER_RATIO inside
+        // ContextBudget, which `follow window tier applies the ratios ...` in ContextBudgetTest covers.
+        val bounded = ContextBudgetTier.entries.filterNot { it.followsWindow }
+
+        assertEquals(ContextBudgetTier.entries.size - 1, bounded.size)
+        bounded.forEach { tier ->
+            val tail = requireNotNull(tier.recentRawTailCeiling) { "${tier.name} is not follow-window" }
+            val compact = requireNotNull(tier.compactTriggerCeiling) { "${tier.name} is not follow-window" }
+
+            assertTrue("${tier.name}: tail $tail must stay under compaction $compact", tail < compact)
         }
     }
 
