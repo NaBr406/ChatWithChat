@@ -3361,11 +3361,14 @@ class ChatRepositoryImpl @Inject constructor(
     override fun generateDefaultChatTitle(messages: List<MessageV2>): String? = messages.sortedBy { it.createdAt }.firstOrNull { it.platformType == null }?.content?.replace('\n', ' ')?.take(50)
 
     override suspend fun updateChatTitle(chatRoom: ChatRoomV2, title: String) {
-        chatRoomV2Dao.editChatRoom(chatRoom.copy(title = title.replace('\n', ' ').take(50)))
+        // Title-only write: renaming a chat is not "using" it, so `updated_at` must keep its stored
+        // value rather than being overwritten by whatever the caller's copy of the row happens to hold.
+        chatRoomV2Dao.updateChatRoomTitle(chatRoom.id, title.replace('\n', ' ').take(50))
         enqueueHistoryReconciliation(chatRoom.id)
     }
 
     override suspend fun saveChat(chatRoom: ChatRoomV2, messages: List<MessageV2>, chatPlatformModels: Map<String, ChatPlatformConfig>): ChatRoomV2 {
+        val savedAt = System.currentTimeMillis() / 1000
         if (chatRoom.id == 0) {
             val savedChat = runInChatTransaction {
                 val chatId = chatRoomV2Dao.addChatRoom(chatRoom)
@@ -3376,12 +3379,14 @@ class ChatRepositoryImpl @Inject constructor(
                     models = chatPlatformModels.filterKeys { it in chatRoom.enabledPlatform }
                 )
 
-                val savedChatRoom = chatRoom.copy(id = chatId.toInt())
-                chatRoomV2Dao.editChatRoom(
-                    savedChatRoom.copy(title = updatedMessages[0].content.replace('\n', ' ').take(50))
+                val savedChatRoom = chatRoom.copy(
+                    id = chatId.toInt(),
+                    title = updatedMessages[0].content.replace('\n', ' ').take(50),
+                    updatedAt = savedAt
                 )
+                chatRoomV2Dao.editChatRoom(savedChatRoom)
 
-                savedChatRoom.copy(title = updatedMessages[0].content.replace('\n', ' ').take(50))
+                savedChatRoom
             }
             enqueueHistoryReconciliation(savedChat.id)
             return savedChat
@@ -3401,7 +3406,10 @@ class ChatRepositoryImpl @Inject constructor(
                 savedMessages.firstOrNull { it.id == m.id } == null
             }
 
-            chatRoomV2Dao.editChatRoom(chatRoom)
+            // Every save is a use of the chat, so last-use time advances here. Without this the column
+            // stays at creation time forever and the chat list — which sorts by it — never reorders.
+            val touchedChatRoom = chatRoom.copy(updatedAt = savedAt)
+            chatRoomV2Dao.editChatRoom(touchedChatRoom)
             messageV2Dao.deleteMessages(*shouldBeDeleted.toTypedArray())
             messageV2Dao.editMessages(*shouldBeUpdated.toTypedArray())
             messageV2Dao.addMessages(*shouldBeAdded.toTypedArray())
@@ -3410,7 +3418,7 @@ class ChatRepositoryImpl @Inject constructor(
                 models = chatPlatformModels.filterKeys { it in chatRoom.enabledPlatform }
             )
 
-            chatRoom
+            touchedChatRoom
         }
         enqueueHistoryReconciliation(savedChat.id)
         return savedChat

@@ -22,6 +22,16 @@ interface ChatRoomV2Dao {
     @Update
     suspend fun editChatRoom(chatRoom: ChatRoomV2)
 
+    /**
+     * Renames without touching any other column.
+     *
+     * A rename must not reorder the chat list, and writing the whole row back through
+     * [editChatRoom] would also push the caller's in-memory `updated_at` — which is typically the
+     * value read when the screen opened — over the newer one already stored.
+     */
+    @Query("UPDATE chats_v2 SET title = :title WHERE chat_id = :chatId")
+    suspend fun updateChatRoomTitle(chatId: Int, title: String)
+
     @Delete
     suspend fun deleteChatRooms(vararg chatRooms: ChatRoomV2)
 }

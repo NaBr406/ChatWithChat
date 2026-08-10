@@ -12,14 +12,14 @@
   <img alt="Android 12+" src="https://img.shields.io/badge/Android-12%2B-3DDC84?logo=android&logoColor=white">
   <img alt="Kotlin" src="https://img.shields.io/badge/Kotlin-2.3.20-7F52FF?logo=kotlin&logoColor=white">
   <img alt="Jetpack Compose" src="https://img.shields.io/badge/UI-Jetpack%20Compose-4285F4?logo=jetpackcompose&logoColor=white">
-  <a href="https://github.com/NaBr406/ChatWithChat/releases/tag/v1.0.0"><img alt="GitHub Release" src="https://img.shields.io/badge/Release-v1.0.0-0969DA?logo=github"></a>
+  <a href="https://github.com/NaBr406/ChatWithChat/releases/tag/v1.1.0"><img alt="GitHub Release" src="https://img.shields.io/badge/Release-v1.1.0-0969DA?logo=github"></a>
   <a href="./LICENSE"><img alt="GPL-3.0 license" src="https://img.shields.io/badge/License-GPL--3.0-blue"></a>
 </p>
 
 <p>
-  <a href="https://github.com/NaBr406/ChatWithChat/releases/download/v1.0.0/1.0.0.apk"><strong>下载 v1.0.0 APK</strong></a>
+  <a href="https://github.com/NaBr406/ChatWithChat/releases/download/v1.1.0/v1.1.0.apk"><strong>下载 v1.1.0 APK</strong></a>
   ·
-  <a href="https://github.com/NaBr406/ChatWithChat/releases/tag/v1.0.0">查看发布说明</a>
+  <a href="https://github.com/NaBr406/ChatWithChat/releases/tag/v1.1.0">查看发布说明</a>
   ·
   <a href="#本地开发">从源码构建</a>
 </p>
@@ -29,10 +29,10 @@
 ChatWithChat 不提供项目方托管的账号、模型或 API 中转服务。你需要使用自己的模型服务凭据，或者连接本机、局域网中的 Ollama / OpenAI 兼容服务。聊天记录、设置和长期记忆由应用在本地管理；发生模型请求、联网搜索或记忆整理时，相关内容会发送到你配置的外部端点。
 
 > [!IMPORTANT]
-> 当前稳定版为 `v1.0.0`，可从 [GitHub Release](https://github.com/NaBr406/ChatWithChat/releases/tag/v1.0.0) 下载 `1.0.0.apk`。APK 的 SHA-256 为 `446c645efeed83b9948fce9bc56435e716d44701c647b123fb1cc0adec5f0347`。项目尚未上架 Google Play 或 F-Droid，安装 GitHub APK 时需要允许浏览器或文件管理器安装未知来源应用。
+> 当前稳定版为 `v1.1.0`，可从 [GitHub Release](https://github.com/NaBr406/ChatWithChat/releases/tag/v1.1.0) 下载 `v1.1.0.apk`。APK 的 SHA-256 为 `2831ccf376ecc94818bf78a7f7cfebe6b8ca239766de4b7bb9d5e99784eb48c6`。项目尚未上架 Google Play 或 F-Droid，安装 GitHub APK 时需要允许浏览器或文件管理器安装未知来源应用。
 
 > [!NOTE]
-> 公开的 `v1.0.0` APK 早于当前源码。`main` 已包含 Room schema 20、参考聊天历史和近期长期记忆召回改动；这些改动尚未作为新的 GitHub Release 发布，需要从源码构建才能使用。
+> `v1.1.0` 对应 Room schema 20，已包含参考聊天历史与长期记忆召回。当前 `main` 已前进到 Room schema 21，新增按供应商配置的上下文管理与自动压缩，以及记忆导入与身份安全的长期记忆整理。这些能力尚未进入正式 Release，需要自行从源码构建。
 
 ## 核心能力
 
@@ -43,7 +43,8 @@ ChatWithChat 不提供项目方托管的账号、模型或 API 中转服务。�
 | 推理流展示 | 统一接收 Responses reasoning summary、`reasoning_content`、`reasoning`、`<think>` 与 `<thinking>`，流式写入可折叠思考区 |
 | 工具调用 | 统一的工具循环、参数校验、调用额度、权限检查和结果来源展示 |
 | 联网搜索 | 通过用户配置的 SearXNG 搜索公开网页，并按需读取网页正文 |
-| 长期记忆 | Room schema 20 记忆流水线，以 `MEMORY.md` 为权威事实源，结合端侧 ONNX、ObjectBox HNSW、混合召回和可恢复的原子写入 |
+| 上下文管理 | 按供应商选择自动压缩的四个成本档位或“原文优先”，用检查点链折叠较早内容，并可在会话内选择参与上下文的回合范围 |
+| 长期记忆 | Room schema 21 记忆流水线，以 `MEMORY.md` 为权威事实源，结合端侧 ONNX、ObjectBox HNSW、混合召回和可恢复的原子写入，并支持导入既有记忆 |
 | 参考聊天历史 | 在同一“启用记忆”开关下，按需从其他会话召回有界的历史片段；使用独立的 Room 投影、FTS 和本地向量索引，不替代 `MEMORY.md` |
 | 丰富消息 | 流式回复、Markdown、代码块复制、数学公式、思考过程、来源链接和 Token 用量 |
 | 会话操作 | 搜索标题和消息并按最近更新时间排序，复制与批量删除历史会话，编辑消息、重试回答、切换回答版本并导出会话 |
@@ -62,8 +63,9 @@ ChatWithChat 不只是更换了名称和图标。相较于 GPT Mobile 上游基�
 | 聊天交互 | 增加回答轮次导航、回答版本切换、按平台与轮次统计 Token、用户/助手消息编辑、重试、导出，以及新建会话附件接力 |
 | 附件链路 | 支持相册多选、相机拍照、本地缩略图、格式与容量准入、图片压缩，以及兼容端点不支持 Files API 时的内联回退 |
 | 工具平台 | 建立统一工具注册、schema 校验、执行预算、超时、权限与来源展示，内置搜索、网页读取、设备时间和按需定位 |
-| 长期记忆 | 新增完整的本地记忆子系统，包括五轮批处理、日记忆蒸馏、schema 20 恢复状态、默认 `ignore` 的质量门禁、可恢复的 `retire` 整理、原子 Markdown 提交、端侧向量索引与 Top8 Hybrid recall |
+| 长期记忆 | 新增完整的本地记忆子系统，包括五轮批处理、日记忆蒸馏、schema 21 恢复状态、默认 `ignore` 的质量门禁、可恢复的 `retire` 整理、原子 Markdown 提交、端侧向量索引、Top8 Hybrid recall，以及记忆导入与身份安全的全语料整理 |
 | 参考聊天历史 | 新增可重建的会话轮次投影、异步回填与队列、FTS 检索、独立历史向量快照、混合排序、去重、当前会话排除和进程终止恢复 |
+| 上下文管理 | 新增按模型真实窗口推导的请求预算、四档成本档位、检查点链与后台折叠、OpenAI 服务端压缩接入、跨供应商独立链、可选回合范围，以及压缩失败时的确定性抽取式降级 |
 | 构建与交付 | 增加单 ABI 构建、APK 包名/版本/签名/ABI 校验、固定哈希记忆模型供应，以及 16 KB ZIP/ELF 兼容门禁 |
 
 ## 界面预览
@@ -127,8 +129,8 @@ ChatWithChat 不只是更换了名称和图标。相较于 GPT Mobile 上游基�
 
 ### 安装发布版
 
-1. 下载 [ChatWithChat v1.0.0 APK](https://github.com/NaBr406/ChatWithChat/releases/download/v1.0.0/1.0.0.apk)。
-2. 如需校验完整性，确认 SHA-256 为 `446c645efeed83b9948fce9bc56435e716d44701c647b123fb1cc0adec5f0347`。
+1. 下载 [ChatWithChat v1.1.0 APK](https://github.com/NaBr406/ChatWithChat/releases/download/v1.1.0/v1.1.0.apk)。
+2. 如需校验完整性，确认 SHA-256 为 `2831ccf376ecc94818bf78a7f7cfebe6b8ca239766de4b7bb9d5e99784eb48c6`。
 3. 在 Android 12 或更高版本设备上打开 APK，并按系统提示允许当前来源安装应用。
 
 ### 首次配置
@@ -222,6 +224,44 @@ ObjectBox 索引可以安全删除并从 Markdown 重建。模型资产缺失、
 | 降级与提示 | 向量资产不可用、快照过期或损坏时回退到词法检索；只注入有界的自然语言片段，并标记为不可信历史证据，不包含内部 ID、路径、哈希、诊断字段或附件字节 |
 
 历史召回与长期记忆在同一轮使用冻结的上下文快照，但始终保持独立语料、索引和诊断边界。历史片段只有在相关时才会作为额外上下文发送给所选模型。
+
+## 上下文管理与自动压缩
+
+长对话迟早会超出模型的输入窗口。应用不会静默丢弃消息，而是按供应商决定单次请求携带多少历史、以及超出部分如何折叠。所有策略都只影响请求的组装方式；`messages_v2` 里的原始消息始终保留，也始终可以在界面上翻阅。
+
+预算由模型的**真实输入窗口**推导，而不是模型名字。`ContextWindowResolver` 按三步解析：先用从模型列表接口发现并写入 `platform_model_v2.context_window` 的值，再查一张人工维护的模型族前缀表，最后回退到该供应商类型的保守默认值。名字里带 `-1m` 或 `-128k` 不构成依据。Ollama 例外并直接短路到回退值：应用使用的 OpenAI 兼容端点无法传递 `num_ctx`，实际窗口由服务端设置决定，超出部分会被静默截断。
+
+### 策略与成本档位
+
+供应商设置里提供五个选项。前四个是同一套「检查点 + 最近原文」组装方式的不同成本档位，最后一个改变组装方式本身：
+
+| 选项 | 压缩线上限 | 原文尾巴上限 | 说明 |
+| --- | --- | --- | --- |
+| 自动压缩 · 节流 | 32K | 8K | 折叠最勤，单次请求最便宜，长对话连贯性相应弱 |
+| 自动压缩 · 均衡 | 96K | 16K | 默认档，成本与连贯性的折中 |
+| 自动压缩 · 宽裕 | 200K | 48K | 摘要更详细，长对话记得更牢，成本约为均衡档三倍 |
+| 自动压缩 · 跟随窗口 | 无上限 | 无上限 | 取消上限，两条线按模型窗口比例计算 |
+| 原文优先 | — | 整个可用预算 | 容量允许时按原文发送，超出预算后才压缩较早内容 |
+
+档位只是上限。请求预算先从窗口扣掉输出预留（15%，上限 8192）和安全余量（5%，上限 2048），得到有效输入预算；压缩线取其 75%、后台预折叠线取 60%、原文尾巴取 30%，再分别与档位上限取较小者。因此在小窗口模型上比例先到上限，四个档位表现完全一致；档位只有在窗口大到上限成为决定因素时才起作用。跟随窗口档去掉上限后，1M 窗口模型的单次请求可携带约 297K token 原文，费用可能是均衡档的一二十倍。
+
+「原文优先」不等于「从不压缩」：它把整个剩余预算交给逐字回合，接近预算的 80% 时给出提示，真正超出后仍会折叠较早内容。它也是唯一支持手动选择回合范围的策略。
+
+### 检查点链与后台折叠
+
+折叠的产物是 `context_checkpoint_segment` 里的一条链，每次折叠追加一段，第 N 段的输入包含第 N-1 段的正文。链按 `chat_id + platform_uid` 分开，同一会话切换供应商各自独立；删除会话时随之级联删除，原始消息不会被移动或替换。
+
+折叠在后台进行，复用记忆维护的 `memory_maintenance_job` 队列及其任务类型注册、三层幂等、租约认领与看门狗，不阻塞发送路径。只有当未折叠批次达到摘要目标的两倍时才值得为它调用一次模型——更小的批次换不来实际收缩。判据用的是不受预算钳制的待折叠 token 量：自动压缩档下请求大小本就被预算限死，拿它当信号会让后台折叠永远不入队。
+
+### 原生压缩与降级
+
+连接官方 OpenAI 且模型属于已确认支持的族（当前为 `gpt-5.2`、`gpt-5.3`、`gpt-5.4` 前缀）时，压缩交给 Responses API 的服务端 `context_management`，应用只负责给出阈值并跟踪状态。这张表会过时，新模型族默认按不支持处理，仍可正常聊天，只是走应用侧检查点路径。通过 Custom 类型接入的第三方 OpenAI 兼容网关一律不发送 `context_management`，无论模型名写的是什么。
+
+压缩调用失败、超时或返回不可用内容时，退回确定性的抽取式摘要（最多 8 轮），只用于当次请求的组装，不会写入检查点链——抽取式结果是展示层降级，不是检查点。同一会话 + 供应商反复耗尽重试后进入冷却，避免每轮都排一个注定失败的任务，冷却到期后自动重试。整个降级过程对话都能继续，只是压缩暂时不再是语义压缩。
+
+### 上下文范围
+
+在「原文优先」下，聊天页可以选择从哪一轮开始参与上下文。端点吸附到完整回合边界（一条用户消息加它的助手回答），选择按 `chatRoomId + platformUid` 保存。如果起始回合后来被删除，或不再是有效的回合边界，范围会自动恢复为全部历史并说明原因——修正只会放宽范围，不会删除任何消息。自动压缩档自行决定携带多少历史，界面会说明这一点而不是提供无效的选择器。
 
 ## 数据与隐私边界
 
@@ -380,7 +420,7 @@ flowchart LR
 - CodeQL 在 Pull Request 和每周定时任务中运行。
 - 推送标签或手动触发 Release workflow 时，会准备记忆模型、构建并签名 APK / AAB，再上传为 Actions artifact。
 - 当前 CI 不会运行完整 JVM / 设备测试，也不会自动创建 GitHub Release；Actions artifact 与正式发布仍是两个独立步骤。
-- `v1.0.0` 已作为正式 GitHub Release 发布，公开资产为 [`1.0.0.apk`](https://github.com/NaBr406/ChatWithChat/releases/download/v1.0.0/1.0.0.apk)。
+- `v1.1.0` 已作为正式 GitHub Release 发布，公开资产为 [`v1.1.0.apk`](https://github.com/NaBr406/ChatWithChat/releases/download/v1.1.0/v1.1.0.apk)。
 
 提交代码前，请至少运行与修改范围对应的单元测试和 `:app:compileDebugKotlin`；数据库、记忆、权限或 Android 生命周期改动还应补充设备测试。
 

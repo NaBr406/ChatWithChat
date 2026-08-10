@@ -39,6 +39,8 @@ import cn.nabr.chatwithchat.data.repository.AttachmentUploadCoordinator
 import cn.nabr.chatwithchat.data.repository.ChatRepository
 import cn.nabr.chatwithchat.data.repository.MemoryRepository
 import cn.nabr.chatwithchat.data.repository.SettingRepository
+import cn.nabr.chatwithchat.data.title.ChatTitleGenerationService
+import cn.nabr.chatwithchat.data.title.ChatTitleTurn
 import cn.nabr.chatwithchat.data.tool.ToolApprovalBroker
 import cn.nabr.chatwithchat.data.tool.ToolDefinition
 import cn.nabr.chatwithchat.di.ApplicationScope
@@ -68,6 +70,7 @@ class ChatViewModel @Inject constructor(
     private val chatRepository: ChatRepository,
     private val settingRepository: SettingRepository,
     private val memoryRepository: MemoryRepository,
+    private val chatTitleGenerationService: ChatTitleGenerationService,
     private val attachmentUploadCoordinator: AttachmentUploadCoordinator,
     private val toolApprovalBroker: ToolApprovalBroker,
     private val contextCheckpointRepository: ContextCheckpointRepository,
@@ -1621,7 +1624,10 @@ class ChatViewModel @Inject constructor(
                             if (currentChatRoom.id == chatRoom.id && chatRoom.id == 0) {
                                 savedChatRoom
                             } else {
-                                currentChatRoom
+                                // Only the timestamp is adopted: the rest of the row may have been
+                                // edited meanwhile (a rename), but keeping the pre-save last-use time
+                                // would let the next save write an older value back over this one.
+                                currentChatRoom.copy(updatedAt = savedChatRoom.updatedAt)
                             }
                         }
                         if (activityAt != null) {
@@ -1647,6 +1653,7 @@ class ChatViewModel @Inject constructor(
 
                         // Sync message ids
                         _groupedMessages.value = persistedGroupedMessages
+                        maybeGenerateChatTitle(savedChatRoom, persistedGroupedMessages)
                         refreshContextCompactionNotice()
                     } catch (error: CancellationException) {
                         throw error
@@ -1686,6 +1693,66 @@ class ChatViewModel @Inject constructor(
             ?: return null
 
         return resolvePlatformSelection(chatPlatform).platform
+    }
+
+    /**
+     * Names the chat with one LLM call after its first complete turn.
+     *
+     * Runs on [applicationScope], not [viewModelScope]: the user very often leaves the chat as soon
+     * as the answer finishes, and a title that dies with the screen would leave the truncated first
+     * message behind exactly in the case it is least wanted.
+     *
+     * Deliberately narrow: first turn only, and only while the stored title is still the truncated
+     * first message that `saveChat` writes. Comparing against that truncation — rather than against
+     * whatever the title was a moment ago — is what keeps this idempotent: reopening a one-turn chat
+     * re-enters this path, and a chat already named by the model or renamed by hand no longer matches,
+     * so it is never regenerated. The title is re-read from the database immediately before the write
+     * because [updateChatTitle] can land while the request is in flight.
+     */
+    private fun maybeGenerateChatTitle(chatRoom: ChatRoomV2, groupedMessages: GroupedMessages) {
+        if (chatRoom.id <= 0) return
+        if (groupedMessages.userMessages.size != 1) return
+
+        val platform = preferredMemoryPlatform() ?: return
+        val userMessage = groupedMessages.userMessages.firstOrNull()?.content?.takeIf { it.isNotBlank() } ?: return
+        val assistantMessage = groupedMessages.assistantMessages
+            .firstOrNull()
+            ?.firstOrNull { it.effectiveContent().isNotBlank() }
+            ?.effectiveContent()
+        val autoTitle = chatRepository.generateDefaultChatTitle(groupedMessages.userMessages) ?: return
+        if (chatRoom.title != autoTitle) return
+
+        applicationScope.launch(Dispatchers.IO) {
+            try {
+                val generated = chatTitleGenerationService.generateTitle(
+                    platform = platform,
+                    turns = listOf(
+                        ChatTitleTurn(
+                            userMessage = userMessage,
+                            assistantMessage = assistantMessage
+                        )
+                    )
+                ) ?: return@launch
+
+                val storedTitle = chatRepository.fetchChatListV2().firstOrNull { it.id == chatRoom.id }?.title
+                if (storedTitle != autoTitle) return@launch
+                if (generated == autoTitle) return@launch
+
+                chatRepository.updateChatTitle(chatRoom, generated)
+                _chatRoom.update { current ->
+                    if (current.id == chatRoom.id && current.title == autoTitle) {
+                        current.copy(title = generated)
+                    } else {
+                        current
+                    }
+                }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Throwable) {
+                // A title is cosmetic and the truncated first message is already stored, so nothing
+                // here may surface as a chat error.
+            }
+        }
     }
 
     private fun persistCurrentChatSnapshot() {

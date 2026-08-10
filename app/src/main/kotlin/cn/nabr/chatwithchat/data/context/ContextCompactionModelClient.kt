@@ -46,9 +46,12 @@ data class ContextCompactionModelResponse(
 )
 
 /**
- * The single network seam of app-side compaction.
+ * The network seam for one-shot auxiliary model calls: one system prompt, one user payload, a token
+ * cap, no tool plumbing. Compaction is its original caller; chat-title generation
+ * ([cn.nabr.chatwithchat.data.title.ChatTitleGenerationService]) rides the same seam rather than
+ * carrying a second copy of the five-provider fan-out.
  *
- * A `fun interface` rather than a direct dependency on the four API clients so the service above it
+ * A `fun interface` rather than a direct dependency on the four API clients so the services above it
  * can be unit-tested without a network stack, and so the "compaction never enters the tool loop"
  * rule is structural instead of a comment: there is simply no tool plumbing on this path.
  */

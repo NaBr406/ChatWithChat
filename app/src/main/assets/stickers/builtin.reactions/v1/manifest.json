@@ -292,40 +292,12 @@
         "不知所措",
         "摊手",
         "害羞",
-        "不好意思",
-        "无奈"
+        "不好意思"
       ],
       "aliases": [
-        "尴尬",
-        "我也不知道",
-        "shrug"
+        "尴尬"
       ],
       "byteSize": 48249,
-      "width": 240,
-      "height": 240
-    },
-    {
-      "stickerId": "builtin.reactions.sold_out",
-      "assetPath": "stickers/builtin.reactions/v1/sold_out.png",
-      "sha256": "906b12fd210434f8d14e3a9152e5910fbc466abbe2e538b6f5ce28a09afb8ded",
-      "mimeType": "image/png",
-      "mediaKind": "static_raster",
-      "title": "卖掉了",
-      "altText": "白色角色抱着写有“卖掉了”的黑色牌子，表示已经售出",
-      "tags": [
-        "卖掉",
-        "售出",
-        "售罄",
-        "交易",
-        "成交",
-        "搞定"
-      ],
-      "aliases": [
-        "售罄",
-        "已卖出",
-        "sold out"
-      ],
-      "byteSize": 47466,
       "width": 240,
       "height": 240
     },
@@ -448,7 +420,8 @@
       "aliases": [
         "想吃",
         "馋哭了",
-        "星星眼吃饭"
+        "星星眼吃饭",
+        "期待"
       ],
       "byteSize": 55447,
       "width": 240,
@@ -530,25 +503,24 @@
       "height": 240
     },
     {
-      "stickerId": "builtin.reactions.tired_walking",
-      "assetPath": "stickers/builtin.reactions/v1/tired_walking.png",
+      "stickerId": "builtin.reactions.shrug_dog",
+      "assetPath": "stickers/builtin.reactions/v1/shrug_dog.png",
       "sha256": "c54e4004ddbce3f9a05063912fdd0a9895c4b4df524edd85c3c89155da02b7d9",
       "mimeType": "image/png",
       "mediaKind": "static_raster",
       "title": "疲惫走路",
       "altText": "白色小狗无精打采地拖着步子走路，显得很累",
       "tags": [
-        "疲惫",
-        "累",
-        "不想动",
-        "拖着走",
         "摆烂",
-        "无奈"
+        "无奈",
+        "耸肩",
+        "撅嘴"
       ],
       "aliases": [
-        "累瘫",
-        "打工人",
-        "走不动了"
+        "摆烂",
+        "无奈",
+        "耸肩",
+        "撅嘴"
       ],
       "byteSize": 30761,
       "width": 240,
