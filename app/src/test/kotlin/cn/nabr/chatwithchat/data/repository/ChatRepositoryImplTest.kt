@@ -49,6 +49,7 @@ import cn.nabr.chatwithchat.data.dto.groq.response.GroqDelta
 import cn.nabr.chatwithchat.data.dto.openai.common.Role as OpenAIRole
 import cn.nabr.chatwithchat.data.dto.openai.common.TextContent as OpenAITextContent
 import cn.nabr.chatwithchat.data.dto.openai.request.ChatCompletionRequest
+import cn.nabr.chatwithchat.data.dto.openai.request.ResponsesCompactRequest
 import cn.nabr.chatwithchat.data.dto.openai.request.ChatCompletionToolChoice
 import cn.nabr.chatwithchat.data.dto.openai.request.ChatMessage
 import cn.nabr.chatwithchat.data.dto.openai.request.ResponseFunctionCallInputItem
@@ -69,6 +70,7 @@ import cn.nabr.chatwithchat.data.dto.openai.response.ResponseCompletedEvent
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponseError
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponseFailedEvent
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponseObject
+import cn.nabr.chatwithchat.data.dto.openai.response.ResponsesCompactResult
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponsesStreamEvent
 import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceScheduler
 import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceWorkEnqueuer
@@ -5283,6 +5285,11 @@ class ChatRepositoryImplTest {
                 emptyFlow()
             }
         }
+
+        override suspend fun compactResponses(
+            request: ResponsesCompactRequest,
+            timeoutSeconds: Int
+        ): ResponsesCompactResult = error("Not used")
 
         override suspend fun uploadFile(
             filePath: String,

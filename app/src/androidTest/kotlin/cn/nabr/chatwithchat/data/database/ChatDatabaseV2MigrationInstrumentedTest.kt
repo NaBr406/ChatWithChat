@@ -828,7 +828,10 @@ class ChatDatabaseV2MigrationInstrumentedTest {
             true,
             ChatDatabaseV2Migrations.MIGRATION_20_21
         ).use { database ->
-            assertEquals(SCHEMA_21_TABLES, database.userTableNames())
+            // MigrationTestHelper creates v20 from Room's exported schema, which intentionally
+            // excludes the FTS4 runtime tables. Those are installed by ChatHistoryDatabaseCallback
+            // when the real database opens below, and are covered by the fresh-schema assertions.
+            assertEquals(SCHEMA_21_MIGRATION_TABLES, database.userTableNames())
 
             // Nothing outside the two altered tables may shift.
             expectedUnchangedRows.forEach { (tableName, rows) ->
@@ -1859,6 +1862,13 @@ class ChatDatabaseV2MigrationInstrumentedTest {
             "context_checkpoint_segment",
             "context_range_state",
             "context_native_compaction_state"
+        )
+        private val SCHEMA_21_MIGRATION_TABLES = SCHEMA_21_TABLES - setOf(
+            "chat_history_projection_fts",
+            "chat_history_projection_fts_docsize",
+            "chat_history_projection_fts_segdir",
+            "chat_history_projection_fts_segments",
+            "chat_history_projection_fts_stat"
         )
 
         /**

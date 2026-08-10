@@ -489,7 +489,7 @@ class ContextFoldServiceTest {
             ordered.forEach { message ->
                 if (message.platformType == null) {
                     userMessages += message
-                    assistantMessages += mutableListOf()
+                    assistantMessages.add(mutableListOf())
                 } else {
                     assistantMessages.lastOrNull()?.add(message)
                 }

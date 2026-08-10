@@ -37,6 +37,12 @@ class ContextWindowResolverTest {
     }
 
     @Test
+    fun `deepseek v4 families resolve to documented one million token window`() {
+        assertEquals(1_000_000, ModelContextWindowTable.lookup(ClientType.CUSTOM, "deepseek-v4-flash"))
+        assertEquals(1_000_000, ModelContextWindowTable.lookup(ClientType.CUSTOM, "deepseek-v4-pro"))
+    }
+
+    @Test
     fun `custom family lookup ignores gateway path prefix`() {
         assertEquals(65_536, ModelContextWindowTable.lookup(ClientType.CUSTOM, "deepseek/deepseek-chat"))
     }

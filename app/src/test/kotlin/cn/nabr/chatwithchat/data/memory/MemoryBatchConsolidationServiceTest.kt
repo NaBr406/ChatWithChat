@@ -9,10 +9,12 @@ import cn.nabr.chatwithchat.data.database.entity.MemoryMaintenanceJob
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.dto.openai.request.ChatCompletionRequest
+import cn.nabr.chatwithchat.data.dto.openai.request.ResponsesCompactRequest
 import cn.nabr.chatwithchat.data.dto.openai.request.ResponsesRequest
 import cn.nabr.chatwithchat.data.dto.openai.response.ChatCompletionChunk
 import cn.nabr.chatwithchat.data.dto.openai.response.Choice
 import cn.nabr.chatwithchat.data.dto.openai.response.Delta
+import cn.nabr.chatwithchat.data.dto.openai.response.ResponsesCompactResult
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponsesStreamEvent
 import cn.nabr.chatwithchat.data.model.ClientType
 import cn.nabr.chatwithchat.data.network.AnthropicAPI
@@ -2295,6 +2297,11 @@ private class BaselineMemoryOpenAIAPI(
 
     override fun streamResponses(request: ResponsesRequest, timeoutSeconds: Int): Flow<ResponsesStreamEvent> =
         emptyFlow()
+
+    override suspend fun compactResponses(
+        request: ResponsesCompactRequest,
+        timeoutSeconds: Int
+    ): ResponsesCompactResult = error("Not used")
 
     override suspend fun uploadFile(
         filePath: String,

@@ -8,8 +8,10 @@ import cn.nabr.chatwithchat.data.dto.anthropic.response.MessageResponseChunk
 import cn.nabr.chatwithchat.data.dto.google.request.GenerateContentRequest
 import cn.nabr.chatwithchat.data.dto.google.response.GenerateContentResponse
 import cn.nabr.chatwithchat.data.dto.openai.request.ChatCompletionRequest
+import cn.nabr.chatwithchat.data.dto.openai.request.ResponsesCompactRequest
 import cn.nabr.chatwithchat.data.dto.openai.request.ResponsesRequest
 import cn.nabr.chatwithchat.data.dto.openai.response.ChatCompletionChunk
+import cn.nabr.chatwithchat.data.dto.openai.response.ResponsesCompactResult
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponsesStreamEvent
 import cn.nabr.chatwithchat.data.model.AttachmentProviderRef
 import cn.nabr.chatwithchat.data.model.AttachmentRemoteType
@@ -264,6 +266,11 @@ class AttachmentUploadCoordinatorTest {
         override fun streamChatCompletion(request: ChatCompletionRequest, timeoutSeconds: Int): Flow<ChatCompletionChunk> = emptyFlow()
 
         override fun streamResponses(request: ResponsesRequest, timeoutSeconds: Int): Flow<ResponsesStreamEvent> = emptyFlow()
+
+        override suspend fun compactResponses(
+            request: ResponsesCompactRequest,
+            timeoutSeconds: Int
+        ): ResponsesCompactResult = error("Not used")
 
         override suspend fun uploadFile(filePath: String, fileName: String, mimeType: String): UploadedProviderFile {
             uploadCount += 1

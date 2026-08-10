@@ -88,6 +88,11 @@ internal object ModelContextWindowTable {
      * same name, so these are a best-effort improvement over the blanket fallback, not a guarantee.
      */
     private val CUSTOM_FAMILIES: List<Pair<String, Int>> = listOf(
+        // DeepSeek's current v4 API documentation lists a 1M input context for both models.
+        // Keep the entries ahead of the older 64K v3 families so model discovery fallback does
+        // not collapse these models to the generic Custom-provider window.
+        "deepseek-v4-flash" to 1_000_000,
+        "deepseek-v4-pro" to 1_000_000,
         "deepseek-reasoner" to 65_536,
         "deepseek-chat" to 65_536,
         "qwen3" to 32_768,

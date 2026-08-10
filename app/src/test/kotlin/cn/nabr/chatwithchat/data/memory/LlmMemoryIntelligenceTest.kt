@@ -11,12 +11,14 @@ import cn.nabr.chatwithchat.data.dto.google.response.Candidate
 import cn.nabr.chatwithchat.data.dto.google.response.GenerateContentResponse
 import cn.nabr.chatwithchat.data.dto.openai.common.TextContent as OpenAiTextContent
 import cn.nabr.chatwithchat.data.dto.openai.request.ChatCompletionRequest
+import cn.nabr.chatwithchat.data.dto.openai.request.ResponsesCompactRequest
 import cn.nabr.chatwithchat.data.dto.openai.request.ResponsesRequest
 import cn.nabr.chatwithchat.data.dto.openai.response.ChatCompletionChunk
 import cn.nabr.chatwithchat.data.dto.openai.response.Choice
 import cn.nabr.chatwithchat.data.dto.openai.response.Delta
 import cn.nabr.chatwithchat.data.dto.openai.response.ErrorDetail
 import cn.nabr.chatwithchat.data.dto.openai.response.OutputTextDeltaEvent
+import cn.nabr.chatwithchat.data.dto.openai.response.ResponsesCompactResult
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponsesStreamEvent
 import cn.nabr.chatwithchat.data.model.ClientType
 import cn.nabr.chatwithchat.data.network.AnthropicAPI
@@ -634,6 +636,11 @@ private class RecordingOpenAIAPI(
         lastResponsesTimeoutSeconds = timeoutSeconds
         return responseEvents
     }
+
+    override suspend fun compactResponses(
+        request: ResponsesCompactRequest,
+        timeoutSeconds: Int
+    ): ResponsesCompactResult = error("Not used")
 
     override suspend fun uploadFile(filePath: String, fileName: String, mimeType: String): UploadedProviderFile =
         error("Not used")

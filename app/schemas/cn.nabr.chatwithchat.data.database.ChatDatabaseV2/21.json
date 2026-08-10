@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 21,
-    "identityHash": "00000000000000000000000000000021",
+    "identityHash": "91328e242f217c768d58f0a25c48406e",
     "entities": [
       {
         "tableName": "chats_v2",
