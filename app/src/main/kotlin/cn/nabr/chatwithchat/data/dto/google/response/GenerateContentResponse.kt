@@ -48,6 +48,9 @@ data class UsageMetadata(
     @SerialName("toolUsePromptTokenCount")
     val toolUsePromptTokenCount: Int? = null,
 
+    @SerialName("cachedContentTokenCount")
+    val cachedContentTokenCount: Int? = null,
+
     @SerialName("thoughtsTokenCount")
     val thoughtsTokenCount: Int? = null,
 

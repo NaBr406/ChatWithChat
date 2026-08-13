@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="token_cache_hit">Cache hit %1$s</string>
+    <string name="token_cache_miss">Cache miss %1$s</string>
+    <string name="token_cache_rate">Hit rate %1$s</string>
+    <string name="token_cache_session_rate">Session cache hit rate %1$s</string>
+    <string name="token_cache_official">Official</string>
+    <string name="token_cache_partial">Partial</string>
+    <string name="token_cache_estimated">Estimated</string>
+</resources>

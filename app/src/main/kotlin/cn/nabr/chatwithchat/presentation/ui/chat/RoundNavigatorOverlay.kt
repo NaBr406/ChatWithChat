@@ -59,6 +59,7 @@ import cn.nabr.chatwithchat.data.database.entity.effectiveContent
 import cn.nabr.chatwithchat.data.database.entity.effectiveStickerRefs
 import cn.nabr.chatwithchat.data.database.entity.effectiveTokenUsage
 import cn.nabr.chatwithchat.data.token.TokenUsageRecord
+import cn.nabr.chatwithchat.data.token.aggregateCacheUsage
 import cn.nabr.chatwithchat.presentation.common.AppleGreen
 import cn.nabr.chatwithchat.presentation.common.AppleOrange
 import cn.nabr.chatwithchat.presentation.common.AppleRed
@@ -81,7 +82,9 @@ data class RoundNavigationItem(
     val hasSuccessfulAnswer: Boolean,
     val totalTokens: Int,
     val isEstimated: Boolean,
-    val platformUsages: List<PlatformTokenUsageLine>
+    val platformUsages: List<PlatformTokenUsageLine>,
+    val sessionCacheRate: String? = null,
+    val sessionCachePartial: Boolean = false
 )
 
 data class PlatformTokenUsageLine(
@@ -286,6 +289,10 @@ private fun RoundNavigatorItem(
     val questionPreview = item.questionPreview.ifBlank { stringResource(R.string.round_question_empty) }
     val tokenLabel = stringResource(R.string.round_token_count, formatTokenCount(item.totalTokens))
     val estimateLabel = stringResource(R.string.round_token_estimated)
+    val sessionCacheLabel = item.sessionCacheRate?.let { rate ->
+        stringResource(R.string.token_cache_session_rate, rate) +
+            if (item.sessionCachePartial) " · ${stringResource(R.string.token_cache_partial)}" else ""
+    }
 
     Row(
         modifier = Modifier
@@ -357,6 +364,10 @@ private fun RoundNavigatorItem(
                             append(" · ")
                             append(estimateLabel)
                         }
+                        sessionCacheLabel?.let { label ->
+                            append(" · ")
+                            append(label)
+                        }
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = materialColors.secondaryLabel,
@@ -421,13 +432,37 @@ fun buildRoundNavigationItems(
     groupedMessages: ChatViewModel.GroupedMessages,
     loadingStates: List<ChatViewModel.LoadingState>,
     enabledPlatformsInChat: List<String>,
-    enabledPlatformLookup: Map<String, PlatformV2>
+    enabledPlatformLookup: Map<String, PlatformV2>,
+    selectedPlatformIndices: List<Int> = emptyList()
 ): List<RoundNavigationItem> = groupedMessages.userMessages.mapIndexed { index, userMessage ->
     val assistantRow = groupedMessages.assistantMessages.getOrNull(index).orEmpty()
-    val usages = assistantRow.mapNotNull { it.effectiveTokenUsage() }
-    val successCount = assistantRow.count { it.hasSuccessfulAssistantAnswer() }
-    val failedCount = assistantRow.count { it.hasAssistantFailure() }
-    val expectedCount = enabledPlatformsInChat.size.coerceAtLeast(assistantRow.size).coerceAtLeast(1)
+    val selectedPlatformIndex = selectedPlatformIndices.getOrNull(index)
+        ?.coerceIn(0, assistantRow.lastIndex.coerceAtLeast(0))
+        ?: 0
+    val selectedAssistantMessage = assistantRow.getOrNull(selectedPlatformIndex)
+    val selectedUsage = selectedAssistantMessage?.effectiveTokenUsage()
+    val selectedPlatformUid = enabledPlatformsInChat.getOrNull(selectedPlatformIndex)
+        ?: selectedAssistantMessage?.platformType.orEmpty()
+    val selectedPlatform = enabledPlatformLookup[selectedPlatformUid]
+    val selectedModel = selectedUsage?.model?.ifBlank { selectedPlatform?.model.orEmpty() }
+        ?: selectedPlatform?.model.orEmpty()
+    val sessionCacheUsage = groupedMessages.assistantMessages
+        .asSequence()
+        .flatten()
+        .mapNotNull { assistantMessage -> assistantMessage.effectiveTokenUsage() }
+        .filter { usage ->
+            usage.platformUid == selectedPlatformUid &&
+                (selectedModel.isBlank() || usage.model == selectedModel)
+        }
+        .toList()
+        .aggregateCacheUsage()
+    val successCount = selectedAssistantMessage?.let { message ->
+        if (message.hasSuccessfulAssistantAnswer()) 1 else 0
+    } ?: 0
+    val failedCount = selectedAssistantMessage?.let { message ->
+        if (message.hasAssistantFailure()) 1 else 0
+    } ?: 0
+    val expectedCount = 1
     val isGenerating = index == groupedMessages.userMessages.lastIndex &&
         loadingStates.any { it == ChatViewModel.LoadingState.Loading }
     val status = when {
@@ -445,20 +480,23 @@ fun buildRoundNavigationItems(
             .trim(),
         status = status,
         hasSuccessfulAnswer = successCount > 0,
-        totalTokens = usages.roundTotalTokens(),
-        isEstimated = usages.any { it.isEstimated },
-        platformUsages = assistantRow.mapIndexedNotNull { platformIndex, assistantMessage ->
-            val usage = assistantMessage.effectiveTokenUsage() ?: return@mapIndexedNotNull null
-            val platformUid = enabledPlatformsInChat.getOrNull(platformIndex) ?: assistantMessage.platformType.orEmpty()
-            val platform = enabledPlatformLookup[platformUid]
-            PlatformTokenUsageLine(
-                platformName = platform?.name ?: platformUid,
-                model = usage.model.ifBlank { platform?.model.orEmpty() },
-                totalTokens = usage.roundTotalTokens(),
-                toolTokens = usage.toolTotalTokens,
-                isEstimated = usage.isEstimated
-            )
-        }
+        totalTokens = selectedUsage?.roundTotalTokens() ?: 0,
+        isEstimated = selectedUsage?.isEstimated ?: false,
+        platformUsages = listOfNotNull(
+            selectedUsage?.let { usage ->
+                val platformUid = selectedPlatformUid
+                val platform = selectedPlatform
+                PlatformTokenUsageLine(
+                    platformName = platform?.name ?: platformUid,
+                    model = usage.model.ifBlank { platform?.model.orEmpty() },
+                    totalTokens = usage.roundTotalTokens(),
+                    toolTokens = usage.toolTotalTokens,
+                    isEstimated = usage.isEstimated
+                )
+            }
+        ),
+        sessionCacheRate = sessionCacheUsage?.hitRate?.let { rate -> "${(rate * 1000).toInt() / 10.0}%" },
+        sessionCachePartial = sessionCacheUsage?.status == cn.nabr.chatwithchat.data.token.TokenCacheStatus.PARTIAL
     )
 }
 
@@ -490,5 +528,3 @@ private fun MessageV2.hasAssistantFailure(): Boolean {
     val content = effectiveContent()
     return isAssistantErrorMessage(content) || stripAssistantErrorNote(content) != content
 }
-
-private fun TokenUsageRecord.roundTotalTokens(): Int = if (toolTotalTokens > 0) toolTotalTokens else totalTokens

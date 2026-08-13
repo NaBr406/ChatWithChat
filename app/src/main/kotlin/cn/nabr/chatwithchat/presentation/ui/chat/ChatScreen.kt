@@ -354,12 +354,19 @@ private fun ChatContent(
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     val lastMessageIndex = groupedMessages.userMessages.lastIndex
     val bottomItemIndex = groupedMessages.userMessages.size
-    val roundNavigationItems = remember(groupedMessages, loadingStates, enabledPlatformsInChat, enabledPlatformLookup) {
+    val roundNavigationItems = remember(
+        groupedMessages,
+        loadingStates,
+        enabledPlatformsInChat,
+        enabledPlatformLookup,
+        indexStates
+    ) {
         buildRoundNavigationItems(
             groupedMessages = groupedMessages,
             loadingStates = loadingStates,
             enabledPlatformsInChat = enabledPlatformsInChat,
-            enabledPlatformLookup = enabledPlatformLookup
+            enabledPlatformLookup = enabledPlatformLookup,
+            selectedPlatformIndices = indexStates
         )
     }
     val currentTurnIndex by remember(roundNavigationItems, listState) {
@@ -581,6 +588,7 @@ private fun ChatContent(
                             messageIndex = index,
                             message = groupedMessages.userMessages[index],
                             assistantMessages = groupedMessages.assistantMessages.getOrNull(index) ?: emptyList(),
+                            allAssistantMessages = groupedMessages.assistantMessages,
                             platformIndexState = indexStates.getOrElse(index) { 0 },
                             loadingStates = loadingStates,
                             toolProgressStates = toolProgressStates,
@@ -610,6 +618,7 @@ private fun ChatContent(
                                 messageIndex = lastMessageIndex,
                                 message = groupedMessages.userMessages[lastMessageIndex],
                                 assistantMessages = groupedMessages.assistantMessages.getOrNull(lastMessageIndex) ?: emptyList(),
+                                allAssistantMessages = groupedMessages.assistantMessages,
                                 platformIndexState = indexStates.getOrElse(lastMessageIndex) { 0 },
                                 loadingStates = loadingStates,
                                 toolProgressStates = toolProgressStates,
@@ -713,6 +722,7 @@ private fun ChatMessagePair(
     messageIndex: Int,
     message: MessageV2,
     assistantMessages: List<MessageV2>,
+    allAssistantMessages: List<List<MessageV2>>,
     platformIndexState: Int,
     loadingStates: List<ChatViewModel.LoadingState>,
     toolProgressStates: Map<String, List<ChatViewModel.ToolProgressState>>,
@@ -740,7 +750,6 @@ private fun ChatMessagePair(
     val assistantThoughts = selectedAssistantMessage?.effectiveThoughts()?.stripInternalStickerMarkers() ?: ""
     val assistantStickerRefs = selectedAssistantMessage?.effectiveStickerRefs().orEmpty()
     val selectedTokenUsage = selectedAssistantMessage?.effectiveTokenUsage()
-    val turnTokenUsages = remember(assistantMessages) { assistantMessages.mapNotNull { it.effectiveTokenUsage() } }
     val canShowPreviousRevision = selectedAssistantMessage?.let { assistantMessage ->
         assistantMessage.revisions.isNotEmpty() &&
             assistantMessage.activeRevisionIndex < assistantMessage.revisions.lastIndex
@@ -750,6 +759,19 @@ private fun ChatMessagePair(
             assistantMessage.activeRevisionIndex != ACTIVE_REVISION_LATEST
     } ?: false
     val selectedPlatformUid = enabledPlatformsInChat.getOrElse(platformIndexState) { "" }
+    val selectedPlatformModel = enabledPlatformLookup[selectedPlatformUid]?.model.orEmpty()
+    val sessionTokenUsages = remember(allAssistantMessages, selectedPlatformUid, selectedPlatformModel) {
+        allAssistantMessages.asSequence()
+            .flatten()
+            .mapNotNull { assistantMessage ->
+                assistantMessage.effectiveTokenUsage()
+                    ?.takeIf { usage ->
+                        usage.platformUid == selectedPlatformUid &&
+                            (selectedPlatformModel.isBlank() || usage.model == selectedPlatformModel)
+                    }
+            }
+            .toList()
+    }
     val selectedToolProgressStates = toolProgressStates[ChatViewModel.toolProgressKey(messageIndex, platformIndexState)].orEmpty()
     val isCurrentPlatformLoading =
         loadingStates.getOrElse(platformIndexState) { ChatViewModel.LoadingState.Idle } == ChatViewModel.LoadingState.Loading
@@ -883,7 +905,7 @@ private fun ChatMessagePair(
             )
             TokenUsageRow(
                 usage = selectedTokenUsage,
-                turnUsages = turnTokenUsages,
+                sessionUsages = sessionTokenUsages,
                 modifier = Modifier
                     .padding(top = 4.dp)
                     .widthIn(max = maximumOpponentChatBubbleWidth)

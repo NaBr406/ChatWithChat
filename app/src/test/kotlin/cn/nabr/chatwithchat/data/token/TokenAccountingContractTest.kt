@@ -9,6 +9,7 @@ import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class TokenAccountingContractTest {
@@ -59,6 +60,96 @@ class TokenAccountingContractTest {
     }
 
     @Test
+    fun `provider cache usage is normalized and weighted`() {
+        val deepSeek = Json { ignoreUnknownKeys = true }.decodeFromString<ProviderUsage>(
+            """{"prompt_tokens":1200,"completion_tokens":80,"total_tokens":1280,"prompt_cache_hit_tokens":900,"prompt_cache_miss_tokens":300}"""
+        ).toTokenUsageRecord(platform, "DeepSeek")
+        requireNotNull(deepSeek)
+        assertEquals(900, deepSeek.cacheHitTokens)
+        assertEquals(300, deepSeek.cacheMissTokens)
+        assertEquals(TokenCacheStatus.KNOWN, deepSeek.cacheStatus)
+        assertEquals(0.75, deepSeek.cacheHitRate!!, 0.0001)
+
+        val openAi = Json { ignoreUnknownKeys = true }.decodeFromString<ProviderUsage>(
+            """{"prompt_tokens":1200,"completion_tokens":80,"prompt_tokens_details":{"cached_tokens":900}}"""
+        ).toTokenUsageRecord(platform, "OpenAI")
+        requireNotNull(openAi)
+        assertEquals(300, openAi.cacheMissTokens)
+        assertEquals(0.75, openAi.cacheHitRate!!, 0.0001)
+    }
+
+    @Test
+    fun `invalid cache values remain unavailable while ordinary usage is preserved`() {
+        val record = ProviderUsage(
+            inputTokens = 100,
+            outputTokens = 20,
+            promptCacheHitTokens = 110,
+            promptCacheMissTokens = 1
+        ).toTokenUsageRecord(platform, "invalid")
+
+        requireNotNull(record)
+        assertEquals(100, record.inputTokens)
+        assertEquals(20, record.outputTokens)
+        assertEquals(TokenCacheStatus.UNAVAILABLE, record.cacheStatus)
+        assertNull(record.cacheHitTokens)
+        assertNull(record.cacheHitRate)
+    }
+
+    @Test
+    fun `anthropic cache read and write stay out of ordinary input total`() {
+        val record = ProviderUsage(
+            inputTokens = 300,
+            outputTokens = 40,
+            cacheReadInputTokens = 900,
+            cacheCreationInputTokens = 0
+        ).toTokenUsageRecord(platform, "Anthropic")
+
+        requireNotNull(record)
+        assertEquals(300, record.inputTokens)
+        assertEquals(340, record.totalTokens)
+        assertEquals(900, record.cacheHitTokens)
+        assertEquals(300, record.cacheMissTokens)
+        assertEquals(TokenCacheStatus.KNOWN, record.cacheStatus)
+    }
+
+    @Test
+    fun `gemini cached content and session aggregation use weighted tokens`() {
+        val gemini = ProviderUsage(
+            promptTokens = 1_000,
+            completionTokens = 20,
+            cachedContentTokenCount = 700
+        ).toTokenUsageRecord(platform, "Gemini")
+        requireNotNull(gemini)
+        assertEquals(700, gemini.cacheHitTokens)
+        assertEquals(300, gemini.cacheMissTokens)
+
+        val unknown = TokenUsageRecord(inputTokens = 10, outputTokens = 2)
+        val summary = listOf(
+            TokenUsageRecord(
+                inputTokens = 100,
+                outputTokens = 10,
+                cacheHitTokens = 90,
+                cacheMissTokens = 10,
+                cacheStatus = TokenCacheStatus.KNOWN
+            ),
+            TokenUsageRecord(
+                inputTokens = 200,
+                outputTokens = 10,
+                cacheHitTokens = 100,
+                cacheMissTokens = 100,
+                cacheStatus = TokenCacheStatus.KNOWN
+            ),
+            unknown
+        ).aggregateCacheUsage()
+
+        requireNotNull(summary)
+        assertEquals(190, summary.hitTokens)
+        assertEquals(110, summary.missTokens)
+        assertEquals(TokenCacheStatus.PARTIAL, summary.status)
+        assertEquals(0.6333, summary.hitRate!!, 0.0001)
+    }
+
+    @Test
     fun `token usage converter reads legacy defaults and round trips current records`() {
         val converter = TokenUsageRecordConverter()
         val legacy = requireNotNull(
@@ -100,7 +191,10 @@ class TokenAccountingContractTest {
                     isEstimated = false,
                     isToolRelated = true
                 )
-            )
+            ),
+            cacheHitTokens = 9,
+            cacheMissTokens = 1,
+            cacheStatus = TokenCacheStatus.KNOWN
         )
 
         assertEquals(current, converter.fromString(converter.fromRecord(current)))

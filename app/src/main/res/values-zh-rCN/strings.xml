@@ -589,6 +589,13 @@
     <string name="round_token_estimated">估算</string>
     <string name="round_unknown_platform">未知平台</string>
     <string name="round_tool_token_count">工具 %1$s</string>
+    <string name="token_cache_hit">缓存命中 %1$s</string>
+    <string name="token_cache_miss">未命中 %1$s</string>
+    <string name="token_cache_rate">命中率 %1$s</string>
+    <string name="token_cache_session_rate">会话缓存命中率 %1$s</string>
+    <string name="token_cache_official">官方统计</string>
+    <string name="token_cache_partial">部分统计</string>
+    <string name="token_cache_estimated">估算</string>
     <string name="round_status_completed">已完成</string>
     <string name="round_status_partial">部分完成</string>
     <string name="round_status_failed">失败</string>

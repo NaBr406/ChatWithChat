@@ -112,6 +112,7 @@ import cn.nabr.chatwithchat.data.network.NetworkClient
 import cn.nabr.chatwithchat.data.network.OpenAIAPI
 import cn.nabr.chatwithchat.data.sticker.StickerPresentationArtifact
 import cn.nabr.chatwithchat.data.sticker.toMessageStickerRef
+import cn.nabr.chatwithchat.data.token.TokenCacheStatus
 import cn.nabr.chatwithchat.data.token.TokenUsageEstimator
 import cn.nabr.chatwithchat.data.token.TokenUsageRecord
 import cn.nabr.chatwithchat.data.tool.ToolAdvertisementSizer
@@ -3992,13 +3993,13 @@ private fun anthropicUsageFromChunks(
         .filterIsInstance<MessageDeltaResponseChunk>()
         .lastOrNull()
         ?.usage
-    val inputTokens = startUsage?.let { usage ->
-        usage.inputTokens + (usage.cacheCreationInputTokens ?: 0) + (usage.cacheReadInputTokens ?: 0)
-    }
+    val inputTokens = startUsage?.inputTokens
     val providerUsage = if (inputTokens != null || deltaUsage != null || startUsage != null) {
         ProviderUsage(
             inputTokens = inputTokens ?: 0,
-            outputTokens = deltaUsage?.outputTokens ?: startUsage?.outputTokens ?: 0
+            outputTokens = deltaUsage?.outputTokens ?: startUsage?.outputTokens ?: 0,
+            cacheReadInputTokens = startUsage?.cacheReadInputTokens,
+            cacheCreationInputTokens = startUsage?.cacheCreationInputTokens
         )
     } else {
         null
@@ -4025,7 +4026,8 @@ private fun googleUsageFromResponses(
         ProviderUsage(
             promptTokens = metadata.promptTokenCount,
             completionTokens = (metadata.candidatesTokenCount ?: 0) + (metadata.thoughtsTokenCount ?: 0),
-            totalTokens = metadata.totalTokenCount
+            totalTokens = metadata.totalTokenCount,
+            cachedContentTokenCount = metadata.cachedContentTokenCount
         )
     }
 
@@ -4043,23 +4045,38 @@ private fun TokenUsageRecord.withToolAggregate(toolUsages: List<TokenUsageRecord
     val toolInputTokens = relatedUsages.sumOf { usage -> usage.inputTokens }
     val toolOutputTokens = relatedUsages.sumOf { usage -> usage.outputTokens }
     val toolTotalTokens = relatedUsages.sumOf { usage -> usage.totalTokens }
-
+    val cacheUsages = listOf(this) + toolUsages
+    val knownCacheUsages = cacheUsages.filter { usage -> usage.cacheStatus == TokenCacheStatus.KNOWN }
+    val cacheHitTokens = knownCacheUsages.sumOf { usage -> usage.cacheHitTokens ?: 0 }
+        .takeIf { knownCacheUsages.isNotEmpty() }
+    val cacheMissTokens = knownCacheUsages.sumOf { usage -> usage.cacheMissTokens ?: 0 }
+        .takeIf { knownCacheUsages.isNotEmpty() }
+    val cacheWriteTokens = cacheUsages.mapNotNull { usage -> usage.cacheWriteTokens }
+        .sum()
+        .takeIf { cacheUsages.any { usage -> usage.cacheWriteTokens != null } }
+    val cacheStatus = when {
+        knownCacheUsages.isEmpty() && cacheUsages.any { usage -> usage.cacheStatus == TokenCacheStatus.PARTIAL } ->
+            TokenCacheStatus.PARTIAL
+        knownCacheUsages.isEmpty() -> TokenCacheStatus.UNAVAILABLE
+        cacheUsages.any { usage -> usage.cacheStatus != TokenCacheStatus.KNOWN } -> TokenCacheStatus.PARTIAL
+        else -> TokenCacheStatus.KNOWN
+    }
     return copy(
         toolInputTokens = toolInputTokens,
         toolOutputTokens = toolOutputTokens,
         toolTotalTokens = toolTotalTokens,
         isEstimated = isEstimated || relatedUsages.any { usage -> usage.isEstimated },
-        details = relatedUsages.flatMap { usage -> usage.details }
+        details = relatedUsages.flatMap { usage -> usage.details },
+        cacheHitTokens = cacheHitTokens,
+        cacheMissTokens = cacheMissTokens,
+        cacheWriteTokens = cacheWriteTokens,
+        cacheStatus = cacheStatus
     )
 }
 
 private fun TokenUsageRecord.withAdditionalToolUsage(toolUsages: List<TokenUsageRecord>): TokenUsageRecord {
     val relatedUsages = toolUsages.map { usage -> usage.asToolRelated() }
-    return copy(
-        toolInputTokens = relatedUsages.sumOf { usage -> usage.inputTokens },
-        toolOutputTokens = relatedUsages.sumOf { usage -> usage.outputTokens },
-        toolTotalTokens = relatedUsages.sumOf { usage -> usage.totalTokens },
-        isEstimated = isEstimated || relatedUsages.any { usage -> usage.isEstimated },
+    return withToolAggregate(toolUsages).copy(
         details = relatedUsages.flatMap { usage -> usage.details } + details
     )
 }

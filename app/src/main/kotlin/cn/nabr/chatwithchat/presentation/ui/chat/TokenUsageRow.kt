@@ -31,23 +31,31 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
+import cn.nabr.chatwithchat.R
+import cn.nabr.chatwithchat.data.token.TokenCacheStatus
 import cn.nabr.chatwithchat.data.token.TokenUsageRecord
+import cn.nabr.chatwithchat.data.token.TokenCacheSummary
+import cn.nabr.chatwithchat.data.token.aggregateCacheUsage
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun TokenUsageRow(
     usage: TokenUsageRecord?,
-    turnUsages: List<TokenUsageRecord>,
+    sessionUsages: List<TokenUsageRecord> = emptyList(),
     modifier: Modifier = Modifier
 ) {
     if (usage == null) return
 
-    var isExpanded by remember(usage, turnUsages) { mutableStateOf(false) }
+    var isExpanded by remember(usage, sessionUsages) { mutableStateOf(false) }
     val rotation = if (isExpanded) 180f else 0f
     val rowUsage = usage
-    val turnTotal = remember(turnUsages) { turnUsages.roundTotalTokens() }
-    val allPlatformTotal = remember(turnUsages) { turnUsages.sumOf { it.totalTokens } }
-    val toolDetails = remember(rowUsage) { rowUsage.details.filter { it.isToolRelated } }
+    val sessionCacheUsage = remember(sessionUsages) { sessionUsages.aggregateCacheUsage() }
+    val toolDetails = remember(rowUsage) {
+        rowUsage.details
+            .filter { detail -> detail.isToolRelated }
+            .dropLastIfFinalAnswer(rowUsage)
+    }
 
     Column(
         modifier = modifier
@@ -61,9 +69,26 @@ fun TokenUsageRow(
             verticalArrangement = Arrangement.spacedBy(4.dp),
             itemVerticalAlignment = Alignment.CenterVertically
         ) {
-            UsageMetric(Icons.Rounded.ArrowUpward, "输入 token", formatTokenCount(rowUsage.inputTokens))
-            UsageMetric(Icons.Rounded.ArrowDownward, "输出 token", formatTokenCount(rowUsage.outputTokens))
-            UsageMetric(Icons.Rounded.Functions, "总 token", formatTokenCount(rowUsage.totalTokens))
+            UsageMetric(Icons.Rounded.ArrowUpward, "输入 token", formatTokenCount(rowUsage.roundInputTokens()))
+            UsageMetric(Icons.Rounded.ArrowDownward, "输出 token", formatTokenCount(rowUsage.roundOutputTokens()))
+            UsageMetric(Icons.Rounded.Functions, "总 token", formatTokenCount(rowUsage.roundTotalTokens()))
+            CacheSummary(rowUsage, compact = true)
+            sessionCacheUsage?.let { summary ->
+                Text(
+                    text = stringResource(
+                        R.string.token_cache_session_rate,
+                        summary.rateLabel()
+                    ) + if (summary.status == TokenCacheStatus.PARTIAL) {
+                        " · ${stringResource(R.string.token_cache_partial)}"
+                    } else {
+                        ""
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
             if (rowUsage.isEstimated) {
                 Text(
                     text = "估算",
@@ -92,13 +117,18 @@ fun TokenUsageRow(
                     .fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                TokenDetailLine("当前可见回答", rowUsage.totalTokens, rowUsage.isEstimated)
-                TokenDetailLine("本轮合并总量", turnTotal, turnUsages.any { it.isEstimated })
-                TokenDetailLine("所有平台回答合计", allPlatformTotal, turnUsages.any { it.isEstimated })
-                TokenDetailLine("工具循环合计", rowUsage.toolTotalTokens, rowUsage.isEstimated)
+                Text(
+                    text = "本次回答",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                TokenDetailLine("输入 token", rowUsage.inputTokens, rowUsage.isEstimated)
+                TokenDetailLine("输出 token", rowUsage.outputTokens, rowUsage.isEstimated)
+                TokenDetailLine("合计 token", rowUsage.totalTokens, rowUsage.isEstimated)
+                CacheSummary(rowUsage)
                 if (toolDetails.isNotEmpty()) {
                     Text(
-                        text = "工具请求明细",
+                        text = "工具请求",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 2.dp)
@@ -111,9 +141,79 @@ fun TokenUsageRow(
                         )
                     }
                 }
+                if (toolDetails.isNotEmpty()) {
+                    Text(
+                        text = "本轮总计",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                    TokenDetailLine("输入 token", rowUsage.roundInputTokens(), rowUsage.isEstimated)
+                    TokenDetailLine("输出 token", rowUsage.roundOutputTokens(), rowUsage.isEstimated)
+                    TokenDetailLine("合计 token", rowUsage.roundTotalTokens(), rowUsage.isEstimated)
+                    CacheSummary(rowUsage)
+                }
+                if (sessionCacheUsage != null) {
+                    Text(
+                        text = stringResource(
+                            R.string.token_cache_session_rate,
+                            sessionCacheUsage.rateLabel()
+                        ) + if (sessionCacheUsage.status == TokenCacheStatus.PARTIAL) {
+                            " · ${stringResource(R.string.token_cache_partial)}"
+                        } else {
+                            ""
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
     }
+}
+
+private fun List<cn.nabr.chatwithchat.data.token.TokenUsageDetail>.dropLastIfFinalAnswer(
+    usage: TokenUsageRecord
+): List<cn.nabr.chatwithchat.data.token.TokenUsageDetail> = if (
+    usage.totalTokens > 0 && size > 1
+) {
+    dropLast(1)
+} else {
+    this
+}
+
+@Composable
+private fun CacheSummary(
+    usage: TokenUsageRecord,
+    compact: Boolean = false
+) {
+    if (usage.cacheStatus == TokenCacheStatus.UNAVAILABLE) return
+    val hit = usage.cacheHitTokens ?: return
+    val miss = usage.cacheMissTokens ?: return
+    val label = if (compact) {
+        listOf(
+            stringResource(R.string.token_cache_hit, formatTokenCount(hit)),
+            stringResource(R.string.token_cache_miss, formatTokenCount(miss)),
+            stringResource(R.string.token_cache_rate, usage.rateLabel())
+        ).joinToString(" · ")
+    } else {
+        listOf(
+            stringResource(R.string.token_cache_hit, hit),
+            stringResource(R.string.token_cache_miss, miss),
+            stringResource(R.string.token_cache_rate, usage.rateLabel())
+        ).joinToString(" · ")
+    }
+    Text(
+        text = label + " · " + stringResource(
+            if (usage.cacheStatus == TokenCacheStatus.PARTIAL) {
+                R.string.token_cache_partial
+            } else {
+                R.string.token_cache_official
+            }
+        ),
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
 }
 
 @Composable
@@ -174,9 +274,27 @@ private fun TokenDetailLine(
     }
 }
 
-fun List<TokenUsageRecord>.roundTotalTokens(): Int = sumOf { usage ->
-    if (usage.toolTotalTokens > 0) usage.toolTotalTokens else usage.totalTokens
+fun TokenUsageRecord.roundInputTokens(): Int = inputTokens + toolInputTokens
+
+fun TokenUsageRecord.roundOutputTokens(): Int = outputTokens + toolOutputTokens
+
+fun TokenUsageRecord.roundTotalTokens(): Int = if (
+    details.isEmpty() && inputTokens + outputTokens == 0
+) {
+    if (toolTotalTokens > 0) toolTotalTokens else totalTokens
+} else {
+    roundInputTokens() + roundOutputTokens()
 }
+
+fun List<TokenUsageRecord>.roundTotalTokens(): Int = sumOf(TokenUsageRecord::roundTotalTokens)
+
+private fun TokenCacheSummary.rateLabel(): String = hitRate
+    ?.let { rate -> "${(rate * 1000).toInt() / 10.0}%" }
+    .orEmpty()
+
+private fun TokenUsageRecord.rateLabel(): String = cacheHitRate
+    ?.let { rate -> "${(rate * 1000).toInt() / 10.0}%" }
+    .orEmpty()
 
 fun formatTokenCount(tokens: Int): String = when {
     tokens >= 10_000 -> "${(tokens / 1000.0).formatOneDecimal()}k"

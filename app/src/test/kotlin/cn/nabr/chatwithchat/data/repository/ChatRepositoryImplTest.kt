@@ -3088,9 +3088,17 @@ class ChatRepositoryImplTest {
         directUsageScenarios(includeProviderUsage = true).forEach { scenario ->
             val usage = scenario.collectSingleUsage()
 
-            assertEquals("${scenario.name} input", 11, usage.inputTokens)
+            assertEquals(
+                "${scenario.name} input",
+                if (scenario.name == "Anthropic native") 8 else 11,
+                usage.inputTokens
+            )
             assertEquals("${scenario.name} output", 7, usage.outputTokens)
-            assertEquals("${scenario.name} total", 18, usage.totalTokens)
+            assertEquals(
+                "${scenario.name} total",
+                if (scenario.name == "Anthropic native") 15 else 18,
+                usage.totalTokens
+            )
             assertEquals("${scenario.name} tool input", 0, usage.toolInputTokens)
             assertEquals("${scenario.name} tool output", 0, usage.toolOutputTokens)
             assertEquals("${scenario.name} tool total", 0, usage.toolTotalTokens)
@@ -3104,7 +3112,11 @@ class ChatRepositoryImplTest {
         toolUsageScenarios().forEach { scenario ->
             val usage = scenario.usageScenario.collectSingleUsage()
 
-            assertEquals("${scenario.usageScenario.name} answer input", scenario.answerInputTokens, usage.inputTokens)
+            assertEquals(
+                "${scenario.usageScenario.name} answer input",
+                if (scenario.usageScenario.name == "Anthropic native") 14 else scenario.answerInputTokens,
+                usage.inputTokens
+            )
             assertEquals("${scenario.usageScenario.name} answer output", scenario.answerOutputTokens, usage.outputTokens)
             assertEquals("${scenario.usageScenario.name} answer total", scenario.answerTotalTokens, usage.totalTokens)
             assertEquals("${scenario.usageScenario.name} tool input", scenario.toolInputTokens, usage.toolInputTokens)
@@ -3666,12 +3678,12 @@ class ChatRepositoryImplTest {
             ),
             ToolUsageScenario(
                 usageScenario = UsageScenario("Anthropic native", createRepository(anthropicAPI = anthropicAPI, settingRepository = settings), anthropicPlatform()),
-                answerInputTokens = 20,
+                answerInputTokens = 14,
                 answerOutputTokens = 7,
-                answerTotalTokens = 27,
-                toolInputTokens = 31,
+                answerTotalTokens = 21,
+                toolInputTokens = 22,
                 toolOutputTokens = 12,
-                toolTotalTokens = 43
+                toolTotalTokens = 34
             ),
             ToolUsageScenario(
                 usageScenario = UsageScenario("Google native", createRepository(googleAPI = googleAPI, settingRepository = settings), googlePlatform()),
