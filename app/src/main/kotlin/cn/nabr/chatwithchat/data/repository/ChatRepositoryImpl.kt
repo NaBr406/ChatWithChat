@@ -33,6 +33,7 @@ import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.database.entity.effectiveContent
 import cn.nabr.chatwithchat.data.database.entity.effectiveStickerRefs
+import cn.nabr.chatwithchat.data.database.entity.effectiveTokenUsage
 import cn.nabr.chatwithchat.data.database.entity.safeDedupeKey
 import cn.nabr.chatwithchat.data.debug.PromptTraceStage
 import cn.nabr.chatwithchat.data.debug.PromptTraceStore
@@ -845,7 +846,12 @@ class ChatRepositoryImpl @Inject constructor(
                 val absoluteIndex = (userMessages.size - 1 - minOf(2, userMessages.size - 1)) + offset
                 val assistantMessage = assistantMessages
                     .getOrNull(absoluteIndex)
-                    ?.firstOrNull { message -> message.platformType == platform.uid }
+                    ?.let { candidates ->
+                        candidates.firstOrNull { message ->
+                            message.platformType == platform.uid &&
+                                message.effectiveTokenUsage()?.model == platform.model
+                        } ?: candidates.firstOrNull { message -> message.platformType == platform.uid }
+                    }
                 buildString {
                     userMessage.content.trim().takeIf { it.isNotBlank() }?.let { content ->
                         append("User: ")

@@ -5,6 +5,7 @@ import cn.nabr.chatwithchat.data.database.entity.MessageSourceMetadata
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.database.entity.SafeMessageSourceTarget
+import cn.nabr.chatwithchat.data.database.entity.effectiveTokenUsage
 import cn.nabr.chatwithchat.data.database.entity.safeDedupeKey
 import cn.nabr.chatwithchat.data.database.entity.safeNavigationTarget
 import cn.nabr.chatwithchat.util.isAssistantErrorMessage
@@ -34,7 +35,7 @@ class ContextBuilder @Inject constructor() {
 
         val rawTurns = userMessages.mapIndexed { index, userMessage ->
             val assistantMessage = assistantMessages.getOrNull(index)
-                ?.firstValidAssistantCandidate(platform.uid)
+                ?.firstValidAssistantCandidate(platform.uid, platform.model)
 
             ConversationTurn(
                 userMessage = userMessage,
@@ -100,7 +101,8 @@ class ContextBuilder @Inject constructor() {
         val pairedTurns = pairManagedTurns(
             userMessages = request.userMessages,
             assistantMessages = request.assistantMessages,
-            platformUid = request.platform.uid
+            platformUid = request.platform.uid,
+            modelId = request.platform.model
         )
         if (pairedTurns.isEmpty()) return emptyResult
 
@@ -128,7 +130,7 @@ class ContextBuilder @Inject constructor() {
         assistantMessages: List<List<MessageV2>>,
         platformUid: String
     ): List<ConversationTurn> =
-        pairManagedTurns(userMessages, assistantMessages, platformUid).map { it.turn }
+        pairManagedTurns(userMessages, assistantMessages, platformUid, modelId = null).map { it.turn }
 
     /**
      * A model that folds server-side takes the native path — unless the provider has already answered
@@ -338,11 +340,12 @@ class ContextBuilder @Inject constructor() {
     private fun pairManagedTurns(
         userMessages: List<MessageV2>,
         assistantMessages: List<List<MessageV2>>,
-        platformUid: String
+        platformUid: String,
+        modelId: String?
     ): List<PairedTurn> = userMessages
         .mapIndexed { index, userMessage ->
             val candidates = assistantMessages.getOrNull(index).orEmpty()
-            val ownReply = candidates.firstValidAssistantCandidate(platformUid)
+            val ownReply = candidates.firstValidAssistantCandidate(platformUid, modelId)
             val foreignReply = if (ownReply == null) candidates.firstForeignAssistantCandidate(platformUid) else null
 
             PairedTurn(
@@ -484,14 +487,27 @@ class ContextBuilder @Inject constructor() {
         )
     }
 
-    private fun List<MessageV2>.firstValidAssistantCandidate(platformUid: String): MessageV2? = firstNotNullOfOrNull { message ->
-        if (message.platformType != platformUid) return@firstNotNullOfOrNull null
+    private fun List<MessageV2>.firstValidAssistantCandidate(
+        platformUid: String,
+        modelId: String?
+    ): MessageV2? {
+        val providerCandidates = filter { message -> message.platformType == platformUid }
+        val exactModel = modelId?.trim().orEmpty().takeIf { it.isNotBlank() }
+        val orderedCandidates = if (exactModel == null) {
+            providerCandidates
+        } else {
+            providerCandidates.sortedByDescending { message ->
+                message.effectiveTokenUsage()?.model?.trim() == exactModel
+            }
+        }
 
-        val sanitizedMessage = sanitizeAssistantMessageForContext(message)
-        when {
-            sanitizedMessage.semanticAssistantContent().isBlank() && sanitizedMessage.attachments.isEmpty() -> null
-            isAssistantErrorMessage(sanitizedMessage.content) -> null
-            else -> sanitizedMessage
+        return orderedCandidates.firstNotNullOfOrNull { message ->
+            val sanitizedMessage = sanitizeAssistantMessageForContext(message)
+            when {
+                sanitizedMessage.semanticAssistantContent().isBlank() && sanitizedMessage.attachments.isEmpty() -> null
+                isAssistantErrorMessage(sanitizedMessage.content) -> null
+                else -> sanitizedMessage
+            }
         }
     }
 

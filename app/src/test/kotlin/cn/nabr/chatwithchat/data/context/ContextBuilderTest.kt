@@ -8,6 +8,7 @@ import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.database.entity.effectiveContent
 import cn.nabr.chatwithchat.data.model.ClientType
+import cn.nabr.chatwithchat.data.token.TokenUsageRecord
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -16,6 +17,42 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ContextBuilderTest {
+
+    @Test
+    fun `context prefers selected model when provider has multiple historical candidates`() {
+        val selectedPlatform = platform().copy(model = "model-b")
+        val context = ContextBuilder().buildContext(
+            userMessages = listOf(
+                userMessage(1, "previous question"),
+                userMessage(2, "current question")
+            ),
+            assistantMessages = listOf(
+                listOf(
+                    assistantMessage(1, "answer from model-a").copy(
+                        tokenUsage = TokenUsageRecord(
+                            platformUid = PLATFORM_UID,
+                            model = "model-a"
+                        )
+                    ),
+                    assistantMessage(1, "answer from model-b").copy(
+                        tokenUsage = TokenUsageRecord(
+                            platformUid = PLATFORM_UID,
+                            model = "model-b"
+                        )
+                    )
+                ),
+                listOf(assistantMessage(2, ""))
+            ),
+            platform = selectedPlatform,
+            policy = policy(
+                recentTurnWindow = 4,
+                maxContextTokens = 600,
+                summaryTokenBudget = 80
+            )
+        )
+
+        assertEquals("answer from model-b", context.turns.first().assistantMessage?.effectiveContent())
+    }
 
     @Test
     fun `token budget keeps current turn and summarizes omitted history`() {

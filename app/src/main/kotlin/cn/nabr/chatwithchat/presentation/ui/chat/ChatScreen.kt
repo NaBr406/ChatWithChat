@@ -143,12 +143,12 @@ fun ChatScreen(
     val isLoaded by chatViewModel.isLoaded.collectAsStateWithLifecycle()
     val selectedAttachments by chatViewModel.selectedAttachments.collectAsStateWithLifecycle()
     val attachmentNotice by chatViewModel.attachmentNotice.collectAsStateWithLifecycle()
-    val appEnabledPlatforms by chatViewModel.enabledPlatformsInApp.collectAsStateWithLifecycle()
+    val platformsInApp by chatViewModel.platformsInApp.collectAsStateWithLifecycle()
     val chatPlatformModels by chatViewModel.chatPlatformModels.collectAsStateWithLifecycle()
     val lastSelectedModel by chatViewModel.lastSelectedModel.collectAsStateWithLifecycle()
     val availableChatModels by chatViewModel.availableChatModels.collectAsStateWithLifecycle()
     val currentReasoningMode by chatViewModel.currentReasoningMode.collectAsStateWithLifecycle()
-    val enabledPlatformLookup = remember(appEnabledPlatforms) { appEnabledPlatforms.associateBy { it.uid } }
+    val enabledPlatformLookup = remember(platformsInApp) { platformsInApp.associateBy { it.uid } }
     val isIdle = loadingStates.all { it == ChatViewModel.LoadingState.Idle }
     val canSubmitOrEdit = isIdle && !isPersistingCompletion
     val currentModelOptions = remember(availableChatModels, lastSelectedModel) {
@@ -181,7 +181,6 @@ fun ChatScreen(
         indexStates = indexStates,
         loadingStates = loadingStates,
         toolProgressStates = toolProgressStates,
-        enabledPlatformsInChat = chatViewModel.enabledPlatformsInChat,
         enabledPlatformLookup = enabledPlatformLookup,
         canUseChat = canUseChat,
         isIdle = isIdle,
@@ -313,7 +312,6 @@ private fun ChatContent(
     indexStates: List<Int>,
     loadingStates: List<ChatViewModel.LoadingState>,
     toolProgressStates: Map<String, List<ChatViewModel.ToolProgressState>>,
-    enabledPlatformsInChat: List<String>,
     enabledPlatformLookup: Map<String, PlatformV2>,
     canUseChat: Boolean,
     isIdle: Boolean,
@@ -357,14 +355,12 @@ private fun ChatContent(
     val roundNavigationItems = remember(
         groupedMessages,
         loadingStates,
-        enabledPlatformsInChat,
         enabledPlatformLookup,
         indexStates
     ) {
         buildRoundNavigationItems(
             groupedMessages = groupedMessages,
             loadingStates = loadingStates,
-            enabledPlatformsInChat = enabledPlatformsInChat,
             enabledPlatformLookup = enabledPlatformLookup,
             selectedPlatformIndices = indexStates
         )
@@ -592,7 +588,6 @@ private fun ChatContent(
                             platformIndexState = indexStates.getOrElse(index) { 0 },
                             loadingStates = loadingStates,
                             toolProgressStates = toolProgressStates,
-                            enabledPlatformsInChat = enabledPlatformsInChat,
                             enabledPlatformLookup = enabledPlatformLookup,
                             canUseChat = canUseChat,
                             isIdle = isIdle,
@@ -622,7 +617,6 @@ private fun ChatContent(
                                 platformIndexState = indexStates.getOrElse(lastMessageIndex) { 0 },
                                 loadingStates = loadingStates,
                                 toolProgressStates = toolProgressStates,
-                                enabledPlatformsInChat = enabledPlatformsInChat,
                                 enabledPlatformLookup = enabledPlatformLookup,
                                 canUseChat = canUseChat,
                                 isIdle = isIdle,
@@ -726,7 +720,6 @@ private fun ChatMessagePair(
     platformIndexState: Int,
     loadingStates: List<ChatViewModel.LoadingState>,
     toolProgressStates: Map<String, List<ChatViewModel.ToolProgressState>>,
-    enabledPlatformsInChat: List<String>,
     enabledPlatformLookup: Map<String, PlatformV2>,
     canUseChat: Boolean,
     isIdle: Boolean,
@@ -758,16 +751,19 @@ private fun ChatMessagePair(
         assistantMessage.revisions.isNotEmpty() &&
             assistantMessage.activeRevisionIndex != ACTIVE_REVISION_LATEST
     } ?: false
-    val selectedPlatformUid = enabledPlatformsInChat.getOrElse(platformIndexState) { "" }
-    val selectedPlatformModel = enabledPlatformLookup[selectedPlatformUid]?.model.orEmpty()
+    val selectedPlatformUid = selectedAssistantMessage?.platformType.orEmpty()
+    val selectedPlatformModel = selectedAssistantMessage?.effectiveTokenUsage()?.model.orEmpty()
     val sessionTokenUsages = remember(allAssistantMessages, selectedPlatformUid, selectedPlatformModel) {
+        if (selectedPlatformUid.isBlank() || selectedPlatformModel.isBlank()) {
+            return@remember emptyList()
+        }
         allAssistantMessages.asSequence()
             .flatten()
             .mapNotNull { assistantMessage ->
                 assistantMessage.effectiveTokenUsage()
                     ?.takeIf { usage ->
                         usage.platformUid == selectedPlatformUid &&
-                            (selectedPlatformModel.isBlank() || usage.model == selectedPlatformModel)
+                            usage.model == selectedPlatformModel
                     }
             }
             .toList()
@@ -822,21 +818,26 @@ private fun ChatMessagePair(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = if (enabledPlatformsInChat.size > 1) 8.dp else 2.dp),
+                    .padding(bottom = if (assistantMessages.size > 1) 8.dp else 2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (enabledPlatformsInChat.size > 1) {
+                if (assistantMessages.size > 1) {
                     Row(
                         modifier = Modifier
                             .padding(start = 4.dp)
                             .fillMaxWidth()
                             .horizontalScroll(rememberScrollState())
                     ) {
-                        enabledPlatformsInChat.forEachIndexed { platformIndex, uid ->
+                        assistantMessages.forEachIndexed { platformIndex, assistantMessage ->
+                            val platformUid = assistantMessage.platformType.orEmpty()
                             val platformLoadingState = loadingStates.getOrElse(platformIndex) { ChatViewModel.LoadingState.Idle }
                             PlatformButton(
                                 isLoading = isActiveMessage && platformLoadingState == ChatViewModel.LoadingState.Loading,
-                                name = enabledPlatformLookup[uid]?.name ?: stringResource(R.string.unknown),
+                                name = assistantCandidateLabel(
+                                    assistantMessage = assistantMessage,
+                                    platform = enabledPlatformLookup[platformUid],
+                                    unknownPlatformName = stringResource(R.string.unknown)
+                                ),
                                 selected = platformIndexState == platformIndex,
                                 onPlatformClick = { onPlatformClick(messageIndex, platformIndex) }
                             )
@@ -912,6 +913,17 @@ private fun ChatMessagePair(
             )
         }
     }
+}
+
+private fun assistantCandidateLabel(
+    assistantMessage: MessageV2,
+    platform: PlatformV2?,
+    unknownPlatformName: String
+): String {
+    val platformName = platform?.name ?: assistantMessage.platformType.orEmpty().ifBlank { unknownPlatformName }
+    val modelName = assistantMessage.effectiveTokenUsage()?.model.orEmpty()
+
+    return if (modelName.isBlank()) platformName else "$platformName / $modelName"
 }
 
 private const val CHAT_BOTTOM_KEY = "chat-bottom"

@@ -431,7 +431,6 @@ internal fun List<RoundNavigationItem>.completedRoundCount(): Int = count { item
 fun buildRoundNavigationItems(
     groupedMessages: ChatViewModel.GroupedMessages,
     loadingStates: List<ChatViewModel.LoadingState>,
-    enabledPlatformsInChat: List<String>,
     enabledPlatformLookup: Map<String, PlatformV2>,
     selectedPlatformIndices: List<Int> = emptyList()
 ): List<RoundNavigationItem> = groupedMessages.userMessages.mapIndexed { index, userMessage ->
@@ -441,21 +440,22 @@ fun buildRoundNavigationItems(
         ?: 0
     val selectedAssistantMessage = assistantRow.getOrNull(selectedPlatformIndex)
     val selectedUsage = selectedAssistantMessage?.effectiveTokenUsage()
-    val selectedPlatformUid = enabledPlatformsInChat.getOrNull(selectedPlatformIndex)
-        ?: selectedAssistantMessage?.platformType.orEmpty()
+    val selectedPlatformUid = selectedAssistantMessage?.platformType.orEmpty()
     val selectedPlatform = enabledPlatformLookup[selectedPlatformUid]
-    val selectedModel = selectedUsage?.model?.ifBlank { selectedPlatform?.model.orEmpty() }
-        ?: selectedPlatform?.model.orEmpty()
-    val sessionCacheUsage = groupedMessages.assistantMessages
-        .asSequence()
-        .flatten()
-        .mapNotNull { assistantMessage -> assistantMessage.effectiveTokenUsage() }
-        .filter { usage ->
-            usage.platformUid == selectedPlatformUid &&
-                (selectedModel.isBlank() || usage.model == selectedModel)
-        }
-        .toList()
-        .aggregateCacheUsage()
+    val selectedModel = selectedUsage?.model.orEmpty()
+    val sessionCacheUsage = if (selectedPlatformUid.isBlank() || selectedModel.isBlank()) {
+        null
+    } else {
+        groupedMessages.assistantMessages
+            .asSequence()
+            .flatten()
+            .mapNotNull { assistantMessage -> assistantMessage.effectiveTokenUsage() }
+            .filter { usage ->
+                usage.platformUid == selectedPlatformUid && usage.model == selectedModel
+            }
+            .toList()
+            .aggregateCacheUsage()
+    }
     val successCount = selectedAssistantMessage?.let { message ->
         if (message.hasSuccessfulAssistantAnswer()) 1 else 0
     } ?: 0
@@ -488,7 +488,7 @@ fun buildRoundNavigationItems(
                 val platform = selectedPlatform
                 PlatformTokenUsageLine(
                     platformName = platform?.name ?: platformUid,
-                    model = usage.model.ifBlank { platform?.model.orEmpty() },
+                    model = usage.model,
                     totalTokens = usage.roundTotalTokens(),
                     toolTokens = usage.toolTotalTokens,
                     isEstimated = usage.isEstimated

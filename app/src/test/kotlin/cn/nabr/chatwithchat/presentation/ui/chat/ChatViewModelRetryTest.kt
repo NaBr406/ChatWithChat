@@ -10,6 +10,7 @@ import cn.nabr.chatwithchat.data.database.entity.selectRevision
 import cn.nabr.chatwithchat.data.memory.PreparedMemoryContext
 import cn.nabr.chatwithchat.data.memory.TurnRecallSnapshot
 import cn.nabr.chatwithchat.data.model.ChatAttachment
+import cn.nabr.chatwithchat.data.token.TokenUsageRecord
 import cn.nabr.chatwithchat.data.repository.hasSendableAssistantPayload
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -206,6 +207,39 @@ class ChatViewModelRetryTest {
         assertEquals("Primary answer", normalizedRow[0].content)
         assertEquals("Second platform", normalizedRow[1].content)
         assertTrue(normalizedRow.drop(2).any { it.content == "Duplicate answer" })
+    }
+
+    @Test
+    fun `assistant candidate identity includes model for same provider`() {
+        val firstModel = MessageV2(
+            chatId = 9,
+            content = "Answer from model A",
+            platformType = "provider-1",
+            tokenUsage = TokenUsageRecord(platformUid = "provider-1", model = "model-a")
+        )
+        val secondModel = MessageV2(
+            chatId = 9,
+            content = "Answer from model B",
+            platformType = "provider-1",
+            tokenUsage = TokenUsageRecord(platformUid = "provider-1", model = "model-b")
+        )
+
+        assertTrue(assistantCandidateMatchesModel(firstModel, "provider-1", "model-a"))
+        assertTrue(!assistantCandidateMatchesModel(firstModel, "provider-1", "model-b"))
+        assertTrue(assistantCandidateMatchesModel(secondModel, "provider-1", "model-b"))
+    }
+
+    @Test
+    fun `blank candidate can be reused for selected model but completed unknown candidate cannot`() {
+        val blank = createEmptyAssistantMessage(chatId = 9, platformUid = "provider-1")
+        val legacyAnswer = MessageV2(
+            chatId = 9,
+            content = "Legacy answer",
+            platformType = "provider-1"
+        )
+
+        assertTrue(assistantCandidateMatchesModel(blank, "provider-1", "model-a"))
+        assertTrue(!assistantCandidateMatchesModel(legacyAnswer, "provider-1", "model-a"))
     }
 
     @Test
