@@ -61,7 +61,8 @@ import cn.nabr.chatwithchat.util.formatPlatformTimeout
 fun PlatformSettingScreen(
     modifier: Modifier = Modifier,
     settingViewModel: PlatformSettingViewModel = hiltViewModel(),
-    onNavigationClick: () -> Unit
+    onNavigationClick: () -> Unit,
+    onNavigateToContextStrategy: (platformUid: String) -> Unit
 ) {
     val scrollState = rememberScrollState()
     val platform by settingViewModel.platformState.collectAsStateWithLifecycle()
@@ -222,7 +223,7 @@ fun PlatformSettingScreen(
                         title = stringResource(R.string.context_strategy),
                         description = stringResource(contextStrategy.titleRes()),
                         enabled = platformData.enabled,
-                        onItemClick = settingViewModel::openContextStrategyDialog,
+                        onItemClick = { onNavigateToContextStrategy(platformData.uid) },
                         showTrailingIcon = true,
                         showLeadingIcon = true,
                         leadingIcon = {
@@ -241,11 +242,6 @@ fun PlatformSettingScreen(
                 TopPDialog(dialogState, platformData.topP, settingViewModel)
                 SystemPromptDialog(dialogState, platformData.systemPrompt ?: "", settingViewModel)
                 TimeoutDialog(dialogState, platformData.timeout, settingViewModel)
-                ContextStrategyDialog(
-                    dialogState = dialogState,
-                    strategy = ContextStrategy.fromStorage(platformData.contextStrategy),
-                    settingViewModel = settingViewModel
-                )
                 DeletePlatformDialog(dialogState, settingViewModel)
             }
         }

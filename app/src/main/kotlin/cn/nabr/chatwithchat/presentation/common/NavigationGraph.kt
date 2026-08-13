@@ -27,6 +27,7 @@ import cn.nabr.chatwithchat.presentation.ui.memory.MemoryScreen
 import cn.nabr.chatwithchat.presentation.ui.migrate.MigrateScreen
 import cn.nabr.chatwithchat.presentation.ui.setting.AboutScreen
 import cn.nabr.chatwithchat.presentation.ui.setting.AddPlatformScreen
+import cn.nabr.chatwithchat.presentation.ui.setting.ContextStrategyScreen
 import cn.nabr.chatwithchat.presentation.ui.setting.LicenseScreen
 import cn.nabr.chatwithchat.presentation.ui.setting.ModelManagementScreen
 import cn.nabr.chatwithchat.presentation.ui.setting.PlatformSettingScreen
@@ -269,6 +270,29 @@ fun NavGraphBuilder.settingNavigation(navController: NavHostController) {
             arguments = listOf(navArgument("platformUid") { type = NavType.StringType })
         ) {
             PlatformSettingScreen(
+                onNavigationClick = { navController.navigateUp() },
+                onNavigateToContextStrategy = { platformUid ->
+                    navController.navigate(
+                        Route.CONTEXT_STRATEGY_SETTINGS.replace("{platformUid}", platformUid)
+                    )
+                }
+            )
+        }
+        composable(
+            Route.CONTEXT_STRATEGY_SETTINGS,
+            arguments = listOf(navArgument("platformUid") { type = NavType.StringType })
+        ) { entry ->
+            // Scoped to the platform settings entry so both screens share one view model: the
+            // strategy page saves immediately, and the row on the parent page has to reflect that
+            // as soon as the user navigates back.
+            val platformUid = entry.arguments?.getString("platformUid").orEmpty()
+            val parentEntry = remember(entry) {
+                navController.getBackStackEntry(
+                    Route.PLATFORM_SETTINGS.replace("{platformUid}", platformUid)
+                )
+            }
+            ContextStrategyScreen(
+                settingViewModel = hiltViewModel(parentEntry),
                 onNavigationClick = { navController.navigateUp() }
             )
         }

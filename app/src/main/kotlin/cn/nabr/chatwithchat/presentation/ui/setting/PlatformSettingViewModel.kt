@@ -31,6 +31,14 @@ class PlatformSettingViewModel @Inject constructor(
     private val _isDeleted = MutableStateFlow(false)
     val isDeleted: StateFlow<Boolean> = _isDeleted.asStateFlow()
 
+    /**
+     * Set when persisting the context strategy fails. The strategy page applies selections
+     * immediately with no confirm step, so a silent failure would leave the checkmark showing a
+     * value that was never written.
+     */
+    private val _contextStrategySaveError = MutableStateFlow(false)
+    val contextStrategySaveError: StateFlow<Boolean> = _contextStrategySaveError.asStateFlow()
+
     init {
         loadPlatform()
     }
@@ -77,18 +85,24 @@ class PlatformSettingViewModel @Inject constructor(
     fun openTimeoutDialog() = _dialogState.update { it.copy(isTimeoutDialogOpen = true) }
     fun closeTimeoutDialog() = _dialogState.update { it.copy(isTimeoutDialogOpen = false) }
 
-    fun openContextStrategyDialog() = _dialogState.update { it.copy(isContextStrategyDialogOpen = true) }
-    fun closeContextStrategyDialog() = _dialogState.update { it.copy(isContextStrategyDialogOpen = false) }
+    fun consumeContextStrategySaveError() = _contextStrategySaveError.update { false }
 
     /**
      * Persists the provider default only. The per-chat range lives in the checkpoint store keyed by
      * `chatRoomId + platformUid` and is deliberately untouched here: changing the default must not
      * silently rewrite ranges the user picked for individual conversations.
+     *
+     * Applied immediately from the strategy page rather than behind a confirm button, so the local
+     * state is only advanced once the write succeeds.
      */
     fun updateContextStrategy(strategy: ContextStrategy) {
         _platformState.value?.let { platform ->
-            updatePlatform(platform.copy(contextStrategy = strategy.name))
-            closeContextStrategyDialog()
+            val updated = platform.copy(contextStrategy = strategy.name)
+            viewModelScope.launch {
+                runCatching { settingRepository.updatePlatformV2(updated) }
+                    .onSuccess { _platformState.update { updated } }
+                    .onFailure { _contextStrategySaveError.update { true } }
+            }
         }
     }
 
@@ -163,7 +177,6 @@ class PlatformSettingViewModel @Inject constructor(
         val isTopPDialogOpen: Boolean = false,
         val isSystemPromptDialogOpen: Boolean = false,
         val isTimeoutDialogOpen: Boolean = false,
-        val isContextStrategyDialogOpen: Boolean = false,
         val isDeleteDialogOpen: Boolean = false
     )
 
