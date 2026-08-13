@@ -301,6 +301,9 @@
     <string name="context_strategy_follow_window_description">取消上限，原文尾巴按模型窗口的三成计算。在 1M 窗口模型上意味着单次请求可携带约 297K token 原文，费用可能是均衡档的一二十倍，请确认该模型的价格后再选。</string>
     <string name="context_strategy_raw_preferred">原文优先</string>
     <string name="context_strategy_raw_preferred_description">容量允许时按原文发送所选回合，可用满整个窗口；超出预算后自动压缩较早内容。与「跟随窗口」的区别是请求大小不固定，并可在聊天里手动选择参与的回合范围。</string>
+    <string name="context_strategy_current">当前策略：%1$s</string>
+    <string name="context_strategy_options_section">可选档位</string>
+    <string name="context_strategy_save_failed">保存失败，请重试。</string>
     <string name="context_range">上下文范围</string>
     <string name="context_range_provider">供应商：%1$s</string>
     <string name="context_range_strategy">当前策略：%1$s</string>
@@ -386,7 +389,7 @@
     <string name="reasoning_mode_current">思考：%1$s</string>
     <string name="reasoning_mode_model_default">模型默认</string>
     <string name="reasoning_mode_default_only">模型默认思考</string>
-    <string name="reasoning_mode_unknown">能力未识别，保持模型默认</string>
+    <string name="reasoning_mode_unknown">暂不支持调整</string>
     <string name="reasoning_mode_auto">自动</string>
     <string name="reasoning_mode_off">关闭</string>
     <string name="reasoning_mode_on">开启</string>
