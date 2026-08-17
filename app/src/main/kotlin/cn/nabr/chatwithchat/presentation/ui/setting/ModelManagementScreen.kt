@@ -47,6 +47,7 @@ import cn.nabr.chatwithchat.data.database.entity.PlatformModelV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.presentation.common.SettingsMaterialGroup
 import cn.nabr.chatwithchat.presentation.common.SettingsTopAppBar
+import cn.nabr.chatwithchat.presentation.common.settingsCanvasBackground
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.common.settingsSwitchColors
 
@@ -59,7 +60,6 @@ fun ModelManagementScreen(
 ) {
     val state by settingViewModel.modelManagementState.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
-    val materialColors = settingsMaterialColors()
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -72,14 +72,14 @@ fun ModelManagementScreen(
     }
 
     Scaffold(
-        modifier = modifier,
+        modifier = modifier.settingsCanvasBackground(),
         topBar = {
             SettingsTopAppBar(
                 title = stringResource(R.string.model_management),
                 onNavigationClick = onNavigationClick
             )
         },
-        containerColor = materialColors.canvas
+        containerColor = Color.Transparent
     ) { innerPadding ->
         LazyColumn(
             modifier = Modifier

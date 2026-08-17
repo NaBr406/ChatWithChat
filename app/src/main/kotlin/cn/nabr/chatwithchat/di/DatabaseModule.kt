@@ -21,6 +21,7 @@ import cn.nabr.chatwithchat.data.database.dao.MessageV2Dao
 import cn.nabr.chatwithchat.data.database.dao.PlatformModelV2Dao
 import cn.nabr.chatwithchat.data.database.dao.PlatformV2Dao
 import cn.nabr.chatwithchat.data.database.dao.StickerCatalogDao
+import cn.nabr.chatwithchat.data.database.dao.TextSkillDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -81,6 +82,9 @@ object DatabaseModule {
     fun provideContextManagementDao(chatDatabaseV2: ChatDatabaseV2): ContextManagementDao = chatDatabaseV2.contextManagementDao()
 
     @Provides
+    fun provideTextSkillDao(chatDatabaseV2: ChatDatabaseV2): TextSkillDao = chatDatabaseV2.textSkillDao()
+
+    @Provides
     @Singleton
     fun provideChatDatabase(@ApplicationContext appContext: Context): ChatDatabase = Room.databaseBuilder(
         appContext,
@@ -114,6 +118,7 @@ object DatabaseModule {
         ChatDatabaseV2Migrations.MIGRATION_17_18,
         ChatDatabaseV2Migrations.MIGRATION_18_19,
         ChatDatabaseV2Migrations.MIGRATION_19_20,
-        ChatDatabaseV2Migrations.MIGRATION_20_21
+        ChatDatabaseV2Migrations.MIGRATION_20_21,
+        ChatDatabaseV2Migrations.MIGRATION_21_22
     ).addCallback(ChatHistoryDatabaseCallback()).build()
 }

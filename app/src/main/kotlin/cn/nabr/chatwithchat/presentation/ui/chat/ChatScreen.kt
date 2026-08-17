@@ -49,6 +49,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.IosShare
 import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -78,6 +79,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.ClipEntry
@@ -89,6 +91,7 @@ import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
@@ -105,6 +108,7 @@ import cn.nabr.chatwithchat.data.database.entity.effectiveStickerRefs
 import cn.nabr.chatwithchat.data.database.entity.effectiveThoughts
 import cn.nabr.chatwithchat.data.database.entity.effectiveTokenUsage
 import cn.nabr.chatwithchat.data.model.ReasoningMode
+import cn.nabr.chatwithchat.presentation.common.settingsCanvasBackground
 import cn.nabr.chatwithchat.presentation.common.settingsDropdownMenuItemColors
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import java.io.File
@@ -142,6 +146,9 @@ fun ChatScreen(
     val isContextCompacted by chatViewModel.isContextCompacted.collectAsStateWithLifecycle()
     val isLoaded by chatViewModel.isLoaded.collectAsStateWithLifecycle()
     val selectedAttachments by chatViewModel.selectedAttachments.collectAsStateWithLifecycle()
+    val selectedTextSkills by chatViewModel.oneShotTextSkills.collectAsStateWithLifecycle()
+    val availableTextSkills by chatViewModel.availableTextSkills.collectAsStateWithLifecycle()
+    val sessionTextSkills by chatViewModel.sessionTextSkills.collectAsStateWithLifecycle()
     val attachmentNotice by chatViewModel.attachmentNotice.collectAsStateWithLifecycle()
     val platformsInApp by chatViewModel.platformsInApp.collectAsStateWithLifecycle()
     val chatPlatformModels by chatViewModel.chatPlatformModels.collectAsStateWithLifecycle()
@@ -189,6 +196,9 @@ fun ChatScreen(
         isLoaded = isLoaded,
         inputState = chatViewModel.question,
         selectedAttachments = selectedAttachments,
+        selectedTextSkills = selectedTextSkills,
+        availableTextSkills = availableTextSkills,
+        sessionTextSkills = sessionTextSkills,
         stickerAssetResolver = stickerAssetViewModel,
         onBackAction = onBackAction,
         onChatTitleItemClick = chatViewModel::openChatTitleDialog,
@@ -208,6 +218,10 @@ fun ChatScreen(
         onShowNextRevision = chatViewModel::showNextAssistantRevision,
         onFilesSelected = chatViewModel::addSelectedFiles,
         onFileRemoved = chatViewModel::removeSelectedFile,
+        onTextSkillsSelected = chatViewModel::selectTextSkills,
+        onTextSkillRemoved = chatViewModel::removeOneShotTextSkill,
+        onSessionTextSkillEnabled = chatViewModel::setSessionTextSkillEnabled,
+        onSessionTextSkillRemoved = chatViewModel::removeSessionTextSkill,
         onSendButtonClick = chatViewModel::askQuestion,
         onModelOptionSelected = { option ->
             chatViewModel.updateChatPlatformModelAndRemember(option.platformUid, option.model)
@@ -320,6 +334,9 @@ private fun ChatContent(
     isLoaded: Boolean,
     inputState: TextFieldState,
     selectedAttachments: List<ChatAttachmentDraft>,
+    selectedTextSkills: List<cn.nabr.chatwithchat.data.textskill.SelectedTextSkill>,
+    availableTextSkills: List<cn.nabr.chatwithchat.data.textskill.SelectedTextSkill>,
+    sessionTextSkills: List<cn.nabr.chatwithchat.data.database.entity.SessionTextSkillBinding>,
     stickerAssetResolver: StickerAssetResolver,
     onBackAction: () -> Unit,
     onChatTitleItemClick: () -> Unit,
@@ -337,6 +354,10 @@ private fun ChatContent(
     onShowNextRevision: (Int, Int) -> Unit,
     onFilesSelected: (List<String>, Int) -> Unit,
     onFileRemoved: (String) -> Unit,
+    onTextSkillsSelected: (List<cn.nabr.chatwithchat.data.textskill.SelectedTextSkill>, cn.nabr.chatwithchat.data.textskill.TextSkillSelectionScope) -> Unit,
+    onTextSkillRemoved: (cn.nabr.chatwithchat.data.textskill.SelectedTextSkill) -> Unit,
+    onSessionTextSkillEnabled: (cn.nabr.chatwithchat.data.database.entity.SessionTextSkillBinding, Boolean) -> Unit,
+    onSessionTextSkillRemoved: (cn.nabr.chatwithchat.data.database.entity.SessionTextSkillBinding) -> Unit,
     onSendButtonClick: () -> Unit,
     navigationIcon: ImageVector,
     navigationIconContentDescription: String
@@ -530,9 +551,10 @@ private fun ChatContent(
             .clickable(
                 indication = null,
                 interactionSource = remember { MutableInteractionSource() }
-            ) { focusManager.clearFocus() },
+            ) { focusManager.clearFocus() }
+            .settingsCanvasBackground(),
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        containerColor = settingsMaterialColors().canvas,
+        containerColor = Color.Transparent,
         contentColor = MaterialTheme.colorScheme.onSurface,
         topBar = {
             ChatTopBar(
@@ -694,19 +716,55 @@ private fun ChatContent(
                 }
             }
 
+            if (sessionTextSkills.isNotEmpty()) {
+                SessionTextSkillRow(
+                    bindings = sessionTextSkills,
+                    onEnabledChanged = onSessionTextSkillEnabled,
+                    onRemove = onSessionTextSkillRemoved
+                )
+            }
             ChatComposer(
                 inputState = inputState,
                 chatEnabled = canUseChat,
                 sendButtonEnabled = canSubmitOrEdit,
                 isAttachmentImportInProgress = isAttachmentImportInProgress,
                 selectedAttachments = selectedAttachments,
+                selectedTextSkills = selectedTextSkills,
+                availableTextSkills = availableTextSkills,
                 onFilesSelected = onFilesSelected,
-                onFileRemoved = onFileRemoved
+                onFileRemoved = onFileRemoved,
+                onTextSkillsSelected = onTextSkillsSelected,
+                onTextSkillRemoved = onTextSkillRemoved
             ) {
                 requestFollowLatest()
                 onSendButtonClick()
                 focusManager.clearFocus()
             }
+        }
+    }
+}
+
+@Composable
+private fun SessionTextSkillRow(
+    bindings: List<cn.nabr.chatwithchat.data.database.entity.SessionTextSkillBinding>,
+    onEnabledChanged: (cn.nabr.chatwithchat.data.database.entity.SessionTextSkillBinding, Boolean) -> Unit,
+    onRemove: (cn.nabr.chatwithchat.data.database.entity.SessionTextSkillBinding) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).horizontalScroll(rememberScrollState()),
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp)
+    ) {
+        bindings.forEach { binding ->
+            androidx.compose.material3.FilterChip(
+                selected = binding.isEnabled,
+                onClick = { onEnabledChanged(binding, !binding.isEnabled) },
+                label = { Text(binding.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                trailingIcon = {
+                    IconButton(onClick = { onRemove(binding) }, modifier = Modifier.size(24.dp)) {
+                        Icon(Icons.Rounded.Close, stringResource(R.string.remove), modifier = Modifier.size(16.dp))
+                    }
+                }
+            )
         }
     }
 }
@@ -959,9 +1017,10 @@ private fun ChatTopBar(
     var isDropDownMenuExpanded by remember { mutableStateOf(false) }
 
     CenterAlignedTopAppBar(
+        modifier = Modifier.settingsCanvasBackground(),
         colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = settingsMaterialColors().navigation,
-            scrolledContainerColor = settingsMaterialColors().navigation,
+            containerColor = Color.Transparent,
+            scrolledContainerColor = Color.Transparent,
             navigationIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
             actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
             titleContentColor = MaterialTheme.colorScheme.onSurface

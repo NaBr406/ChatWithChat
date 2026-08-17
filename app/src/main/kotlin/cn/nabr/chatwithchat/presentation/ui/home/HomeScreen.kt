@@ -72,6 +72,7 @@ import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.database.entity.ChatRoomV2
 import cn.nabr.chatwithchat.presentation.common.AppleRed
 import cn.nabr.chatwithchat.presentation.common.HigActionDialog
+import cn.nabr.chatwithchat.presentation.common.settingsCanvasBackground
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.util.getPlatformName
 
@@ -126,8 +127,9 @@ fun HomeScreen(
 
     Scaffold(
         modifier = Modifier
-            .nestedScroll(scrollBehavior.nestedScrollConnection),
-        containerColor = settingsMaterialColors().canvas,
+            .nestedScroll(scrollBehavior.nestedScrollConnection)
+            .settingsCanvasBackground(),
+        containerColor = Color.Transparent,
         topBar = {
             HomeTopAppBar(
                 isSelectionMode = chatListState.isSelectionMode,
@@ -323,12 +325,13 @@ fun HomeTopAppBar(
     searchQuery: String
 ) {
     TopAppBar(
+        modifier = Modifier.settingsCanvasBackground(),
         colors = TopAppBarDefaults.topAppBarColors(
-            scrolledContainerColor = if (isSelectionMode) MaterialTheme.colorScheme.surfaceContainerHigh else Color.Unspecified,
+            scrolledContainerColor = if (isSelectionMode) MaterialTheme.colorScheme.surfaceContainerHigh else Color.Transparent,
             containerColor = if (isSelectionMode) {
                 MaterialTheme.colorScheme.surfaceContainerHigh
             } else {
-                settingsMaterialColors().navigation
+                Color.Transparent
             },
             titleContentColor = MaterialTheme.colorScheme.onBackground
         ),

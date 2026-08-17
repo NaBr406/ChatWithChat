@@ -20,6 +20,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.database.entity.ChatRoomV2
+import cn.nabr.chatwithchat.data.textskill.PendingTextSkillSelection
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.ui.home.ChatHistoryDrawer
 import cn.nabr.chatwithchat.presentation.ui.home.DeleteWarningDialog
@@ -37,11 +38,23 @@ fun ChatShellScreen(
     settingOnClick: () -> Unit,
     onAboutClick: () -> Unit,
     onExistingChatClick: (ChatRoomV2) -> Unit,
-    navigateToNewChat: (enabledPlatforms: List<String>, initialQuestion: String?, initialModel: String?, initialAttachmentPaths: List<String>, initialRequestId: Int) -> Unit,
+    navigateToNewChat: (
+        enabledPlatforms: List<String>,
+        initialQuestion: String?,
+        initialModel: String?,
+        initialAttachmentPaths: List<String>,
+        initialRequestId: Int,
+        initialTextSkills: List<PendingTextSkillSelection>
+    ) -> Unit,
     content: @Composable (
         openDrawer: () -> Unit,
         homeViewModel: HomeViewModel,
-        startNewChat: (initialQuestion: String?, initialAttachmentPaths: List<String>, preferPrimaryPlatform: Boolean) -> Boolean
+        startNewChat: (
+            initialQuestion: String?,
+            initialAttachmentPaths: List<String>,
+            initialTextSkills: List<PendingTextSkillSelection>,
+            preferPrimaryPlatform: Boolean
+        ) -> Boolean
     ) -> Unit
 ) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
@@ -66,6 +79,7 @@ fun ChatShellScreen(
     fun startNewChat(
         initialQuestion: String?,
         initialAttachmentPaths: List<String>,
+        initialTextSkills: List<PendingTextSkillSelection>,
         preferPrimaryPlatform: Boolean
     ): Boolean {
         val currentModelsState = homeViewModel.homeModelsState.value
@@ -91,7 +105,14 @@ fun ChatShellScreen(
         } else {
             0
         }
-        navigateToNewChat(listOf(model.platformUid), initialQuestion, model.modelId, initialAttachmentPaths, initialRequestId)
+        navigateToNewChat(
+            listOf(model.platformUid),
+            initialQuestion,
+            model.modelId,
+            initialAttachmentPaths,
+            initialRequestId,
+            initialTextSkills
+        )
         return true
     }
 
@@ -146,7 +167,14 @@ fun ChatShellScreen(
                         }
                     },
                     onClearSearch = homeViewModel::disableSearchMode,
-                    onNewChatClick = { startNewChat(null, emptyList(), preferPrimaryPlatform = false) },
+                    onNewChatClick = {
+                        startNewChat(
+                            initialQuestion = null,
+                            initialAttachmentPaths = emptyList(),
+                            initialTextSkills = emptyList(),
+                            preferPrimaryPlatform = false
+                        )
+                    },
                     onChatClick = { chatRoom ->
                         closeDrawer()
                         onExistingChatClick(chatRoom)

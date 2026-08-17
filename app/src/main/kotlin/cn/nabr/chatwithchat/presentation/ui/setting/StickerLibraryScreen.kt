@@ -50,6 +50,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -62,6 +63,7 @@ import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.sticker.StickerCatalogItem
 import cn.nabr.chatwithchat.presentation.common.SettingsMaterialGroup
 import cn.nabr.chatwithchat.presentation.common.SettingsTopAppBar
+import cn.nabr.chatwithchat.presentation.common.settingsCanvasBackground
 import cn.nabr.chatwithchat.presentation.common.settingsDropdownMenuItemColors
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.common.settingsSwitchColors
@@ -153,7 +155,9 @@ fun StickerLibraryScreen(
     val deletingSticker = uiState.customStickers.firstOrNull { item -> item.stickerId == deletingStickerId }
 
     Scaffold(
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier
+            .fillMaxSize()
+            .settingsCanvasBackground(),
         topBar = {
             SettingsTopAppBar(
                 title = stringResource(R.string.sticker_library),
@@ -172,7 +176,7 @@ fun StickerLibraryScreen(
             )
         },
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
-        containerColor = settingsMaterialColors().canvas
+        containerColor = Color.Transparent
     ) { innerPadding ->
         LazyColumn(
             modifier = Modifier

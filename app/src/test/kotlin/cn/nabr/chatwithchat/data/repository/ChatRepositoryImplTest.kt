@@ -3228,6 +3228,21 @@ class ChatRepositoryImplTest {
     }
 
     @Test
+    fun `prompt section merge keeps selected Skill after system prompt and before memory`() {
+        val envelope = "\u0000chatwithchat-text-skill-v1\u0000Skill instructions" +
+            "\u0000chatwithchat-memory-v1\u0000Local memory context"
+
+        assertEquals(
+            "System instructions\n\nSkill instructions\n\nLocal memory context\n\nContext summary",
+            mergePromptSections("System instructions", envelope, "Context summary")
+        )
+        assertEquals(
+            "System instructions\n\nLocal memory context\n\nContext summary",
+            mergePromptSections("System instructions", "Local memory context", "Context summary")
+        )
+    }
+
+    @Test
     fun `unsafe memory prompt fails before every provider request`() {
         val scenarios = providerMemoryGuardScenarios()
         val unsafePrompts = listOf(

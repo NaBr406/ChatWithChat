@@ -16,6 +16,7 @@ import cn.nabr.chatwithchat.data.database.dao.MessageV2Dao
 import cn.nabr.chatwithchat.data.database.dao.PlatformModelV2Dao
 import cn.nabr.chatwithchat.data.database.dao.PlatformV2Dao
 import cn.nabr.chatwithchat.data.database.dao.StickerCatalogDao
+import cn.nabr.chatwithchat.data.database.dao.TextSkillDao
 import cn.nabr.chatwithchat.data.database.entity.AssistantRevisionListConverter
 import cn.nabr.chatwithchat.data.database.entity.ChatAttachmentListConverter
 import cn.nabr.chatwithchat.data.database.entity.ChatPlatformModelV2
@@ -47,6 +48,8 @@ import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.database.entity.StickerAssetEntity
 import cn.nabr.chatwithchat.data.database.entity.StickerItemEntity
 import cn.nabr.chatwithchat.data.database.entity.StickerPackEntity
+import cn.nabr.chatwithchat.data.database.entity.SessionTextSkillBinding
+import cn.nabr.chatwithchat.data.database.entity.MessageTextSkillInvocation
 import cn.nabr.chatwithchat.data.database.entity.StringListConverter
 import cn.nabr.chatwithchat.data.database.entity.TokenUsageRecordConverter
 
@@ -78,9 +81,11 @@ import cn.nabr.chatwithchat.data.database.entity.TokenUsageRecordConverter
         ChatHistoryVectorEntryEntity::class,
         ContextCheckpointSegment::class,
         ContextRangeState::class,
-        ContextNativeCompactionState::class
+        ContextNativeCompactionState::class,
+        SessionTextSkillBinding::class,
+        MessageTextSkillInvocation::class
     ],
-    version = 21,
+    version = 22,
     exportSchema = true
 )
 @TypeConverters(
@@ -106,4 +111,5 @@ abstract class ChatDatabaseV2 : RoomDatabase() {
     abstract fun stickerCatalogDao(): StickerCatalogDao
     abstract fun chatHistoryDao(): ChatHistoryDao
     abstract fun contextManagementDao(): ContextManagementDao
+    abstract fun textSkillDao(): TextSkillDao
 }

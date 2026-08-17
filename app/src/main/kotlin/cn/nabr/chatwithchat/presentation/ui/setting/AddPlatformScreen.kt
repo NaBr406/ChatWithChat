@@ -47,6 +47,7 @@ import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.model.ClientType
 import cn.nabr.chatwithchat.presentation.common.SettingsMaterialGroup
 import cn.nabr.chatwithchat.presentation.common.SettingsTopAppBar
+import cn.nabr.chatwithchat.presentation.common.settingsCanvasBackground
 import cn.nabr.chatwithchat.presentation.common.settingsDropdownMenuItemColors
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.common.settingsTextFieldColors
@@ -76,7 +77,7 @@ fun AddPlatformScreen(
     }
 
     Scaffold(
-        modifier = modifier,
+        modifier = modifier.settingsCanvasBackground(),
         topBar = {
             SettingsTopAppBar(
                 title = stringResource(R.string.add_platform),
@@ -84,7 +85,7 @@ fun AddPlatformScreen(
                 navigationEnabled = !isBusy
             )
         },
-        containerColor = materialColors.canvas
+        containerColor = Color.Transparent
     ) { innerPadding ->
         Column(
             modifier = Modifier

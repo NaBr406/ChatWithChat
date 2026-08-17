@@ -10,8 +10,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Article
@@ -40,6 +40,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -50,6 +51,7 @@ import cn.nabr.chatwithchat.data.context.ContextStrategy
 import cn.nabr.chatwithchat.presentation.common.SettingItem
 import cn.nabr.chatwithchat.presentation.common.SettingsMaterialGroup
 import cn.nabr.chatwithchat.presentation.common.SettingsTopAppBar
+import cn.nabr.chatwithchat.presentation.common.settingsCanvasBackground
 import cn.nabr.chatwithchat.presentation.common.settingsDropdownMenuItemColors
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.common.settingsSwitchColors
@@ -76,9 +78,8 @@ fun PlatformSettingScreen(
     }
 
     platform?.let { platformData ->
-        val materialColors = settingsMaterialColors()
         Scaffold(
-            modifier = modifier,
+            modifier = modifier.settingsCanvasBackground(),
             topBar = {
                 PlatformTopAppBar(
                     title = platformData.name,
@@ -86,7 +87,7 @@ fun PlatformSettingScreen(
                     onDeleteClick = settingViewModel::openDeleteDialog
                 )
             },
-            containerColor = materialColors.canvas
+            containerColor = Color.Transparent
         ) { innerPadding ->
             Column(
                 Modifier

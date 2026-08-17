@@ -102,6 +102,7 @@ import cn.nabr.chatwithchat.data.memory.MemorySource
 import cn.nabr.chatwithchat.data.memory.MemoryValidity
 import cn.nabr.chatwithchat.presentation.common.SettingsMaterialGroup
 import cn.nabr.chatwithchat.presentation.common.SettingsTopAppBar
+import cn.nabr.chatwithchat.presentation.common.settingsCanvasBackground
 import cn.nabr.chatwithchat.presentation.common.settingsDropdownMenuItemColors
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import java.io.ByteArrayOutputStream
@@ -183,6 +184,7 @@ fun MemoryScreen(
     }
 
     Scaffold(
+        modifier = Modifier.settingsCanvasBackground(),
         topBar = {
             SettingsTopAppBar(
                 title = stringResource(R.string.memory),
@@ -330,7 +332,7 @@ fun MemoryScreen(
                 )
             }
         },
-        containerColor = materialColors.canvas
+        containerColor = Color.Transparent
     ) { innerPadding ->
         Column(
             modifier = Modifier
@@ -791,10 +793,8 @@ private fun memoryHistoryStatus(entry: MemoryProjectionEntry): String = when {
     entry.validity == MemoryValidity.CONTESTED -> stringResource(R.string.memory_status_pending)
     entry.validity == MemoryValidity.OBSOLETE && entry.supersededBy != null ->
         stringResource(R.string.memory_status_superseded)
-    entry.validity == MemoryValidity.CURRENT && entry.recallState in setOf(
-        MemoryRecallState.CORE,
-        MemoryRecallState.QUERY
-    ) -> stringResource(R.string.memory_status_active)
+    entry.validity == MemoryValidity.CURRENT && entry.recallState in ACTIVE_RECALL_STATES ->
+        stringResource(R.string.memory_status_active)
     else -> stringResource(R.string.memory_status_unknown)
 }
 
@@ -1405,3 +1405,4 @@ internal const val MEMORY_ACTIVITY_ROW_TEST_TAG = "memory_activity_row"
 internal const val MEMORY_ACTIVITY_PHASE_TEST_TAG = "memory_activity_phase"
 private val LOG_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
     .withZone(ZoneId.systemDefault())
+private val ACTIVE_RECALL_STATES = setOf(MemoryRecallState.CORE, MemoryRecallState.QUERY)

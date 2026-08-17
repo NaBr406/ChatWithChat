@@ -1,6 +1,7 @@
 package cn.nabr.chatwithchat.presentation.ui.setting
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -18,8 +19,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Alarm
 import androidx.compose.material.icons.outlined.Check
@@ -35,17 +34,13 @@ import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Tune
-import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -55,10 +50,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -78,6 +73,8 @@ import cn.nabr.chatwithchat.presentation.common.HigActionDialog
 import cn.nabr.chatwithchat.presentation.common.LocalNotificationPermissionRequester
 import cn.nabr.chatwithchat.presentation.common.LocalToolPermissionRequester
 import cn.nabr.chatwithchat.presentation.common.SettingsMaterialGroup
+import cn.nabr.chatwithchat.presentation.common.SettingsTopAppBar
+import cn.nabr.chatwithchat.presentation.common.settingsCanvasBackground
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.common.settingsSwitchColors
 import cn.nabr.chatwithchat.presentation.common.settingsTextFieldColors
@@ -95,6 +92,7 @@ fun SettingScreen(
     onNavigateToToolSettings: () -> Unit,
     onNavigateToMemory: () -> Unit,
     onNavigateToStickerLibrary: () -> Unit,
+    onNavigateToSkills: () -> Unit,
     onNavigateToAboutPage: () -> Unit
 ) {
     val platformState by settingViewModel.platformState.collectAsStateWithLifecycle()
@@ -104,7 +102,6 @@ fun SettingScreen(
     val notificationPermissionRequester = LocalNotificationPermissionRequester.current
     val scrollState = rememberScrollState()
     val lifecycleOwner = LocalLifecycleOwner.current
-    val materialColors = settingsMaterialColors()
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -119,28 +116,16 @@ fun SettingScreen(
     }
 
     Scaffold(
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier
+            .fillMaxSize()
+            .settingsCanvasBackground(),
         topBar = {
-            CenterAlignedTopAppBar(
-                title = {
-                    Text(
-                        text = stringResource(R.string.settings),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onNavigationClick) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
-                            contentDescription = stringResource(R.string.go_back)
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = materialColors.navigation)
+            SettingsTopAppBar(
+                title = stringResource(R.string.settings),
+                onNavigationClick = onNavigationClick
             )
         },
-        containerColor = materialColors.canvas
+        containerColor = Color.Transparent
     ) { innerPadding ->
         Column(
             modifier = Modifier
@@ -158,13 +143,11 @@ fun SettingScreen(
                 SettingsRow(
                     title = stringResource(R.string.model_management),
                     leadingIcon = Icons.Outlined.Tune,
-                    showDivider = platformState.isNotEmpty(),
                     onClick = onNavigateToModelManagement
                 )
-                platformState.forEachIndexed { index, platform ->
+                platformState.forEach { platform ->
                     PlatformItem(
                         platform = platform,
-                        showDivider = index < platformState.lastIndex,
                         onItemClick = { onNavigateToPlatformSetting(platform.uid) }
                     )
                 }
@@ -187,14 +170,18 @@ fun SettingScreen(
                 SettingsRow(
                     title = stringResource(R.string.memory),
                     leadingIcon = Icons.Outlined.Memory,
-                    showDivider = true,
                     onClick = onNavigateToMemory
                 )
                 SettingsRow(
                     title = stringResource(R.string.sticker_library),
                     leadingIcon = Icons.Outlined.EmojiEmotions,
-                    showDivider = false,
                     onClick = onNavigateToStickerLibrary
+                )
+                SettingsRow(
+                    title = stringResource(R.string.skills),
+                    description = stringResource(R.string.skills_description),
+                    leadingIcon = Icons.Outlined.Extension,
+                    onClick = onNavigateToSkills
                 )
             }
 
@@ -202,13 +189,11 @@ fun SettingScreen(
                 SettingsRow(
                     title = stringResource(R.string.tool_settings_title),
                     leadingIcon = Icons.Outlined.Extension,
-                    showDivider = true,
                     onClick = onNavigateToToolSettings
                 )
                 SettingsRow(
                     title = stringResource(R.string.about),
                     leadingIcon = Icons.Outlined.Info,
-                    showDivider = false,
                     onClick = onNavigateToAboutPage
                 )
             }
@@ -232,7 +217,6 @@ fun ToolSettingsScreen(
     val webSearchSettings by settingViewModel.webSearchSettings.collectAsStateWithLifecycle()
     val scrollState = rememberScrollState()
     val lifecycleOwner = LocalLifecycleOwner.current
-    val materialColors = settingsMaterialColors()
     val toolPermissionRequester = LocalToolPermissionRequester.current
     var pendingPermissionTool by remember { mutableStateOf<ResolvedToolCatalogEntry?>(null) }
     var deniedPermissionToolNames by remember { mutableStateOf(emptySet<String>()) }
@@ -252,28 +236,16 @@ fun ToolSettingsScreen(
     }
 
     Scaffold(
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier
+            .fillMaxSize()
+            .settingsCanvasBackground(),
         topBar = {
-            CenterAlignedTopAppBar(
-                title = {
-                    Text(
-                        text = stringResource(R.string.tool_settings_title),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onNavigationClick) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
-                            contentDescription = stringResource(R.string.go_back)
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = materialColors.navigation)
+            SettingsTopAppBar(
+                title = stringResource(R.string.tool_settings_title),
+                onNavigationClick = onNavigationClick
             )
         },
-        containerColor = materialColors.canvas
+        containerColor = Color.Transparent
     ) { innerPadding ->
         Column(
             modifier = Modifier
@@ -295,13 +267,12 @@ fun ToolSettingsScreen(
                     selectedMode = webSearchSettings.toolCallingMode,
                     title = stringResource(R.string.tool_calling_mode_auto),
                     description = stringResource(R.string.tool_calling_mode_auto_description),
-                    showDivider = false,
                     onSelected = settingViewModel::updateToolCallingMode
                 )
             }
 
             SettingsSection(title = stringResource(R.string.settings_section_callable_tools)) {
-                webSearchSettings.tools.forEachIndexed { index, resolvedEntry ->
+                webSearchSettings.tools.forEach { resolvedEntry ->
                     val entry = resolvedEntry.catalogEntry
                     val toolName = entry.definition.name
                     val description = if (toolName in deniedPermissionToolNames && !resolvedEntry.isEnabled) {
@@ -315,7 +286,6 @@ fun ToolSettingsScreen(
                         description = description,
                         icon = entry.settingsIcon(),
                         enabled = resolvedEntry.isEnabled,
-                        showDivider = index != webSearchSettings.tools.lastIndex,
                         onEnabledChange = { _, enabled ->
                             when {
                                 !enabled -> settingViewModel.updateToolEnabled(toolName, false)
@@ -410,6 +380,10 @@ private fun ToolCatalogEntry.settingsIcon(): ImageVector = when (settings.iconKe
     else -> Icons.Outlined.Extension
 }
 
+/**
+ * A titled run of settings cards. Each row inside gets its own card instead of the group sharing one
+ * card with hairline dividers, which is what keeps the list from reading as a dense iOS table.
+ */
 @Composable
 private fun SettingsSection(
     title: String,
@@ -417,14 +391,13 @@ private fun SettingsSection(
 ) {
     val materialColors = settingsMaterialColors()
     Text(
-        modifier = Modifier.padding(start = 12.dp, top = 18.dp, end = 12.dp, bottom = 6.dp),
+        modifier = Modifier.padding(start = 16.dp, top = 28.dp, end = 16.dp, bottom = 16.dp),
         text = title,
         style = MaterialTheme.typography.titleSmall,
         color = materialColors.secondaryLabel
     )
-    SettingsMaterialGroup(
-        shape = RoundedCornerShape(8.dp),
-        showBorder = false,
+    Column(
+        verticalArrangement = Arrangement.spacedBy(4.dp),
         content = content
     )
 }
@@ -435,10 +408,8 @@ private fun SettingsRow(
     description: String? = null,
     onClick: () -> Unit,
     leadingIcon: ImageVector? = null,
-    showNavigationIndicator: Boolean = true,
-    showDivider: Boolean = true,
     toggleValue: Boolean? = null,
-    descriptionMaxLines: Int = 2,
+    descriptionMaxLines: Int = 1,
     trailingContent: (@Composable () -> Unit)? = null
 ) {
     val materialColors = settingsMaterialColors()
@@ -451,28 +422,28 @@ private fun SettingsRow(
             onValueChange = { onClick() }
         )
     }
-    Column(modifier = Modifier.fillMaxWidth()) {
+    SettingsMaterialGroup {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .then(interactionModifier)
-                .defaultMinSize(minHeight = 52.dp)
-                .padding(horizontal = 16.dp, vertical = 8.dp),
+                .defaultMinSize(minHeight = 56.dp)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (leadingIcon != null) {
                 Box(
-                    modifier = Modifier.size(28.dp),
+                    modifier = Modifier.size(32.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = leadingIcon,
                         contentDescription = null,
                         modifier = Modifier.size(22.dp),
-                        tint = materialColors.primaryLabel
+                        tint = materialColors.secondaryLabel
                     )
                 }
-                Spacer(modifier = Modifier.size(12.dp))
+                Spacer(modifier = Modifier.size(16.dp))
             }
             Column(
                 modifier = Modifier.weight(1f)
@@ -490,7 +461,7 @@ private fun SettingsRow(
                         text = description,
                         maxLines = descriptionMaxLines,
                         overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = materialColors.secondaryLabel
                     )
                 }
@@ -498,21 +469,7 @@ private fun SettingsRow(
             if (trailingContent != null) {
                 Spacer(modifier = Modifier.size(8.dp))
                 trailingContent()
-            } else if (showNavigationIndicator) {
-                Spacer(modifier = Modifier.size(8.dp))
-                Icon(
-                    imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                    tint = materialColors.tertiaryLabel
-                )
             }
-        }
-        if (showDivider) {
-            HorizontalDivider(
-                modifier = Modifier.padding(start = if (leadingIcon == null) 16.dp else 56.dp),
-                color = materialColors.separator
-            )
         }
     }
 }
@@ -523,15 +480,12 @@ private fun ToolCallingModeItem(
     selectedMode: ToolCallingMode,
     title: String,
     description: String,
-    showDivider: Boolean = true,
     onSelected: (ToolCallingMode) -> Unit
 ) {
     SettingsRow(
         title = title,
         description = description,
         onClick = { onSelected(mode) },
-        showNavigationIndicator = false,
-        showDivider = showDivider,
         trailingContent = {
             SettingsSelectionCheckmark(selected = selectedMode == mode)
         }
@@ -545,7 +499,6 @@ private fun ToolEnabledItem(
     description: String,
     icon: ImageVector,
     enabled: Boolean,
-    showDivider: Boolean = true,
     onEnabledChange: (String, Boolean) -> Unit
 ) {
     SettingsRow(
@@ -553,10 +506,8 @@ private fun ToolEnabledItem(
         description = description,
         onClick = { onEnabledChange(toolName, !enabled) },
         leadingIcon = icon,
-        showNavigationIndicator = false,
-        showDivider = showDivider,
         toggleValue = enabled,
-        descriptionMaxLines = 3,
+        descriptionMaxLines = 2,
         trailingContent = {
             Switch(
                 checked = enabled,
@@ -579,7 +530,6 @@ private fun WebSearchModeItem(
         title = title,
         description = description,
         onClick = { onSelected(mode) },
-        showNavigationIndicator = false,
         trailingContent = {
             SettingsSelectionCheckmark(selected = selectedMode == mode)
         }
@@ -592,28 +542,30 @@ private fun WebSearchBaseUrlItem(
     hasError: Boolean,
     onBaseUrlChange: (String) -> Unit
 ) {
-    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-        OutlinedTextField(
-            value = baseUrl,
-            onValueChange = onBaseUrlChange,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text(stringResource(R.string.searxng_base_url)) },
-            placeholder = { Text(stringResource(R.string.searxng_base_url_hint)) },
-            singleLine = true,
-            isError = hasError,
-            shape = RoundedCornerShape(10.dp),
-            colors = settingsTextFieldColors(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-            supportingText = {
-                Text(
-                    text = if (hasError) {
-                        stringResource(R.string.searxng_base_url_invalid)
-                    } else {
-                        stringResource(R.string.searxng_base_url_description)
-                    }
-                )
-            }
-        )
+    SettingsMaterialGroup {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            OutlinedTextField(
+                value = baseUrl,
+                onValueChange = onBaseUrlChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text(stringResource(R.string.searxng_base_url)) },
+                placeholder = { Text(stringResource(R.string.searxng_base_url_hint)) },
+                singleLine = true,
+                isError = hasError,
+                shape = RoundedCornerShape(10.dp),
+                colors = settingsTextFieldColors(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                supportingText = {
+                    Text(
+                        text = if (hasError) {
+                            stringResource(R.string.searxng_base_url_invalid)
+                        } else {
+                            stringResource(R.string.searxng_base_url_description)
+                        }
+                    )
+                }
+            )
+        }
     }
 }
 
@@ -637,7 +589,6 @@ private fun SettingsSelectionCheckmark(selected: Boolean) {
 @Composable
 private fun PlatformItem(
     platform: PlatformV2,
-    showDivider: Boolean,
     onItemClick: () -> Unit
 ) {
     val statusText = if (platform.enabled) stringResource(R.string.enabled) else stringResource(R.string.disabled)
@@ -645,7 +596,6 @@ private fun PlatformItem(
         title = platform.name,
         description = "${getClientTypeDisplayName(platform.compatibleType)} · $statusText",
         leadingIcon = Icons.Outlined.Cloud,
-        showDivider = showDivider,
         onClick = onItemClick
     )
 }
@@ -660,7 +610,7 @@ fun MemoryEnabledItem(
         description = stringResource(R.string.memory_enabled_description),
         onClick = { onCheckedChange(!memoryEnabled) },
         leadingIcon = Icons.Outlined.Memory,
-        showNavigationIndicator = false,
+        descriptionMaxLines = 2,
         trailingContent = {
             Switch(
                 checked = memoryEnabled,
@@ -680,7 +630,6 @@ fun MemoryMaintenanceNotificationsItem(
         title = stringResource(R.string.memory_maintenance_notifications_title),
         onClick = { onCheckedChange(!enabled) },
         leadingIcon = Icons.Outlined.Notifications,
-        showNavigationIndicator = false,
         trailingContent = {
             Switch(
                 checked = enabled,

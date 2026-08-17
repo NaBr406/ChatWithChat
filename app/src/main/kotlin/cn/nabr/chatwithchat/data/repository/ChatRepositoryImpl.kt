@@ -24,12 +24,15 @@ import cn.nabr.chatwithchat.data.database.dao.ChatRoomDao
 import cn.nabr.chatwithchat.data.database.dao.ChatRoomV2Dao
 import cn.nabr.chatwithchat.data.database.dao.MessageDao
 import cn.nabr.chatwithchat.data.database.dao.MessageV2Dao
+import cn.nabr.chatwithchat.data.database.dao.TextSkillDao
 import cn.nabr.chatwithchat.data.database.entity.ChatPlatformModelV2
 import cn.nabr.chatwithchat.data.database.entity.ChatRoom
 import cn.nabr.chatwithchat.data.database.entity.ChatRoomV2
 import cn.nabr.chatwithchat.data.database.entity.Message
 import cn.nabr.chatwithchat.data.database.entity.MessageSourceMetadata
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
+import cn.nabr.chatwithchat.data.database.entity.MessageTextSkillInvocation
+import cn.nabr.chatwithchat.data.database.entity.SessionTextSkillBinding
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.database.entity.effectiveContent
 import cn.nabr.chatwithchat.data.database.entity.effectiveStickerRefs
@@ -146,6 +149,8 @@ import cn.nabr.chatwithchat.data.tool.stickerFinalAnswerInstruction
 import cn.nabr.chatwithchat.data.tool.stickerToolUsageRules
 import cn.nabr.chatwithchat.data.tool.toolLimitErrorCodeOrNull
 import cn.nabr.chatwithchat.data.tool.toolProtocolJson
+import cn.nabr.chatwithchat.data.textskill.ChatRequestContext
+import cn.nabr.chatwithchat.data.textskill.TextSkillInvocationSnapshot
 import cn.nabr.chatwithchat.data.websearch.SearchDecision
 import cn.nabr.chatwithchat.data.websearch.SearchDecisionService
 import cn.nabr.chatwithchat.data.websearch.WebSearchMode
@@ -225,7 +230,8 @@ class ChatRepositoryImpl @Inject constructor(
      * requests without `context_management`, which is exactly what every other provider already
      * sends — never to a broken request.
      */
-    private val openAINativeCompactionService: OpenAINativeCompactionService? = null
+    private val openAINativeCompactionService: OpenAINativeCompactionService? = null,
+    private val textSkillDao: TextSkillDao? = null
 ) : ChatRepository {
 
     private fun isImageFile(extension: String): Boolean = extension in setOf("jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff", "svg")
@@ -305,10 +311,15 @@ class ChatRepositoryImpl @Inject constructor(
         userMessages: List<MessageV2>,
         assistantMessages: List<List<MessageV2>>,
         platform: PlatformV2,
-        memoryPrompt: String?,
+        requestContext: ChatRequestContext,
         reasoningMode: ReasoningMode
     ): Flow<ApiState> {
+        val memoryPrompt = requestContext.memoryPrompt
         validateProviderMemoryPrompt(memoryPrompt)
+        val providerContextPrompt = textSkillPromptEnvelope(
+            textSkillPrompt = requestContext.textSkillInvocation?.prompt,
+            memoryPrompt = memoryPrompt
+        )
         val toolCallingMode = runCatching { settingRepository.fetchToolCallingMode() }
             .getOrNull()
             ?: ToolCallingMode.Off
@@ -335,7 +346,7 @@ class ChatRepositoryImpl @Inject constructor(
                     userMessages = userMessages,
                     assistantMessages = assistantMessages,
                     platform = platform,
-                    memoryPrompt = memoryPrompt,
+                    memoryPrompt = providerContextPrompt,
                     reasoningMode = reasoningMode,
                     activeToolDefinitions = activeToolDefinitions
                 )
@@ -343,7 +354,7 @@ class ChatRepositoryImpl @Inject constructor(
                     userMessages = userMessages,
                     assistantMessages = assistantMessages,
                     platform = platform,
-                    memoryPrompt = memoryPrompt,
+                    memoryPrompt = providerContextPrompt,
                     reasoningMode = reasoningMode,
                     activeToolDefinitions = activeToolDefinitions
                 )
@@ -353,7 +364,7 @@ class ChatRepositoryImpl @Inject constructor(
                             userMessages = userMessages,
                             assistantMessages = assistantMessages,
                             platform = platform,
-                            memoryPrompt = memoryPrompt,
+                            memoryPrompt = providerContextPrompt,
                             reasoningMode = reasoningMode,
                             activeToolDefinitions = activeToolDefinitions,
                             fallbackToJsonToolLoop = true
@@ -363,7 +374,7 @@ class ChatRepositoryImpl @Inject constructor(
                             userMessages = userMessages,
                             assistantMessages = assistantMessages,
                             platform = platform,
-                            memoryPrompt = memoryPrompt,
+                            memoryPrompt = providerContextPrompt,
                             reasoningMode = reasoningMode,
                             activeToolDefinitions = activeToolDefinitions
                         )
@@ -373,7 +384,7 @@ class ChatRepositoryImpl @Inject constructor(
                     userMessages = userMessages,
                     assistantMessages = assistantMessages,
                     platform = platform,
-                    memoryPrompt = memoryPrompt,
+                    memoryPrompt = providerContextPrompt,
                     reasoningMode = reasoningMode,
                     activeToolDefinitions = activeToolDefinitions
                 )
@@ -381,7 +392,7 @@ class ChatRepositoryImpl @Inject constructor(
                     userMessages = userMessages,
                     assistantMessages = assistantMessages,
                     platform = platform,
-                    memoryPrompt = memoryPrompt,
+                    memoryPrompt = providerContextPrompt,
                     reasoningMode = reasoningMode,
                     activeToolDefinitions = activeToolDefinitions
                 )
@@ -389,13 +400,19 @@ class ChatRepositoryImpl @Inject constructor(
                     userMessages = userMessages,
                     assistantMessages = assistantMessages,
                     platform = platform,
-                    memoryPrompt = memoryPrompt,
+                    memoryPrompt = providerContextPrompt,
                     reasoningMode = reasoningMode,
                     activeToolDefinitions = activeToolDefinitions
                 )
             }
         } else {
-            completeChatByProvider(userMessages, assistantMessages, platform, memoryPrompt, reasoningMode)
+            completeChatByProvider(
+                userMessages,
+                assistantMessages,
+                platform,
+                providerContextPrompt,
+                reasoningMode
+            )
         }
     }
 
@@ -3431,6 +3448,59 @@ class ChatRepositoryImpl @Inject constructor(
         return savedChat
     }
 
+    override suspend fun saveChatWithTextSkillInvocation(
+        chatRoom: ChatRoomV2,
+        messages: List<MessageV2>,
+        chatPlatformModels: Map<String, ChatPlatformConfig>,
+        snapshot: TextSkillInvocationSnapshot
+    ): ChatRoomV2 {
+        require(messages.any { it.platformType == null }) { "Skill invocation is missing its user message." }
+        val dao = requireNotNull(textSkillDao) { "Text Skill storage is unavailable." }
+        val savedAt = System.currentTimeMillis() / 1000
+        val savedChat = runInChatTransaction {
+            val savedChatRoom = if (chatRoom.id == 0) {
+                val chatId = chatRoomV2Dao.addChatRoom(chatRoom).toInt()
+                val persistedMessages = messages.map { message -> message.copy(chatId = chatId) }
+                messageV2Dao.addMessages(*persistedMessages.toTypedArray())
+                saveChatPlatformModels(chatId, chatPlatformModels.filterKeys { it in chatRoom.enabledPlatform })
+                val title = persistedMessages.firstOrNull()?.content?.replace('\n', ' ')?.take(50).orEmpty()
+                val saved = chatRoom.copy(id = chatId, title = title, updatedAt = savedAt)
+                chatRoomV2Dao.editChatRoom(saved)
+                saved
+            } else {
+                val existing = fetchMessagesV2(chatRoom.id)
+                val updated = messages.map { message -> message.copy(chatId = chatRoom.id) }
+                val deleted = existing.filter { stored -> updated.none { it.id == stored.id } }
+                val changed = updated.filter { candidate -> existing.any { it.id == candidate.id && it != candidate } }
+                val added = updated.filter { candidate -> existing.none { it.id == candidate.id } }
+                val touched = chatRoom.copy(updatedAt = savedAt)
+                chatRoomV2Dao.editChatRoom(touched)
+                messageV2Dao.deleteMessages(*deleted.toTypedArray())
+                messageV2Dao.editMessages(*changed.toTypedArray())
+                messageV2Dao.addMessages(*added.toTypedArray())
+                saveChatPlatformModels(chatRoom.id, chatPlatformModels.filterKeys { it in chatRoom.enabledPlatform })
+                touched
+            }
+            val persistedUserMessage = messageV2Dao.loadMessages(savedChatRoom.id)
+                .asSequence()
+                .filter { message -> message.platformType == null }
+                .maxByOrNull(MessageV2::id)
+                ?: throw IllegalStateException("The Skill invocation user message was not persisted.")
+            dao.insertInvocation(
+                MessageTextSkillInvocation(
+                    userMessageId = persistedUserMessage.id,
+                    chatId = savedChatRoom.id,
+                    snapshotSchemaVersion = snapshot.schemaVersion,
+                    snapshotJson = toolProtocolJson.encodeToString(snapshot),
+                    promptHash = snapshot.promptHash
+                )
+            )
+            savedChatRoom
+        }
+        enqueueHistoryReconciliation(savedChat.id)
+        return savedChat
+    }
+
     private suspend fun <T> runInChatTransaction(block: suspend () -> T): T =
         chatDatabaseV2?.withTransaction { block() } ?: block()
 
@@ -3474,6 +3544,62 @@ class ChatRepositoryImpl @Inject constructor(
         chatRooms.forEach { chatHistoryIndexCoordinator?.invalidateDeletedChat(it.id) }
         chatRoomV2Dao.deleteChatRooms(*chatRooms.toTypedArray())
     }
+
+    override suspend fun fetchSessionTextSkillBindings(chatId: Int): List<SessionTextSkillBinding> =
+        textSkillDao?.loadSessionBindings(chatId).orEmpty()
+
+    override suspend fun fetchSessionTextSkillBindingsForPackage(packageId: String): List<SessionTextSkillBinding> =
+        textSkillDao?.loadBindingsForPackage(packageId).orEmpty()
+
+    override suspend fun saveSessionTextSkillBinding(binding: SessionTextSkillBinding) {
+        requireNotNull(textSkillDao) { "Text Skill storage is unavailable." }.upsertBinding(binding)
+    }
+
+    override suspend fun setSessionTextSkillBindingEnabled(
+        chatId: Int,
+        packageId: String,
+        skillId: String,
+        variantKey: String,
+        enabled: Boolean
+    ) {
+        requireNotNull(textSkillDao) { "Text Skill storage is unavailable." }
+            .setBindingEnabled(chatId, packageId, skillId, variantKey, enabled)
+    }
+
+    override suspend fun removeSessionTextSkillBinding(chatId: Int, packageId: String, skillId: String, variantKey: String) {
+        requireNotNull(textSkillDao) { "Text Skill storage is unavailable." }
+            .removeBinding(chatId, packageId, skillId, variantKey)
+    }
+
+    override suspend fun disableTextSkillBindingsForPackage(packageId: String) {
+        textSkillDao?.disableBindingsForPackage(packageId)
+    }
+
+    override suspend fun textSkillBindingCount(packageId: String): Int = textSkillDao?.countBindingsForPackage(packageId) ?: 0
+
+    override suspend fun saveTextSkillInvocation(
+        userMessageId: Int,
+        chatId: Int,
+        snapshot: TextSkillInvocationSnapshot
+    ) {
+        require(userMessageId > 0 && chatId > 0) { "Skill invocation requires a persisted user message." }
+        val dao = requireNotNull(textSkillDao) { "Text Skill storage is unavailable." }
+        runInChatTransaction {
+            dao.insertInvocation(
+                MessageTextSkillInvocation(
+                    userMessageId = userMessageId,
+                    chatId = chatId,
+                    snapshotSchemaVersion = snapshot.schemaVersion,
+                    snapshotJson = toolProtocolJson.encodeToString(snapshot),
+                    promptHash = snapshot.promptHash
+                )
+            )
+        }
+    }
+
+    override suspend fun fetchTextSkillInvocation(userMessageId: Int): TextSkillInvocationSnapshot? =
+        textSkillDao?.loadInvocation(userMessageId)
+            ?.let { record -> runCatching { toolProtocolJson.decodeFromString<TextSkillInvocationSnapshot>(record.snapshotJson) }.getOrNull() }
 
     private suspend fun enqueueHistoryReconciliation(chatId: Int) {
         val coordinator = chatHistoryIndexCoordinator ?: return
@@ -3873,10 +3999,53 @@ private fun ToolRoundReasoningPolicy.resolve(userMode: ReasoningMode): Reasoning
     ToolRoundReasoningPolicy.LOW -> ReasoningMode.LOW
 }
 
-internal fun mergePromptSections(vararg sections: String?): String? = sections
-    .mapNotNull { section -> section?.trim()?.takeIf { it.isNotBlank() } }
-    .takeIf { it.isNotEmpty() }
-    ?.joinToString(separator = "\n\n")
+internal fun mergePromptSections(vararg sections: String?): String? {
+    val envelopePosition = sections.indexOfFirst { section -> TextSkillPromptEnvelope.parse(section) != null }
+    val envelope = sections.getOrNull(envelopePosition)?.let(TextSkillPromptEnvelope::parse)
+    val withoutEnvelope = sections.filterIndexed { index, _ -> index != envelopePosition }
+        .mapNotNull { section -> section?.trim()?.takeIf { it.isNotBlank() } }
+        .toMutableList()
+    if (envelope != null && envelopePosition >= 0) {
+        // The normal provider call shape is platform prompt, runtime context, memory, summary. Put
+        // explicit user-selected Skills directly after the platform prompt without changing the
+        // established position of runtime context or memory for requests without Skills.
+        val precedingCount = sections.take(envelopePosition).count { !it.isNullOrBlank() }
+        val memoryInsertionIndex = precedingCount.coerceIn(0, withoutEnvelope.size)
+        envelope.memoryPrompt?.trim()?.takeIf { it.isNotBlank() }?.let { memory ->
+            withoutEnvelope.add(memoryInsertionIndex, memory)
+        }
+        val skillInsertionIndex = if (sections.firstOrNull().isNullOrBlank()) 0 else 1
+        withoutEnvelope.add(skillInsertionIndex.coerceAtMost(withoutEnvelope.size), envelope.textSkillPrompt)
+    }
+    return withoutEnvelope.takeIf { it.isNotEmpty() }?.joinToString(separator = "\n\n")
+}
+
+private fun textSkillPromptEnvelope(textSkillPrompt: String?, memoryPrompt: String?): String? =
+    if (textSkillPrompt.isNullOrBlank()) memoryPrompt else TextSkillPromptEnvelope.encode(textSkillPrompt, memoryPrompt)
+
+private data class TextSkillPromptEnvelope(
+    val textSkillPrompt: String,
+    val memoryPrompt: String?
+) {
+    companion object {
+        private const val PREFIX = "\u0000chatwithchat-text-skill-v1\u0000"
+        private const val SEPARATOR = "\u0000chatwithchat-memory-v1\u0000"
+
+        fun encode(textSkillPrompt: String, memoryPrompt: String?): String =
+            PREFIX + textSkillPrompt + SEPARATOR + memoryPrompt.orEmpty()
+
+        fun parse(value: String?): TextSkillPromptEnvelope? {
+            if (value == null || !value.startsWith(PREFIX)) return null
+            val payload = value.removePrefix(PREFIX)
+            val separatorIndex = payload.indexOf(SEPARATOR)
+            if (separatorIndex < 0) return null
+            return TextSkillPromptEnvelope(
+                textSkillPrompt = payload.substring(0, separatorIndex),
+                memoryPrompt = payload.substring(separatorIndex + SEPARATOR.length).takeIf(String::isNotBlank)
+            )
+        }
+    }
+}
 
 private fun List<MessageV2>.latestToolIntent(): String = lastOrNull()
     ?.effectiveContent()

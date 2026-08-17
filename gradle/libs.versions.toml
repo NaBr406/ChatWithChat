@@ -24,6 +24,7 @@ androidxHilt = "1.3.0"
 navigation = "2.9.7"
 markdownRenderer = "0.39.2"
 serialization = "1.10.0" # Should not update due to kotlin version
+snakeYaml = "2.2"
 splashscreen = "1.2.0"
 room = "2.8.4"
 work = "2.11.0"
@@ -57,6 +58,7 @@ hilt = { group = "com.google.dagger", name = "hilt-android", version.ref = "hilt
 hilt-compiler = { group = "com.google.dagger", name = "hilt-android-compiler", version.ref = "hilt" }
 hilt-navigation = { group = "androidx.hilt", name = "hilt-navigation-compose", version.ref = "androidxHilt" }
 kotlin-serialization = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serialization" }
+snake-yaml = { group = "org.yaml", name = "snakeyaml", version.ref = "snakeYaml" }
 ktor-content-negotiation = { group = "io.ktor", name = "ktor-client-content-negotiation", version.ref = "ktor" }
 ktor-client-cio = { group = "io.ktor", name = "ktor-client-cio", version.ref = "ktor" }
 ktor-core = { group = "io.ktor", name = "ktor-client-core", version.ref = "ktor" }

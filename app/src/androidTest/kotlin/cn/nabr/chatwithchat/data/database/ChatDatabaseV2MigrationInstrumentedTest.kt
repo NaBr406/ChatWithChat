@@ -162,7 +162,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 ChatDatabaseV2Migrations.MIGRATION_17_18,
                 ChatDatabaseV2Migrations.MIGRATION_18_19,
                 ChatDatabaseV2Migrations.MIGRATION_19_20,
-                ChatDatabaseV2Migrations.MIGRATION_20_21
+                ChatDatabaseV2Migrations.MIGRATION_20_21,
+                ChatDatabaseV2Migrations.MIGRATION_21_22
             )
             .addCallback(ChatHistoryDatabaseCallback())
             .build()
@@ -281,7 +282,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 ChatDatabaseV2Migrations.MIGRATION_17_18,
                 ChatDatabaseV2Migrations.MIGRATION_18_19,
                 ChatDatabaseV2Migrations.MIGRATION_19_20,
-                ChatDatabaseV2Migrations.MIGRATION_20_21
+                ChatDatabaseV2Migrations.MIGRATION_20_21,
+                ChatDatabaseV2Migrations.MIGRATION_21_22
             )
             .addCallback(ChatHistoryDatabaseCallback())
             .build()
@@ -333,7 +335,7 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                     assertEquals("dismissed", roomDatabase.memoryMaintenanceJobDao().getById(jobId)?.status)
                 }
             }
-            assertEquals(SCHEMA_21_TABLES, roomDatabase.openHelper.writableDatabase.userTableNames())
+            assertEquals(SCHEMA_22_TABLES, roomDatabase.openHelper.writableDatabase.userTableNames())
             assertLegacySemanticTablesAbsent(roomDatabase.openHelper.writableDatabase)
         } finally {
             roomDatabase.close()
@@ -473,7 +475,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 ChatDatabaseV2Migrations.MIGRATION_17_18,
                 ChatDatabaseV2Migrations.MIGRATION_18_19,
                 ChatDatabaseV2Migrations.MIGRATION_19_20,
-                ChatDatabaseV2Migrations.MIGRATION_20_21
+                ChatDatabaseV2Migrations.MIGRATION_20_21,
+                ChatDatabaseV2Migrations.MIGRATION_21_22
             )
             .addCallback(ChatHistoryDatabaseCallback())
             .build()
@@ -750,7 +753,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
             .addMigrations(
                 ChatDatabaseV2Migrations.MIGRATION_18_19,
                 ChatDatabaseV2Migrations.MIGRATION_19_20,
-                ChatDatabaseV2Migrations.MIGRATION_20_21
+                ChatDatabaseV2Migrations.MIGRATION_20_21,
+                ChatDatabaseV2Migrations.MIGRATION_21_22
             )
             .build()
         try {
@@ -896,7 +900,10 @@ class ChatDatabaseV2MigrationInstrumentedTest {
         // that migrated with the right name but the wrong affinity.
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val roomDatabase = Room.databaseBuilder(context, ChatDatabaseV2::class.java, TEST_DATABASE)
-            .addMigrations(ChatDatabaseV2Migrations.MIGRATION_20_21)
+            .addMigrations(
+                ChatDatabaseV2Migrations.MIGRATION_20_21,
+                ChatDatabaseV2Migrations.MIGRATION_21_22
+            )
             .addCallback(ChatHistoryDatabaseCallback())
             .build()
         try {
@@ -948,7 +955,50 @@ class ChatDatabaseV2MigrationInstrumentedTest {
     }
 
     @Test
-    fun freshSchema21_opensAndReopensWithContextManagementState() {
+    fun migration21To22_preservesExistingRowsCreatesTextSkillStateAndCascadesWithChat() {
+        var expectedRows = emptyMap<String, List<List<String>>>()
+        migrationHelper.createDatabase(TEST_DATABASE, 21).apply {
+            insertSchema20ContextRows(this)
+            insertContextManagementFixtures(this)
+            expectedRows = SCHEMA_21_MIGRATION_TABLES.associateWith { tableName -> snapshotRows(tableName) }
+            close()
+        }
+
+        migrationHelper.runMigrationsAndValidate(
+            TEST_DATABASE,
+            22,
+            true,
+            ChatDatabaseV2Migrations.MIGRATION_21_22
+        ).use { database ->
+            assertEquals(SCHEMA_22_MIGRATION_TABLES, database.userTableNames())
+            expectedRows.forEach { (tableName, rows) ->
+                assertEquals("$tableName changed across 21->22", rows, database.snapshotRows(tableName))
+            }
+            assertEquals(0L, database.singleLong("SELECT COUNT(*) FROM session_text_skill_bindings"))
+            assertEquals(0L, database.singleLong("SELECT COUNT(*) FROM message_text_skill_invocations"))
+
+            insertTextSkillFixtures(database)
+            assertEquals(
+                "Writing style",
+                database.singleString("SELECT display_name FROM session_text_skill_bindings WHERE chat_id = 7")
+            )
+            assertEquals(
+                "snapshot-hash",
+                database.singleString("SELECT prompt_hash FROM message_text_skill_invocations WHERE user_message_id = 11")
+            )
+
+            database.execSQL("PRAGMA foreign_keys = ON")
+            database.execSQL("DELETE FROM messages_v2 WHERE message_id = 11")
+            assertEquals(0L, database.singleLong("SELECT COUNT(*) FROM message_text_skill_invocations"))
+            database.execSQL("DELETE FROM chats_v2 WHERE chat_id = 7")
+            assertEquals(0L, database.singleLong("SELECT COUNT(*) FROM session_text_skill_bindings"))
+            database.query("PRAGMA foreign_key_check").use { cursor -> assertEquals(0, cursor.count) }
+            assertEquals("ok", database.singleString("PRAGMA integrity_check"))
+        }
+    }
+
+    @Test
+    fun freshSchema22_opensAndReopensWithTextSkillState() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val freshDatabase = Room.databaseBuilder(context, ChatDatabaseV2::class.java, TEST_DATABASE)
             .addCallback(ChatHistoryDatabaseCallback())
@@ -956,9 +1006,9 @@ class ChatDatabaseV2MigrationInstrumentedTest {
         try {
             val database = freshDatabase
             val sqliteDatabase = database.openHelper.writableDatabase
-            assertEquals(SCHEMA_21_TABLES, sqliteDatabase.userTableNames())
+            assertEquals(SCHEMA_22_TABLES, sqliteDatabase.userTableNames())
             assertLegacySemanticTablesAbsent(sqliteDatabase)
-            assertEquals(21L, sqliteDatabase.singleLong("PRAGMA user_version"))
+            assertEquals(22L, sqliteDatabase.singleLong("PRAGMA user_version"))
             sqliteDatabase.query("PRAGMA foreign_key_check").use { cursor ->
                 assertEquals(0, cursor.count)
             }
@@ -973,9 +1023,9 @@ class ChatDatabaseV2MigrationInstrumentedTest {
         try {
             val database = reopenedDatabase
             val sqliteDatabase = database.openHelper.writableDatabase
-            assertEquals(SCHEMA_21_TABLES, sqliteDatabase.userTableNames())
+            assertEquals(SCHEMA_22_TABLES, sqliteDatabase.userTableNames())
             assertLegacySemanticTablesAbsent(sqliteDatabase)
-            assertEquals(21L, sqliteDatabase.singleLong("PRAGMA user_version"))
+            assertEquals(22L, sqliteDatabase.singleLong("PRAGMA user_version"))
             assertEquals("ok", sqliteDatabase.singleString("PRAGMA integrity_check"))
             runBlocking {
                 assertTrue(database.chatRoomDao().getChatRooms().isEmpty())
@@ -989,6 +1039,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 assertTrue(database.contextManagementDao().getCheckpointChain(1, "provider-1").isEmpty())
                 assertNull(database.contextManagementDao().getRange(1, "provider-1"))
                 assertNull(database.contextManagementDao().getNativeState(1, "provider-1"))
+                assertTrue(database.textSkillDao().loadSessionBindings(1).isEmpty())
+                assertNull(database.textSkillDao().loadInvocation(1))
             }
         } finally {
             reopenedDatabase.close()
@@ -1532,6 +1584,24 @@ class ChatDatabaseV2MigrationInstrumentedTest {
         )
     }
 
+    private fun insertTextSkillFixtures(database: SupportSQLiteDatabase) {
+        database.execSQL(
+            """
+            INSERT INTO session_text_skill_bindings (
+                chat_id, package_id, skill_id, variant_key, display_name, order_index,
+                is_enabled, created_at, updated_at
+            ) VALUES (7, 'package-1', 'skill-1', 'default', 'Writing style', 0, 1, 30, 31)
+            """.trimIndent()
+        )
+        database.execSQL(
+            """
+            INSERT INTO message_text_skill_invocations (
+                user_message_id, chat_id, snapshot_schema_version, snapshot_json, prompt_hash, created_at
+            ) VALUES (11, 7, 1, '{"schemaVersion":1}', 'snapshot-hash', 32)
+            """.trimIndent()
+        )
+    }
+
     private fun insertSchema14Rows(database: SupportSQLiteDatabase) {
         database.execSQL(
             "INSERT INTO chats_v2 (chat_id, title, enabled_platform, created_at, updated_at) VALUES (7, 'kept chat', '', 10, 11)"
@@ -1869,6 +1939,14 @@ class ChatDatabaseV2MigrationInstrumentedTest {
             "chat_history_projection_fts_segdir",
             "chat_history_projection_fts_segments",
             "chat_history_projection_fts_stat"
+        )
+        private val SCHEMA_22_TABLES = SCHEMA_21_TABLES + setOf(
+            "session_text_skill_bindings",
+            "message_text_skill_invocations"
+        )
+        private val SCHEMA_22_MIGRATION_TABLES = SCHEMA_21_MIGRATION_TABLES + setOf(
+            "session_text_skill_bindings",
+            "message_text_skill_invocations"
         )
 
         /**

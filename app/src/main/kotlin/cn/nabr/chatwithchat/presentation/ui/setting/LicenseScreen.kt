@@ -6,30 +6,31 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import com.mikepenz.aboutlibraries.ui.compose.android.produceLibraries
-import com.mikepenz.aboutlibraries.ui.compose.m3.LibrariesContainer
 import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.presentation.common.SettingsMaterialGroup
 import cn.nabr.chatwithchat.presentation.common.SettingsTopAppBar
-import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
+import cn.nabr.chatwithchat.presentation.common.settingsCanvasBackground
+import com.mikepenz.aboutlibraries.ui.compose.android.produceLibraries
+import com.mikepenz.aboutlibraries.ui.compose.m3.LibrariesContainer
 
 @Composable
 fun LicenseScreen(
     onNavigationClick: () -> Unit
 ) {
     val libraries = produceLibraries(R.raw.aboutlibraries)
-    val materialColors = settingsMaterialColors()
 
     Scaffold(
+        modifier = Modifier.settingsCanvasBackground(),
         topBar = {
             SettingsTopAppBar(
                 title = stringResource(R.string.license),
                 onNavigationClick = onNavigationClick
             )
         },
-        containerColor = materialColors.canvas
+        containerColor = Color.Transparent
     ) { innerPadding ->
         Column(
             modifier = Modifier

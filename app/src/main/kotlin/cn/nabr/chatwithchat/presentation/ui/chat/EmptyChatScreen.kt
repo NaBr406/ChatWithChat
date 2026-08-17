@@ -33,13 +33,15 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.model.ReasoningMode
-import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
+import cn.nabr.chatwithchat.data.textskill.PendingTextSkillSelection
+import cn.nabr.chatwithchat.presentation.common.settingsCanvasBackground
 import cn.nabr.chatwithchat.presentation.ui.home.HomeModelsState
 import cn.nabr.chatwithchat.presentation.ui.home.HomeViewModel
 import cn.nabr.chatwithchat.presentation.ui.home.canStartChat
@@ -53,11 +55,12 @@ import java.io.File
 fun EmptyChatScreen(
     homeViewModel: HomeViewModel,
     onOpenDrawer: () -> Unit,
-    onStartChat: (String, List<String>) -> Boolean,
+    onStartChat: (String, List<String>, List<PendingTextSkillSelection>) -> Boolean,
     onAddProvider: () -> Unit
 ) {
     val lastSelectedModel by homeViewModel.lastSelectedModel.collectAsStateWithLifecycle()
     val homeModelsState by homeViewModel.homeModelsState.collectAsStateWithLifecycle()
+    val availableTextSkills by homeViewModel.availableTextSkills.collectAsStateWithLifecycle()
     val availableChatModels = homeModelsState.modelsOrEmpty()
     val currentModelOptions = remember(availableChatModels, lastSelectedModel) {
         buildModelSelectionOptions(
@@ -73,6 +76,7 @@ fun EmptyChatScreen(
     val inputState = rememberTextFieldState()
     val context = LocalContext.current
     var selectedAttachments by remember { mutableStateOf(listOf<ChatAttachmentDraft>()) }
+    var pendingTextSkills by remember { mutableStateOf(listOf<PendingTextSkillSelection>()) }
     val latestSelectedAttachments = rememberUpdatedState(selectedAttachments)
     val attachmentsTransferred = remember { mutableStateOf(false) }
     val canChat = homeModelsState.canStartChat() && currentModelOptions.isNotEmpty()
@@ -88,14 +92,16 @@ fun EmptyChatScreen(
     }
 
     Scaffold(
+        modifier = Modifier.settingsCanvasBackground(),
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        containerColor = settingsMaterialColors().canvas,
+        containerColor = Color.Transparent,
         contentColor = MaterialTheme.colorScheme.onSurface,
         topBar = {
             CenterAlignedTopAppBar(
+                modifier = Modifier.settingsCanvasBackground(),
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = settingsMaterialColors().navigation,
-                    scrolledContainerColor = settingsMaterialColors().navigation,
+                    containerColor = Color.Transparent,
+                    scrolledContainerColor = Color.Transparent,
                     navigationIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     titleContentColor = MaterialTheme.colorScheme.onSurface
                 ),
@@ -169,6 +175,8 @@ fun EmptyChatScreen(
                     chatEnabled = true,
                     sendButtonEnabled = true,
                     selectedAttachments = selectedAttachments,
+                    selectedTextSkills = pendingTextSkills.map(PendingTextSkillSelection::skill),
+                    availableTextSkills = availableTextSkills,
                     onFilesSelected = { filePaths, copyFailureCount ->
                         val current = selectedAttachments
                         val existingCandidates = current.map { attachment ->
@@ -209,13 +217,20 @@ fun EmptyChatScreen(
                         selectedAttachments = selectedAttachments.filter { it.sourceFilePath != filePath }
                         File(filePath).delete()
                     },
+                    onTextSkillsSelected = { skills, scope ->
+                        pendingTextSkills = mergeTextSkillSelection(pendingTextSkills, skills, scope)
+                    },
+                    onTextSkillRemoved = { skill ->
+                        pendingTextSkills = pendingTextSkills.removeTextSkillSelection(skill)
+                    },
                     onSendButtonClick = {
                         val prompt = inputState.text.toString().trim()
                         val attachmentPaths = selectedAttachments.map { it.sourceFilePath }
                         if (prompt.isNotEmpty() || attachmentPaths.isNotEmpty()) {
-                            if (onStartChat(prompt, attachmentPaths)) {
+                            if (onStartChat(prompt, attachmentPaths, pendingTextSkills)) {
                                 attachmentsTransferred.value = true
                                 selectedAttachments = emptyList()
+                                pendingTextSkills = emptyList()
                                 inputState.clearText()
                             }
                         }

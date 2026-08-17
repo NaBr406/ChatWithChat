@@ -222,6 +222,7 @@ dependencies {
 
     // Serialization
     implementation(libs.kotlin.serialization)
+    implementation(libs.snake.yaml)
 
     // On-device embeddings
     implementation(libs.onnx.runtime.android)

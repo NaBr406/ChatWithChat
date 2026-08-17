@@ -23,6 +23,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
@@ -33,7 +34,7 @@ import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.presentation.common.SettingItem
 import cn.nabr.chatwithchat.presentation.common.SettingsMaterialGroup
 import cn.nabr.chatwithchat.presentation.common.SettingsTopAppBar
-import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
+import cn.nabr.chatwithchat.presentation.common.settingsCanvasBackground
 import kotlinx.coroutines.launch
 
 @Composable
@@ -43,7 +44,6 @@ fun AboutScreen(
     onNavigateToPromptTrace: () -> Unit
 ) {
     val scrollState = rememberScrollState()
-    val materialColors = settingsMaterialColors()
     val context = LocalContext.current
     val version = context.packageManager.getPackageInfo(context.packageName, 0).versionName
     val clipboardManager = LocalClipboard.current
@@ -57,13 +57,14 @@ fun AboutScreen(
     var versionTapCount by rememberSaveable { mutableIntStateOf(0) }
 
     Scaffold(
+        modifier = Modifier.settingsCanvasBackground(),
         topBar = {
             SettingsTopAppBar(
                 title = stringResource(R.string.about),
                 onNavigationClick = onNavigationClick
             )
         },
-        containerColor = materialColors.canvas
+        containerColor = Color.Transparent
     ) { innerPadding ->
         Column(
             modifier = Modifier

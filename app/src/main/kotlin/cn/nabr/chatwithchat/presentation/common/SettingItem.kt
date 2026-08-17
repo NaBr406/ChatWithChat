@@ -66,7 +66,7 @@ fun SettingItem(
                     containerColor = Color.Transparent,
                     headlineColor = if (enabled) materialColors.primaryLabel else materialColors.tertiaryLabel,
                     supportingColor = if (enabled) materialColors.secondaryLabel else materialColors.tertiaryLabel,
-                    leadingIconColor = if (enabled) materialColors.primaryLabel else materialColors.tertiaryLabel,
+                    leadingIconColor = if (enabled) materialColors.secondaryLabel else materialColors.tertiaryLabel,
                     trailingIconColor = if (enabled) materialColors.secondaryLabel else materialColors.tertiaryLabel
                 )
             )

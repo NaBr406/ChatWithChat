@@ -19,6 +19,7 @@ import cn.nabr.chatwithchat.data.database.entity.ACTIVE_REVISION_LATEST
 import cn.nabr.chatwithchat.data.database.entity.ChatRoomV2
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
+import cn.nabr.chatwithchat.data.database.entity.SessionTextSkillBinding
 import cn.nabr.chatwithchat.data.database.entity.effectiveContent
 import cn.nabr.chatwithchat.data.database.entity.effectiveStickerRefs
 import cn.nabr.chatwithchat.data.database.entity.effectiveThoughts
@@ -41,6 +42,17 @@ import cn.nabr.chatwithchat.data.repository.AttachmentUploadCoordinator
 import cn.nabr.chatwithchat.data.repository.ChatRepository
 import cn.nabr.chatwithchat.data.repository.MemoryRepository
 import cn.nabr.chatwithchat.data.repository.SettingRepository
+import cn.nabr.chatwithchat.data.textskill.ChatRequestContext
+import cn.nabr.chatwithchat.data.textskill.PendingTextSkillSelection
+import cn.nabr.chatwithchat.data.textskill.SelectedTextSkill
+import cn.nabr.chatwithchat.data.textskill.SkillInvocationSource
+import cn.nabr.chatwithchat.data.textskill.TextSkillInvocationCandidate
+import cn.nabr.chatwithchat.data.textskill.TextSkillInvocationCompiler
+import cn.nabr.chatwithchat.data.textskill.TextSkillPackageRepository
+import cn.nabr.chatwithchat.data.textskill.TextSkillSelectionScope
+import cn.nabr.chatwithchat.data.textskill.TextSkillVariantKey
+import cn.nabr.chatwithchat.data.textskill.selectionKey
+import cn.nabr.chatwithchat.data.textskill.toSelectableTextSkills
 import cn.nabr.chatwithchat.data.title.ChatTitleGenerationService
 import cn.nabr.chatwithchat.data.title.ChatTitleTurn
 import cn.nabr.chatwithchat.data.tool.ToolApprovalBroker
@@ -64,10 +76,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
 @HiltViewModel
 class ChatViewModel @Inject constructor(
-    savedStateHandle: SavedStateHandle,
+    private val savedStateHandle: SavedStateHandle,
     @param:ApplicationContext private val context: Context,
     private val chatRepository: ChatRepository,
     private val settingRepository: SettingRepository,
@@ -76,6 +90,8 @@ class ChatViewModel @Inject constructor(
     private val attachmentUploadCoordinator: AttachmentUploadCoordinator,
     private val toolApprovalBroker: ToolApprovalBroker,
     private val contextCheckpointRepository: ContextCheckpointRepository,
+    private val textSkillPackageRepository: TextSkillPackageRepository,
+    private val textSkillInvocationCompiler: TextSkillInvocationCompiler,
     @param:ApplicationScope private val applicationScope: CoroutineScope
 ) : ViewModel() {
     sealed class LoadingState {
@@ -133,6 +149,17 @@ class ChatViewModel @Inject constructor(
         .map { it.trim() }
         .filter { it.isNotBlank() }
         .toList()
+
+    /**
+     * Skills the user picked on the landing page, before this chat existed.
+     *
+     * Only used to seed the in-memory selections below, and only when they have no saved state of
+     * their own yet: after that the SavedStateHandle copy is the source of truth, so a pick the user
+     * removed does not come back when the process is recreated.
+     */
+    private val initialTextSkills: List<PendingTextSkillSelection> = decodePendingTextSkillSelections(
+        Uri.decode(savedStateHandle.get<String>("initialTextSkills").orEmpty())
+    )
     private val initialEnabledPlatformsInChat = enabledPlatformString.split(',').filter { it.isNotBlank() }
     val enabledPlatformsInChat: List<String>
         get() = _chatRoom.value.enabledPlatform
@@ -183,6 +210,28 @@ class ChatViewModel @Inject constructor(
 
     private val _attachmentNotice = MutableStateFlow<String?>(null)
     val attachmentNotice = _attachmentNotice.asStateFlow()
+    private val _oneShotTextSkills = MutableStateFlow(
+        savedStateHandle.get<String>(ONE_SHOT_TEXT_SKILLS_STATE_KEY)
+            ?.let { encoded -> runCatching { TEXT_SKILL_SELECTION_JSON.decodeFromString<List<SelectedTextSkill>>(encoded) }.getOrNull().orEmpty() }
+            ?: initialTextSkills.skillsInScope(TextSkillSelectionScope.ONE_SHOT)
+    )
+    val oneShotTextSkills = _oneShotTextSkills.asStateFlow()
+    private val _availableTextSkills = MutableStateFlow<List<SelectedTextSkill>>(emptyList())
+    val availableTextSkills = _availableTextSkills.asStateFlow()
+    private val _sessionTextSkills = MutableStateFlow<List<SessionTextSkillBinding>>(emptyList())
+    val sessionTextSkills = _sessionTextSkills.asStateFlow()
+
+    /**
+     * Session-scope picks that cannot be stored yet, because `session_text_skill_bindings` is keyed by
+     * a persisted chat id and this chat has no row until its first message is saved. They are surfaced
+     * through [_sessionTextSkills] as bindings with a non-positive chat id and flushed to the database
+     * by [flushPendingSessionTextSkills] as soon as the row exists.
+     */
+    private val pendingSessionTextSkills = MutableStateFlow(
+        savedStateHandle.get<String>(PENDING_SESSION_TEXT_SKILLS_STATE_KEY)
+            ?.let { encoded -> decodePendingTextSkillSelections(encoded) }
+            ?: initialTextSkills.filter { it.scope == TextSkillSelectionScope.SESSION }
+    )
     private val _pendingSelectedAttachmentBatches = MutableStateFlow(0)
     val pendingSelectedAttachmentBatches = _pendingSelectedAttachmentBatches.asStateFlow()
     private val _pendingMessageEditAttachmentBatches = MutableStateFlow(0)
@@ -247,6 +296,12 @@ class ChatViewModel @Inject constructor(
         recoverInitialRequestIfNeeded()
         fetchChatRoom()
         viewModelScope.launch { fetchMessages() }
+        viewModelScope.launch { loadSessionTextSkills() }
+        viewModelScope.launch {
+            textSkillPackageRepository.packages.collect { packages ->
+                _availableTextSkills.value = packages.toSelectableTextSkills()
+            }
+        }
         fetchEnabledPlatformsInApp()
         observeStateChanges()
     }
@@ -562,11 +617,18 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch {
             val retryContext = groupedMessagesThroughTurn(_groupedMessages.value, turnIndex)
             val memoryContext = prepareMemoryContextForTurn(retryContext, platformSelection.platform)
+            val frozenTextSkillSnapshot = retryContext.userMessages.lastOrNull()
+                ?.id
+                ?.takeIf { it > 0 }
+                ?.let { userMessageId -> chatRepository.fetchTextSkillInvocation(userMessageId) }
             chatRepository.completeChat(
                 retryContext.userMessages,
                 retryContext.assistantMessages,
                 platformSelection.platform,
-                memoryContext.prompt,
+                ChatRequestContext(
+                    memoryPrompt = memoryContext.prompt,
+                    textSkillInvocation = frozenTextSkillSnapshot
+                ),
                 reasoningMode = platformSelection.reasoningMode
             ).handleStates(
                 messageFlow = _groupedMessages,
@@ -723,6 +785,12 @@ class ChatViewModel @Inject constructor(
             _attachmentNotice.update { context.getString(R.string.wait_for_attachments_before_saving) }
             return false
         }
+        val textSkillSnapshot = runCatching { compileTextSkillSnapshot(includeOneShot = false) }
+            .onFailure { error -> _attachmentNotice.update { error.message ?: "Skill 编译失败" } }
+            .getOrNull()
+        if (_sessionTextSkills.value.any(SessionTextSkillBinding::isEnabled) && textSkillSnapshot == null) {
+            return false
+        }
 
         val userMessages = _groupedMessages.value.userMessages
         val assistantMessages = _groupedMessages.value.assistantMessages
@@ -774,8 +842,12 @@ class ChatViewModel @Inject constructor(
             currentStates
         }
 
-        // Start new conversation from the edited question
-        completeChat()
+        // An edit starts a new request. It recompiles only current session bindings, never draft one-shot choices.
+        if (textSkillSnapshot == null) {
+            completeChat()
+        } else {
+            persistTextSkillSnapshotThenComplete(textSkillSnapshot, clearOneShotAfterPersistence = false)
+        }
         return true
     }
 
@@ -884,7 +956,7 @@ class ChatViewModel @Inject constructor(
         return Pair(fileName, chatHistoryMarkdown)
     }
 
-    private fun completeChat() {
+    private fun completeChat(requestContext: ChatRequestContext = ChatRequestContext()) {
         val currentPlatformUid = currentChatPlatformUid() ?: return
         val platform = _enabledPlatformsInApp.value.firstOrNull { it.uid == currentPlatformUid } ?: return
         val platformSelection = resolvePlatformSelection(platform)
@@ -908,7 +980,7 @@ class ChatViewModel @Inject constructor(
                 latestGroupedMessages.userMessages,
                 latestGroupedMessages.assistantMessages,
                 platformSelection.platform,
-                memoryContext.prompt,
+                requestContext.copy(memoryPrompt = memoryContext.prompt),
                 reasoningMode = platformSelection.reasoningMode
             ).handleStates(
                 messageFlow = _groupedMessages,
@@ -1329,6 +1401,33 @@ class ChatViewModel @Inject constructor(
     }
 
     private fun sendQuestion(questionText: String, attachments: List<ChatAttachmentDraft>) {
+        val candidates = textSkillCandidates()
+        if (candidates.isEmpty()) {
+            sendQuestionWithTextSkillSnapshot(questionText, attachments, textSkillSnapshot = null)
+            return
+        }
+
+        // Freeze the selected bindings and drafts at submit time, then read package content away from
+        // the main thread before accepting the message or starting a provider request.
+        _loadingStates.update { listOf(LoadingState.Loading) }
+        viewModelScope.launch {
+            val textSkillSnapshot = runCatching {
+                withContext(Dispatchers.IO) { textSkillInvocationCompiler.compile(candidates) }
+            }.onFailure { error ->
+                _attachmentNotice.update { error.message ?: "Skill 编译失败" }
+            }.getOrNull() ?: run {
+                _loadingStates.update { emptyList() }
+                return@launch
+            }
+            sendQuestionWithTextSkillSnapshot(questionText, attachments, textSkillSnapshot)
+        }
+    }
+
+    private fun sendQuestionWithTextSkillSnapshot(
+        questionText: String,
+        attachments: List<ChatAttachmentDraft>,
+        textSkillSnapshot: cn.nabr.chatwithchat.data.textskill.TextSkillInvocationSnapshot?
+    ) {
         val activityAt = currentTimeStamp
         MessageV2(
             chatId = chatRoomId,
@@ -1346,8 +1445,12 @@ class ChatViewModel @Inject constructor(
             _loadingStates.update { listOf(LoadingState.Loading) }
             viewModelScope.launch {
                 try {
-                    persistInitialRequestBeforeCompletion()
-                    completeChat()
+                    if (textSkillSnapshot == null) {
+                        persistInitialRequestBeforeCompletion()
+                        completeChat()
+                    } else {
+                        persistTextSkillSnapshotThenComplete(textSkillSnapshot)
+                    }
                 } catch (error: CancellationException) {
                     throw error
                 } catch (error: Throwable) {
@@ -1356,8 +1459,200 @@ class ChatViewModel @Inject constructor(
                 }
             }
         } else {
-            completeChat()
+            if (textSkillSnapshot != null) {
+                persistTextSkillSnapshotThenComplete(textSkillSnapshot)
+            } else {
+                completeChat()
+            }
         }
+    }
+
+    fun selectOneShotTextSkills(skills: List<SelectedTextSkill>) {
+        setOneShotTextSkills(skills.distinctBy(SelectedTextSkill::selectionKey))
+    }
+
+    fun selectTextSkills(skills: List<SelectedTextSkill>, scope: TextSkillSelectionScope) {
+        when (scope) {
+            TextSkillSelectionScope.ONE_SHOT -> selectOneShotTextSkills(skills)
+            TextSkillSelectionScope.SESSION -> addSessionTextSkills(skills)
+        }
+    }
+
+    fun removeOneShotTextSkill(skill: SelectedTextSkill) {
+        setOneShotTextSkills(_oneShotTextSkills.value.filterNot { it == skill })
+    }
+
+    fun addSessionTextSkills(skills: List<SelectedTextSkill>) {
+        viewModelScope.launch {
+            val chatId = chatRoomId
+            if (chatId <= 0) {
+                // No chat row to key the bindings on yet, so hold the picks in memory. They still take
+                // part in the very next request and are written out once the row is saved.
+                setPendingSessionTextSkills(
+                    mergeTextSkillSelection(pendingSessionTextSkills.value, skills, TextSkillSelectionScope.SESSION)
+                )
+                loadSessionTextSkills()
+                return@launch
+            }
+            val existingKeys = _sessionTextSkills.value.mapTo(mutableSetOf(), SessionTextSkillBinding::selectionKey)
+            val additions = skills.filterNot { skill -> skill.selectionKey() in existingKeys }
+            val start = _sessionTextSkills.value.size
+            additions.forEachIndexed { index, skill ->
+                chatRepository.saveSessionTextSkillBinding(
+                    SessionTextSkillBinding(
+                        chatId = chatId,
+                        packageId = skill.packageId,
+                        skillId = skill.skillId,
+                        variantKey = skill.variantKey,
+                        displayName = skill.displayName,
+                        orderIndex = start + index
+                    )
+                )
+            }
+            loadSessionTextSkills()
+        }
+    }
+
+    fun setSessionTextSkillEnabled(binding: SessionTextSkillBinding, enabled: Boolean) {
+        viewModelScope.launch {
+            if (binding.chatId > 0) {
+                chatRepository.setSessionTextSkillBindingEnabled(
+                    binding.chatId,
+                    binding.packageId,
+                    binding.skillId,
+                    binding.variantKey,
+                    enabled
+                )
+            } else {
+                setPendingSessionTextSkills(
+                    pendingSessionTextSkills.value.map { selection ->
+                        if (selection.skill.selectionKey() == binding.selectionKey()) {
+                            selection.copy(isEnabled = enabled)
+                        } else {
+                            selection
+                        }
+                    }
+                )
+            }
+            loadSessionTextSkills()
+        }
+    }
+
+    fun removeSessionTextSkill(binding: SessionTextSkillBinding) {
+        viewModelScope.launch {
+            if (binding.chatId > 0) {
+                chatRepository.removeSessionTextSkillBinding(
+                    binding.chatId,
+                    binding.packageId,
+                    binding.skillId,
+                    binding.variantKey
+                )
+            } else {
+                setPendingSessionTextSkills(
+                    pendingSessionTextSkills.value.filterNot { selection ->
+                        selection.skill.selectionKey() == binding.selectionKey()
+                    }
+                )
+            }
+            loadSessionTextSkills()
+        }
+    }
+
+    private suspend fun loadSessionTextSkills() {
+        val persisted = if (chatRoomId > 0) chatRepository.fetchSessionTextSkillBindings(chatRoomId) else emptyList()
+        _sessionTextSkills.value = persisted + pendingSessionTextSkills.value.mapIndexed { index, selection ->
+            selection.toSessionBinding(chatId = UNSAVED_SESSION_CHAT_ID, orderIndex = persisted.size + index)
+        }
+    }
+
+    private fun setPendingSessionTextSkills(selections: List<PendingTextSkillSelection>) {
+        pendingSessionTextSkills.value = selections
+        savedStateHandle[PENDING_SESSION_TEXT_SKILLS_STATE_KEY] = encodePendingTextSkillSelections(selections)
+    }
+
+    /**
+     * Single place where "this chat now has a database row" is recorded, so every save path also gets
+     * the chance to write out session-scope Skills the user picked while the row did not exist yet.
+     */
+    private suspend fun recordPersistedChatRoom(chatId: Int) {
+        launchState.recordPersistedChatRoomId(chatId)
+        if (flushPendingSessionTextSkills(chatId)) loadSessionTextSkills()
+    }
+
+    /**
+     * Writes the picks made before the chat row existed, so later turns read them back from the
+     * database. Returns whether anything was written.
+     */
+    private suspend fun flushPendingSessionTextSkills(chatId: Int): Boolean {
+        val pending = pendingSessionTextSkills.value
+        if (chatId <= 0 || pending.isEmpty()) return false
+        val existingKeys = chatRepository.fetchSessionTextSkillBindings(chatId)
+            .mapTo(mutableSetOf(), SessionTextSkillBinding::selectionKey)
+        var orderIndex = existingKeys.size
+        pending.forEach { selection ->
+            if (!existingKeys.add(selection.skill.selectionKey())) return@forEach
+            chatRepository.saveSessionTextSkillBinding(
+                selection.toSessionBinding(chatId = chatId, orderIndex = orderIndex)
+            )
+            orderIndex++
+        }
+        setPendingSessionTextSkills(emptyList())
+        return true
+    }
+
+    private fun compileTextSkillSnapshot(includeOneShot: Boolean = true) = textSkillInvocationCompiler.compile(
+        textSkillCandidates(includeOneShot)
+    )
+
+    private fun textSkillCandidates(includeOneShot: Boolean = true): List<TextSkillInvocationCandidate> =
+        _sessionTextSkills.value.filter(SessionTextSkillBinding::isEnabled).map { binding ->
+            TextSkillInvocationCandidate(
+                TextSkillVariantKey(binding.packageId, binding.skillId, binding.variantKey),
+                SkillInvocationSource.SESSION
+            )
+        } + _oneShotTextSkills.value.takeIf { includeOneShot }.orEmpty().map { skill ->
+            TextSkillInvocationCandidate(
+                TextSkillVariantKey(skill.packageId, skill.skillId, skill.variantKey),
+                SkillInvocationSource.ONE_SHOT
+            )
+        }
+
+    private fun persistTextSkillSnapshotThenComplete(
+        snapshot: cn.nabr.chatwithchat.data.textskill.TextSkillInvocationSnapshot,
+        clearOneShotAfterPersistence: Boolean = true
+    ) {
+        viewModelScope.launch {
+            try {
+                val persisted = withContext(Dispatchers.IO) {
+                    chatRepository.saveChatWithTextSkillInvocation(
+                        chatRoom = _chatRoom.value,
+                        messages = persistableMessages(_groupedMessages.value),
+                        chatPlatformModels = _chatPlatformModels.value,
+                        snapshot = snapshot
+                    )
+                }
+                _chatRoom.value = persisted
+                recordPersistedChatRoom(persisted.id)
+                if (isInitialRequestInFlight) {
+                    launchState.recordInitialRequestPersisted()
+                    isInitialRequestInFlight = false
+                }
+                _groupedMessages.value = withContext(Dispatchers.IO) { fetchGroupedMessages(persisted.id) }
+                if (clearOneShotAfterPersistence) setOneShotTextSkills(emptyList())
+                loadSessionTextSkills()
+                completeChat(ChatRequestContext(textSkillInvocation = snapshot))
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                _attachmentNotice.value = error.message ?: "Skill 快照保存失败"
+                _loadingStates.value = emptyList()
+            }
+        }
+    }
+
+    private fun setOneShotTextSkills(skills: List<SelectedTextSkill>) {
+        _oneShotTextSkills.value = skills
+        savedStateHandle[ONE_SHOT_TEXT_SKILLS_STATE_KEY] = TEXT_SKILL_SELECTION_JSON.encodeToString(skills)
     }
 
     private fun restoreQueuedQuestion(questionText: String) {
@@ -1450,7 +1745,7 @@ class ChatViewModel @Inject constructor(
                 }
                 if (recovered != null) {
                     val (recoveredChatRoom, recoveredMessages) = recovered
-                    launchState.recordPersistedChatRoomId(recoveredChatRoom.id)
+                    recordPersistedChatRoom(recoveredChatRoom.id)
                     launchState.recordInitialRequestPersisted()
                     _chatRoom.value = recoveredChatRoom
                     _groupedMessages.value = recoveredMessages
@@ -1474,7 +1769,7 @@ class ChatViewModel @Inject constructor(
                 chatPlatformModels = _chatPlatformModels.value
             )
         }
-        launchState.recordPersistedChatRoomId(savedChatRoom.id)
+        recordPersistedChatRoom(savedChatRoom.id)
         launchState.recordInitialRequestPersisted()
         _chatRoom.value = savedChatRoom
         isInitialRequestInFlight = false
@@ -1686,7 +1981,7 @@ class ChatViewModel @Inject constructor(
                             )
                             saved to fetchGroupedMessages(saved.id)
                         }
-                        launchState.recordPersistedChatRoomId(savedChatRoom.id)
+                        recordPersistedChatRoom(savedChatRoom.id)
                         _chatRoom.update { currentChatRoom ->
                             if (currentChatRoom.id == chatRoom.id && chatRoom.id == 0) {
                                 savedChatRoom
@@ -1845,10 +2140,29 @@ class ChatViewModel @Inject constructor(
 
     companion object {
         private const val TAG = "ChatViewModel"
+        private const val ONE_SHOT_TEXT_SKILLS_STATE_KEY = "one_shot_text_skills"
+        private const val PENDING_SESSION_TEXT_SKILLS_STATE_KEY = "pending_session_text_skills"
+
+        // Chat id carried by session bindings that only exist in memory, because the chat has no row yet.
+        private const val UNSAVED_SESSION_CHAT_ID = 0
+        private val TEXT_SKILL_SELECTION_JSON = Json
 
         fun toolProgressKey(turnIndex: Int, platformIndex: Int): String = "$turnIndex:$platformIndex"
     }
 }
+
+internal fun SessionTextSkillBinding.selectionKey(): String = "$packageId:$skillId:$variantKey"
+
+internal fun PendingTextSkillSelection.toSessionBinding(chatId: Int, orderIndex: Int): SessionTextSkillBinding =
+    SessionTextSkillBinding(
+        chatId = chatId,
+        packageId = skill.packageId,
+        skillId = skill.skillId,
+        variantKey = skill.variantKey,
+        displayName = skill.displayName,
+        orderIndex = orderIndex,
+        isEnabled = isEnabled
+    )
 
 internal fun shouldRecoverInitialRequest(
     routeChatRoomId: Int,

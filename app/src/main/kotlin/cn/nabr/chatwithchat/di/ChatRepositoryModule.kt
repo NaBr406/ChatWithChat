@@ -17,6 +17,7 @@ import cn.nabr.chatwithchat.data.database.dao.ChatRoomDao
 import cn.nabr.chatwithchat.data.database.dao.ChatRoomV2Dao
 import cn.nabr.chatwithchat.data.database.dao.MessageDao
 import cn.nabr.chatwithchat.data.database.dao.MessageV2Dao
+import cn.nabr.chatwithchat.data.database.dao.TextSkillDao
 import cn.nabr.chatwithchat.data.debug.PromptTraceStore
 import cn.nabr.chatwithchat.data.memory.MemoryTurnBatchScheduler
 import cn.nabr.chatwithchat.data.history.ChatHistoryIndexCoordinator
@@ -45,6 +46,7 @@ object ChatRepositoryModule {
         chatDatabaseV2: ChatDatabaseV2,
         chatRoomV2Dao: ChatRoomV2Dao,
         messageV2Dao: MessageV2Dao,
+        textSkillDao: TextSkillDao,
         chatPlatformModelV2Dao: ChatPlatformModelV2Dao,
         settingRepository: SettingRepository,
         openAIAPI: OpenAIAPI,
@@ -87,6 +89,7 @@ object ChatRepositoryModule {
         contextWindowResolver = contextWindowResolver,
         contextFoldScheduler = contextFoldScheduler,
         applicationScope = applicationScope,
-        openAINativeCompactionService = openAINativeCompactionService
+        openAINativeCompactionService = openAINativeCompactionService,
+        textSkillDao = textSkillDao
     )
 }

@@ -9,7 +9,7 @@ object Route {
     const val SETUP_COMPLETE = "setup_complete"
 
     const val CHAT_LIST = "chat_list"
-    const val CHAT_ROOM = "chat_room/{chatRoomId}?enabled={enabledPlatforms}&initialQuestion={initialQuestion}&initialModel={initialModel}&initialAttachments={initialAttachments}&initialRequestId={initialRequestId}"
+    const val CHAT_ROOM = "chat_room/{chatRoomId}?enabled={enabledPlatforms}&initialQuestion={initialQuestion}&initialModel={initialModel}&initialAttachments={initialAttachments}&initialRequestId={initialRequestId}&initialTextSkills={initialTextSkills}"
 
     const val SETTING_ROUTE = "setting_route"
     const val SETTINGS = "settings"
@@ -22,6 +22,7 @@ object Route {
     const val LICENSE = "license"
     const val MEMORY = "memory"
     const val STICKER_LIBRARY = "sticker_library"
+    const val SKILLS = "skills"
     const val PROMPT_TRACE_DEBUG = "prompt_trace_debug"
 
     const val MIGRATE_V2 = "migrate_v2"

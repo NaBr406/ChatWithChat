@@ -13,6 +13,9 @@ import cn.nabr.chatwithchat.data.model.coerceReasoningModeForModel
 import cn.nabr.chatwithchat.data.model.defaultReasoningMode
 import cn.nabr.chatwithchat.data.repository.ChatRepository
 import cn.nabr.chatwithchat.data.repository.SettingRepository
+import cn.nabr.chatwithchat.data.textskill.SelectedTextSkill
+import cn.nabr.chatwithchat.data.textskill.TextSkillPackageRepository
+import cn.nabr.chatwithchat.data.textskill.toSelectableTextSkills
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.FlowPreview
@@ -50,7 +53,8 @@ internal fun HomeModelsState.shouldShowAddProvider(): Boolean =
 @HiltViewModel
 class HomeViewModel @Inject constructor(
     private val chatRepository: ChatRepository,
-    private val settingRepository: SettingRepository
+    private val settingRepository: SettingRepository,
+    private val textSkillPackageRepository: TextSkillPackageRepository
 ) : ViewModel() {
 
     companion object {
@@ -81,7 +85,16 @@ class HomeViewModel @Inject constructor(
     private val _searchQuery = MutableStateFlow("")
     val searchQuery = _searchQuery.asStateFlow()
 
+    // Installed Skills, so a Skill can be invoked on the landing page before any chat row exists.
+    private val _availableTextSkills = MutableStateFlow<List<SelectedTextSkill>>(emptyList())
+    val availableTextSkills: StateFlow<List<SelectedTextSkill>> = _availableTextSkills.asStateFlow()
+
     init {
+        viewModelScope.launch {
+            textSkillPackageRepository.packages.collect { packages ->
+                _availableTextSkills.value = packages.toSelectableTextSkills()
+            }
+        }
         // Set up debounced search
         _searchQuery
             .debounce(SEARCH_DEBOUNCE_MS)

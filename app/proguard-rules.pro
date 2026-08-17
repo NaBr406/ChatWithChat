@@ -26,6 +26,13 @@
 # ONNX Runtime JNI resolves tensor/value metadata classes by their binary names.
 -keep class ai.onnxruntime.** { *; }
 
+# SnakeYAML's TypeDescription static initializer calls Class.getPackage().getName().
+# R8 obfuscation removes the package metadata on Android and makes getPackage() return null.
+# Keep only that class's original name; keeping the whole desktop-oriented library also pulls in
+# optional java.beans references that are not present on Android.
+-keep class org.yaml.snakeyaml.TypeDescription { *; }
+-dontwarn java.beans.**
+
 # If your project uses WebView with JS, uncomment the following
 # and specify the fully qualified class name to the JavaScript interface
 # class:

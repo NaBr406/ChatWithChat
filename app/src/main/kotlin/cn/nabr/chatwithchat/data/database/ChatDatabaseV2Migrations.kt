@@ -459,6 +459,47 @@ object ChatDatabaseV2Migrations {
         }
     }
 
+    val MIGRATION_21_22 = object : Migration(21, 22) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `session_text_skill_bindings` (
+                    `chat_id` INTEGER NOT NULL,
+                    `package_id` TEXT NOT NULL,
+                    `skill_id` TEXT NOT NULL,
+                    `variant_key` TEXT NOT NULL,
+                    `display_name` TEXT NOT NULL,
+                    `order_index` INTEGER NOT NULL,
+                    `is_enabled` INTEGER NOT NULL,
+                    `created_at` INTEGER NOT NULL,
+                    `updated_at` INTEGER NOT NULL,
+                    PRIMARY KEY(`chat_id`, `package_id`, `skill_id`, `variant_key`),
+                    FOREIGN KEY(`chat_id`) REFERENCES `chats_v2`(`chat_id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                )
+                """.trimIndent()
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_session_text_skill_bindings_chat_id_order_index` ON `session_text_skill_bindings` (`chat_id`, `order_index`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_session_text_skill_bindings_package_id` ON `session_text_skill_bindings` (`package_id`)")
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `message_text_skill_invocations` (
+                    `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    `user_message_id` INTEGER NOT NULL,
+                    `chat_id` INTEGER NOT NULL,
+                    `snapshot_schema_version` INTEGER NOT NULL,
+                    `snapshot_json` TEXT NOT NULL,
+                    `prompt_hash` TEXT NOT NULL,
+                    `created_at` INTEGER NOT NULL,
+                    FOREIGN KEY(`user_message_id`) REFERENCES `messages_v2`(`message_id`) ON UPDATE NO ACTION ON DELETE CASCADE,
+                    FOREIGN KEY(`chat_id`) REFERENCES `chats_v2`(`chat_id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                )
+                """.trimIndent()
+            )
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_message_text_skill_invocations_user_message_id` ON `message_text_skill_invocations` (`user_message_id`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_message_text_skill_invocations_chat_id` ON `message_text_skill_invocations` (`chat_id`)")
+        }
+    }
+
     internal fun createContextManagementTables(db: SupportSQLiteDatabase) {
         // Column order, types, defaults and index names below must match what Room generates for
         // ContextCheckpointSegment / ContextRangeState / ContextNativeCompactionState, or

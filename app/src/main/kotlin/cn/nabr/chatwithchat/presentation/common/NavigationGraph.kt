@@ -18,9 +18,11 @@ import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import androidx.navigation.navigation
 import cn.nabr.chatwithchat.R
+import cn.nabr.chatwithchat.data.textskill.PendingTextSkillSelection
 import cn.nabr.chatwithchat.presentation.ui.chat.ChatScreen
 import cn.nabr.chatwithchat.presentation.ui.chat.ChatShellScreen
 import cn.nabr.chatwithchat.presentation.ui.chat.EmptyChatScreen
+import cn.nabr.chatwithchat.presentation.ui.chat.encodePendingTextSkillSelections
 import cn.nabr.chatwithchat.presentation.ui.debug.PromptTraceScreen
 import cn.nabr.chatwithchat.presentation.ui.main.MainLaunchDestination
 import cn.nabr.chatwithchat.presentation.ui.memory.MemoryScreen
@@ -33,6 +35,7 @@ import cn.nabr.chatwithchat.presentation.ui.setting.ModelManagementScreen
 import cn.nabr.chatwithchat.presentation.ui.setting.PlatformSettingScreen
 import cn.nabr.chatwithchat.presentation.ui.setting.SettingScreen
 import cn.nabr.chatwithchat.presentation.ui.setting.SettingViewModelV2
+import cn.nabr.chatwithchat.presentation.ui.setting.SkillsScreen
 import cn.nabr.chatwithchat.presentation.ui.setting.StickerLibraryScreen
 import cn.nabr.chatwithchat.presentation.ui.setting.ToolSettingsScreen
 import cn.nabr.chatwithchat.presentation.ui.setup.SetupCompleteScreen
@@ -141,14 +144,24 @@ fun NavGraphBuilder.homeScreenNavigation(navController: NavHostController) {
             onExistingChatClick = { chatRoom ->
                 navController.navigateToChatRoom(chatRoom.id, chatRoom.enabledPlatform)
             },
-            navigateToNewChat = { enabledPlatforms, initialQuestion, initialModel, initialAttachmentPaths, initialRequestId ->
-                navController.navigateToChatRoom(0, enabledPlatforms, initialQuestion, initialModel, initialAttachmentPaths, initialRequestId)
+            navigateToNewChat = { enabledPlatforms, initialQuestion, initialModel, initialAttachmentPaths, initialRequestId, initialTextSkills ->
+                navController.navigateToChatRoom(
+                    chatRoomId = 0,
+                    enabledPlatforms = enabledPlatforms,
+                    initialQuestion = initialQuestion,
+                    initialModel = initialModel,
+                    initialAttachmentPaths = initialAttachmentPaths,
+                    initialRequestId = initialRequestId,
+                    initialTextSkills = initialTextSkills
+                )
             }
         ) { openDrawer, homeViewModel, startNewChat ->
             EmptyChatScreen(
                 homeViewModel = homeViewModel,
                 onOpenDrawer = openDrawer,
-                onStartChat = { prompt, attachmentPaths -> startNewChat(prompt, attachmentPaths, true) },
+                onStartChat = { prompt, attachmentPaths, textSkills ->
+                    startNewChat(prompt, attachmentPaths, textSkills, true)
+                },
                 onAddProvider = { navController.navigate(Route.ADD_PLATFORM) }
             )
         }
@@ -161,12 +174,14 @@ private fun NavHostController.navigateToChatRoom(
     initialQuestion: String? = null,
     initialModel: String? = null,
     initialAttachmentPaths: List<String> = emptyList(),
-    initialRequestId: Int = 0
+    initialRequestId: Int = 0,
+    initialTextSkills: List<PendingTextSkillSelection> = emptyList()
 ) {
     val enabledPlatformString = enabledPlatforms.joinToString(",")
     val encodedInitialQuestion = Uri.encode(initialQuestion.orEmpty())
     val encodedInitialModel = Uri.encode(initialModel.orEmpty())
     val encodedInitialAttachments = Uri.encode(initialAttachmentPaths.joinToString("\n"))
+    val encodedInitialTextSkills = Uri.encode(encodePendingTextSkillSelections(initialTextSkills))
     navigate(
         Route.CHAT_ROOM
             .replace(oldValue = "{chatRoomId}", newValue = "$chatRoomId")
@@ -175,6 +190,7 @@ private fun NavHostController.navigateToChatRoom(
             .replace(oldValue = "{initialModel}", newValue = encodedInitialModel)
             .replace(oldValue = "{initialAttachments}", newValue = encodedInitialAttachments)
             .replace(oldValue = "{initialRequestId}", newValue = "$initialRequestId")
+            .replace(oldValue = "{initialTextSkills}", newValue = encodedInitialTextSkills)
     )
 }
 
@@ -190,7 +206,8 @@ fun NavGraphBuilder.chatScreenNavigation(navController: NavHostController) {
             navArgument("initialRequestId") {
                 type = NavType.IntType
                 defaultValue = 0
-            }
+            },
+            navArgument("initialTextSkills") { defaultValue = "" }
         )
     ) {
         ChatShellScreen(
@@ -199,8 +216,16 @@ fun NavGraphBuilder.chatScreenNavigation(navController: NavHostController) {
             onExistingChatClick = { chatRoom ->
                 navController.navigateToChatRoom(chatRoom.id, chatRoom.enabledPlatform)
             },
-            navigateToNewChat = { enabledPlatforms, initialQuestion, initialModel, initialAttachmentPaths, initialRequestId ->
-                navController.navigateToChatRoom(0, enabledPlatforms, initialQuestion, initialModel, initialAttachmentPaths, initialRequestId)
+            navigateToNewChat = { enabledPlatforms, initialQuestion, initialModel, initialAttachmentPaths, initialRequestId, initialTextSkills ->
+                navController.navigateToChatRoom(
+                    chatRoomId = 0,
+                    enabledPlatforms = enabledPlatforms,
+                    initialQuestion = initialQuestion,
+                    initialModel = initialModel,
+                    initialAttachmentPaths = initialAttachmentPaths,
+                    initialRequestId = initialRequestId,
+                    initialTextSkills = initialTextSkills
+                )
             }
         ) { openDrawer, _, _ ->
             ChatScreen(
@@ -232,6 +257,7 @@ fun NavGraphBuilder.settingNavigation(navController: NavHostController) {
                 onNavigateToToolSettings = { navController.navigate(Route.TOOL_SETTINGS) },
                 onNavigateToMemory = { navController.navigate(Route.MEMORY) },
                 onNavigateToStickerLibrary = { navController.navigate(Route.STICKER_LIBRARY) },
+                onNavigateToSkills = { navController.navigate(Route.SKILLS) },
                 onNavigateToAboutPage = { navController.navigate(Route.ABOUT_PAGE) }
             )
         }
@@ -311,6 +337,9 @@ fun NavGraphBuilder.settingNavigation(navController: NavHostController) {
         }
         composable(Route.STICKER_LIBRARY) {
             StickerLibraryScreen(onNavigationClick = { navController.navigateUp() })
+        }
+        composable(Route.SKILLS) {
+            SkillsScreen(onNavigationClick = { navController.navigateUp() })
         }
         composable(Route.LICENSE) {
             LicenseScreen(onNavigationClick = { navController.navigateUp() })
