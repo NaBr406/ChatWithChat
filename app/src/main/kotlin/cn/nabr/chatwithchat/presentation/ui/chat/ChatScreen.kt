@@ -538,7 +538,9 @@ private fun ChatContent(
         }
     }
 
-    val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    // 抽屉搜索框弹出的键盘属于抽屉，聊天页不该因此跳到最新消息（抽屉关掉后阅读位置就丢了）。
+    val imeVisible = !LocalChatDrawerImeSuppressed.current &&
+        WindowInsets.ime.getBottom(LocalDensity.current) > 0
     LaunchedEffect(imeVisible) {
         if (imeVisible) {
             requestFollowLatest()

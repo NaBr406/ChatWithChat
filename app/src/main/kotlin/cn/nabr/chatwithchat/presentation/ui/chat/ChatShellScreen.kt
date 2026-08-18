@@ -2,17 +2,27 @@ package cn.nabr.chatwithchat.presentation.ui.chat
 
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.ime
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
@@ -29,7 +39,14 @@ import cn.nabr.chatwithchat.presentation.ui.home.HomeViewModel
 import cn.nabr.chatwithchat.presentation.ui.home.modelsOrEmpty
 import cn.nabr.chatwithchat.presentation.ui.home.shouldResetSelectionAfterDrawerTransition
 import java.util.UUID
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
+
+/**
+ * 抽屉和它身后的聊天页在同一个窗口里，因此 IME insets 是全窗口共享的：抽屉里的搜索框弹出键盘时，
+ * 聊天页若照常响应，输入框会跟着一起上浮。抽屉打开（含开合动画）期间该值为 true，聊天页据此忽略键盘。
+ */
+internal val LocalChatDrawerImeSuppressed = compositionLocalOf { false }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -60,12 +77,17 @@ fun ChatShellScreen(
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     val chatListState by homeViewModel.chatListState.collectAsStateWithLifecycle()
     val platformState by homeViewModel.platformState.collectAsStateWithLifecycle()
     val searchQuery by homeViewModel.searchQuery.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
     val lifecycleState by lifecycleOwner.lifecycle.currentStateFlow.collectAsStateWithLifecycle()
     val materialColors = settingsMaterialColors()
+    // 打开中、已打开、关闭中三个阶段都算抽屉持有键盘：这期间聊天页都不该跟着 IME 变形。
+    val drawerImeSuppressed = drawerState.currentValue == DrawerValue.Open ||
+        drawerState.targetValue == DrawerValue.Open
 
     fun openDrawer() {
         homeViewModel.resetDrawerSelection()
@@ -121,6 +143,17 @@ fun ChatShellScreen(
             homeViewModel.fetchChats()
             homeViewModel.fetchPlatformStatus()
         }
+    }
+
+    // 抽屉不是独立窗口，打开它并不会让聊天输入框失焦，键盘于是赖着不走。这里在每次开合抽屉时主动收键盘；
+    // 挂在 targetValue 上而不是写进 openDrawer()，是为了同样覆盖侧滑手势和返回手势触发的开合。
+    LaunchedEffect(drawerState) {
+        snapshotFlow { drawerState.targetValue }
+            .drop(1)
+            .collect {
+                keyboardController?.hide()
+                focusManager.clearFocus()
+            }
     }
 
     LaunchedEffect(drawerState) {
@@ -202,11 +235,25 @@ fun ChatShellScreen(
             }
         }
     ) {
-        content(
-            ::openDrawer,
-            homeViewModel,
-            ::startNewChat
-        )
+        CompositionLocalProvider(LocalChatDrawerImeSuppressed provides drawerImeSuppressed) {
+            Box(
+                // 抽屉持有键盘时把 IME insets 就地消费掉，聊天页里的 imePadding() 于是解析为 0，
+                // 输入框不再跟着抽屉的搜索键盘上浮。
+                modifier = if (drawerImeSuppressed) {
+                    Modifier
+                        .fillMaxSize()
+                        .consumeWindowInsets(WindowInsets.ime)
+                } else {
+                    Modifier.fillMaxSize()
+                }
+            ) {
+                content(
+                    ::openDrawer,
+                    homeViewModel,
+                    ::startNewChat
+                )
+            }
+        }
     }
 
     if (chatListState.showDeleteWarningDialog) {
