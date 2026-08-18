@@ -92,6 +92,9 @@ interface ChatHistoryDao {
     @Query("DELETE FROM chat_history_embedding_cache")
     suspend fun clearEmbeddings()
 
+    @Query("DELETE FROM chat_history_embedding_cache WHERE turn_key NOT IN (SELECT turn_key FROM chat_history_projection)")
+    suspend fun deleteOrphanedEmbeddings(): Int
+
     @Query("SELECT * FROM chat_history_vector_snapshot WHERE snapshot_id = :snapshotId LIMIT 1")
     suspend fun vectorSnapshot(snapshotId: String): ChatHistoryVectorSnapshotEntity?
 
@@ -115,6 +118,9 @@ interface ChatHistoryDao {
 
     @Query("DELETE FROM chat_history_vector_entry WHERE turn_key IN (:turnKeys)")
     suspend fun deleteVectorEntriesForTurns(turnKeys: List<String>)
+
+    @Query("DELETE FROM chat_history_vector_entry WHERE turn_key NOT IN (SELECT turn_key FROM chat_history_projection)")
+    suspend fun deleteOrphanedVectorEntries(): Int
 
     @Query("SELECT turn_key FROM chat_history_projection WHERE chat_id = :chatId")
     suspend fun turnKeysForChat(chatId: Int): List<String>

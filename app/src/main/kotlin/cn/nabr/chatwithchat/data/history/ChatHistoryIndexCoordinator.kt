@@ -70,6 +70,7 @@ class ChatHistoryIndexCoordinator @Inject constructor(
 
     suspend fun invalidateDeletedChat(chatId: Int) {
         val turnKeys = historyDao.turnKeysForChat(chatId)
+        var generationAdvanced = false
         database.withTransaction {
             historyDao.deleteChatProjections(chatId)
             historyDao.deleteChatQueue(chatId)
@@ -77,8 +78,20 @@ class ChatHistoryIndexCoordinator @Inject constructor(
                 historyDao.deleteEmbeddings(turnKeys)
                 historyDao.deleteVectorEntriesForTurns(turnKeys)
                 advanceGeneration("deleted:$chatId:${turnKeys.joinToString(",")}")
+                generationAdvanced = true
+            }
+            // 会话行被删掉时 projection 会随外键级联消失，这里再查 turn_key 就已经查不到了。
+            // embedding 缓存和向量条目没有外键约束，只能按“找不到对应 projection”兜底清理，
+            // 否则被删会话的向量会一直留在库里。
+            val orphaned = historyDao.deleteOrphanedEmbeddings() + historyDao.deleteOrphanedVectorEntries()
+            if (orphaned > 0 && !generationAdvanced) {
+                advanceGeneration("orphaned:$chatId:$orphaned")
+                generationAdvanced = true
             }
         }
+        // 向量快照只在 worker 把队列跑干后才重建。删除后不叫醒 worker，向量库里就还是上一版快照，
+        // 语义召回会一路退化成纯词法命中，直到别的操作恰好触发一次调度。
+        if (generationAdvanced) scheduler.enqueue()
     }
 
     suspend fun onMemoryEnabledChanged(enabled: Boolean) {
