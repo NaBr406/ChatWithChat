@@ -11,22 +11,18 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -49,6 +45,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -58,8 +55,6 @@ import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.database.entity.effectiveContent
 import cn.nabr.chatwithchat.data.database.entity.effectiveStickerRefs
 import cn.nabr.chatwithchat.data.database.entity.effectiveTokenUsage
-import cn.nabr.chatwithchat.data.token.TokenUsageRecord
-import cn.nabr.chatwithchat.data.token.aggregateCacheUsage
 import cn.nabr.chatwithchat.presentation.common.AppleGreen
 import cn.nabr.chatwithchat.presentation.common.AppleOrange
 import cn.nabr.chatwithchat.presentation.common.AppleRed
@@ -82,9 +77,7 @@ data class RoundNavigationItem(
     val hasSuccessfulAnswer: Boolean,
     val totalTokens: Int,
     val isEstimated: Boolean,
-    val platformUsages: List<PlatformTokenUsageLine>,
-    val sessionCacheRate: String? = null,
-    val sessionCachePartial: Boolean = false
+    val platformUsages: List<PlatformTokenUsageLine>
 )
 
 data class PlatformTokenUsageLine(
@@ -152,8 +145,16 @@ fun RoundNavigatorOverlay(
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = initialVisibleItemIndex)
     val completedCount = items.completedRoundCount()
     val maximumRoundDigits = items.maxOfOrNull { item -> item.displayNumber.toString().length } ?: 1
-    val roundNumberWidth = (16.dp + 9.dp * (maximumRoundDigits * LocalDensity.current.fontScale))
-        .coerceAtLeast(32.dp)
+    // 轮次号只保留一个右对齐的窄栏位：宽度按最大位数算，行与行之间的提问才对得齐。
+    val roundNumberWidth = (8.dp * maximumRoundDigits * LocalDensity.current.fontScale)
+        .coerceAtLeast(14.dp)
+    // 整段会话都用同一个模型时，逐行标模型名和顶栏里显示的完全重复；只有中途换过模型才值得占一行。
+    val showModel = remember(items) {
+        items
+            .mapNotNull { item -> item.platformUsages.firstOrNull()?.model?.takeIf(String::isNotBlank) }
+            .distinct()
+            .size > 1
+    }
 
     Box(modifier = modifier.fillMaxSize()) {
         Box(
@@ -189,37 +190,39 @@ fun RoundNavigatorOverlay(
                     .fillMaxWidth()
                     .heightIn(max = maxHeight)
             ) {
+                // 标题和统计并排放在一行：它们加起来也就十几个字，堆成两行只是把面板顶高。
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(start = 18.dp, top = 6.dp, end = 6.dp, bottom = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .padding(start = 16.dp, end = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Column(
+                    Text(
+                        modifier = Modifier.semantics { heading() },
+                        text = stringResource(R.string.round_navigator_title),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = materialColors.primaryLabel,
+                        maxLines = 1
+                    )
+                    Text(
                         modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(2.dp)
-                    ) {
-                        Text(
-                            modifier = Modifier.semantics { heading() },
-                            text = stringResource(R.string.round_navigator_title),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = materialColors.primaryLabel
-                        )
-                        Text(
-                            text = stringResource(R.string.round_navigator_summary, items.size, completedCount),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = materialColors.secondaryLabel
-                        )
-                    }
+                        text = stringResource(R.string.round_navigator_summary, items.size, completedCount),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = materialColors.secondaryLabel,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                     IconButton(
-                        modifier = Modifier.size(44.dp),
+                        modifier = Modifier.size(40.dp),
                         onClick = onDismiss
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Close,
                             contentDescription = stringResource(R.string.close),
-                            tint = materialColors.secondaryLabel
+                            tint = materialColors.secondaryLabel,
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }
@@ -233,7 +236,7 @@ fun RoundNavigatorOverlay(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(min = 120.dp),
+                            .heightIn(min = 88.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
@@ -250,23 +253,18 @@ fun RoundNavigatorOverlay(
                         state = listState,
                         contentPadding = PaddingValues(vertical = 4.dp)
                     ) {
-                        itemsIndexed(
+                        // 单行行高配合行间不再画分隔线：一行文字本身就是分隔，横线只是多一层视觉噪音。
+                        items(
                             items = items,
-                            key = { _, item -> item.turnIndex }
-                        ) { index, item ->
+                            key = { item -> item.turnIndex }
+                        ) { item ->
                             RoundNavigatorItem(
                                 item = item,
                                 isCurrent = item.turnIndex == currentTurnIndex,
                                 roundNumberWidth = roundNumberWidth,
+                                showModel = showModel,
                                 onClick = { onTurnClick(item.turnIndex) }
                             )
-                            if (index < items.lastIndex) {
-                                HorizontalDivider(
-                                    modifier = Modifier.padding(start = 26.dp + roundNumberWidth),
-                                    thickness = 0.5.dp,
-                                    color = materialColors.separator
-                                )
-                            }
                         }
                     }
                 }
@@ -280,148 +278,90 @@ private fun RoundNavigatorItem(
     item: RoundNavigationItem,
     isCurrent: Boolean,
     roundNumberWidth: Dp,
+    showModel: Boolean,
     onClick: () -> Unit
 ) {
     val materialColors = settingsMaterialColors()
-    val statusColor = item.status.color()
-    val statusLabel = item.status.localizedLabel()
     val onClickLabel = stringResource(R.string.round_navigator_jump_to, item.displayNumber)
     val questionPreview = item.questionPreview.ifBlank { stringResource(R.string.round_question_empty) }
-    val tokenLabel = stringResource(R.string.round_token_count, formatTokenCount(item.totalTokens))
-    val estimateLabel = stringResource(R.string.round_token_estimated)
-    val sessionCacheLabel = item.sessionCacheRate?.let { rate ->
-        stringResource(R.string.token_cache_session_rate, rate) +
-            if (item.sessionCachePartial) " · ${stringResource(R.string.token_cache_partial)}" else ""
-    }
+    // 绝大多数轮次都是“已完成”，每行都写一遍等于没写；只有异常状态才值得占位置。
+    val statusLabel = item.status.takeIf { status -> status != RoundStatus.Completed }?.localizedLabel()
+    val tokenValue = formatTokenCount(item.totalTokens)
+    // 估算标记压成一个 ≈ 前缀，省下“估算”两个字；朗读时仍然给完整文案。
+    val tokenText = tokenValue.takeIf { item.totalTokens > 0 }
+        ?.let { value -> if (item.isEstimated) "≈$value" else value }
+    val tokenDescription = stringResource(R.string.round_token_count, tokenValue) +
+        if (item.isEstimated) " ${stringResource(R.string.round_token_estimated)}" else ""
+    val modelLabel = item.platformUsages.firstOrNull()
+        ?.model
+        ?.takeIf { model -> showModel && model.isNotBlank() }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(if (isCurrent) materialColors.primaryLabel.copy(alpha = 0.08f) else Color.Transparent)
+            .background(if (isCurrent) materialColors.primaryLabel.copy(alpha = 0.07f) else Color.Transparent)
             .semantics(mergeDescendants = true) { selected = isCurrent }
             .clickable(
                 role = Role.Button,
                 onClickLabel = onClickLabel,
                 onClick = onClick
             )
-            .defaultMinSize(minHeight = 72.dp)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.Top,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
+            .defaultMinSize(minHeight = 44.dp)
+            .padding(horizontal = 14.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Surface(
-            modifier = Modifier
-                .width(roundNumberWidth)
-                .heightIn(min = 32.dp),
-            shape = CircleShape,
-            color = if (isCurrent) materialColors.primaryLabel else materialColors.primaryLabel.copy(alpha = 0.1f),
-            contentColor = if (isCurrent) materialColors.canvas else materialColors.primaryLabel,
-            tonalElevation = 0.dp
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Text(
-                    text = item.displayNumber.toString(),
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-        }
+        Text(
+            modifier = Modifier.widthIn(min = roundNumberWidth),
+            text = item.displayNumber.toString(),
+            textAlign = TextAlign.End,
+            style = MaterialTheme.typography.labelMedium,
+            color = if (isCurrent) materialColors.primaryLabel else materialColors.tertiaryLabel,
+            maxLines = 1
+        )
 
         Column(
             modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+            verticalArrangement = Arrangement.spacedBy(1.dp)
         ) {
             Text(
                 text = questionPreview,
                 style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
+                fontWeight = if (isCurrent) FontWeight.Medium else FontWeight.Normal,
                 color = materialColors.primaryLabel,
-                maxLines = 2,
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(6.dp)
-                        .background(statusColor, CircleShape)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
+            modelLabel?.let { model ->
                 Text(
-                    text = statusLabel,
+                    text = model,
                     style = MaterialTheme.typography.labelSmall,
-                    color = materialColors.secondaryLabel,
-                    maxLines = 1
-                )
-                Text(
-                    text = buildString {
-                        append(" · ")
-                        append(tokenLabel)
-                        if (item.isEstimated) {
-                            append(" · ")
-                            append(estimateLabel)
-                        }
-                        sessionCacheLabel?.let { label ->
-                            append(" · ")
-                            append(label)
-                        }
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = materialColors.secondaryLabel,
+                    color = materialColors.tertiaryLabel,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
+                    overflow = TextOverflow.Ellipsis
                 )
-            }
-
-            item.platformUsages.forEach { usage ->
-                PlatformUsageText(usage = usage)
             }
         }
 
-        Icon(
-            imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-            contentDescription = null,
-            tint = if (isCurrent) materialColors.primaryLabel else materialColors.tertiaryLabel,
-            modifier = Modifier
-                .padding(top = 7.dp)
-                .size(18.dp)
-        )
-    }
-}
+        statusLabel?.let { label ->
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = item.status.color(),
+                maxLines = 1
+            )
+        }
 
-@Composable
-private fun PlatformUsageText(usage: PlatformTokenUsageLine) {
-    val materialColors = settingsMaterialColors()
-    val platformName = usage.platformName.ifBlank { stringResource(R.string.round_unknown_platform) }
-    val tokenLabel = stringResource(R.string.round_token_count, formatTokenCount(usage.totalTokens))
-    val toolTokenLabel = if (usage.toolTokens > 0) {
-        stringResource(R.string.round_tool_token_count, formatTokenCount(usage.toolTokens))
-    } else {
-        null
+        tokenText?.let { token ->
+            Text(
+                modifier = Modifier.semantics { contentDescription = tokenDescription },
+                text = token,
+                style = MaterialTheme.typography.labelSmall,
+                color = materialColors.secondaryLabel,
+                maxLines = 1
+            )
+        }
     }
-    val estimateLabel = stringResource(R.string.round_token_estimated).takeIf { usage.isEstimated }
-
-    Text(
-        text = buildString {
-            append(platformName)
-            usage.model.takeIf { it.isNotBlank() }?.let { model ->
-                append(" / ")
-                append(model)
-            }
-            listOfNotNull(tokenLabel, toolTokenLabel, estimateLabel).forEach { detail ->
-                append(" · ")
-                append(detail)
-            }
-        },
-        style = MaterialTheme.typography.bodySmall,
-        color = materialColors.secondaryLabel,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis
-    )
 }
 
 internal fun List<RoundNavigationItem>.completedRoundCount(): Int = count { item ->
@@ -442,20 +382,6 @@ fun buildRoundNavigationItems(
     val selectedUsage = selectedAssistantMessage?.effectiveTokenUsage()
     val selectedPlatformUid = selectedAssistantMessage?.platformType.orEmpty()
     val selectedPlatform = enabledPlatformLookup[selectedPlatformUid]
-    val selectedModel = selectedUsage?.model.orEmpty()
-    val sessionCacheUsage = if (selectedPlatformUid.isBlank() || selectedModel.isBlank()) {
-        null
-    } else {
-        groupedMessages.assistantMessages
-            .asSequence()
-            .flatten()
-            .mapNotNull { assistantMessage -> assistantMessage.effectiveTokenUsage() }
-            .filter { usage ->
-                usage.platformUid == selectedPlatformUid && usage.model == selectedModel
-            }
-            .toList()
-            .aggregateCacheUsage()
-    }
     val successCount = selectedAssistantMessage?.let { message ->
         if (message.hasSuccessfulAssistantAnswer()) 1 else 0
     } ?: 0
@@ -494,19 +420,17 @@ fun buildRoundNavigationItems(
                     isEstimated = usage.isEstimated
                 )
             }
-        ),
-        sessionCacheRate = sessionCacheUsage?.hitRate?.let { rate -> "${(rate * 1000).toInt() / 10.0}%" },
-        sessionCachePartial = sessionCacheUsage?.status == cn.nabr.chatwithchat.data.token.TokenCacheStatus.PARTIAL
+        )
     )
 }
 
 @Composable
 private fun RoundStatus.color(): Color = when (this) {
-        RoundStatus.Completed -> AppleGreen
-        RoundStatus.Partial -> AppleOrange
-        RoundStatus.Failed -> AppleRed
-        RoundStatus.Generating -> settingsMaterialColors().primaryLabel
-    }
+    RoundStatus.Completed -> AppleGreen
+    RoundStatus.Partial -> AppleOrange
+    RoundStatus.Failed -> AppleRed
+    RoundStatus.Generating -> settingsMaterialColors().primaryLabel
+}
 
 @Composable
 private fun RoundStatus.localizedLabel(): String = stringResource(
