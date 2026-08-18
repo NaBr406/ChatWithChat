@@ -1382,19 +1382,15 @@
       "sha256": "e559857b30c5bfe1044d15974a1a850311beaf7146a43eabef0b21e456129e54",
       "mimeType": "image/png",
       "mediaKind": "static_raster",
-      "title": "心累小狗",
+      "title": "心累无语小狗",
       "altText": "棕白小狗瘫坐在角落，眼神疲惫又无奈，像是心累了",
       "tags": [
-        "心累",
-        "疲惫",
-        "无奈",
-        "忧郁",
-        "发呆",
+        "无语",
         "丧"
       ],
       "aliases": [
         "心累狗",
-        "忧郁狗",
+        "无语狗",
         "累了"
       ],
       "byteSize": 30641,
