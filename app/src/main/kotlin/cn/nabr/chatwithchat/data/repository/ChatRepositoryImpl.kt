@@ -167,6 +167,7 @@ import java.io.IOException
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -3987,13 +3988,22 @@ private fun List<MessageSourceMetadata>.dedupeMessageSources(): List<MessageSour
 
 internal fun mergeSystemPrompt(basePrompt: String?, memoryPrompt: String?): String? = mergePromptSections(basePrompt, memoryPrompt)
 
+/**
+ * 运行时上下文位于系统提示词的开头，而供应商的提示词缓存只认逐字节相同的前缀。此前这里带着秒和纳秒
+ * （ISO_OFFSET_DATE_TIME），于是每次请求的前缀都是新的，缓存永远命中不了——OpenAI 的缓存命中率因此恒为 0%。
+ * 现在只到日期，同一天内前缀保持不变，缓存才有机会复用。既然不再提供具体时刻，就明确说明这一点，
+ * 而不是让模型拿日期去回答"现在几点"。文案也要压到和原来相当的长度：它进入每一次请求，字数直接算进输入 token。
+ */
 internal fun currentRuntimeContextPrompt(): String {
     val zone = ZoneId.systemDefault()
-    val now = ZonedDateTime.now(zone)
+    val today = ZonedDateTime.now(zone)
     return "运行时上下文：\n" +
-        "- 当前本地日期和时间：${now.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)} (${zone.id})。\n" +
-        "- 回答简单的日期、时间和时区问题时使用此上下文；不要通过外部查询确定本地时钟时间。"
+        "- 当前本地日期：${today.format(RUNTIME_CONTEXT_DATE_FORMATTER)}（${zone.id}），不含具体时刻。\n" +
+        "- 日期、星期、时区问题用此上下文，不要外部查询；时刻未知时如实说明。"
 }
+
+private val RUNTIME_CONTEXT_DATE_FORMATTER: DateTimeFormatter =
+    DateTimeFormatter.ofPattern("yyyy-MM-dd EEEE", Locale.SIMPLIFIED_CHINESE)
 
 internal fun openAINativeToolInstruction(activeToolDefinitions: List<ToolDefinition>): String {
     val webInstruction = OPENAI_NATIVE_WEB_SEARCH_INSTRUCTION.takeIf {

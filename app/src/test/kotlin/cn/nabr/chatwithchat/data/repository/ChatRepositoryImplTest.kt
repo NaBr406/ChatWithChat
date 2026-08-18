@@ -2240,7 +2240,7 @@ class ChatRepositoryImplTest {
             SearchDecisionModelClient { _, prompt ->
                 assertTrue(prompt.contains("latest Kotlin release"))
                 assertTrue(prompt.contains("运行时上下文"))
-                assertTrue(prompt.contains("当前本地日期和时间"))
+                assertTrue(prompt.contains("当前本地日期"))
                 Result.success(
                     SearchDecisionModelResponse(
                         """{"shouldSearch":true,"queries":["latest Kotlin release"],"reason":"latest requested"}"""
@@ -4069,15 +4069,15 @@ class ChatRepositoryImplTest {
         const val BASELINE_MEMORY_PROMPT = "Relevant memory: user prefers concise Chinese replies."
         const val FALLBACK_TOOL_SCHEMA_MARKER = "Enabled tool signatures:"
         const val FALLBACK_TOOL_SCRATCHPAD_MARKER = "Tool scratchpad:"
-        val BASELINE_RUNTIME_DATE_TIME_REGEX = Regex("\\d{4}-\\d{2}-\\d{2}T[^ ]+ \\([^)]*\\)")
+        val BASELINE_RUNTIME_DATE_TIME_REGEX = Regex("\\d{4}-\\d{2}-\\d{2} 星期.（[^）]*）")
         val EXPECTED_STICKER_BASELINE_ROWS = listOf(
-            "sticker-request-baseline|custom_json|3|2|1371,1430,719|614,526,254|1155,1202,524|67,67,67|54,54,54|159,73,0|0,247,0|0,0,0|1|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|ollama_json|3|2|1367,1426,715|617,529,257|1155,1202,524|67,67,67|54,54,54|159,73,0|0,247,0|0,0,0|1|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|groq_json|3|2|1422,1481,770|631,543,271|1155,1202,524|67,67,67|54,54,54|159,73,0|0,247,0|0,0,0|1|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|openai_responses|3|2|1529,1676,1187|648,650,565|586,646,737|42,42,42|54,54,54|803,361,0|0,479,334|2,1,0|2|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|openrouter_native|3|2|1672,1812,1358|852,830,774|586,645,736|67,67,67|54,54,54|829,374,0|0,509,366|2,1,0|2|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|anthropic_native|3|2|1525,1680,1260|825,805,756|586,646,737|67,67,67|54,54,54|742,331,0|0,502,359|2,1,0|2|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|google_native|3|2|1497,1649,1225|814,792,743|586,645,736|51,51,51|54,54,54|707,327,0|0,460,334|2,1,0|2|30/3/33|60/6/66|3|1"
+            "sticker-request-baseline|custom_json|3|2|1356,1415,704|611,523,251|1140,1187,509|67,67,67|54,54,54|159,73,0|0,247,0|0,0,0|1|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|ollama_json|3|2|1352,1411,700|614,526,254|1140,1187,509|67,67,67|54,54,54|159,73,0|0,247,0|0,0,0|1|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|groq_json|3|2|1407,1466,755|628,540,268|1140,1187,509|67,67,67|54,54,54|159,73,0|0,247,0|0,0,0|1|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|openai_responses|3|2|1514,1661,1172|639,641,556|571,631,722|42,42,42|54,54,54|803,361,0|0,479,334|2,1,0|2|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|openrouter_native|3|2|1657,1797,1343|849,827,771|571,630,721|67,67,67|54,54,54|829,374,0|0,509,366|2,1,0|2|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|anthropic_native|3|2|1510,1665,1245|822,802,753|571,631,722|67,67,67|54,54,54|742,331,0|0,502,359|2,1,0|2|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|google_native|3|2|1482,1634,1210|811,789,740|571,630,721|51,51,51|54,54,54|707,327,0|0,460,334|2,1,0|2|30/3/33|60/6/66|3|1"
         )
         val JSON_STICKER_TOKEN_CEILINGS = mapOf(
             "custom_json" to 1_939,
@@ -4795,9 +4795,10 @@ class ChatRepositoryImplTest {
         )
     }
 
+    // 运行时上下文里的日期和时区随机器和当天变化，基线统计的是字符数和 token 数，所以先归一成固定串。
     private fun normalizeBaselinePayload(value: String): String = BASELINE_RUNTIME_DATE_TIME_REGEX.replace(
         value,
-        "2000-01-01T00:00:00+08:00 (Asia/Shanghai)"
+        "2000-01-01 星期六（Asia/Shanghai）"
     )
 
     private fun systemText(openAIAPI: RecordingOpenAIAPI): String = openAIAPI.lastChatCompletionRequest
