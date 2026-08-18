@@ -227,6 +227,9 @@ dependencies {
     // On-device embeddings
     implementation(libs.onnx.runtime.android)
 
+    // PDF text extraction for document attachments
+    implementation(libs.pdfbox.android)
+
     // Test
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

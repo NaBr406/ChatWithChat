@@ -1289,7 +1289,7 @@ class ChatViewModel @Inject constructor(
             path = this,
             identity = attachmentIdentity(this),
             sizeBytes = FileUtils.getFileSize(context, this),
-            isSupported = FileUtils.isSupportedUploadMimeType(mimeType)
+            isSupported = FileUtils.isSupportedAttachmentMimeType(mimeType)
         )
     }
 

@@ -4,6 +4,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -126,21 +127,37 @@ fun UserMessageEditDialog(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var question by remember { mutableStateOf(initialQuestion.content) }
-    var isCopyingPickedImages by remember { mutableStateOf(false) }
-    val isAttachmentBusy = isAttachmentImportInProgress || isCopyingPickedImages
+    var isCopyingPickedAttachments by remember { mutableStateOf(false) }
+    val isAttachmentBusy = isAttachmentImportInProgress || isCopyingPickedAttachments
     val questionFieldMaxLines = 8
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia()
     ) { uris ->
         if (uris.isNotEmpty()) {
-            isCopyingPickedImages = true
+            isCopyingPickedAttachments = true
             scope.launch {
                 try {
-                    copyPickedImages(context, uris) { result ->
+                    copyPickedAttachments(context, uris) { result ->
                         onFilesSelected(result.copiedPaths, result.failedCount)
                     }
                 } finally {
-                    isCopyingPickedImages = false
+                    isCopyingPickedAttachments = false
+                }
+            }
+        }
+    }
+    val documentPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            isCopyingPickedAttachments = true
+            scope.launch {
+                try {
+                    copyPickedAttachments(context, uris) { result ->
+                        onFilesSelected(result.copiedPaths, result.failedCount)
+                    }
+                } finally {
+                    isCopyingPickedAttachments = false
                 }
             }
         }
@@ -178,6 +195,7 @@ fun UserMessageEditDialog(
                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                         )
                     },
+                    onAttachDocumentClick = { documentPickerLauncher.launch(DOCUMENT_PICKER_MIME_TYPES) },
                     onFileRemoved = onFileRemoved
                 )
             }
@@ -226,20 +244,36 @@ fun AssistantMessageEditDialog(
     val initialThoughtsText = initialMessage.effectiveThoughts().stripInternalStickerMarkers()
     var responseText by remember { mutableStateOf(initialResponseText) }
     var thoughtsText by remember { mutableStateOf(initialThoughtsText) }
-    var isCopyingPickedImages by remember { mutableStateOf(false) }
-    val isAttachmentBusy = isAttachmentImportInProgress || isCopyingPickedImages
+    var isCopyingPickedAttachments by remember { mutableStateOf(false) }
+    val isAttachmentBusy = isAttachmentImportInProgress || isCopyingPickedAttachments
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia()
     ) { uris ->
         if (uris.isNotEmpty()) {
-            isCopyingPickedImages = true
+            isCopyingPickedAttachments = true
             scope.launch {
                 try {
-                    copyPickedImages(context, uris) { result ->
+                    copyPickedAttachments(context, uris) { result ->
                         onFilesSelected(result.copiedPaths, result.failedCount)
                     }
                 } finally {
-                    isCopyingPickedImages = false
+                    isCopyingPickedAttachments = false
+                }
+            }
+        }
+    }
+    val documentPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            isCopyingPickedAttachments = true
+            scope.launch {
+                try {
+                    copyPickedAttachments(context, uris) { result ->
+                        onFilesSelected(result.copiedPaths, result.failedCount)
+                    }
+                } finally {
+                    isCopyingPickedAttachments = false
                 }
             }
         }
@@ -290,6 +324,7 @@ fun AssistantMessageEditDialog(
                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                         )
                     },
+                    onAttachDocumentClick = { documentPickerLauncher.launch(DOCUMENT_PICKER_MIME_TYPES) },
                     onFileRemoved = onFileRemoved
                 )
             }
@@ -330,6 +365,7 @@ private fun AttachmentEditorSection(
     attachments: List<ChatAttachmentDraft>,
     enabled: Boolean,
     onAttachFileClick: () -> Unit,
+    onAttachDocumentClick: () -> Unit,
     onFileRemoved: (String) -> Unit
 ) {
     if (attachments.isNotEmpty()) {
@@ -338,12 +374,20 @@ private fun AttachmentEditorSection(
             onFileRemoved = onFileRemoved
         )
     }
-    TextButton(
-        modifier = Modifier.padding(horizontal = 12.dp),
-        enabled = enabled,
-        onClick = onAttachFileClick,
-        colors = settingsTextButtonColors()
-    ) {
-        Text(text = stringResource(R.string.attach_file))
+    Row(modifier = Modifier.padding(horizontal = 12.dp)) {
+        TextButton(
+            enabled = enabled,
+            onClick = onAttachFileClick,
+            colors = settingsTextButtonColors()
+        ) {
+            Text(text = stringResource(R.string.attach_file))
+        }
+        TextButton(
+            enabled = enabled,
+            onClick = onAttachDocumentClick,
+            colors = settingsTextButtonColors()
+        ) {
+            Text(text = stringResource(R.string.attach_document))
+        }
     }
 }

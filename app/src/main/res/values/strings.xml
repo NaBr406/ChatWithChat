@@ -263,6 +263,7 @@
     <string name="token_set">密钥已设置为 %s*****</string>
     <string name="not_set">未设置</string>
     <string name="close">关闭</string>
+    <string name="view_full_image">查看大图</string>
     <string name="delete">删除</string>
     <string name="duplicate">复制</string>
     <string name="chats_selected">已选择 %d 个</string>
@@ -459,7 +460,14 @@
     <string name="no_search_results">未找到会话</string>
     <string name="clear">清除</string>
     <string name="attach_file">附加文件</string>
+    <string name="attach_document">附加文档</string>
     <string name="choose_image">选择图片</string>
+    <string name="choose_document">选择文档</string>
+    <string name="document_preview_title">文档内容</string>
+    <string name="attachment_preview_title">附件预览</string>
+    <string name="pdf_page_indicator">第 %1$d / %2$d 页</string>
+    <string name="document_preview_truncated">文档较长，仅预览并发送前 %1$d 个字符。</string>
+    <string name="document_text_unavailable">无法读取文档内容，可能是扫描版 PDF 或加密文件。</string>
     <string name="take_photo">拍照</string>
     <string name="failed_to_start_camera">无法打开相机。</string>
     <string name="add_platform">添加平台</string>
@@ -543,7 +551,7 @@
     <string name="large_images_resized_before_upload">上传前已压缩大图。</string>
     <string name="failed_to_prepare_attachment">附件处理失败。</string>
     <string name="failed_to_copy_attachment">附件复制失败。</string>
-    <string name="attachment_batch_rejected">%1$d 张图片未能添加，请检查图片格式和 50 MB 限制。</string>
+    <string name="attachment_batch_rejected">%1$d 个附件未能添加，请检查格式和 50 MB 限制。</string>
     <string name="settings_section_web_search">联网搜索</string>
     <string name="settings_section_tool_calling">工具调用</string>
     <string name="settings_section_callable_tools">可调用工具</string>

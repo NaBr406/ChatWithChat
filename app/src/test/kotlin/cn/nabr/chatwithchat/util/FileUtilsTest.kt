@@ -54,8 +54,46 @@ class FileUtilsTest {
 
     @Test
     fun `non image mime types are not supported by image upload pipeline`() {
-        assertTrue(FileUtils.isSupportedUploadMimeType("image/jpeg"))
-        assertFalse(FileUtils.isSupportedUploadMimeType("application/pdf"))
+        assertTrue(FileUtils.isInlineImageMimeType("image/jpeg"))
+        assertFalse(FileUtils.isInlineImageMimeType("application/pdf"))
+        assertFalse(FileUtils.isInlineImageMimeType("text/markdown"))
+    }
+
+    @Test
+    fun `text document gate accepts text family and the whitelisted application types`() {
+        assertTrue(FileUtils.isTextDocumentMimeType("text/plain"))
+        assertTrue(FileUtils.isTextDocumentMimeType("text/markdown"))
+        assertTrue(FileUtils.isTextDocumentMimeType("text/plain; charset=GBK"))
+        assertTrue(FileUtils.isTextDocumentMimeType("application/pdf"))
+        assertTrue(
+            FileUtils.isTextDocumentMimeType(
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
+        )
+        // 旧版二进制 .doc 与压缩包不在支持范围内，必须在准入处就被拒掉。
+        assertFalse(FileUtils.isTextDocumentMimeType("application/msword"))
+        assertFalse(FileUtils.isTextDocumentMimeType("application/zip"))
+        assertFalse(FileUtils.isTextDocumentMimeType("application/octet-stream"))
+        assertFalse(FileUtils.isTextDocumentMimeType("image/png"))
+    }
+
+    @Test
+    fun `attachment admission accepts both images and text documents`() {
+        assertTrue(FileUtils.isSupportedAttachmentMimeType("image/png"))
+        assertTrue(FileUtils.isSupportedAttachmentMimeType("application/pdf"))
+        assertFalse(FileUtils.isSupportedAttachmentMimeType("application/zip"))
+    }
+
+    @Test
+    fun `mime type falls back to extension for document suffixes`() {
+        assertEquals("text/markdown", FileUtils.getMimeTypeFromPath("notes.md"))
+        assertEquals("text/plain", FileUtils.getMimeTypeFromPath("Main.kt"))
+        assertEquals("text/csv", FileUtils.getMimeTypeFromPath("rows.csv"))
+        assertEquals("application/pdf", FileUtils.getMimeTypeFromPath("paper.pdf"))
+        assertEquals(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            FileUtils.getMimeTypeFromPath("报告.docx")
+        )
     }
 
     @Test

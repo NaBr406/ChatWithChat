@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -19,6 +20,7 @@ import androidx.navigation.navArgument
 import androidx.navigation.navigation
 import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.textskill.PendingTextSkillSelection
+import cn.nabr.chatwithchat.presentation.ui.chat.AttachmentPreviewScreen
 import cn.nabr.chatwithchat.presentation.ui.chat.ChatScreen
 import cn.nabr.chatwithchat.presentation.ui.chat.ChatShellScreen
 import cn.nabr.chatwithchat.presentation.ui.chat.EmptyChatScreen
@@ -49,18 +51,24 @@ fun SetupNavGraph(
     navController: NavHostController,
     startDestination: MainLaunchDestination
 ) {
-    NavHost(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(settingsMaterialColors().canvas),
-        navController = navController,
-        startDestination = startDestination.route
-    ) {
-        homeScreenNavigation(navController)
-        migrationScreenNavigation(navController)
-        setupNavigation(navController)
-        settingNavigation(navController)
-        chatScreenNavigation(navController)
+    val attachmentPreviewLauncher = remember(navController) {
+        AttachmentPreviewLauncher { filePath -> navController.navigateToAttachmentPreview(filePath) }
+    }
+    CompositionLocalProvider(LocalAttachmentPreviewLauncher provides attachmentPreviewLauncher) {
+        NavHost(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(settingsMaterialColors().canvas),
+            navController = navController,
+            startDestination = startDestination.route
+        ) {
+            homeScreenNavigation(navController)
+            migrationScreenNavigation(navController)
+            setupNavigation(navController)
+            settingNavigation(navController)
+            chatScreenNavigation(navController)
+            attachmentPreviewNavigation(navController)
+        }
     }
 }
 
@@ -192,6 +200,25 @@ private fun NavHostController.navigateToChatRoom(
             .replace(oldValue = "{initialRequestId}", newValue = "$initialRequestId")
             .replace(oldValue = "{initialTextSkills}", newValue = encodedInitialTextSkills)
     )
+}
+
+private fun NavHostController.navigateToAttachmentPreview(filePath: String) {
+    // 路径带 `/`，只能进 query 参数；读取端跟本文件其他参数一样再 Uri.decode 一次。
+    navigate(Route.ATTACHMENT_PREVIEW.replace(oldValue = "{path}", newValue = Uri.encode(filePath))) {
+        launchSingleTop = true
+    }
+}
+
+fun NavGraphBuilder.attachmentPreviewNavigation(navController: NavHostController) {
+    composable(
+        Route.ATTACHMENT_PREVIEW,
+        arguments = listOf(navArgument("path") { defaultValue = "" })
+    ) { entry ->
+        AttachmentPreviewScreen(
+            filePath = Uri.decode(entry.arguments?.getString("path").orEmpty()),
+            onNavigationClick = { navController.navigateUp() }
+        )
+    }
 }
 
 fun NavGraphBuilder.chatScreenNavigation(navController: NavHostController) {

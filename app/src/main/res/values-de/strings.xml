@@ -289,7 +289,7 @@
     <string name="large_images_resized_before_upload">上传前已压缩大图。</string>
     <string name="failed_to_prepare_attachment">附件处理失败。</string>
     <string name="failed_to_copy_attachment">附件复制失败。</string>
-    <string name="attachment_batch_rejected">%1$d Bilder konnten nicht hinzugefügt werden. Prüfe das Bildformat und das Limit von 50 MB.</string>
+    <string name="attachment_batch_rejected">%1$d Anhänge konnten nicht hinzugefügt werden. Prüfe das Format und das Limit von 50 MB.</string>
     <string name="reasoning_control">Denken</string>
     <string name="reasoning_mode_model_default">Modellstandard</string>
     <string name="reasoning_mode_default_only">Standarddenken des Modells</string>

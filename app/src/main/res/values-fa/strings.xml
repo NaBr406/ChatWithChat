@@ -289,7 +289,7 @@
     <string name="large_images_resized_before_upload">上传前已压缩大图。</string>
     <string name="failed_to_prepare_attachment">附件处理失败。</string>
     <string name="failed_to_copy_attachment">附件复制失败。</string>
-    <string name="attachment_batch_rejected">افزودن %1$d تصویر ممکن نشد. قالب تصویر و محدودیت ۵۰ مگابایت را بررسی کنید.</string>
+    <string name="attachment_batch_rejected">افزودن %1$d پیوست ممکن نشد. قالب فایل و محدودیت ۵۰ مگابایت را بررسی کنید.</string>
     <string name="reasoning_control">استدلال</string>
     <string name="reasoning_mode_model_default">پیش‌فرض مدل</string>
     <string name="reasoning_mode_default_only">استدلال پیش‌فرض مدل</string>

@@ -7,6 +7,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -67,8 +68,10 @@ import cn.nabr.chatwithchat.data.database.entity.MessageStickerRef
 import cn.nabr.chatwithchat.data.database.entity.SafeMessageSourceTarget
 import cn.nabr.chatwithchat.data.database.entity.safeDedupeKey
 import cn.nabr.chatwithchat.data.database.entity.safeNavigationTarget
+import cn.nabr.chatwithchat.presentation.common.LocalAttachmentPreviewLauncher
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.theme.ChatWithChatTheme
+import cn.nabr.chatwithchat.util.AttachmentNaming
 import java.io.File
 
 private val OutgoingMessageBlue = Color(0xFF0062CC)
@@ -81,24 +84,30 @@ fun UserChatBubble(
     onLongPress: () -> Unit
 ) {
     Column(horizontalAlignment = Alignment.End) {
-        Surface(
-            modifier = modifier
-                .pointerInput(Unit) {
-                    detectTapGestures(onLongPress = { onLongPress.invoke() })
-                },
-            shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = 20.dp, bottomEnd = 6.dp),
-            color = OutgoingMessageBlue,
-            contentColor = Color.White
-        ) {
-            ChatMarkdown(
-                content = text,
-                contentColor = Color.White,
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp)
-            )
+        // 只发图片、不带文字时气泡里没有任何内容，但仍会按内边距撑出一小块蓝色（右下角还带着 6.dp 的小圆角），
+        // 看起来就是缺了一角的气泡。没有文字就不画气泡。
+        if (text.isNotBlank()) {
+            Surface(
+                modifier = modifier
+                    .pointerInput(Unit) {
+                        detectTapGestures(onLongPress = { onLongPress.invoke() })
+                    },
+                shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = 20.dp, bottomEnd = 6.dp),
+                color = OutgoingMessageBlue,
+                contentColor = Color.White
+            ) {
+                ChatMarkdown(
+                    content = text,
+                    contentColor = Color.White,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp)
+                )
+            }
         }
         MessageFileThumbnailRow(
             files = files,
-            modifier = Modifier.padding(top = 6.dp)
+            modifier = Modifier.padding(top = if (text.isNotBlank()) 6.dp else 0.dp),
+            // 只发图片时上面那个气泡不存在，长按菜单得挂在缩略图上，否则这条消息没法长按。
+            onLongPress = onLongPress
         )
     }
 }
@@ -594,7 +603,8 @@ fun AssistantChatBubblePreview() {
 internal fun MessageFileThumbnailRow(
     files: List<String>,
     modifier: Modifier = Modifier,
-    usePrimaryColors: Boolean = true
+    usePrimaryColors: Boolean = true,
+    onLongPress: (() -> Unit)? = null
 ) {
     // Filter out empty strings and check if we have valid files
     val validFiles = files.filter { it.isNotEmpty() && it.isNotBlank() }
@@ -602,6 +612,9 @@ internal fun MessageFileThumbnailRow(
     if (validFiles.isEmpty()) {
         return
     }
+
+    // 展开附件是另起一页，不是浮窗；这一行离 NavHost 太深，导航入口从 CompositionLocal 取。
+    val previewLauncher = LocalAttachmentPreviewLauncher.current
 
     Row(
         modifier = modifier
@@ -612,7 +625,9 @@ internal fun MessageFileThumbnailRow(
         validFiles.forEach { filePath ->
             MessageFileThumbnail(
                 filePath = filePath,
-                usePrimaryColors = usePrimaryColors
+                usePrimaryColors = usePrimaryColors,
+                onClick = { previewLauncher.open(filePath) },
+                onLongPress = onLongPress
             )
         }
     }
@@ -621,10 +636,13 @@ internal fun MessageFileThumbnailRow(
 @Composable
 private fun MessageFileThumbnail(
     filePath: String,
-    usePrimaryColors: Boolean
+    usePrimaryColors: Boolean,
+    onClick: () -> Unit,
+    onLongPress: (() -> Unit)?
 ) {
     val file = File(filePath)
     val isImage = isImageFile(file.extension)
+    val displayName = AttachmentNaming.attachmentDisplayName(file.name)
     val containerColor = if (usePrimaryColors) {
         MaterialTheme.colorScheme.surfaceContainerHigh
     } else {
@@ -634,6 +652,11 @@ private fun MessageFileThumbnail(
         MaterialTheme.colorScheme.onSurfaceVariant
     } else {
         MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val openLabel = if (isImage) {
+        stringResource(R.string.view_full_image)
+    } else {
+        stringResource(R.string.document_preview_title)
     }
 
     Column(
@@ -645,17 +668,23 @@ private fun MessageFileThumbnail(
                 .size(48.dp)
                 .clip(RoundedCornerShape(8.dp))
                 .background(containerColor)
+                // 点一下另起一页预览：图片和 PDF 看原文件，其余文档看抽取出来的正文。
+                .combinedClickable(
+                    onClickLabel = openLabel,
+                    onLongClick = onLongPress,
+                    onClick = onClick
+                )
         ) {
             if (isImage) {
                 LocalImageThumbnail(
                     filePath = file.absolutePath,
                     size = 48.dp,
-                    contentDescription = file.name,
+                    contentDescription = displayName,
                     modifier = Modifier.fillMaxSize(),
                     fallback = {
                         Icon(
                             imageVector = ImageVector.vectorResource(R.drawable.ic_image),
-                            contentDescription = file.name,
+                            contentDescription = displayName,
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(8.dp),
@@ -666,7 +695,7 @@ private fun MessageFileThumbnail(
             } else {
                 Icon(
                     imageVector = ImageVector.vectorResource(R.drawable.ic_file),
-                    contentDescription = file.name,
+                    contentDescription = displayName,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(8.dp),
@@ -676,7 +705,7 @@ private fun MessageFileThumbnail(
         }
 
         Text(
-            text = file.name,
+            text = displayName,
             style = MaterialTheme.typography.labelSmall,
             color = contentColor,
             maxLines = 2,

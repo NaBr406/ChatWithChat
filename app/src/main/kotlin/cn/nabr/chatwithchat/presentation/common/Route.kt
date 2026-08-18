@@ -10,6 +10,7 @@ object Route {
 
     const val CHAT_LIST = "chat_list"
     const val CHAT_ROOM = "chat_room/{chatRoomId}?enabled={enabledPlatforms}&initialQuestion={initialQuestion}&initialModel={initialModel}&initialAttachments={initialAttachments}&initialRequestId={initialRequestId}&initialTextSkills={initialTextSkills}"
+    const val ATTACHMENT_PREVIEW = "attachment_preview?path={path}"
 
     const val SETTING_ROUTE = "setting_route"
     const val SETTINGS = "settings"

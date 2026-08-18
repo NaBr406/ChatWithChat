@@ -2,6 +2,8 @@ package cn.nabr.chatwithchat.data.repository
 
 import android.content.Context
 import androidx.room.withTransaction
+import cn.nabr.chatwithchat.data.attachment.DocumentPromptComposer
+import cn.nabr.chatwithchat.data.attachment.DocumentTextExtractor
 import cn.nabr.chatwithchat.data.context.CheckpointChainView
 import cn.nabr.chatwithchat.data.context.ContextAssemblyRequest
 import cn.nabr.chatwithchat.data.context.ContextBudget
@@ -155,6 +157,7 @@ import cn.nabr.chatwithchat.data.websearch.SearchDecision
 import cn.nabr.chatwithchat.data.websearch.SearchDecisionService
 import cn.nabr.chatwithchat.data.websearch.WebSearchMode
 import cn.nabr.chatwithchat.di.ApplicationScope
+import cn.nabr.chatwithchat.util.AttachmentNaming
 import cn.nabr.chatwithchat.util.AttachmentPayloadCache
 import cn.nabr.chatwithchat.util.FileUtils
 import cn.nabr.chatwithchat.util.isAssistantErrorMessage
@@ -2868,7 +2871,10 @@ class ChatRepositoryImpl @Inject constructor(
 
     private suspend fun transformMessageV2ToChatMessage(message: MessageV2, isUser: Boolean): ChatMessage {
         val content = mutableListOf<OpenAIMessageContent>()
-        val messageContent = if (isUser) message.content else message.sendableAssistantContent()
+        val messageContent = composeMessageTextWithDocuments(
+            message = message,
+            baseText = if (isUser) message.content else message.sendableAssistantContent()
+        )
 
         // Add text content
         if (messageContent.isNotBlank()) {
@@ -2897,7 +2903,10 @@ class ChatRepositoryImpl @Inject constructor(
 
     private suspend fun transformMessageV2ToResponsesInput(message: MessageV2, isUser: Boolean, platformUid: String): ResponseInputMessage {
         val role = if (isUser) "user" else "assistant"
-        val messageContent = if (isUser) message.content else message.sendableAssistantContent()
+        val messageContent = composeMessageTextWithDocuments(
+            message = message,
+            baseText = if (isUser) message.content else message.sendableAssistantContent()
+        )
 
         // Check if there are any image files
         val imageAttachments = message.attachments.filter { attachment ->
@@ -3056,7 +3065,10 @@ class ChatRepositoryImpl @Inject constructor(
 
     private suspend fun transformMessageV2ToAnthropic(message: MessageV2, role: MessageRole, platformUid: String): InputMessage {
         val content = mutableListOf<AnthropicMessageContent>()
-        val messageContent = if (role == MessageRole.USER) message.content else message.sendableAssistantContent()
+        val messageContent = composeMessageTextWithDocuments(
+            message = message,
+            baseText = if (role == MessageRole.USER) message.content else message.sendableAssistantContent()
+        )
 
         // Add text content
         if (messageContent.isNotBlank()) {
@@ -3198,7 +3210,10 @@ class ChatRepositoryImpl @Inject constructor(
 
     private suspend fun transformMessageV2ToGoogle(message: MessageV2, role: GoogleRole, platformUid: String): Content {
         val parts = mutableListOf<Part>()
-        val messageContent = if (role == GoogleRole.USER) message.content else message.sendableAssistantContent()
+        val messageContent = composeMessageTextWithDocuments(
+            message = message,
+            baseText = if (role == GoogleRole.USER) message.content else message.sendableAssistantContent()
+        )
 
         // Add text content
         if (messageContent.isNotBlank()) {
@@ -3223,8 +3238,31 @@ class ChatRepositoryImpl @Inject constructor(
         return Content(role = role, parts = parts)
     }
 
+    /**
+     * 把消息里的文字类附件在本地抽成正文，作为 `<attachment>` 块追加到消息文本后面。
+     * 四个 provider transform 共用这一处，图片链路完全不受影响。
+     */
+    private suspend fun composeMessageTextWithDocuments(message: MessageV2, baseText: String): String {
+        if (message.attachments.isEmpty()) return baseText
+
+        val sections = message.attachments.mapNotNull { attachment ->
+            val filePath = attachment.preparedFilePath.ifBlank { attachment.localFilePath }
+            val mimeType = attachment.mimeType.ifBlank { FileUtils.getMimeType(context, filePath) }
+            if (!FileUtils.isTextDocumentMimeType(mimeType)) return@mapNotNull null
+            val documentText = DocumentTextExtractor.extract(context, filePath, mimeType) ?: return@mapNotNull null
+            DocumentPromptComposer.DocumentSection(
+                name = AttachmentNaming.attachmentDisplayName(attachment.resolvedDisplayName),
+                mimeType = mimeType,
+                text = documentText.text,
+                truncated = documentText.truncated
+            )
+        }
+
+        return DocumentPromptComposer.compose(baseText, sections)
+    }
+
     private suspend fun getEncodedAttachment(filePath: String, mimeType: String): FileUtils.EncodedImage? {
-        if (!FileUtils.isSupportedUploadMimeType(mimeType)) return null
+        if (!FileUtils.isInlineImageMimeType(mimeType)) return null
         AttachmentPayloadCache.get(filePath)?.let { return it }
 
         return withContext(Dispatchers.IO) {

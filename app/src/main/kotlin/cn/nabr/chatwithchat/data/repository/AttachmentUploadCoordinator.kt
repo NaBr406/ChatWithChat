@@ -1,6 +1,7 @@
 package cn.nabr.chatwithchat.data.repository
 
 import android.content.Context
+import cn.nabr.chatwithchat.data.attachment.DocumentTextExtractor
 import cn.nabr.chatwithchat.data.context.ConversationTurn
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
@@ -12,6 +13,7 @@ import cn.nabr.chatwithchat.data.network.AnthropicAPI
 import cn.nabr.chatwithchat.data.network.GoogleAPI
 import cn.nabr.chatwithchat.data.network.OpenAIAPI
 import cn.nabr.chatwithchat.data.network.ProviderFileUploadException
+import cn.nabr.chatwithchat.util.AttachmentNaming
 import cn.nabr.chatwithchat.util.FileUtils
 import java.io.File
 import javax.inject.Inject
@@ -26,25 +28,47 @@ class AttachmentUploadCoordinator @Inject constructor(
     suspend fun prepareLocalAttachment(context: Context, filePath: String): ChatAttachment? = withContext(Dispatchers.IO) {
         val preparationResult = FileUtils.prepareAttachmentForUpload(context, filePath) ?: return@withContext null
         val preparedFilePath = preparationResult.preparedFilePath
-        val dimensions = FileUtils.getImageDimensionsForDisplay(context, preparedFilePath)
+        val isDocument = FileUtils.isTextDocumentMimeType(preparationResult.mimeType)
+        // 文字类附件在这里就先抽一次正文：抽不出东西（扫描版 PDF、加密文件、二进制乱码）
+        // 就让草稿直接失败，别等到发送时才发现要塞一个空的 <attachment>。
+        val documentText = if (isDocument) {
+            DocumentTextExtractor.extract(context, preparedFilePath, preparationResult.mimeType)
+                ?: return@withContext null
+        } else {
+            null
+        }
+        val dimensions = if (isDocument) null else FileUtils.getImageDimensionsForDisplay(context, preparedFilePath)
         ChatAttachment(
             localFilePath = filePath,
             preparedFilePath = preparedFilePath,
-            displayName = File(preparedFilePath).name,
+            displayName = AttachmentNaming.attachmentDisplayName(File(preparedFilePath).name),
             mimeType = preparationResult.mimeType,
             sizeBytes = FileUtils.getFileSize(context, preparedFilePath),
             width = dimensions?.first,
             height = dimensions?.second,
-            wasResized = preparationResult.wasResized
+            wasResized = preparationResult.wasResized,
+            documentCharCount = documentText?.charCount,
+            documentTruncated = documentText?.truncated == true
         )
     }
 
     suspend fun ensureMessageAttachmentsForPlatform(message: MessageV2, platform: PlatformV2): MessageV2 {
         if (message.attachments.isEmpty()) return message
+        // 只有图片才走 provider 的文件上传：把 docx/PDF POST 到 files 端点会拿回一个
+        // 谁也不认的 file id，然后拼出非法的 image/file content block。文档靠内联文本投递。
         val updatedAttachments = when (platform.compatibleType) {
-            ClientType.OPENAI -> message.attachments.map { ensureOpenAIRef(it, platform.uid) }
-            ClientType.ANTHROPIC -> message.attachments.map { ensureAnthropicRef(it, platform.uid) }
-            ClientType.GOOGLE -> message.attachments.map { ensureGoogleRef(it, platform.uid) }
+            ClientType.OPENAI -> message.attachments.map { attachment ->
+                if (isImageAttachment(attachment)) ensureOpenAIRef(attachment, platform.uid) else attachment
+            }
+
+            ClientType.ANTHROPIC -> message.attachments.map { attachment ->
+                if (isImageAttachment(attachment)) ensureAnthropicRef(attachment, platform.uid) else attachment
+            }
+
+            ClientType.GOOGLE -> message.attachments.map { attachment ->
+                if (isImageAttachment(attachment)) ensureGoogleRef(attachment, platform.uid) else attachment
+            }
+
             else -> message.attachments
         }
         return if (updatedAttachments == message.attachments) message else message.copy(attachments = updatedAttachments)
@@ -61,6 +85,8 @@ class AttachmentUploadCoordinator @Inject constructor(
                     turn.assistantMessage?.let { addAll(it.attachments) }
                 }
             }
+            // 只算图片：文档不进 inline 字节，否则一个 30 MB 的 PDF 会在 Groq/Ollama 上误报"图片太大"
+            .filter { isImageAttachment(it) }
             .sumOf { attachment ->
                 val file = File(resolveUploadFilePath(attachment))
                 when {
@@ -160,6 +186,8 @@ class AttachmentUploadCoordinator @Inject constructor(
     private fun resolveMimeType(attachment: ChatAttachment): String = attachment.mimeType.ifBlank {
         FileUtils.getMimeTypeFromPath(resolveUploadFilePath(attachment))
     }
+
+    private fun isImageAttachment(attachment: ChatAttachment): Boolean = FileUtils.isInlineImageMimeType(resolveMimeType(attachment))
 
     companion object {
         const val MAX_SAFE_INLINE_BYTES = 12L * 1024 * 1024

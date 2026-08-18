@@ -289,7 +289,7 @@
     <string name="large_images_resized_before_upload">上传前已压缩大图。</string>
     <string name="failed_to_prepare_attachment">附件处理失败。</string>
     <string name="failed_to_copy_attachment">附件复制失败。</string>
-    <string name="attachment_batch_rejected">%1$d 枚の画像を追加できませんでした。画像形式と 50 MB の上限を確認してください。</string>
+    <string name="attachment_batch_rejected">%1$d 件の添付ファイルを追加できませんでした。ファイル形式と 50 MB の上限を確認してください。</string>
     <string name="reasoning_control">思考</string>
     <string name="reasoning_mode_model_default">モデルのデフォルト</string>
     <string name="reasoning_mode_default_only">モデル既定の思考</string>

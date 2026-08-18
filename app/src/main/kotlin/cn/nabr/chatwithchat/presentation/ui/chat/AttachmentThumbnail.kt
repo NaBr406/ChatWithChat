@@ -24,22 +24,36 @@ internal fun LocalImageThumbnail(
     fallback: @Composable () -> Unit
 ) {
     val targetSizePx = with(LocalDensity.current) { size.roundToPx() }
-    val bitmap by produceState<Bitmap?>(initialValue = null, filePath, targetSizePx) {
-        value = withContext(Dispatchers.IO) {
-            decodeSampledBitmap(filePath, targetSizePx, targetSizePx)
-        }
-    }
+    val bitmap = rememberLocalImageBitmap(filePath = filePath, targetSizePx = targetSizePx)
 
     if (bitmap == null) {
         fallback()
     } else {
         Image(
-            bitmap = bitmap!!.asImageBitmap(),
+            bitmap = bitmap.asImageBitmap(),
             contentDescription = contentDescription,
             modifier = modifier,
             contentScale = ContentScale.Crop
         )
     }
+}
+
+/**
+ * 在 IO 线程上把本地图片按目标边长降采样解码。缩略图用 RGB_565 省一半内存就够了；
+ * 大图预览要 [preferHighQuality]，否则带透明区域的 PNG 会在黑底上糊成一片。
+ */
+@Composable
+internal fun rememberLocalImageBitmap(
+    filePath: String,
+    targetSizePx: Int,
+    preferHighQuality: Boolean = false
+): Bitmap? {
+    val bitmap by produceState<Bitmap?>(initialValue = null, filePath, targetSizePx, preferHighQuality) {
+        value = withContext(Dispatchers.IO) {
+            decodeSampledBitmap(filePath, targetSizePx, targetSizePx, preferHighQuality)
+        }
+    }
+    return bitmap
 }
 
 internal fun isImageFile(extension: String?): Boolean {
@@ -50,7 +64,8 @@ internal fun isImageFile(extension: String?): Boolean {
 private fun decodeSampledBitmap(
     filePath: String,
     requestedWidth: Int,
-    requestedHeight: Int
+    requestedHeight: Int,
+    preferHighQuality: Boolean = false
 ): Bitmap? {
     val imageFile = File(filePath)
     if (!imageFile.isFile) return null
@@ -63,7 +78,7 @@ private fun decodeSampledBitmap(
 
     val decodeOptions = BitmapFactory.Options().apply {
         inSampleSize = calculateInSampleSize(boundsOptions, requestedWidth, requestedHeight)
-        inPreferredConfig = Bitmap.Config.RGB_565
+        inPreferredConfig = if (preferHighQuality) Bitmap.Config.ARGB_8888 else Bitmap.Config.RGB_565
     }
 
     return try {

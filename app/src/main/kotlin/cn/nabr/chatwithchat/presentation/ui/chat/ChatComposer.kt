@@ -44,6 +44,7 @@ import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.PhotoCamera
@@ -97,10 +98,12 @@ import androidx.core.content.FileProvider.getUriForFile
 import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.textskill.SelectedTextSkill
 import cn.nabr.chatwithchat.data.textskill.TextSkillSelectionScope
+import cn.nabr.chatwithchat.presentation.common.LocalAttachmentPreviewLauncher
 import cn.nabr.chatwithchat.presentation.common.settingsCanvasBackground
 import cn.nabr.chatwithchat.presentation.common.settingsDropdownMenuItemColors
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.theme.ChatWithChatTheme
+import cn.nabr.chatwithchat.util.AttachmentNaming
 import cn.nabr.chatwithchat.util.FileUtils
 import java.io.File
 import java.nio.file.FileAlreadyExistsException
@@ -144,10 +147,10 @@ fun ChatComposer(
     var isAttachmentMenuExpanded by remember { mutableStateOf(false) }
     var isAttachmentMenuMounted by remember { mutableStateOf(false) }
     var inputFieldBounds by remember { mutableStateOf(Rect.Zero) }
-    var isCopyingPickedImages by remember { mutableStateOf(false) }
+    var isCopyingPickedAttachments by remember { mutableStateOf(false) }
     var pendingCameraPhotoPath by rememberSaveable { mutableStateOf<String?>(null) }
     var isTextSkillSheetOpen by remember { mutableStateOf(false) }
-    val isAttachmentBusy = isAttachmentImportInProgress || isCopyingPickedImages
+    val isAttachmentBusy = isAttachmentImportInProgress || isCopyingPickedAttachments
     val canSend = canSubmitChatMessage(
         chatEnabled = chatEnabled,
         sendButtonEnabled = sendButtonEnabled,
@@ -170,27 +173,27 @@ fun ChatComposer(
         }
     }
 
-    fun importPickedImages(uris: List<Uri>) {
+    fun importPickedAttachments(uris: List<Uri>) {
         if (uris.isEmpty()) return
-        isCopyingPickedImages = true
+        isCopyingPickedAttachments = true
         scope.launch {
             try {
-                copyPickedImages(context, uris) { result ->
+                copyPickedAttachments(context, uris) { result ->
                     onFilesSelected(result.copiedPaths, result.failedCount)
                 }
             } finally {
-                isCopyingPickedImages = false
+                isCopyingPickedAttachments = false
             }
         }
     }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia(),
-        onResult = { uris -> importPickedImages(uris) }
+        onResult = { uris -> importPickedAttachments(uris) }
     )
     val documentPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments(),
-        onResult = { uris -> importPickedImages(uris) }
+        onResult = { uris -> importPickedAttachments(uris) }
     )
 
     val cameraLauncher = rememberLauncherForActivityResult(
@@ -243,6 +246,14 @@ fun ChatComposer(
             } catch (_: ActivityNotFoundException) {
                 Toast.makeText(context, context.getString(R.string.failed_to_prepare_attachment), Toast.LENGTH_SHORT).show()
             }
+        }
+    }
+
+    fun launchDocumentPicker() {
+        try {
+            documentPickerLauncher.launch(DOCUMENT_PICKER_MIME_TYPES)
+        } catch (_: ActivityNotFoundException) {
+            Toast.makeText(context, context.getString(R.string.failed_to_prepare_attachment), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -345,6 +356,29 @@ fun ChatComposer(
                                             onClick = {
                                                 isAttachmentMenuExpanded = false
                                                 launchImagePicker()
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            colors = settingsDropdownMenuItemColors(),
+                                            modifier = Modifier.heightIn(min = 48.dp),
+                                            text = {
+                                                Text(
+                                                    text = stringResource(R.string.choose_document),
+                                                    style = MaterialTheme.typography.bodyMedium
+                                                )
+                                            },
+                                            leadingIcon = {
+                                                Icon(
+                                                    imageVector = Icons.Outlined.Description,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(20.dp),
+                                                    tint = materialColors.secondaryLabel
+                                                )
+                                            },
+                                            contentPadding = PaddingValues(horizontal = 14.dp),
+                                            onClick = {
+                                                isAttachmentMenuExpanded = false
+                                                launchDocumentPicker()
                                             }
                                         )
                                         DropdownMenuItem(
@@ -653,6 +687,10 @@ internal fun FileThumbnail(
 ) {
     val file = File(attachment.preparedFilePath ?: attachment.sourceFilePath)
     val isImage = isImageFile(file.extension)
+    val displayName = attachment.displayName
+    // 文档发出去的多半是本地抽取的正文而不是原文件，所以点开要能确认模型到底会读到什么。
+    val previewLauncher = LocalAttachmentPreviewLauncher.current
+    val previewLabel = stringResource(R.string.document_preview_title)
 
     Column(
         modifier = Modifier.width(72.dp),
@@ -663,17 +701,26 @@ internal fun FileThumbnail(
                 .size(64.dp)
                 .clip(RoundedCornerShape(8.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant)
+                .then(
+                    if (isImage) {
+                        Modifier
+                    } else {
+                        Modifier.clickable(onClickLabel = previewLabel) {
+                            previewLauncher.open(file.absolutePath)
+                        }
+                    }
+                )
         ) {
             if (isImage) {
                 LocalImageThumbnail(
                     filePath = file.absolutePath,
                     size = 64.dp,
-                    contentDescription = file.name,
+                    contentDescription = displayName,
                     modifier = Modifier.fillMaxSize(),
                     fallback = {
                         Icon(
                             imageVector = ImageVector.vectorResource(R.drawable.ic_image),
-                            contentDescription = file.name,
+                            contentDescription = displayName,
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(16.dp),
@@ -684,7 +731,7 @@ internal fun FileThumbnail(
             } else {
                 Icon(
                     imageVector = ImageVector.vectorResource(R.drawable.ic_file),
-                    contentDescription = file.name,
+                    contentDescription = displayName,
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(16.dp),
@@ -723,7 +770,7 @@ internal fun FileThumbnail(
         }
 
         Text(
-            text = file.name,
+            text = displayName,
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 2,
@@ -831,7 +878,7 @@ internal fun copyFilesToAppDirectory(
     )
 }
 
-internal suspend fun copyPickedImages(
+internal suspend fun copyPickedAttachments(
     context: Context,
     uris: List<Uri>,
     onResult: (AttachmentCopyBatchResult) -> Unit
@@ -894,16 +941,12 @@ internal fun copyFileToAppDirectory(
         if (exceededCopyLimit || copiedBytes <= 0L) return null.also { temporaryFile.delete() }
 
         val digestHex = digest.digest().joinToString("") { byte -> "%02x".format(byte) }
-        val targetName = buildString {
-            append("attachment_")
-            append(digestHex)
-            append('_')
-            append(UUID.randomUUID())
-            if (extension.isNotEmpty()) {
-                append('.')
-                append(extension)
-            }
-        }
+        // 文件名里带上原始名字，chip / 气泡 / <attachment name> 才不会显示成 attachment_9f3a….docx
+        val targetName = AttachmentNaming.buildAttachmentFileName(
+            digestHex = digestHex,
+            baseName = sanitizedFileName.substringBeforeLast('.', sanitizedFileName),
+            extension = extension
+        )
         val targetFile = File(attachmentsDir, targetName)
 
         // Verify canonical path is within attachments directory to prevent path traversal.
@@ -969,8 +1012,13 @@ internal fun attachmentExtension(fileName: String, mimeType: String?): String {
         .take(MAX_ATTACHMENT_EXTENSION_LENGTH)
     if (fileNameExtension.isNotEmpty()) return fileNameExtension
 
-    val normalizedMimeType = mimeType?.trim()?.lowercase().orEmpty()
-    if (!normalizedMimeType.startsWith("image/")) return ""
+    val normalizedMimeType = mimeType?.trim()?.lowercase()?.substringBefore(';').orEmpty()
+    // 文档类：SAF 给的名字偶尔没有后缀，靠 mime 补一个，否则后面按扩展名判类型会失手
+    DOCUMENT_MIME_EXTENSIONS[normalizedMimeType]?.let { return it }
+    if (!normalizedMimeType.startsWith("image/")) {
+        if (normalizedMimeType.startsWith("text/")) return "txt"
+        return ""
+    }
     val subtype = normalizedMimeType
         .substringAfter('/')
         .substringBefore('+')
@@ -981,10 +1029,49 @@ internal fun attachmentExtension(fileName: String, mimeType: String?): String {
     }
 }
 
+private val DOCUMENT_MIME_EXTENSIONS = mapOf(
+    "application/pdf" to "pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document" to "docx",
+    "application/json" to "json",
+    "application/ld+json" to "json",
+    "application/xml" to "xml",
+    "application/xhtml+xml" to "html",
+    "application/yaml" to "yaml",
+    "application/x-yaml" to "yaml",
+    "application/javascript" to "js",
+    "application/x-javascript" to "js",
+    "application/typescript" to "ts",
+    "application/sql" to "sql",
+    "application/toml" to "toml",
+    "application/x-sh" to "sh",
+    "application/x-httpd-php" to "php",
+    "application/x-tex" to "tex",
+    "text/plain" to "txt",
+    "text/markdown" to "md",
+    "text/x-markdown" to "md",
+    "text/csv" to "csv",
+    "text/tab-separated-values" to "tsv",
+    "text/html" to "html",
+    "text/xml" to "xml"
+)
+
 private const val MAX_ATTACHMENT_EXTENSION_LENGTH = 12
 private const val CAMERA_PENDING_PREFIX = "camera_pending_"
 private const val ATTACHMENT_MENU_WIDTH_DP = 184
 private const val ATTACHMENT_MENU_WINDOW_MARGIN_DP = 8
+
+/**
+ * 文档选择器的 mime 过滤。必须带上 `application/octet-stream`：SAF 对 `.md` / `.kt` 这类后缀
+ * 常常报不出具体类型，不放行的话用户在选择器里根本点不到它们。不受支持的类型仍由附件准入拦掉。
+ */
+internal val DOCUMENT_PICKER_MIME_TYPES = arrayOf(
+    "text/*",
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/json",
+    "application/xml",
+    "application/octet-stream"
+)
 
 @Preview
 @Composable

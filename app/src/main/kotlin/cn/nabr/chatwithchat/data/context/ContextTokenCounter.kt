@@ -2,6 +2,7 @@ package cn.nabr.chatwithchat.data.context
 
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
+import cn.nabr.chatwithchat.data.model.ChatAttachment
 import cn.nabr.chatwithchat.data.model.ClientType
 import com.knuddels.jtokkit.Encodings
 import com.knuddels.jtokkit.api.Encoding
@@ -61,7 +62,17 @@ internal class ContextTokenCounter private constructor(
     fun estimateMessage(message: MessageV2): Int =
         MESSAGE_OVERHEAD_TOKENS +
             estimateText(message.semanticAssistantContent()) +
-            message.attachments.size * ATTACHMENT_ESTIMATED_TOKENS
+            message.attachments.sumOf(::estimateAttachment)
+
+    /**
+     * 图片按固定值估；文字类附件的正文会被内联进消息文本，长度差几个数量级，
+     * 按字符数折算（中文 ≈1 token/字、英文 ≈4 字符/token，取中间值）。
+     */
+    private fun estimateAttachment(attachment: ChatAttachment): Int {
+        val charCount = attachment.documentCharCount ?: return ATTACHMENT_ESTIMATED_TOKENS
+        if (charCount <= 0) return ATTACHMENT_ESTIMATED_TOKENS
+        return (charCount / DOCUMENT_CHARS_PER_TOKEN).coerceAtLeast(1)
+    }
 
     private fun estimateTextHeuristic(text: String): Int {
         var tokens = 0
@@ -103,6 +114,7 @@ internal class ContextTokenCounter private constructor(
         private const val MESSAGE_OVERHEAD_TOKENS = 4
         const val TURN_OVERHEAD_TOKENS = 2
         const val ATTACHMENT_ESTIMATED_TOKENS = 850
+        const val DOCUMENT_CHARS_PER_TOKEN = 2
 
         private val ASCII_TOKEN_CHARS = setOf('_', '-', '.', '/', ':', '@', '#')
         private val registry by lazy { Encodings.newLazyEncodingRegistry() }

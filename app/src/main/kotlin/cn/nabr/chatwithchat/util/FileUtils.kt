@@ -72,7 +72,7 @@ object FileUtils {
         val mimeType = getMimeType(context, filePath)
         val fileSize = getFileSize(context, filePath)
         if (!validateFileSize(context, filePath, MAX_UPLOAD_SIZE_BYTES)) return null
-        if (!isSupportedUploadMimeType(mimeType) || mimeType == "image/gif" || mimeType == "image/svg+xml") {
+        if (!isInlineImageMimeType(mimeType) || mimeType == "image/gif" || mimeType == "image/svg+xml") {
             return AttachmentPreparationResult(
                 preparedFilePath = filePath,
                 mimeType = mimeType,
@@ -204,6 +204,29 @@ object FileUtils {
 
         "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
+        // Text documents. SAF 对 .md / .kt 这类后缀常返回 application/octet-stream，
+        // 而附件准入跑在已复制到 filesDir 的路径上（走扩展名分支），所以这里必须认全。
+        "md", "markdown" -> "text/markdown"
+
+        "csv" -> "text/csv"
+
+        "tsv" -> "text/tab-separated-values"
+
+        "json", "jsonl", "jsonc" -> "application/json"
+
+        "yml", "yaml" -> "application/yaml"
+
+        "xml" -> "application/xml"
+
+        "html", "htm" -> "text/html"
+
+        "log", "text", "conf", "cfg", "ini", "properties", "env" -> "text/plain"
+
+        "kt", "kts", "java", "py", "js", "mjs", "cjs", "ts", "tsx", "jsx", "c", "cc", "cpp", "h", "hpp",
+        "cs", "rs", "go", "rb", "php", "swift", "m", "mm", "scala", "sh", "bash", "zsh", "bat", "ps1",
+        "sql", "toml", "gradle", "pro", "dart", "lua", "r", "pl", "vue", "svelte", "css", "scss", "diff", "patch" ->
+            "text/plain"
+
         else -> MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension) ?: "application/octet-stream"
     }
 
@@ -275,7 +298,44 @@ object FileUtils {
         maxSizeBytes: Long = MAX_UPLOAD_SIZE_BYTES
     ): Boolean = currentTotalBytes + newFileBytes > maxSizeBytes
 
-    internal fun isSupportedUploadMimeType(mimeType: String): Boolean = isImage(mimeType)
+    /**
+     * 能否内联成图片 content part（image_url / base64 image block）。图片链路的唯一门禁，
+     * 文字类附件走本地抽取 + 内联文本，不能落到这里。
+     */
+    internal fun isInlineImageMimeType(mimeType: String): Boolean = isImage(mimeType)
+
+    /**
+     * 能否在本地抽出正文的文字类附件。旧的 [isDocument] 语义不同（含 .doc/.xls 这些抽不出文字的），
+     * 不要复用。
+     */
+    internal fun isTextDocumentMimeType(mimeType: String): Boolean {
+        val normalized = mimeType.substringBefore(';').trim().lowercase()
+        if (normalized.startsWith("text/")) return true
+        return normalized in TEXT_DOCUMENT_APPLICATION_MIME_TYPES
+    }
+
+    /** 附件准入的总门禁：图片或可抽取正文的文档。 */
+    internal fun isSupportedAttachmentMimeType(mimeType: String): Boolean =
+        isInlineImageMimeType(mimeType) || isTextDocumentMimeType(mimeType)
+
+    private val TEXT_DOCUMENT_APPLICATION_MIME_TYPES = setOf(
+        "application/pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/json",
+        "application/ld+json",
+        "application/xml",
+        "application/xhtml+xml",
+        "application/yaml",
+        "application/x-yaml",
+        "application/javascript",
+        "application/x-javascript",
+        "application/typescript",
+        "application/sql",
+        "application/toml",
+        "application/x-sh",
+        "application/x-httpd-php",
+        "application/x-tex"
+    )
 
     internal fun shouldResizeImage(
         originalWidth: Int,

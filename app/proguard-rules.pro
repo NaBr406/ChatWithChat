@@ -33,6 +33,17 @@
 -keep class org.yaml.snakeyaml.TypeDescription { *; }
 -dontwarn java.beans.**
 
+# pdfbox-android loads fonts, CMaps and the Bouncy Castle bits by resource path and reflection,
+# so its classes must keep their original names. The optional AWT/desktop references it carries
+# do not exist on Android and are unreachable from the text-extraction path we use.
+-keep class com.tom_roush.pdfbox.** { *; }
+-keep class com.tom_roush.fontbox.** { *; }
+-dontwarn com.tom_roush.pdfbox.**
+-dontwarn com.tom_roush.fontbox.**
+-dontwarn com.tom_roush.harmony.**
+-dontwarn org.bouncycastle.**
+-dontwarn javax.imageio.**
+
 # If your project uses WebView with JS, uncomment the following
 # and specify the fully qualified class name to the JavaScript interface
 # class:

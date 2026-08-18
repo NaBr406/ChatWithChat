@@ -289,7 +289,7 @@
     <string name="large_images_resized_before_upload">上传前已压缩大图。</string>
     <string name="failed_to_prepare_attachment">附件处理失败。</string>
     <string name="failed_to_copy_attachment">附件复制失败。</string>
-    <string name="attachment_batch_rejected">לא ניתן להוסיף %1$d תמונות. יש לבדוק את פורמט התמונה ואת מגבלת 50 MB.</string>
+    <string name="attachment_batch_rejected">לא ניתן להוסיף %1$d קבצים מצורפים. יש לבדוק את הפורמט ואת מגבלת 50 MB.</string>
     <string name="reasoning_control">חשיבה</string>
     <string name="reasoning_mode_model_default">ברירת המחדל של המודל</string>
     <string name="reasoning_mode_default_only">חשיבת ברירת המחדל של המודל</string>

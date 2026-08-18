@@ -1,6 +1,7 @@
 package cn.nabr.chatwithchat.presentation.ui.chat
 
 import cn.nabr.chatwithchat.data.model.ChatAttachment
+import cn.nabr.chatwithchat.util.AttachmentNaming
 import java.io.File
 
 data class ChatAttachmentDraft(
@@ -15,7 +16,13 @@ data class ChatAttachmentDraft(
     val errorMessage: String? = null
 ) {
     val id: String = sourceFilePath
-    val displayName: String = attachment?.resolvedDisplayName ?: File(preparedFilePath ?: sourceFilePath).name
+
+    /**
+     * 还在 [Status.Preparing] 时拿不到 [ChatAttachment]，只能从文件名反解——复制进 filesDir 的名字是
+     * `attachment_<sha>_<uuid>_<原始名>`，直接显示会是一串哈希。
+     */
+    val displayName: String = attachment?.resolvedDisplayName
+        ?: AttachmentNaming.attachmentDisplayName(File(preparedFilePath ?: sourceFilePath).name)
 
     enum class Status {
         Preparing,

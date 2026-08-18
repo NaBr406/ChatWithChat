@@ -289,7 +289,7 @@
     <string name="large_images_resized_before_upload">上传前已压缩大图。</string>
     <string name="failed_to_prepare_attachment">附件处理失败。</string>
     <string name="failed_to_copy_attachment">附件复制失败。</string>
-    <string name="attachment_batch_rejected">%1$d படங்களைச் சேர்க்க முடியவில்லை. பட வடிவத்தையும் 50 MB வரம்பையும் சரிபார்க்கவும்.</string>
+    <string name="attachment_batch_rejected">%1$d இணைப்புகளைச் சேர்க்க முடியவில்லை. கோப்பு வடிவத்தையும் 50 MB வரம்பையும் சரிபார்க்கவும்.</string>
     <string name="reasoning_control">சிந்தனை</string>
     <string name="reasoning_mode_model_default">மாடல் இயல்புநிலை</string>
     <string name="reasoning_mode_default_only">மாடலின் இயல்புநிலை சிந்தனை</string>
