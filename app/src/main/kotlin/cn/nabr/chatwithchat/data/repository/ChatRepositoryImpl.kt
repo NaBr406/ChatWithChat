@@ -727,7 +727,7 @@ class ChatRepositoryImpl @Inject constructor(
         }
     }.catch { e ->
         if (e is CancellationException) throw e
-        emit(ApiState.Error(e.message ?: "鏈煡閿欒"))
+        emit(ApiState.Error(e.message ?: "未知错误"))
         emit(ApiState.Done)
     }
 
@@ -1188,7 +1188,7 @@ class ChatRepositoryImpl @Inject constructor(
         emit(ApiState.Done)
     }.catch { e ->
         if (e is CancellationException) throw e
-        emit(ApiState.Error(e.message ?: "鏈煡閿欒"))
+        emit(ApiState.Error(e.message ?: "未知错误"))
         emit(ApiState.Done)
     }
 
@@ -1532,7 +1532,7 @@ class ChatRepositoryImpl @Inject constructor(
         emit(ApiState.Done)
     }.catch { e ->
         if (e is CancellationException) throw e
-        emit(ApiState.Error(e.message ?: "鏈煡閿欒"))
+        emit(ApiState.Error(e.message ?: "未知错误"))
         emit(ApiState.Done)
     }
 
@@ -1850,7 +1850,7 @@ class ChatRepositoryImpl @Inject constructor(
         emit(ApiState.Done)
     }.catch { e ->
         if (e is CancellationException) throw e
-        emit(ApiState.Error(e.message ?: "鏈煡閿欒"))
+        emit(ApiState.Error(e.message ?: "未知错误"))
         emit(ApiState.Done)
     }
 
@@ -2173,7 +2173,7 @@ class ChatRepositoryImpl @Inject constructor(
         emit(ApiState.Done)
     }.catch { e ->
         if (e is CancellationException) throw e
-        emit(ApiState.Error(e.message ?: "鏈煡閿欒"))
+        emit(ApiState.Error(e.message ?: "未知错误"))
         emit(ApiState.Done)
     }
 
