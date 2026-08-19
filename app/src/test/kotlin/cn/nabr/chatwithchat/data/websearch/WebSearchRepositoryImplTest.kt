@@ -121,7 +121,7 @@ class WebSearchRepositoryImplTest {
 
             repository.search("android sdk", limit = 10).getOrThrow()
 
-            assertEquals("/search?q=android+sdk&format=json", requests.single())
+            assertEquals("/search?q=android+sdk&format=json", requests.single().path)
         }
     }
 
@@ -273,15 +273,194 @@ class WebSearchRepositoryImplTest {
         }
     }
 
+    @Test
+    fun `search parses anysearch response into web search results`() = runBlocking {
+        withServer(
+            statusCode = 200,
+            body =
+                """
+                {
+                  "code": 0,
+                  "message": "success",
+                  "data": {
+                    "results": [
+                      {
+                        "title": "Android SDK",
+                        "url": "https://developer.android.com/sdk",
+                        "snippet": "SDK overview",
+                        "content": "Full page body"
+                      },
+                      {
+                        "title": "Duplicate",
+                        "url": "https://developer.android.com/sdk",
+                        "snippet": "Duplicate result",
+                        "content": ""
+                      },
+                      {
+                        "title": "Kotlin SDK",
+                        "url": "https://kotlinlang.org",
+                        "snippet": "   ",
+                        "content": "Kotlin android content"
+                      }
+                    ]
+                  }
+                }
+                """.trimIndent()
+        ) { baseUrl, _ ->
+            val repository = WebSearchRepositoryImpl(
+                httpClient = NetworkClient(CIO)(),
+                config = WebSearchConfig(
+                    backend = WebSearchBackend.AnySearch,
+                    anySearchBaseUrl = baseUrl,
+                    maxResults = 5
+                )
+            )
+
+            val results = repository.search("android sdk", limit = 10).getOrThrow()
+
+            assertEquals(2, results.size)
+            assertEquals(
+                WebSearchResult(
+                    title = "Android SDK",
+                    url = "https://developer.android.com/sdk",
+                    snippet = "SDK overview",
+                    source = "anysearch"
+                ),
+                results[0]
+            )
+            // snippet 空白时退到正文，才不会把没有摘要的结果整条丢掉。
+            assertEquals("Kotlin android content", results[1].snippet)
+        }
+    }
+
+    @Test
+    fun `anysearch posts query with bounded max results and bearer token`() = runBlocking {
+        withServer(
+            statusCode = 200,
+            body = """{"code": 0, "data": {"results": []}}"""
+        ) { baseUrl, requests ->
+            val repository = WebSearchRepositoryImpl(
+                httpClient = NetworkClient(CIO)(),
+                config = WebSearchConfig(
+                    backend = WebSearchBackend.AnySearch,
+                    anySearchBaseUrl = baseUrl,
+                    anySearchApiKey = "as_sk_test",
+                    maxResults = 3
+                )
+            )
+
+            repository.search("android sdk", limit = 10).getOrThrow()
+
+            val request = requests.single()
+            assertEquals("POST", request.method)
+            assertEquals("/v1/search", request.path)
+            assertEquals("Bearer as_sk_test", request.authorization)
+            assertTrue(request.body.contains("\"query\":\"android sdk\""))
+            assertTrue(request.body.contains("\"max_results\":3"))
+        }
+    }
+
+    @Test
+    fun `anysearch omits authorization header when api key is blank`() = runBlocking {
+        withServer(
+            statusCode = 200,
+            body = """{"code": 0, "data": {"results": []}}"""
+        ) { baseUrl, requests ->
+            val repository = WebSearchRepositoryImpl(
+                httpClient = NetworkClient(CIO)(),
+                config = WebSearchConfig(
+                    backend = WebSearchBackend.AnySearch,
+                    anySearchBaseUrl = baseUrl,
+                    anySearchApiKey = "   "
+                )
+            )
+
+            repository.search("android", limit = 5).getOrThrow()
+
+            assertEquals(null, requests.single().authorization)
+        }
+    }
+
+    @Test
+    fun `anysearch business error code returns failure`() = runBlocking {
+        withServer(
+            statusCode = 200,
+            body = """{"code": 40001, "message": "invalid api key", "data": null}"""
+        ) { baseUrl, _ ->
+            val repository = WebSearchRepositoryImpl(
+                httpClient = NetworkClient(CIO)(),
+                config = WebSearchConfig(
+                    backend = WebSearchBackend.AnySearch,
+                    anySearchBaseUrl = baseUrl
+                )
+            )
+
+            val result = repository.search("android", limit = 5)
+
+            assertTrue(result.isFailure)
+            val message = result.exceptionOrNull()?.message.orEmpty()
+            assertTrue(message.contains("web_search_backend_rejected"))
+            assertTrue(message.contains("40001"))
+            assertTrue(message.contains("invalid api key"))
+        }
+    }
+
+    @Test
+    fun `anysearch quota exhausted returns dedicated failure`() = runBlocking {
+        withServer(
+            statusCode = 402,
+            body = """{"code": 402, "message": "quota exceeded"}"""
+        ) { baseUrl, _ ->
+            val repository = WebSearchRepositoryImpl(
+                httpClient = NetworkClient(CIO)(),
+                config = WebSearchConfig(
+                    backend = WebSearchBackend.AnySearch,
+                    anySearchBaseUrl = baseUrl
+                )
+            )
+
+            val result = repository.search("android", limit = 5)
+
+            assertTrue(result.isFailure)
+            assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("web_search_quota_exhausted"))
+        }
+    }
+
+    @Test
+    fun `anysearch http failure returns result failure`() = runBlocking {
+        withServer(
+            statusCode = 500,
+            body = "unavailable"
+        ) { baseUrl, _ ->
+            val repository = WebSearchRepositoryImpl(
+                httpClient = NetworkClient(CIO)(),
+                config = WebSearchConfig(
+                    backend = WebSearchBackend.AnySearch,
+                    anySearchBaseUrl = baseUrl
+                )
+            )
+
+            val result = repository.search("android", limit = 5)
+
+            assertTrue(result.isFailure)
+            assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("web_search_http_500"))
+        }
+    }
+
     private suspend fun withServer(
         statusCode: Int,
         body: String,
-        block: suspend (baseUrl: String, requests: List<String>) -> Unit
+        block: suspend (baseUrl: String, requests: List<RecordedRequest>) -> Unit
     ) {
-        val requests = mutableListOf<String>()
+        val requests = mutableListOf<RecordedRequest>()
         val server = HttpServer.create(InetSocketAddress(0), 0)
         server.createContext("/") { exchange ->
-            requests += exchange.requestURI.toString()
+            requests += RecordedRequest(
+                method = exchange.requestMethod,
+                path = exchange.requestURI.toString(),
+                authorization = exchange.requestHeaders.getFirst("Authorization"),
+                body = exchange.requestBody.use { it.readBytes() }.decodeToString()
+            )
             exchange.respond(statusCode, body)
         }
         server.start()
@@ -291,6 +470,13 @@ class WebSearchRepositoryImplTest {
             server.stop(0)
         }
     }
+
+    private data class RecordedRequest(
+        val method: String,
+        val path: String,
+        val authorization: String?,
+        val body: String
+    )
 
     private fun HttpExchange.respond(statusCode: Int, body: String) {
         responseHeaders.add("Content-Type", "application/json")

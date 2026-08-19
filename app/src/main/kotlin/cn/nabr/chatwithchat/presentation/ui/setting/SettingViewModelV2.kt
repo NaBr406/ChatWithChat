@@ -12,6 +12,7 @@ import cn.nabr.chatwithchat.data.tool.ToolCallingMode
 import cn.nabr.chatwithchat.data.tool.ToolEnablementOverrides
 import cn.nabr.chatwithchat.data.tool.ToolEnablementResolver
 import cn.nabr.chatwithchat.data.tool.ToolRegistry
+import cn.nabr.chatwithchat.data.websearch.WebSearchBackend
 import cn.nabr.chatwithchat.data.websearch.WebSearchMode
 import java.net.URI
 import javax.inject.Inject
@@ -55,6 +56,7 @@ class SettingViewModelV2 @Inject constructor(
 
     private var lastAddedPlatformUid: String? = null
     private var webSearchBaseUrlSaveJob: Job? = null
+    private var webSearchAnySearchApiKeySaveJob: Job? = null
     private val toolSettingsMutex = Mutex()
 
     init {
@@ -123,7 +125,9 @@ class SettingViewModelV2 @Inject constructor(
                         toolEnablementOverrides = toolEnablementOverrides,
                         tools = visibleTools(toolEnablementOverrides),
                         mode = settingRepository.fetchWebSearchMode(),
-                        searxngBaseUrl = settingRepository.fetchWebSearchSearxngBaseUrl()
+                        backend = settingRepository.fetchWebSearchBackend(),
+                        searxngBaseUrl = settingRepository.fetchWebSearchSearxngBaseUrl(),
+                        anySearchApiKey = settingRepository.fetchWebSearchAnySearchApiKey()
                     )
                 }
             }
@@ -178,6 +182,22 @@ class SettingViewModelV2 @Inject constructor(
 
         webSearchBaseUrlSaveJob = viewModelScope.launch {
             settingRepository.updateWebSearchSearxngBaseUrl(baseUrl)
+        }
+    }
+
+    fun updateWebSearchBackend(backend: WebSearchBackend) {
+        _webSearchSettings.update { currentState -> currentState.copy(backend = backend) }
+        viewModelScope.launch {
+            settingRepository.updateWebSearchBackend(backend)
+        }
+    }
+
+    fun updateWebSearchAnySearchApiKey(apiKey: String) {
+        _webSearchSettings.update { currentState -> currentState.copy(anySearchApiKey = apiKey) }
+
+        webSearchAnySearchApiKeySaveJob?.cancel()
+        webSearchAnySearchApiKeySaveJob = viewModelScope.launch {
+            settingRepository.updateWebSearchAnySearchApiKey(apiKey)
         }
     }
 
@@ -302,8 +322,10 @@ class SettingViewModelV2 @Inject constructor(
         val toolEnablementOverrides: ToolEnablementOverrides = ToolEnablementOverrides(),
         val tools: List<ResolvedToolCatalogEntry> = emptyList(),
         val mode: WebSearchMode = WebSearchMode.Off,
+        val backend: WebSearchBackend = WebSearchBackend.Searxng,
         val searxngBaseUrl: String = "",
-        val searxngBaseUrlError: Boolean = false
+        val searxngBaseUrlError: Boolean = false,
+        val anySearchApiKey: String = ""
     )
 
     sealed class AddPlatformSaveState {

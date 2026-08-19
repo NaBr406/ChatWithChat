@@ -23,7 +23,9 @@ interface SettingDataSource {
     suspend fun updateToolCallingMode(mode: String)
     suspend fun updateToolEnabled(toolName: String, enabled: Boolean)
     suspend fun updateWebSearchMode(mode: String)
+    suspend fun updateWebSearchBackend(backend: String)
     suspend fun updateWebSearchSearxngBaseUrl(baseUrl: String)
+    suspend fun updateWebSearchAnySearchApiKey(apiKey: String)
     suspend fun getDynamicTheme(): DynamicTheme?
     suspend fun getThemeMode(): ThemeMode?
     suspend fun getStatus(apiType: ApiType): Boolean?
@@ -44,5 +46,7 @@ interface SettingDataSource {
     suspend fun getEnabledToolNames(): Set<String>
     suspend fun getDisabledToolNames(): Set<String>
     suspend fun getWebSearchMode(): String?
+    suspend fun getWebSearchBackend(): String?
     suspend fun getWebSearchSearxngBaseUrl(): String?
+    suspend fun getWebSearchAnySearchApiKey(): String?
 }

@@ -20,6 +20,7 @@ import cn.nabr.chatwithchat.data.model.ModelRefreshResult
 import cn.nabr.chatwithchat.data.model.ReasoningMode
 import cn.nabr.chatwithchat.data.tool.ToolCallingMode
 import cn.nabr.chatwithchat.data.tool.ToolEnablementOverrides
+import cn.nabr.chatwithchat.data.websearch.WebSearchBackend
 import cn.nabr.chatwithchat.data.websearch.WebSearchMode
 import cn.nabr.chatwithchat.data.repository.SettingRepository
 import kotlinx.coroutines.runBlocking
@@ -191,7 +192,9 @@ internal class FakeSettingRepository(
     override suspend fun fetchToolCallingMode(): ToolCallingMode = ToolCallingMode.Auto
     override suspend fun fetchDisabledToolNames(): Set<String> = emptySet()
     override suspend fun fetchWebSearchMode(): WebSearchMode = WebSearchMode.Off
+    override suspend fun fetchWebSearchBackend(): WebSearchBackend = WebSearchBackend.Searxng
     override suspend fun fetchWebSearchSearxngBaseUrl(): String = ""
+    override suspend fun fetchWebSearchAnySearchApiKey(): String = ""
     override suspend fun migrateToPlatformV2() = Unit
     override suspend fun updatePlatforms(platforms: List<Platform>) = Unit
     override suspend fun updateThemes(themeSetting: ThemeSetting) = Unit
@@ -204,7 +207,9 @@ internal class FakeSettingRepository(
     override suspend fun updateToolCallingMode(mode: ToolCallingMode) = Unit
     override suspend fun updateToolEnabled(toolName: String, enabled: Boolean) = Unit
     override suspend fun updateWebSearchMode(mode: WebSearchMode) = Unit
+    override suspend fun updateWebSearchBackend(backend: WebSearchBackend) = Unit
     override suspend fun updateWebSearchSearxngBaseUrl(baseUrl: String) = Unit
+    override suspend fun updateWebSearchAnySearchApiKey(apiKey: String) = Unit
     override suspend fun refreshPlatformModels(platformUid: String): ModelRefreshResult = error("not used")
     override suspend fun updatePlatformModelEnabled(platformUid: String, modelId: String, enabled: Boolean) = Unit
     override suspend fun setPlatformDefaultModel(platformUid: String, modelId: String) = Unit

@@ -106,11 +106,3 @@ private fun String.decodeBase64Url(): String? {
 private fun String.urlDecode(): String =
     runCatching { URLDecoder.decode(this, StandardCharsets.UTF_8.name()) }
         .getOrDefault(this)
-
-private fun String.takeIfHttpUrl(): String? {
-    val trimmed = trim()
-    val uri = runCatching { URI(trimmed) }.getOrNull() ?: return null
-    val scheme = uri.scheme?.lowercase(Locale.US)
-    val host = uri.host?.trim().orEmpty()
-    return trimmed.takeIf { scheme in setOf("http", "https") && host.isNotBlank() }
-}

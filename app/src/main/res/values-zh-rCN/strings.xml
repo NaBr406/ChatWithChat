@@ -544,6 +544,7 @@
     <string name="failed_to_copy_attachment">附件复制失败。</string>
     <string name="attachment_batch_rejected">%1$d 个附件未能添加，请检查格式和 50 MB 限制。</string>
     <string name="settings_section_web_search">联网搜索</string>
+    <string name="settings_section_web_search_backend">搜索后端</string>
     <string name="settings_section_tool_calling">工具调用</string>
     <string name="settings_section_callable_tools">可调用工具</string>
     <string name="tool_settings_title">工具</string>
@@ -553,9 +554,9 @@
     <string name="tool_calling_mode_auto">自动</string>
     <string name="tool_calling_mode_auto_description">允许模型在需要时调用已启用的工具</string>
     <string name="tool_web_search_title">网页搜索工具</string>
-    <string name="tool_web_search_description">搜索公开网页；需自动联网搜索及 SearXNG 地址</string>
+    <string name="tool_web_search_description">搜索公开网页；需把联网搜索设为自动并配好搜索后端</string>
     <string name="tool_fetch_url_title">读取网页</string>
-    <string name="tool_fetch_url_description">读取公开网页正文；需自动联网搜索及 SearXNG 地址</string>
+    <string name="tool_fetch_url_description">读取公开网页正文；需把联网搜索设为自动并配好搜索后端</string>
     <string name="tool_current_datetime_title">日期与时间</string>
     <string name="tool_current_datetime_description">读取设备本地日期、时间和时区，不会联网</string>
     <string name="tool_device_location_title">设备位置</string>
@@ -586,6 +587,14 @@
     <string name="searxng_base_url_hint">https://search.example.com</string>
     <string name="searxng_base_url_description">搜索后端基础地址。公共实例可能关闭 JSON API。</string>
     <string name="searxng_base_url_invalid">请输入以 http:// 或 https:// 开头的有效地址</string>
+    <string name="web_search_backend_searxng">SearXNG</string>
+    <string name="web_search_backend_inactive_notice">上面的联网搜索是「关闭」，这里的后端设置暂时不会生效；先选「自动」。</string>
+    <string name="web_search_backend_searxng_description">连自建实例，查询词不出自己的机器，但需要先部署</string>
+    <string name="web_search_backend_anysearch">AnySearch</string>
+    <string name="web_search_backend_anysearch_description">厂商托管，零配置可用，查询词会发给第三方</string>
+    <string name="anysearch_api_key">AnySearch API Key</string>
+    <string name="anysearch_api_key_hint">as_sk_…</string>
+    <string name="anysearch_api_key_description">可以留空：匿名调用也能用，但速率上限按出口 IP 计算，只够轻量使用。</string>
     <string name="round_navigator_button_description">查看回答轮次，共 %1$d 轮</string>
     <string name="round_count">%1$d 轮</string>
     <string name="round_navigator_title">回答轮次</string>

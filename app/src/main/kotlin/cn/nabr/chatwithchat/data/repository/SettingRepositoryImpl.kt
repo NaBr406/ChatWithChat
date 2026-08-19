@@ -24,6 +24,7 @@ import cn.nabr.chatwithchat.data.model.ThemeMode
 import cn.nabr.chatwithchat.data.model.defaultReasoningMode
 import cn.nabr.chatwithchat.data.tool.ToolCallingMode
 import cn.nabr.chatwithchat.data.tool.ToolEnablementOverrides
+import cn.nabr.chatwithchat.data.websearch.WebSearchBackend
 import cn.nabr.chatwithchat.data.websearch.WebSearchMode
 import javax.inject.Inject
 
@@ -158,6 +159,12 @@ class SettingRepositoryImpl @Inject constructor(
     override suspend fun fetchWebSearchSearxngBaseUrl(): String =
         settingDataSource.getWebSearchSearxngBaseUrl()?.trim().orEmpty()
 
+    override suspend fun fetchWebSearchBackend(): WebSearchBackend =
+        WebSearchBackend.fromStorageValue(settingDataSource.getWebSearchBackend())
+
+    override suspend fun fetchWebSearchAnySearchApiKey(): String =
+        settingDataSource.getWebSearchAnySearchApiKey()?.trim().orEmpty()
+
     override suspend fun migrateToPlatformV2() {
         val leftOverPlatformV2s = fetchPlatformV2s()
         leftOverPlatformV2s.forEach { platformV2Dao.deletePlatform(it) }
@@ -269,6 +276,14 @@ class SettingRepositoryImpl @Inject constructor(
 
     override suspend fun updateWebSearchSearxngBaseUrl(baseUrl: String) {
         settingDataSource.updateWebSearchSearxngBaseUrl(baseUrl.trim().trimEnd('/'))
+    }
+
+    override suspend fun updateWebSearchBackend(backend: WebSearchBackend) {
+        settingDataSource.updateWebSearchBackend(backend.storageValue)
+    }
+
+    override suspend fun updateWebSearchAnySearchApiKey(apiKey: String) {
+        settingDataSource.updateWebSearchAnySearchApiKey(apiKey.trim())
     }
 
     override suspend fun refreshPlatformModels(platformUid: String): ModelRefreshResult {

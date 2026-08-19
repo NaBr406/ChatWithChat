@@ -55,6 +55,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -67,6 +68,7 @@ import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.tool.ResolvedToolCatalogEntry
 import cn.nabr.chatwithchat.data.tool.ToolCallingMode
 import cn.nabr.chatwithchat.data.tool.ToolCatalogEntry
+import cn.nabr.chatwithchat.data.websearch.WebSearchBackend
 import cn.nabr.chatwithchat.data.websearch.WebSearchMode
 import cn.nabr.chatwithchat.presentation.common.AppleRed
 import cn.nabr.chatwithchat.presentation.common.HigActionDialog
@@ -312,11 +314,39 @@ fun ToolSettingsScreen(
                     description = stringResource(R.string.web_search_mode_auto_description),
                     onSelected = settingViewModel::updateWebSearchMode
                 )
-                WebSearchBaseUrlItem(
-                    baseUrl = webSearchSettings.searxngBaseUrl,
-                    hasError = webSearchSettings.searxngBaseUrlError,
-                    onBaseUrlChange = settingViewModel::updateWebSearchSearxngBaseUrl
+            }
+
+            SettingsSection(title = stringResource(R.string.settings_section_web_search_backend)) {
+                // 后端配好了但上面还是「关闭」的话，搜索工具根本不会上桌，而且一路上没有任何反馈。
+                // 把这个状态摆在用户正在看的地方，别让它静默失败。
+                if (webSearchSettings.mode == WebSearchMode.Off) {
+                    WebSearchBackendInactiveNotice()
+                }
+                WebSearchBackendItem(
+                    backend = WebSearchBackend.Searxng,
+                    selectedBackend = webSearchSettings.backend,
+                    title = stringResource(R.string.web_search_backend_searxng),
+                    description = stringResource(R.string.web_search_backend_searxng_description),
+                    onSelected = settingViewModel::updateWebSearchBackend
                 )
+                WebSearchBackendItem(
+                    backend = WebSearchBackend.AnySearch,
+                    selectedBackend = webSearchSettings.backend,
+                    title = stringResource(R.string.web_search_backend_anysearch),
+                    description = stringResource(R.string.web_search_backend_anysearch_description),
+                    onSelected = settingViewModel::updateWebSearchBackend
+                )
+                when (webSearchSettings.backend) {
+                    WebSearchBackend.Searxng -> WebSearchBaseUrlItem(
+                        baseUrl = webSearchSettings.searxngBaseUrl,
+                        hasError = webSearchSettings.searxngBaseUrlError,
+                        onBaseUrlChange = settingViewModel::updateWebSearchSearxngBaseUrl
+                    )
+                    WebSearchBackend.AnySearch -> AnySearchApiKeyItem(
+                        apiKey = webSearchSettings.anySearchApiKey,
+                        onApiKeyChange = settingViewModel::updateWebSearchAnySearchApiKey
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -537,6 +567,39 @@ private fun WebSearchModeItem(
 }
 
 @Composable
+private fun WebSearchBackendItem(
+    backend: WebSearchBackend,
+    selectedBackend: WebSearchBackend,
+    title: String,
+    description: String,
+    onSelected: (WebSearchBackend) -> Unit
+) {
+    SettingsRow(
+        title = title,
+        description = description,
+        onClick = { onSelected(backend) },
+        descriptionMaxLines = 2,
+        trailingContent = {
+            SettingsSelectionCheckmark(selected = selectedBackend == backend)
+        }
+    )
+}
+
+@Composable
+private fun WebSearchBackendInactiveNotice() {
+    SettingsMaterialGroup {
+        Text(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            text = stringResource(R.string.web_search_backend_inactive_notice),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.error
+        )
+    }
+}
+
+@Composable
 private fun WebSearchBaseUrlItem(
     baseUrl: String,
     hasError: Boolean,
@@ -563,6 +626,31 @@ private fun WebSearchBaseUrlItem(
                             stringResource(R.string.searxng_base_url_description)
                         }
                     )
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun AnySearchApiKeyItem(
+    apiKey: String,
+    onApiKeyChange: (String) -> Unit
+) {
+    SettingsMaterialGroup {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            OutlinedTextField(
+                value = apiKey,
+                onValueChange = onApiKeyChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text(stringResource(R.string.anysearch_api_key)) },
+                placeholder = { Text(stringResource(R.string.anysearch_api_key_hint)) },
+                singleLine = true,
+                shape = RoundedCornerShape(10.dp),
+                colors = settingsTextFieldColors(),
+                visualTransformation = PasswordVisualTransformation(),
+                supportingText = {
+                    Text(stringResource(R.string.anysearch_api_key_description))
                 }
             )
         }

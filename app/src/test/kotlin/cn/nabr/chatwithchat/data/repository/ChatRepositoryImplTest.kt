@@ -114,6 +114,7 @@ import cn.nabr.chatwithchat.data.websearch.SearchDecisionModelClient
 import cn.nabr.chatwithchat.data.websearch.SearchDecisionModelResponse
 import cn.nabr.chatwithchat.data.websearch.SearchDecisionService
 import cn.nabr.chatwithchat.data.websearch.WebPageExtractor
+import cn.nabr.chatwithchat.data.websearch.WebSearchBackend
 import cn.nabr.chatwithchat.data.websearch.WebSearchMode
 import cn.nabr.chatwithchat.data.websearch.WebSearchRepository
 import cn.nabr.chatwithchat.data.websearch.WebSearchResult
@@ -4936,6 +4937,13 @@ class ChatRepositoryImplTest {
                 "updateWebSearchMode" -> Unit
                 "fetchWebSearchSearxngBaseUrl" -> webSearchBaseUrl
                 "updateWebSearchSearxngBaseUrl" -> Unit
+                "fetchWebSearchBackend" -> WebSearchBackend.Searxng
+                "updateWebSearchBackend" -> Unit
+                "fetchWebSearchAnySearchApiKey" -> ""
+                "updateWebSearchAnySearchApiKey" -> Unit
+                // 接口里带默认体的方法在 Proxy 下也会走到这里，而 defaultReturnValue 对 Boolean 之外的
+                // 派生结论帮不上忙，所以按 SearXNG 那一支自己算一遍。
+                "isWebSearchBackendConfigured" -> webSearchBaseUrl.isNotBlank()
                 "fetchMemoryEnabled" -> memoryEnabled
                 else -> defaultReturnValue(method.returnType)
             }

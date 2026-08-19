@@ -440,7 +440,7 @@ class ChatRepositoryImpl @Inject constructor(
             .toSet()
 
         val webSearchToolsAvailable = webSearchMode == WebSearchMode.Auto &&
-            runCatching { settingRepository.fetchWebSearchSearxngBaseUrl().trim().isNotBlank() }
+            runCatching { settingRepository.isWebSearchBackendConfigured() }
                 .getOrDefault(false)
 
         return toolLoopOrchestrator.availableToolDefinitions { definition ->

@@ -82,7 +82,9 @@ class SettingDataSourceImpl @Inject constructor(
     private val enabledToolNamesKey = stringSetPreferencesKey("enabled_tool_names")
     private val disabledToolNamesKey = stringSetPreferencesKey("disabled_tool_names")
     private val webSearchModeKey = stringPreferencesKey("web_search_mode")
+    private val webSearchBackendKey = stringPreferencesKey("web_search_backend")
     private val webSearchSearxngBaseUrlKey = stringPreferencesKey("web_search_searxng_base_url")
+    private val webSearchAnySearchApiKeyKey = stringPreferencesKey("web_search_anysearch_api_key")
 
     override suspend fun updateDynamicTheme(theme: DynamicTheme) {
         dataStore.edit { pref ->
@@ -214,6 +216,18 @@ class SettingDataSourceImpl @Inject constructor(
         }
     }
 
+    override suspend fun updateWebSearchBackend(backend: String) {
+        dataStore.edit { pref ->
+            pref[webSearchBackendKey] = backend
+        }
+    }
+
+    override suspend fun updateWebSearchAnySearchApiKey(apiKey: String) {
+        dataStore.edit { pref ->
+            pref[webSearchAnySearchApiKeyKey] = apiKey
+        }
+    }
+
     override suspend fun getDynamicTheme(): DynamicTheme? {
         val mode = dataStore.data.map { pref ->
             pref[dynamicThemeKey]
@@ -307,5 +321,13 @@ class SettingDataSourceImpl @Inject constructor(
 
     override suspend fun getWebSearchSearxngBaseUrl(): String? = dataStore.data.map { pref ->
         pref[webSearchSearxngBaseUrlKey]
+    }.first()
+
+    override suspend fun getWebSearchBackend(): String? = dataStore.data.map { pref ->
+        pref[webSearchBackendKey]
+    }.first()
+
+    override suspend fun getWebSearchAnySearchApiKey(): String? = dataStore.data.map { pref ->
+        pref[webSearchAnySearchApiKeyKey]
     }.first()
 }

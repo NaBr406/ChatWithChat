@@ -11,6 +11,7 @@ import cn.nabr.chatwithchat.data.model.ModelRefreshResult
 import cn.nabr.chatwithchat.data.model.ReasoningMode
 import cn.nabr.chatwithchat.data.tool.ToolCallingMode
 import cn.nabr.chatwithchat.data.tool.ToolEnablementOverrides
+import cn.nabr.chatwithchat.data.websearch.WebSearchBackend
 import cn.nabr.chatwithchat.data.websearch.WebSearchMode
 
 interface SettingRepository {
@@ -32,7 +33,18 @@ interface SettingRepository {
         disabledToolNames = fetchDisabledToolNames()
     )
     suspend fun fetchWebSearchMode(): WebSearchMode
+    suspend fun fetchWebSearchBackend(): WebSearchBackend
     suspend fun fetchWebSearchSearxngBaseUrl(): String
+    suspend fun fetchWebSearchAnySearchApiKey(): String
+
+    /**
+     * 搜索工具能不能上桌。SearXNG 得先有实例地址；AnySearch 匿名也能调，所以选中即可用。
+     * 派生结论放在接口里，免得调用方各自拼一遍后端判断。
+     */
+    suspend fun isWebSearchBackendConfigured(): Boolean = when (fetchWebSearchBackend()) {
+        WebSearchBackend.Searxng -> fetchWebSearchSearxngBaseUrl().trim().isNotBlank()
+        WebSearchBackend.AnySearch -> true
+    }
     suspend fun migrateToPlatformV2()
     suspend fun updatePlatforms(platforms: List<Platform>)
     suspend fun updateThemes(themeSetting: ThemeSetting)
@@ -44,7 +56,9 @@ interface SettingRepository {
     suspend fun updateToolCallingMode(mode: ToolCallingMode)
     suspend fun updateToolEnabled(toolName: String, enabled: Boolean)
     suspend fun updateWebSearchMode(mode: WebSearchMode)
+    suspend fun updateWebSearchBackend(backend: WebSearchBackend)
     suspend fun updateWebSearchSearxngBaseUrl(baseUrl: String)
+    suspend fun updateWebSearchAnySearchApiKey(apiKey: String)
     suspend fun refreshPlatformModels(platformUid: String): ModelRefreshResult
     suspend fun updatePlatformModelEnabled(platformUid: String, modelId: String, enabled: Boolean)
     suspend fun setPlatformDefaultModel(platformUid: String, modelId: String)

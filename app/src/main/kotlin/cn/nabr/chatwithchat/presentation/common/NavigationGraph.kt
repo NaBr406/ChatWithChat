@@ -23,6 +23,7 @@ import cn.nabr.chatwithchat.data.textskill.PendingTextSkillSelection
 import cn.nabr.chatwithchat.presentation.ui.chat.AttachmentPreviewScreen
 import cn.nabr.chatwithchat.presentation.ui.chat.ChatScreen
 import cn.nabr.chatwithchat.presentation.ui.chat.ChatShellScreen
+import cn.nabr.chatwithchat.presentation.ui.chat.ChatViewModel
 import cn.nabr.chatwithchat.presentation.ui.chat.EmptyChatScreen
 import cn.nabr.chatwithchat.presentation.ui.chat.encodePendingTextSkillSelections
 import cn.nabr.chatwithchat.presentation.ui.debug.PromptTraceScreen
@@ -253,11 +254,22 @@ fun NavGraphBuilder.chatScreenNavigation(navController: NavHostController) {
             navArgument("initialTextSkills") { defaultValue = "" }
         )
     ) {
+        // 和 ChatScreen 默认参数取到的是同一个实例——两边的 hiltViewModel() 都落在这个 NavBackStackEntry
+        // 上。提到这里是为了在下面比对当前会话 id，顺手显式传下去，免得看着像各建了一个。
+        val chatViewModel: ChatViewModel = hiltViewModel()
         ChatShellScreen(
             settingOnClick = { navController.navigate(Route.SETTING_ROUTE) { launchSingleTop = true } },
             onAboutClick = { navController.navigate(Route.ABOUT_PAGE) { launchSingleTop = true } },
             onExistingChatClick = { chatRoom ->
-                navController.navigateToChatRoom(chatRoom.id, chatRoom.enabledPlatform)
+                // 点到的就是正在看的这个会话时什么都不做，抽屉那边已经在关了。否则会走一遍 popUpTo：当前
+                // entry 连 ViewModel 一起销毁，再推一个参数完全相同的新 entry，消息重新查一遍、滚动位置
+                // 归零，用户看到的是原地闪一下。
+                //
+                // 比的是 ViewModel 里的实时 id 而不是路由参数：从空白页新建的会话路由参数恒为 0，落库拿到
+                // 真 id 之后只有 _chatRoom 跟得上，拿 0 去比会漏掉「刚建完就在抽屉里点它」这一档。
+                if (chatRoom.id != chatViewModel.chatRoom.value.id) {
+                    navController.navigateToChatRoom(chatRoom.id, chatRoom.enabledPlatform)
+                }
             },
             navigateToNewChat = { enabledPlatforms, initialQuestion, initialModel, initialAttachmentPaths, initialRequestId, initialTextSkills ->
                 navController.navigateToChatRoom(
@@ -272,6 +284,7 @@ fun NavGraphBuilder.chatScreenNavigation(navController: NavHostController) {
             }
         ) { openDrawer, _, _ ->
             ChatScreen(
+                chatViewModel = chatViewModel,
                 onBackAction = openDrawer,
                 navigationIcon = Icons.Rounded.Menu,
                 navigationIconContentDescription = stringResource(R.string.open_chat_history)

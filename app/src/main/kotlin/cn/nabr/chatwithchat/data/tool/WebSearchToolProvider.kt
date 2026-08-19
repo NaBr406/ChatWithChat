@@ -43,12 +43,17 @@ class WebSearchToolProvider(
         val resultLimit = config.maxSearchResults.coerceAtLeast(0)
         val results = webSearchRepository.search(query, resultLimit).getOrElse { throwable ->
             val message = throwable.message ?: throwable::class.simpleName.orEmpty()
-            return if (message.contains("web_search_backend_not_configured")) {
-                call.errorResult("web_search_backend_not_configured")
-            } else if (message.startsWith(WEB_SEARCH_UNRESPONSIVE_ENGINES_PREFIX)) {
-                call.errorResult("web_search_failed:search backend unavailable: ${message.removePrefix(WEB_SEARCH_UNRESPONSIVE_ENGINES_PREFIX)}")
-            } else {
-                call.errorResult("web_search_failed:$message")
+            return when {
+                message.contains("web_search_backend_not_configured") ->
+                    call.errorResult("web_search_backend_not_configured")
+                message.startsWith(WEB_SEARCH_UNRESPONSIVE_ENGINES_PREFIX) ->
+                    call.errorResult("web_search_failed:search backend unavailable: ${message.removePrefix(WEB_SEARCH_UNRESPONSIVE_ENGINES_PREFIX)}")
+                // 这两个已经是自解释的人话，只需要脱掉仓库层的机器码前缀，免得 UI 里出现双层前缀。
+                message.startsWith(WEB_SEARCH_QUOTA_EXHAUSTED_PREFIX) ->
+                    call.errorResult("web_search_failed:${message.removePrefix(WEB_SEARCH_QUOTA_EXHAUSTED_PREFIX)}")
+                message.startsWith(WEB_SEARCH_BACKEND_REJECTED_PREFIX) ->
+                    call.errorResult("web_search_failed:search backend rejected the query: ${message.removePrefix(WEB_SEARCH_BACKEND_REJECTED_PREFIX)}")
+                else -> call.errorResult("web_search_failed:$message")
             }
         }
         val boundedResults = results
@@ -101,3 +106,5 @@ class WebSearchToolProvider(
 
 private const val MAX_SOURCE_SNIPPET_CHARS = 240
 private const val WEB_SEARCH_UNRESPONSIVE_ENGINES_PREFIX = "web_search_no_results_unresponsive_engines:"
+private const val WEB_SEARCH_QUOTA_EXHAUSTED_PREFIX = "web_search_quota_exhausted:"
+private const val WEB_SEARCH_BACKEND_REJECTED_PREFIX = "web_search_backend_rejected:"
