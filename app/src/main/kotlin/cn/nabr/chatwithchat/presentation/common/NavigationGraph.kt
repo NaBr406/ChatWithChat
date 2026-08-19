@@ -60,7 +60,11 @@ fun SetupNavGraph(
                 .fillMaxSize()
                 .background(settingsMaterialColors().canvas),
             navController = navController,
-            startDestination = startDestination.route
+            startDestination = startDestination.route,
+            enterTransition = NavEnterTransition,
+            exitTransition = NavExitTransition,
+            popEnterTransition = NavPopEnterTransition,
+            popExitTransition = NavPopExitTransition
         ) {
             homeScreenNavigation(navController)
             migrationScreenNavigation(navController)
@@ -199,7 +203,19 @@ private fun NavHostController.navigateToChatRoom(
             .replace(oldValue = "{initialAttachments}", newValue = encodedInitialAttachments)
             .replace(oldValue = "{initialRequestId}", newValue = "$initialRequestId")
             .replace(oldValue = "{initialTextSkills}", newValue = encodedInitialTextSkills)
-    )
+    ) {
+        // 会话之间是平级的。抽屉在首页和会话页里都开得出来，每次点选又都带着不同的参数，不加约束的话
+        // 连开 N 个会话就在返回栈上堆 N 层，返回键得把逛过的历史会话一路倒退完才出得去应用。
+        //
+        // 弹到 CHAT_LIST 但不含它自身，栈里于是恒为「首页 + 当前会话」两层：从会话里返回总是回到首页，
+        // 再返回才退出。不用 popUpTo(CHAT_ROOM) { inclusive = true } 是因为那条要靠带占位符的路由模板
+        // 去匹配，而首页这个锚点没有参数，怎么进来的都对得上。
+        //
+        // 代价：切会话会连着上一个会话的 ViewModel 一起销毁，它那边没跑完的流式回复就断在半路。这跟在
+        // 会话里按返回键的行为是一致的（也断），必须留住的副作用——记忆归档、标题生成——本来就跑在
+        // applicationScope 上，不受这里影响。
+        popUpTo(Route.CHAT_LIST)
+    }
 }
 
 private fun NavHostController.navigateToAttachmentPreview(filePath: String) {

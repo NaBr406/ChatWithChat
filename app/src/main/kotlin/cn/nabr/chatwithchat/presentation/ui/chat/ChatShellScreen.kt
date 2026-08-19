@@ -169,22 +169,27 @@ fun ChatShellScreen(
             }
     }
 
-    BackHandler(enabled = drawerState.currentValue == DrawerValue.Open) {
-        when {
-            chatListState.isSelectionMode -> homeViewModel.disableSelectionMode()
-            chatListState.isSearchMode -> homeViewModel.disableSearchMode()
-            else -> closeDrawer()
-        }
-    }
-
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
             ModalDrawerSheet(
+                // 传 drawerState 才会走到带 DrawerPredictiveBackHandler 的那个重载：抽屉于是随返回
+                // 手势缩放位移。不传的重载完全不接预见式返回，只能等松手瞬间关闭。
+                drawerState = drawerState,
                 drawerContainerColor = materialColors.canvas,
                 drawerContentColor = materialColors.primaryLabel,
                 drawerTonalElevation = 0.dp
             ) {
+                // 只接多选/搜索两态，普通关抽屉交给上面的原生跟手动画。
+                // 位置很关键：OnBackPressedDispatcher 是 LIFO 派发，只有组合在 ModalDrawerSheet 内部
+                // 才会晚于抽屉自己的 handler 注册，从而在这两态下抢先响应。
+                BackHandler(enabled = chatListState.isSelectionMode || chatListState.isSearchMode) {
+                    if (chatListState.isSelectionMode) {
+                        homeViewModel.disableSelectionMode()
+                    } else {
+                        homeViewModel.disableSearchMode()
+                    }
+                }
                 ChatHistoryDrawer(
                     chatListState = chatListState,
                     platformState = platformState,
