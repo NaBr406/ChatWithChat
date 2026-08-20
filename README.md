@@ -6,7 +6,7 @@
 
 **面向 Android 的本地优先多模型 AI 助手**
 
-在同一个移动端界面中连接主流模型服务与 OpenAI 兼容端点，并按需启用工具调用、联网搜索和跨会话长期记忆。
+在同一个移动端界面中连接主流模型服务与 OpenAI 兼容端点，并按需启用工具调用、MCP 服务器、联网搜索和跨会话长期记忆。
 
 <p>
   <img alt="Android 12+" src="https://img.shields.io/badge/Android-12%2B-3DDC84?logo=android&logoColor=white">
@@ -26,13 +26,13 @@
 
 </div>
 
-ChatWithChat 不提供项目方托管的账号、模型或 API 中转服务。你需要使用自己的模型服务凭据，或者连接本机、局域网中的 Ollama / OpenAI 兼容服务。聊天记录、设置和长期记忆由应用在本地管理；发生模型请求、联网搜索或记忆整理时，相关内容会发送到你配置的外部端点。
+ChatWithChat 不提供项目方托管的账号、模型或 API 中转服务。你需要使用自己的模型服务凭据，或者连接本机、局域网中的 Ollama / OpenAI 兼容服务。聊天记录、设置和长期记忆由应用在本地管理；发生模型请求、联网搜索、MCP 工具调用或记忆整理时，相关内容会发送到你配置的外部端点。
 
 > [!IMPORTANT]
 > 当前稳定版为 `v1.1.0`，可从 [GitHub Release](https://github.com/NaBr406/ChatWithChat/releases/tag/v1.1.0) 下载 `v1.1.0.apk`。APK 的 SHA-256 为 `2831ccf376ecc94818bf78a7f7cfebe6b8ca239766de4b7bb9d5e99784eb48c6`。项目尚未上架 Google Play 或 F-Droid，安装 GitHub APK 时需要允许浏览器或文件管理器安装未知来源应用。
 
 > [!NOTE]
-> `v1.1.0` 对应 Room schema 20，已包含参考聊天历史与长期记忆召回。当前 `main` 已前进到 Room schema 21，新增按供应商配置的上下文管理与自动压缩，以及记忆导入与身份安全的长期记忆整理。这些能力尚未进入正式 Release，需要自行从源码构建。
+> `v1.1.0` 对应 Room schema 20，已包含参考聊天历史与长期记忆召回。当前 `main` 已前进到 Room schema 23：schema 21 引入按供应商配置的上下文管理与自动压缩，schema 22 引入本地纯文本技能，schema 23 引入远程 MCP 服务器接入。此外还新增了 AnySearch 搜索后端、文档附件本地正文抽取，以及 Token 缓存命中统计。这些能力尚未进入正式 Release，需要自行从源码构建。
 
 ## 核心能力
 
@@ -41,14 +41,16 @@ ChatWithChat 不提供项目方托管的账号、模型或 API 中转服务。�
 | 多模型接入 | 支持 OpenAI、Anthropic、Google Gemini、Groq、OpenRouter、Ollama，以及自定义 OpenAI 兼容端点 |
 | 移动端聊天 | 首屏直接开始对话，抽屉管理历史会话，顶部切换模型与思考强度 |
 | 推理流展示 | 统一接收 Responses reasoning summary、`reasoning_content`、`reasoning`、`<think>` 与 `<thinking>`，流式写入可折叠思考区 |
-| 工具调用 | 统一的工具循环、参数校验、调用额度、权限检查和结果来源展示 |
-| 联网搜索 | 通过用户配置的 SearXNG 搜索公开网页，并按需读取网页正文 |
+| 工具调用 | 统一的工具循环、参数校验、调用额度、权限检查、逐次调用确认和结果来源展示 |
+| MCP 服务器 | 接入远程 Streamable HTTP / SSE 服务器的工具，按工具逐个启用，一律按可写入处理并逐次确认 |
+| 本地技能 | 导入包含 `SKILL.md` 的 ZIP 包，按会话或按单次请求挂载纯文本技能提示 |
+| 联网搜索 | 可选自建 SearXNG 或厂商托管的 AnySearch 作为搜索后端，并按需读取网页正文 |
 | 上下文管理 | 按供应商选择自动压缩的四个成本档位或“原文优先”，用检查点链折叠较早内容，并可在会话内选择参与上下文的回合范围 |
-| 长期记忆 | Room schema 21 记忆流水线，以 `MEMORY.md` 为权威事实源，结合端侧 ONNX、ObjectBox HNSW、混合召回和可恢复的原子写入，并支持导入既有记忆 |
+| 长期记忆 | Room schema 23 记忆流水线，以 `MEMORY.md` 为权威事实源，结合端侧 ONNX、ObjectBox HNSW、混合召回和可恢复的原子写入，并支持导入既有记忆 |
 | 参考聊天历史 | 在同一“启用记忆”开关下，按需从其他会话召回有界的历史片段；使用独立的 Room 投影、FTS 和本地向量索引，不替代 `MEMORY.md` |
-| 丰富消息 | 流式回复、Markdown、代码块复制、数学公式、思考过程、来源链接和 Token 用量 |
+| 丰富消息 | 流式回复、Markdown、代码块复制、数学公式、思考过程、来源链接，以及按平台与回合统计的 Token 用量与缓存命中率 |
 | 会话操作 | 搜索标题和消息并按最近更新时间排序，复制与批量删除历史会话，编辑消息、重试回答、切换回答版本并导出会话 |
-| 图片附件 | 从相册或相机添加图片；单文件与单次附件总量上限均为 50 MiB，发送前会检查格式并压缩大图 |
+| 图片与文档附件 | 从相册或相机添加图片，或选择 PDF、docx 与纯文本类文档在本地抽取正文；单文件与单次附件总量上限均为 50 MiB |
 | 表情库 | 管理内置和自定义静态表情；AI 仅接收标题、替代文本和标签，可在回复中按需搜索并发送 |
 
 ## 相较上游的主要改造
@@ -61,9 +63,11 @@ ChatWithChat 不只是更换了名称和图标。相较于 GPT Mobile 上游基�
 | 模型与推理控制 | 统一模型发现和启用流程，按提供商映射自动、关闭、低、中、高、最高思考强度，并记住模型与思考模式选择 |
 | 推理流兼容 | 新增跨 SSE 分片的 `ReasoningStreamParser`，按完整 UTF-8 行解码，处理结构化推理字段和思考标签，抑制重复来源，并让未闭合标签仍可见 |
 | 聊天交互 | 增加回答轮次导航、回答版本切换、按平台与轮次统计 Token、用户/助手消息编辑、重试、导出，以及新建会话附件接力 |
-| 附件链路 | 支持相册多选、相机拍照、本地缩略图、格式与容量准入、图片压缩，以及兼容端点不支持 Files API 时的内联回退 |
-| 工具平台 | 建立统一工具注册、schema 校验、执行预算、超时、权限与来源展示，内置搜索、网页读取、设备时间和按需定位 |
-| 长期记忆 | 新增完整的本地记忆子系统，包括五轮批处理、日记忆蒸馏、schema 21 恢复状态、默认 `ignore` 的质量门禁、可恢复的 `retire` 整理、原子 Markdown 提交、端侧向量索引、Top8 Hybrid recall，以及记忆导入与身份安全的全语料整理 |
+| 附件链路 | 支持相册多选、相机拍照、本地缩略图、格式与容量准入、图片压缩、PDF 与 docx 本地正文抽取，以及兼容端点不支持 Files API 时的内联回退 |
+| 工具平台 | 建立统一工具注册、schema 校验、执行预算、超时、权限、逐次调用确认与来源展示，内置搜索、网页读取、设备时间、按需定位、日历与闹钟写入 |
+| MCP 接入 | 新增远程 MCP 客户端：Streamable HTTP / SSE 传输、服务器与工具缓存持久化、JSON Schema 子集翻译与逐工具拒绝理由、确定性工具命名、注册表原子换入，以及固定为「可写入 + 每次确认」的信任策略 |
+| 本地技能 | 新增纯文本技能子系统：ZIP 包校验与解压门禁、`SKILL.md` 前置元数据解析与标准性判定、引用文件解析、按会话或单次请求的挂载绑定，以及请求快照留存 |
+| 长期记忆 | 新增完整的本地记忆子系统，包括五轮批处理、日记忆蒸馏、schema 23 恢复状态、默认 `ignore` 的质量门禁、可恢复的 `retire` 整理、原子 Markdown 提交、端侧向量索引、Top8 Hybrid recall，以及记忆导入与身份安全的全语料整理 |
 | 参考聊天历史 | 新增可重建的会话轮次投影、异步回填与队列、FTS 检索、独立历史向量快照、混合排序、去重、当前会话排除和进程终止恢复 |
 | 上下文管理 | 新增按模型真实窗口推导的请求预算、四档成本档位、检查点链与后台折叠、OpenAI 服务端压缩接入、跨供应商独立链、可选回合范围，以及压缩失败时的确定性抽取式降级 |
 | 构建与交付 | 增加单 ABI 构建、APK 包名/版本/签名/ABI 校验、固定哈希记忆模型供应，以及 16 KB ZIP/ELF 兼容门禁 |
@@ -146,26 +150,88 @@ ChatWithChat 不只是更换了名称和图标。相较于 GPT Mobile 上游基�
 1. 选择提供商类型并填写平台名称、API URL 与凭据。
 2. 等待应用同步模型列表，然后启用至少一个模型。
 3. 回到聊天首页，从顶部模型选择器选择模型与思考强度。
-4. 如有需要，在设置中开启“启用记忆”（同时控制长期记忆和参考聊天历史），再按需开启联网搜索或其他工具。
+4. 如有需要，在设置中开启“启用记忆”（同时控制长期记忆和参考聊天历史）。
+5. 需要联网时把工具调用与联网搜索设为自动，并选择 SearXNG 或 AnySearch 作为搜索后端。
+6. 需要外部工具或提示词扩展时，可在设置中添加 MCP 服务器或导入本地技能包，两者都默认关闭、需要逐项启用。
 
 如果 Android 设备需要连接电脑上运行的 Ollama，请填写电脑在局域网中的地址；Android 设备里的 `localhost` 指向设备自身。
 
 ## 工具调用与联网搜索
 
-工具总开关提供“关闭”和“自动”两种模式。自动模式下，模型可以在当前请求需要时调用已启用工具。内置工具主要是只读工具；表情库额外提供 `search_stickers` 和 `send_sticker`，后者只会从本地已启用目录中选择并展示静态表情：
+工具总开关提供“关闭”和“自动”两种模式。自动模式下，模型可以在当前请求需要时调用已启用工具。内置工具以只读为主，写入型工具单独把关：`add_schedule` 和 `set_alarm` 会写入系统日历与时钟，默认关闭且必须由用户显式启用；表情库额外提供 `search_stickers` 和 `send_sticker`，后者只会从本地已启用目录中选择并展示静态表情：
 
 | 工具 | 用途 | 启用条件 |
 | --- | --- | --- |
-| `web_search` | 搜索公开网页并返回结构化来源 | 工具调用为自动、联网搜索为自动，并已配置 SearXNG URL |
+| `web_search` | 搜索公开网页并返回结构化来源 | 工具调用为自动、联网搜索为自动，并已配置搜索后端 |
 | `fetch_url` | 读取公开网页正文 | 与网页搜索相同 |
 | `current_datetime` | 读取设备本地日期、时间与时区 | 工具调用为自动 |
 | `device_location` | 按需读取设备当前位置 | 默认关闭，需要用户主动启用并授予 Android 定位权限 |
+| `add_schedule` | 向系统日历写入日程 | 默认关闭，需要用户主动启用并授予日历权限 |
+| `set_alarm` | 通过系统时钟设置闹钟 | 默认关闭，需要用户主动启用（`SET_ALARM` 为安装时授予的普通权限） |
 | `search_stickers` | 按语义搜索本地已启用的静态表情 | 工具调用为自动，并启用 AI 自动发送表情 |
 | `send_sticker` | 展示模型选定的本地静态表情 | 仅在 `search_stickers` 返回候选后使用 |
+| `mcp_<服务器>_<工具>` | 由远程 MCP 服务器提供的工具 | 见下方 [MCP 服务器](#mcp-服务器) |
 
 工具执行前会检查当前启用列表、参数 schema、调用次数、超时、结果大小和 Android 权限。模型生成的调用不会自行弹出系统授权窗口；缺少权限时，应用会返回可恢复错误，由用户决定是否授权。
 
-当前不支持 MCP、远程动态工具、插件市场或任意第三方工具下载。工具平台的扩展方式和安全边界见 [工具调用开发指南](./docs/superpowers/tool-calling.md)。
+### 搜索后端
+
+网页搜索需要先选一个后端，两者在隐私和便利之间取舍不同，默认落在 SearXNG 上：
+
+| 后端 | 配置 | 查询词去向 |
+| --- | --- | --- |
+| SearXNG | 需要填写自建或自选实例的 URL | 只发送到你填写的那个实例 |
+| AnySearch | 厂商托管，零配置可用；API Key 可留空 | 发送到 `api.anysearch.com` 这一第三方服务 |
+
+匿名调用 AnySearch 也能工作，但速率上限按出口 IP 计算，只够轻量使用；填入 API Key 后按密钥计费与限速。两个后端返回的都是结构化来源列表，网页正文仍由应用自己从公开 URL 读取。
+
+### MCP 服务器
+
+应用可以接入远程 MCP 服务器**的工具**，不接入 resources 与 prompts。传输方式支持当前规范的 Streamable HTTP 与仍被大量部署使用的旧版 HTTP+SSE；本地 stdio 服务器不在范围内，Android 无法启动子进程。客户端使用 `io.modelcontextprotocol:kotlin-sdk-client`，固定在 0.11.1。
+
+信任模型是这部分的重点，因为工具定义来自第三方：
+
+| 环节 | 处理方式 |
+| --- | --- |
+| 服务器声明 | `readOnlyHint`、`destructiveHint`、`idempotentHint`、`openWorldHint` 会被记录并展示为“服务器声明（未经验证）”，但**不参与授权判断** |
+| 安全策略 | 每个桥接工具一律获得固定的「可写入 + 每次调用需确认」策略，与服务器声称的只读性无关 |
+| 默认状态 | 新服务器默认关闭，其工具需要逐个启用；服务器关闭时它的工具完全不进入注册表，模型伪造工具名也无法触达 |
+| 逐次确认 | 每次调用都会弹出确认对话框。可以选择“本次会话都允许”，该授权只按（服务器，工具）粒度生效、仅存在于内存，关闭工具或重启应用即失效 |
+| 认证 | 用户填写的 Bearer token 与自定义请求头；自定义头不能覆盖 `Authorization`。尚未实现 OAuth 2.1，因此仅支持 OAuth 的托管服务器无法添加 |
+| 地址准入 | 拒绝 URL 内嵌凭据与非法 scheme；内网地址需要为该服务器单独打开“允许内网地址” |
+| Schema 翻译 | `McpSchemaTranslator` 把服务器 schema 转换为应用能表达的子集：会改变参数结构的关键字（`$ref`、`oneOf`、`if/then`、元组 `items` 等）整体拒绝该工具并给出理由码，只收窄取值的关键字则丢弃并保留属性 |
+| 工具命名 | 映射为 `mcp_<别名>_<工具>`，控制在 64 字符内，超长时附带 `(serverId, toolName)` 的短摘要；别名创建时固定，避免改名后孤立已有的启用与授权记录 |
+
+服务器与工具缓存持久化在 `mcp_servers` 与 `mcp_tools` 两张表中，由 schema 23 引入，因此冷启动无需联网即可重建工具目录。单个服务器最多同步 500 个工具、20 页；同步失败时保留上一份目录，不会因为一次网络抖动就抹掉用户已启用并授权的工具。凭据以明文存放在 `mcp_servers.auth_token`，与现有的平台 API 密钥存放方式一致。
+
+完整的翻译规则、预算测算、恢复行为与测试要求见 [工具调用开发指南](./docs/superpowers/tool-calling.md)。当前仍不支持插件市场或任意第三方工具下载。
+
+## 本地技能
+
+技能是纯文本的提示词扩展：导入一个包含若干 `SKILL.md` 目录的 ZIP 包，之后可以在聊天中挂载。技能只提供文本——包内脚本不会执行，也不会因此获得工具或外部连接能力，界面会明确标注“纯文本模式”。
+
+| 环节 | 处理方式 |
+| --- | --- |
+| 导入门禁 | ZIP 压缩后上限 4 MiB、解压后 16 MiB、最多 512 个条目、单文件 512 KiB；同时拒绝符号链接、多卷与 ZIP64 归档和不安全路径，用于防止 zip bomb 与路径穿越 |
+| 元数据 | 解析 `SKILL.md` 前置元数据，并标注为标准、Claude 兼容、已识别发行器扩展或非标准前置元数据 |
+| 能力声明 | 技能可以声明所需能力；无法在纯文本模式下满足的能力会被列为“未满足能力”，而不是静默降级 |
+| 挂载方式 | 单次请求生效（“仅此请求”）或整个会话生效（“本会话启用”），单次请求最多 8 个技能 |
+| 请求预算 | 合计文本上限 512 KiB、约 96,000 估算 token；直接引用文件单个上限 128 KiB，每个技能最多 12 个 |
+| 快照 | 每条用户消息保存当次实际使用的技能快照与提示词哈希；删除技能包会停用相关会话绑定，但历史请求快照保持不变 |
+
+会话绑定与请求快照保存在 `session_text_skill_bindings` 与 `message_text_skill_invocations` 两张表中，由 schema 22 引入。
+
+## 图片与文档附件
+
+图片会在准入检查后压缩并按供应商能力内联或走 Files API。文档则在设备本地抽取正文，只有抽出的文字进入提示词，不会上传原始文件字节：
+
+| 类型 | 抽取方式 | 上限 |
+| --- | --- | --- |
+| PDF | PdfBox-Android 本地解析 | 文件 32 MiB，最多 200 页 |
+| docx | 解析 `word/document.xml` | 解压后 XML 16 MiB，容器最多 512 个条目 |
+| 纯文本类 | 直接读入（`text/*`、JSON、XML、YAML、TOML、SQL、JS/TS、Shell 等） | 单文件 8 MiB |
+
+单个文档抽取后最多保留 40,000 字符，一条消息内所有文档合计 80,000 字符，超出即截断并在提示中标注。附件本身仍受单文件与单次总量各 50 MiB 的限制。
 
 ## 长期记忆
 
@@ -176,7 +242,7 @@ ChatWithChat 不只是更换了名称和图标。相较于 GPT Mobile 上游基�
 | 层级 | 实现与职责 |
 | --- | --- |
 | 权威内容 | `filesDir/memory_store/MEMORY.md` 是普通聊天召回的唯一事实源；`memory/YYYY-MM-DD.md` 只作为维护输入，蒸馏进入 `MEMORY.md` 前不会参与普通召回 |
-| 调度状态 | Room schema 20 保存待处理轮次、聊天检查点、维护任务、活动日志、变更组、变更回执、语料代次和日蒸馏检查点；参考聊天历史的派生表、队列和回填状态也在同一数据库中 |
+| 调度状态 | Room schema 23 保存待处理轮次、聊天检查点、维护任务、活动日志、变更组、变更回执、语料代次和日蒸馏检查点；参考聊天历史的派生表、队列和回填状态也在同一数据库中 |
 | 语义整理 | 使用平台列表中首个已启用且已选择模型的兼容平台，把对话批次转换为受约束的 `create`、`replace`、`remove` 或 `ignore` 操作；全语料整理还支持可恢复的 `retire` |
 | 一致性提交 | `MemoryMutationCoordinator` 通过幂等键、目标哈希、暂存文件、原子替换和 Room compare-and-set 状态推进提交，避免进程终止后重复写入或回滚新内容 |
 | 本地向量化 | 校验固定版本和 SHA-256 的 `bge-small-zh-v1.5` ONNX 资产，在设备上生成 512 维 CLS/L2 向量；该步骤不会调用云端 embedding 服务 |
@@ -189,7 +255,7 @@ flowchart TD
     TURN["成功完成的对话轮次"] --> PENDING["Room 待处理轮次"]
     PENDING --> BATCH["最多 5 轮的不可变批次"]
     BATCH --> LLM["已配置模型生成受约束操作"]
-    LLM --> RECEIPT["schema 20 变更组与回执"]
+    LLM --> RECEIPT["schema 23 变更组与回执"]
     RECEIPT --> MARKDOWN["原子提交 MEMORY.md / daily Markdown"]
     MARKDOWN --> DISTILL["跨日蒸馏稳定事实"]
     DISTILL --> MARKDOWN
@@ -219,7 +285,7 @@ ObjectBox 索引可以安全删除并从 Markdown 重建。模型资产缺失、
 | --- | --- |
 | 隐私开关 | 不新增单独的历史开关，复用“启用记忆”。关闭后不向新请求注入历史，也不消费或写入新的历史索引；已有派生数据保留，重新开启时异步校准 |
 | 收录边界 | 只收录有用户消息和成功助手回答的已完成轮次；编辑、删除或不完整的轮次不会进入可用召回，旧投影在重建前会失效，当前会话默认不参与结果 |
-| 索引生命周期 | Room schema 20 保存轮次投影、FTS、异步队列、回填检查点、索引代次、embedding 缓存和独立历史向量快照；WorkManager 负责回填、增量修复和重建 |
+| 索引生命周期 | Room schema 23 保存轮次投影、FTS、异步队列、回填检查点、索引代次、embedding 缓存和独立历史向量快照；WorkManager 负责回填、增量修复和重建 |
 | 召回路径 | 中文感知的词法检索与端侧语义向量检索融合、去重并按会话分散；最多注入 4 个片段、约 400 Token，每个来源会话最多 2 个片段 |
 | 降级与提示 | 向量资产不可用、快照过期或损坏时回退到词法检索；只注入有界的自然语言片段，并标记为不可信历史证据，不包含内部 ID、路径、哈希、诊断字段或附件字节 |
 
@@ -271,9 +337,12 @@ ObjectBox 索引可以安全删除并从 Markdown 重建。模型资产缺失、
 | --- | --- |
 | 聊天、平台和运行状态 | 保存在应用私有 Room 数据库中；平台记录包含 API URL 与凭据 |
 | 应用偏好 | 保存在应用私有 DataStore 中 |
-| API 凭据 | 没有经过项目自建服务器，但当前也没有额外的应用层加密 |
+| API 凭据 | 没有经过项目自建服务器，但当前也没有额外的应用层加密；MCP 服务器的 Bearer token 同样以明文存放 |
 | 普通对话与模型列表同步 | 直接请求所选模型服务端点 |
-| 联网搜索 | 查询发送到用户配置的 SearXNG；网页正文由应用从公开 URL 读取 |
+| 联网搜索 | SearXNG 后端只把查询发送到你填写的实例；AnySearch 后端会把查询发送到 `api.anysearch.com`。两者的网页正文都由应用从公开 URL 读取 |
+| MCP 工具调用 | 工具名、参数和返回结果在你启用的远程服务器与应用之间传输；每次调用都需要你确认，会话级授权仅存在于内存 |
+| 文档附件 | PDF、docx 与纯文本类文档在设备本地抽取正文；只有抽出的文字进入模型请求，原始文件字节不会上传 |
+| 本地技能 | 技能包解压后保存在应用私有存储；挂载后其文本内容会作为提示词的一部分发送到所选模型，包内脚本不会执行 |
 | 长期记忆语义整理 | 完成轮次、已有记忆和受约束整理提示会发送到已配置的模型服务；模型返回的操作在本地校验后才允许提交 |
 | 长期记忆召回 | Markdown、Room 控制状态、ONNX embedding 和 ObjectBox 检索均在设备端运行；普通召回不会调用云端 embedding |
 | 参考聊天历史 | 轮次投影、FTS、队列和历史向量快照在设备端派生；启用后只有经过相关性筛选的有界片段会进入模型请求，向量失败时回退到本地词法检索 |
@@ -312,6 +381,12 @@ Set-Location ChatWithChat
 
 # 历史索引进程终止与恢复测试（需要恰好一个已连接设备）
 .\tools\history\run-process-death-harness.ps1
+
+# MCP 相关的 JVM 测试
+.\gradlew.bat :app:testDebugUnitTest --tests "cn.nabr.chatwithchat.data.mcp.*"
+
+# MCP SDK 的设备端加载与握手门禁（SDK 尚未到 1.0，且不声明支持 Android）
+.\gradlew.bat :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=cn.nabr.chatwithchat.data.mcp.McpSdkBuildCanaryInstrumentedTest
 ```
 
 macOS / Linux 下将 `.\gradlew.bat` 替换为 `./gradlew`。代码格式由 ktlint 1.3.1 按 `.editorconfig` 在 Pull Request 中检查。
@@ -374,7 +449,7 @@ flowchart LR
     subgraph APP["Android 应用"]
         UI["Compose UI"] --> VM["ViewModel / StateFlow"]
         VM --> CHAT["聊天 Repository"]
-        CHAT --> ROOM["Room schema 20<br/>聊天、平台、任务、回执与历史投影"]
+        CHAT --> ROOM["Room schema 23<br/>聊天、平台、任务、回执、历史投影与 MCP"]
         CHAT --> DATASTORE["DataStore<br/>应用偏好"]
         CHAT --> TOOLS["统一工具循环"]
         CHAT --> RECORDER["完成轮次记录"]
@@ -392,12 +467,16 @@ flowchart LR
         HISTORY --> HISTORY_RECALL["历史 lexical / semantic / hybrid"]
         HISTORY_VECTOR --> HISTORY_RECALL
         HISTORY_RECALL --> CHAT
-        TOOLS --> DEVICE["设备时间 / 位置"]
+        CHAT --> SKILLS["本地纯文本技能<br/>会话绑定 + 请求快照"]
+        SKILLS --> CHAT
+        TOOLS --> DEVICE["设备时间 / 位置 / 日历 / 闹钟"]
+        TOOLS --> MCP["MCP 桥接<br/>缓存目录 + 逐次确认"]
     end
 
     CHAT --> PROVIDERS["用户配置的 AI 服务"]
     WORK --> PROVIDERS
-    TOOLS --> SEARCH["SearXNG / 公开网页"]
+    TOOLS --> SEARCH["SearXNG / AnySearch / 公开网页"]
+    MCP --> MCP_SERVERS["远程 MCP 服务器"]
 ```
 
 主要代码目录：
@@ -405,14 +484,17 @@ flowchart LR
 - `app/src/main/kotlin/cn/nabr/chatwithchat/presentation/`：Compose UI、导航与 ViewModel。
 - `app/src/main/kotlin/cn/nabr/chatwithchat/data/network/`：各模型服务的网络客户端。
 - `app/src/main/kotlin/cn/nabr/chatwithchat/data/repository/`：聊天、设置、附件、模型发现、推理流解析和记忆上下文装配。
-- `app/src/main/kotlin/cn/nabr/chatwithchat/data/tool/`：工具注册、执行、安全策略与 provider adapter。
-- `app/src/main/kotlin/cn/nabr/chatwithchat/data/websearch/`：SearXNG 搜索、网页提取与网络安全策略。
+- `app/src/main/kotlin/cn/nabr/chatwithchat/data/tool/`：工具注册、执行、安全策略、审批与 provider adapter。
+- `app/src/main/kotlin/cn/nabr/chatwithchat/data/mcp/`：MCP 客户端连接、`tools/list` 同步、schema 翻译、工具命名与注册表桥接。
+- `app/src/main/kotlin/cn/nabr/chatwithchat/data/textskill/`：技能包导入校验、前置元数据解析、引用解析与请求编译。
+- `app/src/main/kotlin/cn/nabr/chatwithchat/data/attachment/`：PDF / docx / 纯文本正文抽取与文档提示词合成。
+- `app/src/main/kotlin/cn/nabr/chatwithchat/data/websearch/`：SearXNG 与 AnySearch 搜索、网页提取与网络安全策略。
 - `app/src/main/kotlin/cn/nabr/chatwithchat/data/memory/`：批次整理、日蒸馏、原子变更、恢复、Markdown、端侧 embedding、ObjectBox 与 Hybrid recall。
 - `app/src/main/kotlin/cn/nabr/chatwithchat/data/history/`：历史轮次投影、FTS/向量召回、索引队列、回填与 WorkManager 调度。
-- `app/src/main/kotlin/cn/nabr/chatwithchat/data/database/`：Room entity、DAO、schema migration，以及记忆任务、历史索引、回执和语料代次状态。
+- `app/src/main/kotlin/cn/nabr/chatwithchat/data/database/`：Room entity、DAO、schema migration，以及记忆任务、历史索引、回执、语料代次与 MCP 状态。
 - `app/src/test/kotlin/`、`app/src/androidTest/kotlin/`：JVM 与设备测试。
 
-技术栈包括 Kotlin、Jetpack Compose、Material 3、Hilt、Room、DataStore、WorkManager、Ktor CIO、kotlinx.serialization、ObjectBox 与 ONNX Runtime。
+技术栈包括 Kotlin、Jetpack Compose、Material 3、Hilt、Room、DataStore、WorkManager、Ktor CIO、kotlinx.serialization、ObjectBox、ONNX Runtime、PdfBox-Android 与 MCP Kotlin SDK。
 
 ## CI 与发布流程
 
@@ -422,7 +504,7 @@ flowchart LR
 - 当前 CI 不会运行完整 JVM / 设备测试，也不会自动创建 GitHub Release；Actions artifact 与正式发布仍是两个独立步骤。
 - `v1.1.0` 已作为正式 GitHub Release 发布，公开资产为 [`v1.1.0.apk`](https://github.com/NaBr406/ChatWithChat/releases/download/v1.1.0/v1.1.0.apk)。
 
-提交代码前，请至少运行与修改范围对应的单元测试和 `:app:compileDebugKotlin`；数据库、记忆、权限或 Android 生命周期改动还应补充设备测试。
+提交代码前，请至少运行与修改范围对应的单元测试和 `:app:compileDebugKotlin`；数据库、记忆、权限或 Android 生命周期改动还应补充设备测试。改动 MCP 客户端或升级 MCP SDK 时必须跑一次 `McpSdkBuildCanaryInstrumentedTest`——SDK 尚未到 1.0，也不声明支持 Android，需要在 ART 上实测能加载并完成握手。
 
 ## 反馈
 

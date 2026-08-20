@@ -39,4 +39,4 @@ app/src/main/assets/memory-model/**
 .idea/copilot.data.migration.ask2agent.xml
 
 #codex
-/.codex/
+.codex/
