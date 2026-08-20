@@ -12,6 +12,7 @@ import cn.nabr.chatwithchat.data.database.dao.MemoryLongTermConsolidationDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryMaintenanceJobDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryRecoveryDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryTurnBatchDao
+import cn.nabr.chatwithchat.data.database.dao.McpDao
 import cn.nabr.chatwithchat.data.database.dao.MessageV2Dao
 import cn.nabr.chatwithchat.data.database.dao.PlatformModelV2Dao
 import cn.nabr.chatwithchat.data.database.dao.PlatformV2Dao
@@ -40,6 +41,8 @@ import cn.nabr.chatwithchat.data.database.entity.MemoryMaintenanceJob
 import cn.nabr.chatwithchat.data.database.entity.MemoryMutationGroup
 import cn.nabr.chatwithchat.data.database.entity.MemoryMutationReceipt
 import cn.nabr.chatwithchat.data.database.entity.MemoryPendingTurn
+import cn.nabr.chatwithchat.data.database.entity.McpServerEntity
+import cn.nabr.chatwithchat.data.database.entity.McpToolEntity
 import cn.nabr.chatwithchat.data.database.entity.MessageSourceMetadataListConverter
 import cn.nabr.chatwithchat.data.database.entity.MessageStickerRefListConverter
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
@@ -83,9 +86,11 @@ import cn.nabr.chatwithchat.data.database.entity.TokenUsageRecordConverter
         ContextRangeState::class,
         ContextNativeCompactionState::class,
         SessionTextSkillBinding::class,
-        MessageTextSkillInvocation::class
+        MessageTextSkillInvocation::class,
+        McpServerEntity::class,
+        McpToolEntity::class
     ],
-    version = 22,
+    version = 23,
     exportSchema = true
 )
 @TypeConverters(
@@ -112,4 +117,5 @@ abstract class ChatDatabaseV2 : RoomDatabase() {
     abstract fun chatHistoryDao(): ChatHistoryDao
     abstract fun contextManagementDao(): ContextManagementDao
     abstract fun textSkillDao(): TextSkillDao
+    abstract fun mcpDao(): McpDao
 }

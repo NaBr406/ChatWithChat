@@ -6,6 +6,52 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ToolScopePlannerTest {
+
+    @Test
+    fun `a Chinese query matches a Chinese description`() {
+        val candidate = ToolScopeCandidate(
+            definition = ToolDefinition(
+                name = "mcp_x_query_stores",
+                description = "查询用户可点餐门店",
+                parameters = ToolDefinition.Parameters()
+            ),
+            metadata = ToolDiscoveryMetadata(intentTags = setOf("查询用户可点餐门店"))
+        )
+
+        // This scored zero before CJK bigrams: word-boundary tokenization left the whole phrase as one
+        // token, so only a query containing that exact phrase could ever match it.
+        assertTrue("expected a partial match on 查询/门店", candidate.matchScore("查询附近的门店") > 0)
+    }
+
+    @Test
+    fun `an unrelated Chinese query does not match`() {
+        val candidate = ToolScopeCandidate(
+            definition = ToolDefinition(
+                name = "mcp_x_query_stores",
+                description = "查询用户可点餐门店",
+                parameters = ToolDefinition.Parameters()
+            ),
+            metadata = ToolDiscoveryMetadata(intentTags = setOf("查询用户可点餐门店"))
+        )
+
+        // Bigrams must not make everything match everything.
+        assertEquals(0, candidate.matchScore("帮我写一首诗"))
+    }
+
+    @Test
+    fun `an exact Chinese phrase outranks an incidental overlap`() {
+        val exact = ToolScopeCandidate(
+            definition = ToolDefinition("tool_a", "查询门店", ToolDefinition.Parameters()),
+            metadata = ToolDiscoveryMetadata(intentTags = setOf("查询门店"))
+        )
+        val partial = ToolScopeCandidate(
+            definition = ToolDefinition("tool_b", "查询订单状态", ToolDefinition.Parameters()),
+            metadata = ToolDiscoveryMetadata(intentTags = setOf("查询订单状态"))
+        )
+
+        assertTrue(exact.matchScore("查询门店") > partial.matchScore("查询门店"))
+    }
+
     @Test
     fun `discovery summaries stop at Chinese sentence boundaries`() {
         val candidate = ToolScopeCandidate(
@@ -336,7 +382,7 @@ class ToolScopePlannerTest {
     }
 
     @Test
-    fun `news intent prefers the higher priority web capability over device date`() {
+    fun `news intent ranks the web capability above device date without hiding it`() {
         val scope = ToolScopePlanner().createScope(
             listOf(
                 catalogEntry(
@@ -352,9 +398,39 @@ class ToolScopePlannerTest {
             ),
             initialIntent = "What happened today?"
         )
+        val advertised = scope.definitions.map(ToolDefinition::name)
 
         assertTrue(scope.contains("web_search"))
-        assertFalse(scope.contains(ToolDefinition.CurrentDateTime.name))
+        // Both match "today", and the runner-up used to be hidden behind a `discover_tools` round because
+        // only one on-demand tool was pre-advertised. Ranking is the point, not exclusion: a request that
+        // needs the date as well as the news should not have to spend two rounds discovering it.
+        assertTrue(scope.contains(ToolDefinition.CurrentDateTime.name))
+        assertTrue(advertised.indexOf("web_search") < advertised.indexOf(ToolDefinition.CurrentDateTime.name))
+    }
+
+    @Test
+    fun `a location bound query advertises the device tool alongside web search`() {
+        val scope = ToolScopePlanner().createScope(
+            listOf(
+                catalogEntry(
+                    name = ToolDefinition.WebSearch.name,
+                    tags = setOf("查一下", "搜索", "news"),
+                    priority = 30
+                ),
+                catalogEntry(
+                    name = ToolDefinition.DeviceLocation.name,
+                    exposure = ToolExposure.Resident,
+                    tags = setOf("附近", "位置", "定位"),
+                    priority = 40
+                )
+            ),
+            initialIntent = "查一下附近最近开的店"
+        )
+
+        // The reported bug: the model searched the web for a place it had no name for, because the location
+        // tool was on-demand, outranked, and unmatched by any literal tag in the query.
+        assertTrue(scope.contains(ToolDefinition.DeviceLocation.name))
+        assertTrue(scope.contains(ToolDefinition.WebSearch.name))
     }
 
     @Test
@@ -404,6 +480,66 @@ class ToolScopePlannerTest {
         assertEquals(2, scope.definitions.size)
         assertEquals(1, result.metadata.getValue("discovered_tool_names").split(',').size)
         assertFalse(scope.contains("second_calendar_tool"))
+    }
+
+    @Test
+    fun `a whole resident MCP server fits the advertisement budget without needing discovery`() {
+        // The shape of a real ordering server: every tool resident, verbose descriptions, and useless as a
+        // subset — the model cannot price a basket while `calculate-price` is hidden behind discovery.
+        val orderingTools = listOf(
+            "query-nearby-stores", "query-store-coupons", "query-meals", "query-meal-detail",
+            "query-meal-assistance", "calculate-price", "create-order", "query-order",
+            "query-my-coupons", "query-my-points", "query-party-city", "query-party-store",
+            "query-party-store-date", "query-party-store-session"
+        ).map { name -> catalogEntry(name = name, exposure = ToolExposure.Resident) }
+
+        val scope = ToolScopePlanner().createScope(orderingTools, initialIntent = "帮我点一份套餐")
+
+        // A CJK intent matches no term, which is exactly why these are resident rather than on-demand.
+        orderingTools.forEach { entry ->
+            assertTrue("${entry.definition.name} should be advertised", scope.contains(entry.definition.name))
+        }
+    }
+
+    @Test
+    fun `a server larger than the budget still reaches the rest through discovery`() {
+        val manyTools = (1..40).map { index ->
+            catalogEntry(name = "tool_$index", exposure = ToolExposure.Resident)
+        }
+
+        // The budget is stated rather than inherited: this test is about what happens when a resident set
+        // overflows, so it must keep overflowing even after the default ceiling is raised.
+        val scope = ToolScopePlanner(maxAdvertisedTools = 16, maxAdvertisedSchemaChars = 48_000)
+            .createScope(manyTools, initialIntent = "anything")
+
+        // Truncation must not strand the overflow: discover_tools keeps it reachable.
+        assertTrue(scope.contains(ToolDefinition.DiscoverTools.name))
+        assertTrue(scope.advertisedToolNames.size < manyTools.size)
+    }
+
+    @Test
+    fun `discovery can surface more than one tool when residents overflow the budget`() {
+        val manyTools = (1..40).map { index ->
+            catalogEntry(
+                name = "tool_$index",
+                exposure = ToolExposure.Resident,
+                tags = setOf("shared-capability")
+            )
+        }
+
+        val scope = ToolScopePlanner(maxAdvertisedTools = 16, maxAdvertisedSchemaChars = 48_000)
+            .createScope(manyTools, initialIntent = "anything")
+        val discovered = scope.discover(
+            ToolCall(
+                id = "call_discover",
+                name = ToolDefinition.DiscoverTools.name,
+                arguments = """{"query":"shared-capability"}"""
+            )
+        ).metadata["discovered_tool_names"].orEmpty().split(',').filter { name -> name.isNotBlank() }
+
+        // Residents used to consume every free slot, so discovery could only ever return one tool however
+        // many matched. A caller that needs several tools together could then never assemble them.
+        assertTrue("discovery should deliver a set, got: $discovered", discovered.size > 1)
     }
 
     private fun catalogEntry(

@@ -48,11 +48,36 @@ class ToolScopePlanner(
     }
 
     private companion object {
-        private const val DEFAULT_MAX_ADVERTISED_TOOLS = 6
-        private const val DEFAULT_MAX_ADVERTISED_SCHEMA_CHARS = 4_800
-        private const val DEFAULT_MAX_INITIAL_ON_DEMAND_TOOLS = 1
-        private const val DEFAULT_MAX_DISCOVERY_RESULTS = 3
-        private const val DEFAULT_MAX_DISCOVERY_CALLS = 2
+        /**
+         * Advertisement budget, sized against a measured real server.
+         *
+         * A production ordering server (29 tools, Chinese descriptions, nested basket schemas) costs 23,544
+         * chars of prompt text — see `McpLargeServerScopeTest`. At the previous ceiling of 20 tools the
+         * *count* was what truncated it, not the chars, and the tools it dropped were the ones a task needs:
+         * a coherent server is only useful as a set, since the model cannot price a basket if it can see
+         * `calculate-price` but not `query-meals`.
+         *
+         * These are ceilings, not costs — nothing is advertised that the user did not enable. Overflow
+         * degrades by relevance now, and `shouldReserveDiscovery` keeps `discover_tools` reachable.
+         */
+        private const val DEFAULT_MAX_ADVERTISED_TOOLS = 48
+        private const val DEFAULT_MAX_ADVERTISED_SCHEMA_CHARS = 48_000
+
+        /**
+         * How many on-demand built-ins are pre-advertised before `discover_tools` is needed.
+         *
+         * This was one, on the reasoning that pre-advertising more than the single best intent match spends
+         * prompt budget on tools the request never asked for. The budget argument does not survive contact
+         * with the numbers: the whole built-in set costs a few hundred chars against a 48,000-char ceiling,
+         * and the tools that actually consume it are MCP servers, which are resident and never compete for
+         * these slots. What the ceiling of one bought instead was a coordination tax — any request needing
+         * two built-ins together had to spend a `discover_tools` round first, and whatever it discovered was
+         * only callable from the round after that. Requests that gave up mid-chain answered from the one
+         * tool they could see, which is the failure the user reported as "工具之间的协调差得离谱".
+         */
+        private const val DEFAULT_MAX_INITIAL_ON_DEMAND_TOOLS = 4
+        private const val DEFAULT_MAX_DISCOVERY_RESULTS = 6
+        private const val DEFAULT_MAX_DISCOVERY_CALLS = 3
     }
 }
 
@@ -92,15 +117,20 @@ class ToolScope internal constructor(
                 candidate.metadata.exposure == ToolExposure.Resident ||
                     candidate.definition.name in AUTOMATIC_STICKER_TOOL_NAMES
             }
+            // Intent rank sits between priority and name so that an overflowing resident set is cut by
+            // relevance. Alphabetical order made the cut arbitrary: a 29-tool ordering server lost
+            // `query-meals` and `query-nearby-stores` purely because `q` sorts late, which left the model
+            // able to price a basket it could never assemble. Order is irrelevant when everything fits.
             .sortedWith(
                 compareByDescending<ToolScopeCandidate> { candidate -> candidate.metadata.priority }
+                    .thenByDescending { candidate -> candidate.matchScore(initialIntent) }
                     .thenBy { candidate -> candidate.definition.name }
             )
         val reserveDiscovery = shouldReserveDiscovery(residentCandidates)
         if (candidates.any { candidate -> candidate.metadata.exposure == ToolExposure.OnDemand } || reserveDiscovery) {
             advertise(ToolScopeCandidate(ToolDefinition.DiscoverTools, ToolDiscoveryMetadata(ToolExposure.Resident)))
             if (reserveDiscovery && contains(ToolDefinition.DiscoverTools.name)) {
-                reservedDiscoverySlots = 1
+                reservedDiscoverySlots = discoveryHeadroom()
             }
         }
 
@@ -149,8 +179,16 @@ class ToolScope internal constructor(
                     }
                 )
             )
-            candidates.any(::isDiscoverable) ->
+            // Only a genuine budget problem: candidates matched, but none of them would fit.
+            matchingCandidates.isNotEmpty() ->
                 call.errorResult("tool_scope_budget_exceeded", "tool_scope_budget_exceeded")
+            // Nothing matched. Previously this also reported a budget failure, which sent the model off
+            // retrying a query that was never the problem instead of rewording it.
+            candidates.any(::isDiscoverable) -> ToolResult(
+                callId = call.id,
+                name = call.name,
+                content = "没有工具匹配该描述；可以换用其他关键词再试一次，或在能直接回答时直接回答。"
+            )
             else -> ToolResult(
                 callId = call.id,
                 name = call.name,
@@ -180,8 +218,24 @@ class ToolScope internal constructor(
         return true
     }
 
-    private fun shouldReserveDiscovery(residentCandidates: List<ToolScopeCandidate>): Boolean {
-        if (residentCandidates.isEmpty()) return false
+    /**
+     * How many slots to hold back for the *results* of discovery.
+     *
+     * Reserving a single slot only paid for the `discover_tools` entry itself: residents then filled every
+     * remaining slot, so a discovery call could surface at most one tool no matter what
+     * [maxDiscoveryResults] said. An overflowing coherent server was therefore unusable rather than merely
+     * degraded — the model could reach one missing tool per call when it needed four together.
+     *
+     * Capped at a quarter of the budget so holding room for discovery can never starve the resident set
+     * that most requests actually use.
+     */
+    private fun discoveryHeadroom(): Int {
+        val maxTools = maxAdvertisedTools.coerceAtLeast(0)
+        val cap = (maxTools / DISCOVERY_HEADROOM_DIVISOR).coerceAtLeast(1)
+        return maxDiscoveryResults.coerceAtLeast(1).coerceAtMost(cap)
+    }
+
+    private fun shouldReserveDiscovery(residentCandidates: List<ToolScopeCandidate>): Boolean {        if (residentCandidates.isEmpty()) return false
         val maxTools = maxAdvertisedTools.coerceAtLeast(0)
         val hasOnDemandCandidates = candidates.any { candidate ->
             candidate.metadata.exposure == ToolExposure.OnDemand
@@ -255,6 +309,7 @@ class ToolScope internal constructor(
 
     private companion object {
         private const val MAX_DISCOVERY_QUERY_CHARS = 160
+        private const val DISCOVERY_HEADROOM_DIVISOR = 4
         private val AUTOMATIC_STICKER_TOOL_NAMES = setOf(
             ToolDefinition.SearchStickers.name,
             ToolDefinition.SendSticker.name
@@ -315,12 +370,42 @@ private fun String.discoveryTerms(): Set<String> = discoveryWords()
     .filter { word -> word.length >= MIN_DISCOVERY_TERM_CHARS && word !in DISCOVERY_GENERIC_TERMS }
     .toSet()
 
+/**
+ * Splits text into matchable terms.
+ *
+ * Latin script splits on word boundaries. CJK has none, so a Chinese phrase would otherwise survive as one
+ * long token and only ever match a query containing that exact phrase — which is why every Chinese query
+ * used to score zero against a Chinese tool description. Each CJK run is additionally emitted as its
+ * adjacent character bigrams, the standard way to make CJK substring-matchable without shipping a
+ * segmenter: "查询附近门店" yields 查询/询附/附近/近门/门店, so the query "附近的门店" overlaps on 附近 and 门店.
+ *
+ * The whole run is kept too, so an exact phrase match still earns the higher exact-term score.
+ */
 private fun String.discoveryWords(): List<String> = Regex("[\\p{L}\\p{N}_-]+")
     .findAll(lowercase())
     .map { match -> match.value.replace('_', ' ').replace('-', ' ') }
     .flatMap { value -> value.split(' ').asSequence() }
     .filter { value -> value.isNotBlank() }
+    .flatMap { value -> sequenceOf(value) + value.cjkBigrams() }
+    .distinct()
     .toList()
+
+/** Adjacent character bigrams of every CJK run in this token; empty for Latin-only text. */
+private fun String.cjkBigrams(): Sequence<String> = CJK_RUN.findAll(this)
+    .flatMap { match ->
+        val run = match.value
+        if (run.length < CJK_BIGRAM_CHARS) {
+            emptySequence()
+        } else {
+            (0..run.length - CJK_BIGRAM_CHARS).asSequence()
+                .map { start -> run.substring(start, start + CJK_BIGRAM_CHARS) }
+        }
+    }
+
+private const val CJK_BIGRAM_CHARS = 2
+
+/** Han, Hiragana/Katakana, and Hangul. Explicit ranges rather than `\p{IsHan}` for predictability. */
+private val CJK_RUN = Regex("[\\u1100-\\u11ff\\u3040-\\u30ff\\u3400-\\u4dbf\\u4e00-\\u9fff\\uac00-\\ud7af\\uf900-\\ufaff]+")
 
 private const val MIN_DISCOVERY_TERM_CHARS = 2
 private const val EXACT_TERM_SCORE = 100

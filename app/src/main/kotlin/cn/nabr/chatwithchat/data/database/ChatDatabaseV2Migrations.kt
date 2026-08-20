@@ -500,6 +500,58 @@ object ChatDatabaseV2Migrations {
         }
     }
 
+    val MIGRATION_22_23 = object : Migration(22, 23) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            // Column order, types, defaults and index names must match what Room generates for
+            // McpServerEntity / McpToolEntity, or MigrationTestHelper's validateMigration fails
+            // against 23.json.
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `mcp_servers` (
+                    `server_id` TEXT NOT NULL,
+                    `alias` TEXT NOT NULL,
+                    `display_name` TEXT NOT NULL,
+                    `url` TEXT NOT NULL,
+                    `transport` TEXT NOT NULL,
+                    `auth_token` TEXT,
+                    `extra_headers_json` TEXT NOT NULL,
+                    `enabled` INTEGER NOT NULL,
+                    `allow_private_network` INTEGER NOT NULL,
+                    `last_synced_at` INTEGER,
+                    `last_sync_error` TEXT,
+                    `created_at` INTEGER NOT NULL,
+                    `updated_at` INTEGER NOT NULL,
+                    PRIMARY KEY(`server_id`)
+                )
+                """.trimIndent()
+            )
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_mcp_servers_alias` ON `mcp_servers` (`alias`)")
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `mcp_tools` (
+                    `server_id` TEXT NOT NULL,
+                    `tool_name` TEXT NOT NULL,
+                    `namespaced_name` TEXT NOT NULL,
+                    `description` TEXT NOT NULL,
+                    `input_schema_json` TEXT NOT NULL,
+                    `annotation_title` TEXT,
+                    `read_only_hint` INTEGER,
+                    `destructive_hint` INTEGER,
+                    `idempotent_hint` INTEGER,
+                    `open_world_hint` INTEGER,
+                    `rejection_code` TEXT,
+                    `rejection_path` TEXT,
+                    `synced_at` INTEGER NOT NULL,
+                    PRIMARY KEY(`server_id`, `tool_name`),
+                    FOREIGN KEY(`server_id`) REFERENCES `mcp_servers`(`server_id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                )
+                """.trimIndent()
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_mcp_tools_server_id` ON `mcp_tools` (`server_id`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_mcp_tools_namespaced_name` ON `mcp_tools` (`namespaced_name`)")
+        }
+    }
+
     internal fun createContextManagementTables(db: SupportSQLiteDatabase) {
         // Column order, types, defaults and index names below must match what Room generates for
         // ContextCheckpointSegment / ContextRangeState / ContextNativeCompactionState, or

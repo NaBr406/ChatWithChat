@@ -163,7 +163,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 ChatDatabaseV2Migrations.MIGRATION_18_19,
                 ChatDatabaseV2Migrations.MIGRATION_19_20,
                 ChatDatabaseV2Migrations.MIGRATION_20_21,
-                ChatDatabaseV2Migrations.MIGRATION_21_22
+                ChatDatabaseV2Migrations.MIGRATION_21_22,
+                ChatDatabaseV2Migrations.MIGRATION_22_23
             )
             .addCallback(ChatHistoryDatabaseCallback())
             .build()
@@ -283,7 +284,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 ChatDatabaseV2Migrations.MIGRATION_18_19,
                 ChatDatabaseV2Migrations.MIGRATION_19_20,
                 ChatDatabaseV2Migrations.MIGRATION_20_21,
-                ChatDatabaseV2Migrations.MIGRATION_21_22
+                ChatDatabaseV2Migrations.MIGRATION_21_22,
+                ChatDatabaseV2Migrations.MIGRATION_22_23
             )
             .addCallback(ChatHistoryDatabaseCallback())
             .build()
@@ -335,7 +337,7 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                     assertEquals("dismissed", roomDatabase.memoryMaintenanceJobDao().getById(jobId)?.status)
                 }
             }
-            assertEquals(SCHEMA_22_TABLES, roomDatabase.openHelper.writableDatabase.userTableNames())
+            assertEquals(SCHEMA_23_TABLES, roomDatabase.openHelper.writableDatabase.userTableNames())
             assertLegacySemanticTablesAbsent(roomDatabase.openHelper.writableDatabase)
         } finally {
             roomDatabase.close()
@@ -476,7 +478,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 ChatDatabaseV2Migrations.MIGRATION_18_19,
                 ChatDatabaseV2Migrations.MIGRATION_19_20,
                 ChatDatabaseV2Migrations.MIGRATION_20_21,
-                ChatDatabaseV2Migrations.MIGRATION_21_22
+                ChatDatabaseV2Migrations.MIGRATION_21_22,
+                ChatDatabaseV2Migrations.MIGRATION_22_23
             )
             .addCallback(ChatHistoryDatabaseCallback())
             .build()
@@ -754,7 +757,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 ChatDatabaseV2Migrations.MIGRATION_18_19,
                 ChatDatabaseV2Migrations.MIGRATION_19_20,
                 ChatDatabaseV2Migrations.MIGRATION_20_21,
-                ChatDatabaseV2Migrations.MIGRATION_21_22
+                ChatDatabaseV2Migrations.MIGRATION_21_22,
+                ChatDatabaseV2Migrations.MIGRATION_22_23
             )
             .build()
         try {
@@ -902,7 +906,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
         val roomDatabase = Room.databaseBuilder(context, ChatDatabaseV2::class.java, TEST_DATABASE)
             .addMigrations(
                 ChatDatabaseV2Migrations.MIGRATION_20_21,
-                ChatDatabaseV2Migrations.MIGRATION_21_22
+                ChatDatabaseV2Migrations.MIGRATION_21_22,
+                ChatDatabaseV2Migrations.MIGRATION_22_23
             )
             .addCallback(ChatHistoryDatabaseCallback())
             .build()
@@ -998,7 +1003,54 @@ class ChatDatabaseV2MigrationInstrumentedTest {
     }
 
     @Test
-    fun freshSchema22_opensAndReopensWithTextSkillState() {
+    fun migration22To23_preservesExistingRowsCreatesMcpStateAndCascadesWithServer() {
+        var expectedRows = emptyMap<String, List<List<String>>>()
+        migrationHelper.createDatabase(TEST_DATABASE, 22).apply {
+            insertSchema20ContextRows(this)
+            insertContextManagementFixtures(this)
+            insertTextSkillFixtures(this)
+            expectedRows = SCHEMA_22_MIGRATION_TABLES.associateWith { tableName -> snapshotRows(tableName) }
+            close()
+        }
+
+        migrationHelper.runMigrationsAndValidate(
+            TEST_DATABASE,
+            23,
+            true,
+            ChatDatabaseV2Migrations.MIGRATION_22_23
+        ).use { database ->
+            assertEquals(SCHEMA_23_MIGRATION_TABLES, database.userTableNames())
+            expectedRows.forEach { (tableName, rows) ->
+                assertEquals("$tableName changed across 22->23", rows, database.snapshotRows(tableName))
+            }
+            assertEquals(0L, database.singleLong("SELECT COUNT(*) FROM mcp_servers"))
+            assertEquals(0L, database.singleLong("SELECT COUNT(*) FROM mcp_tools"))
+
+            insertMcpFixtures(database)
+            assertEquals(
+                "acme",
+                database.singleString("SELECT alias FROM mcp_servers WHERE server_id = 'server-23'")
+            )
+            assertEquals(
+                "mcp_acme_search_docs",
+                database.singleString("SELECT namespaced_name FROM mcp_tools WHERE tool_name = 'search_docs'")
+            )
+            // A rejected tool is cached alongside a usable one so settings can explain the verdict.
+            assertEquals(
+                "schema_unsupported_composition",
+                database.singleString("SELECT rejection_code FROM mcp_tools WHERE tool_name = 'weird_schema'")
+            )
+
+            database.execSQL("PRAGMA foreign_keys = ON")
+            database.execSQL("DELETE FROM mcp_servers WHERE server_id = 'server-23'")
+            assertEquals(0L, database.singleLong("SELECT COUNT(*) FROM mcp_tools"))
+            database.query("PRAGMA foreign_key_check").use { cursor -> assertEquals(0, cursor.count) }
+            assertEquals("ok", database.singleString("PRAGMA integrity_check"))
+        }
+    }
+
+    @Test
+    fun freshSchema23_opensAndReopensWithMcpAndTextSkillState() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val freshDatabase = Room.databaseBuilder(context, ChatDatabaseV2::class.java, TEST_DATABASE)
             .addCallback(ChatHistoryDatabaseCallback())
@@ -1006,9 +1058,9 @@ class ChatDatabaseV2MigrationInstrumentedTest {
         try {
             val database = freshDatabase
             val sqliteDatabase = database.openHelper.writableDatabase
-            assertEquals(SCHEMA_22_TABLES, sqliteDatabase.userTableNames())
+            assertEquals(SCHEMA_23_TABLES, sqliteDatabase.userTableNames())
             assertLegacySemanticTablesAbsent(sqliteDatabase)
-            assertEquals(22L, sqliteDatabase.singleLong("PRAGMA user_version"))
+            assertEquals(23L, sqliteDatabase.singleLong("PRAGMA user_version"))
             sqliteDatabase.query("PRAGMA foreign_key_check").use { cursor ->
                 assertEquals(0, cursor.count)
             }
@@ -1023,9 +1075,9 @@ class ChatDatabaseV2MigrationInstrumentedTest {
         try {
             val database = reopenedDatabase
             val sqliteDatabase = database.openHelper.writableDatabase
-            assertEquals(SCHEMA_22_TABLES, sqliteDatabase.userTableNames())
+            assertEquals(SCHEMA_23_TABLES, sqliteDatabase.userTableNames())
             assertLegacySemanticTablesAbsent(sqliteDatabase)
-            assertEquals(22L, sqliteDatabase.singleLong("PRAGMA user_version"))
+            assertEquals(23L, sqliteDatabase.singleLong("PRAGMA user_version"))
             assertEquals("ok", sqliteDatabase.singleString("PRAGMA integrity_check"))
             runBlocking {
                 assertTrue(database.chatRoomDao().getChatRooms().isEmpty())
@@ -1602,6 +1654,47 @@ class ChatDatabaseV2MigrationInstrumentedTest {
         )
     }
 
+    private fun insertMcpFixtures(database: SupportSQLiteDatabase) {
+        database.execSQL(
+            """
+            INSERT INTO mcp_servers (
+                server_id, alias, display_name, url, transport, auth_token, extra_headers_json,
+                enabled, allow_private_network, last_synced_at, last_sync_error, created_at, updated_at
+            ) VALUES (
+                'server-23', 'acme', 'Acme MCP', 'https://mcp.example.invalid/mcp', 'STREAMABLE_HTTP',
+                'token-23', '{}', 1, 0, 40, NULL, 41, 42
+            )
+            """.trimIndent()
+        )
+        database.execSQL(
+            """
+            INSERT INTO mcp_tools (
+                server_id, tool_name, namespaced_name, description, input_schema_json,
+                annotation_title, read_only_hint, destructive_hint, idempotent_hint, open_world_hint,
+                rejection_code, rejection_path, synced_at
+            ) VALUES (
+                'server-23', 'search_docs', 'mcp_acme_search_docs', 'Searches docs.',
+                '{"type":"object","properties":{"query":{"type":"string"}}}',
+                'Search docs', 1, 0, 1, 1, NULL, NULL, 43
+            )
+            """.trimIndent()
+        )
+        database.execSQL(
+            """
+            INSERT INTO mcp_tools (
+                server_id, tool_name, namespaced_name, description, input_schema_json,
+                annotation_title, read_only_hint, destructive_hint, idempotent_hint, open_world_hint,
+                rejection_code, rejection_path, synced_at
+            ) VALUES (
+                'server-23', 'weird_schema', 'mcp_acme_weird_schema', 'Unrepresentable schema.',
+                '{"type":"object","properties":{"value":{"oneOf":[]}}}',
+                NULL, NULL, NULL, NULL, NULL, 'schema_unsupported_composition',
+                '${'$'}.properties.value.oneOf', 44
+            )
+            """.trimIndent()
+        )
+    }
+
     private fun insertSchema14Rows(database: SupportSQLiteDatabase) {
         database.execSQL(
             "INSERT INTO chats_v2 (chat_id, title, enabled_platform, created_at, updated_at) VALUES (7, 'kept chat', '', 10, 11)"
@@ -1947,6 +2040,14 @@ class ChatDatabaseV2MigrationInstrumentedTest {
         private val SCHEMA_22_MIGRATION_TABLES = SCHEMA_21_MIGRATION_TABLES + setOf(
             "session_text_skill_bindings",
             "message_text_skill_invocations"
+        )
+        private val SCHEMA_23_TABLES = SCHEMA_22_TABLES + setOf(
+            "mcp_servers",
+            "mcp_tools"
+        )
+        private val SCHEMA_23_MIGRATION_TABLES = SCHEMA_22_MIGRATION_TABLES + setOf(
+            "mcp_servers",
+            "mcp_tools"
         )
 
         /**

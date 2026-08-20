@@ -13,6 +13,19 @@ interface ToolProvider {
 
     val securityPolicy: ToolSecurityPolicy
 
+    /**
+     * Opaque key naming what a conversation-scoped approval grant covers, or `null` to forbid grants.
+     *
+     * A provider that returns non-null lets the user answer "allow for this conversation" once instead of
+     * confirming every call. The key defines the blast radius, so it should be as narrow as the capability
+     * it represents — one remote server *and* one tool, not a whole server.
+     *
+     * Returning `null` (the default) keeps a tool on strict per-call approval. New write-capable built-ins
+     * therefore do not silently inherit grants.
+     */
+    val sessionApprovalScope: String?
+        get() = null
+
     val policy: ToolPolicy
         get() = ToolPolicy.default()
 

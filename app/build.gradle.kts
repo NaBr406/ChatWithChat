@@ -191,6 +191,13 @@ dependencies {
     implementation(libs.ktor.logging)
     implementation(libs.ktor.serialization)
 
+    // MCP (Model Context Protocol) client, for remote HTTP servers only.
+    // kotlin-sdk-core declares ktor-server-websockets at runtime scope for its server-side
+    // WebSocket transport, which this app never reaches; excluded to keep it out of the APK.
+    implementation(libs.mcp.client) {
+        exclude(group = "io.ktor", module = "ktor-server-websockets")
+    }
+
     // Token counting
     implementation(libs.jtokkit)
 

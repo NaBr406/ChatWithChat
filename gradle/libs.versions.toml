@@ -14,6 +14,11 @@ datastore = "1.2.1"
 hilt = "2.59.2"
 ksp = "2.3.5" # 2.3.4 deadlocks with AGP 9 legacy-kapt; fixed by google/ksp#2743
 ktor = "3.4.1"
+# Pinned deliberately: 0.12.0+ pull kotlinx-serialization-json 1.11.0, which conflicts with the
+# `serialization` pin below, and 0.15.0 additionally wants kotlin-stdlib 2.4.0 (newer than our
+# compiler) plus ktor 3.5.1. 0.11.1 is the newest release whose transitive versions match this
+# project, and it already ships StreamableHttpClientTransport. Bump only together with `kotlin`.
+mcpKotlinSdk = "0.11.1"
 okhttp = "5.3.2"
 jtokkit = "1.1.0"
 jsoup = "1.22.2"
@@ -65,6 +70,7 @@ ktor-client-cio = { group = "io.ktor", name = "ktor-client-cio", version.ref = "
 ktor-core = { group = "io.ktor", name = "ktor-client-core", version.ref = "ktor" }
 ktor-logging = { group = "io.ktor", name = "ktor-client-logging-jvm", version.ref = "ktor" }
 ktor-serialization = { group = "io.ktor", name = "ktor-serialization-kotlinx-json", version.ref = "ktor" }
+mcp-client = { group = "io.modelcontextprotocol", name = "kotlin-sdk-client", version.ref = "mcpKotlinSdk" }
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 jtokkit = { group = "com.knuddels", name = "jtokkit", version.ref = "jtokkit" }
 jsoup = { group = "org.jsoup", name = "jsoup", version.ref = "jsoup" }

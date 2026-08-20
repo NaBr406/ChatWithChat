@@ -11,6 +11,7 @@ import cn.nabr.chatwithchat.data.database.dao.ChatHistoryDao
 import cn.nabr.chatwithchat.data.database.dao.ChatRoomDao
 import cn.nabr.chatwithchat.data.database.dao.ChatRoomV2Dao
 import cn.nabr.chatwithchat.data.database.dao.ContextManagementDao
+import cn.nabr.chatwithchat.data.database.dao.McpDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryActivityLogDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryLongTermConsolidationDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryMaintenanceJobDao
@@ -85,6 +86,9 @@ object DatabaseModule {
     fun provideTextSkillDao(chatDatabaseV2: ChatDatabaseV2): TextSkillDao = chatDatabaseV2.textSkillDao()
 
     @Provides
+    fun provideMcpDao(chatDatabaseV2: ChatDatabaseV2): McpDao = chatDatabaseV2.mcpDao()
+
+    @Provides
     @Singleton
     fun provideChatDatabase(@ApplicationContext appContext: Context): ChatDatabase = Room.databaseBuilder(
         appContext,
@@ -119,6 +123,7 @@ object DatabaseModule {
         ChatDatabaseV2Migrations.MIGRATION_18_19,
         ChatDatabaseV2Migrations.MIGRATION_19_20,
         ChatDatabaseV2Migrations.MIGRATION_20_21,
-        ChatDatabaseV2Migrations.MIGRATION_21_22
+        ChatDatabaseV2Migrations.MIGRATION_21_22,
+        ChatDatabaseV2Migrations.MIGRATION_22_23
     ).addCallback(ChatHistoryDatabaseCallback()).build()
 }
