@@ -8,7 +8,9 @@ Core types live in `app/src/main/kotlin/cn/nabr/chatwithchat/data/tool/`:
 
 - `ToolDefinition`: model-facing name, description, and JSON parameter schema.
 - `ToolProvider`: owns one definition, settings metadata, effect/security policy, runtime permissions, execution policy, progress label, execution, and source mapping.
-- `ToolRegistry`: validates unique names and exposes the immutable runtime catalog. Duplicate names fail during construction.
+- `ToolRegistry`: validates unique names and exposes the runtime catalog as an immutable, fully validated
+  snapshot. Duplicate or invalid built-in names fail during construction; `installDynamicProviders`
+  swaps the MCP half of the catalog all-or-nothing and returns a `Result` instead of throwing.
 - `ToolEnablementResolver`: combines provider defaults with explicit enabled/disabled DataStore overrides.
 - `ToolArgumentsValidator`: validates parsed arguments before permissions or provider execution.
 - `ToolExecutor`: final boundary for active-tool checks, schema validation, Android permissions, approval, timeout, result limits, idempotency context, and audit events.
@@ -17,6 +19,8 @@ Core types live in `app/src/main/kotlin/cn/nabr/chatwithchat/data/tool/`:
 - `OpenAICompatibleJsonToolAdapter`: JSON fallback for provider paths without native tool calling.
 
 Generic bindings live in `ToolModule`; web-search repositories and extractors remain in `WebSearchModule`. The settings UI renders `ToolRegistry.catalog`. It does not define executable tools or security policy.
+
+MCP bridging lives in `data/mcp/` and is bound in `McpModule`; see [MCP Servers](#mcp-servers).
 
 ## Catalog And Defaults
 
@@ -132,7 +136,22 @@ Write approval is carried in a trusted `ToolExecutionContext`, never in `ToolCal
 
 `ToolExecutionContext` also carries a stable idempotency key. `ToolExecutionContextFactory.explicitRetry(...)` preserves that key only when the normalized operation is unchanged. Future write providers should override contextual execution and pass `executionContext.idempotencyKey` to their idempotent local or remote operation.
 
-Future write providers must return a bounded human-readable `approvalArgumentSummary(...)`; raw JSON summaries are rejected. `ToolApprovalCoordinator` creates a `ToolApprovalRequest` whose preview is bound to the real call hash, and it mints an approved or denied execution context only when the decided request still matches that call. `ToolApprovalDialog` renders the generic Compose confirmation boundary. Pausing and resuming a live provider stream is intentionally deferred because no real write-capable tool is registered today.
+Future write providers must return a bounded human-readable `approvalArgumentSummary(...)`; raw JSON summaries are rejected. `ToolApprovalCoordinator` creates a `ToolApprovalRequest` whose preview is bound to the real call hash, and it mints an approved or denied execution context only when the decided request still matches that call. `ToolApprovalDialog` renders the generic Compose confirmation boundary.
+
+`add_schedule` and `set_alarm` are registered write tools that authorize through `REQUIRE_SYSTEM_PERMISSION`. MCP tools are the registered users of `REQUIRE_EACH_CALL`, and the live path is wired end to end: `ToolLoopOrchestrator` sees `tool_approval_required`, suspends on `ToolApprovalBroker.awaitApproval`, and `ChatViewModel.pendingToolApproval` drives `ToolApprovalDialog` in `ChatScreen`. Approving re-executes the same call with the minted context; denying returns a recoverable result.
+
+### Conversation-scoped grants
+
+Confirming every call is unusable for a multi-step task: a six-step order would raise a dialog per call. `ToolApprovalSessionGrants` lets the user answer "allow for this conversation" once, and `ToolApprovalBroker` then resolves matching calls without prompting.
+
+What a grant does **not** do is relax the token binding. `approveFromSessionGrant` still mints a fresh `ToolExecutionContext` for that call, still bound to its tool name and canonical arguments, so a grant cannot be replayed onto another operation. The grant decides whether to *ask*; it is not itself a credential.
+
+Four properties keep the blast radius small:
+
+- **Scope is per tool, not per server.** `ToolProvider.sessionApprovalScope` is `null` by default, so no tool gets grants without opting in, and `McpToolProvider` returns `mcp:<serverId>:<toolName>`. Approving a menu lookup therefore never authorizes placing an order.
+- **Consent is explicit.** The dialog offers a third action rather than treating the first approval as a session-wide grant, so widening consent is a choice the user makes.
+- **Scope is per conversation.** Grants are keyed by chat id, threaded through `ToolExecutionSessionState.chatId`. A chat id of zero — an unsaved chat — disables grants rather than sharing one bucket across conversations.
+- **Grants are in-memory and revocable.** They die with the process, and switching off a server or one of its tools calls `revokeByPrefix`, so turning it back on does not silently resume skipping confirmations.
 
 `ToolAuditSink` is injectable and defaults to no-op. Events cover attempted, approved, denied, invalid, executed, and failed states using hashes only; raw arguments, tokens, full payloads, and secrets are not stored. Oversized rejected arguments use only their original length and a bounded 256-character prefix as audit material, and one computed binding is reused across status events. A mismatched operation is audited without trusting the mismatched context's idempotency key. Audit sink failures are isolated from tool results, while authorization itself remains fail closed.
 
@@ -208,15 +227,102 @@ For any future write tool, also test:
 - bounded non-JSON preview;
 - redacted audit events and sink-failure isolation.
 
+For a large MCP server, also test against captured real schemas rather than hand-written ones:
+
+- every tool translates, or is rejected with a reason the settings screen can explain;
+- the whole set installs into a real `ToolRegistry` and fits the advertisement budget;
+- a truncated resident set keeps the tools the request actually needs, and `discover_tools` can reach the rest — and can return more than one of them;
+- a CJK query scores against a CJK description, an unrelated CJK query still scores zero, and "nothing matched" is not reported as a budget failure.
+
+`app/src/test/resources/mcp/mcdonalds_tools.txt` holds 29 tools captured verbatim from a production ordering server (`McpLargeServerScopeTest`). Hand-written fixtures did not surface any of the four defects this one did: an alphabetical overflow cut, single-slot discovery, zero-scoring CJK, and a 4,000-character result cap against a 29,418-character menu. Prefer captured schemas for anything shaped like a real API.
+
 Useful commands:
 
 ```powershell
 ./gradlew.bat :app:testDebugUnitTest --tests "cn.nabr.chatwithchat.data.tool.*"
 ./gradlew.bat :app:testDebugUnitTest --tests "cn.nabr.chatwithchat.data.tool.provider.*"
 ./gradlew.bat :app:testDebugUnitTest --tests "cn.nabr.chatwithchat.data.repository.ChatRepositoryImplTest"
+./gradlew.bat :app:testDebugUnitTest --tests "cn.nabr.chatwithchat.data.mcp.*"
 ./gradlew.bat :app:compileDebugKotlin
 ```
 
+MCP additionally needs on-device runs, because the SDK is pre-1.0 and Room migrations are involved:
+
+```powershell
+./gradlew.bat :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=cn.nabr.chatwithchat.data.mcp.McpSdkBuildCanaryInstrumentedTest
+./gradlew.bat :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=cn.nabr.chatwithchat.data.database.ChatDatabaseV2MigrationInstrumentedTest
+./gradlew.bat :app:assembleRelease
+```
+
+Neither unit nor instrumented tests substitute for one real transaction. The scope, budget, CJK, and truncation defects above all passed the full unit suite; every one of them was found by driving a live server on a device and reading what the model actually did with the results. When adding support for a new class of server, place one real order — or whatever that server's terminal write is — before calling it supported.
+
+## MCP Servers
+
+Remote MCP servers are supported for tools only. Everything below is the trust, authentication, schema, permission, and lifecycle design that this required; nothing here relaxes a boundary described earlier in this document.
+
+Code lives in `app/src/main/kotlin/cn/nabr/chatwithchat/data/mcp/`. The client is `io.modelcontextprotocol:kotlin-sdk-client`, pinned to 0.11.1 because later releases pull `kotlinx-serialization-json` 1.11.0 and, from 0.15.0, a `kotlin-stdlib` newer than this project's compiler. `McpSdkBuildCanaryInstrumentedTest` is the gate for any bump: the SDK is pre-1.0 and does not claim Android support, so it must be proven to load and complete a handshake under ART.
+
+### Trust
+
+Server-declared `ToolAnnotations` — `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint` — are recorded and displayed, and never consulted for authorization. Every bridged tool gets a fixed `ToolSecurityPolicy(EXTERNAL_WRITE, REQUIRE_EACH_CALL)` regardless of what the server claims. Two existing rules then apply without special-casing MCP:
+
+- `ToolEnablementResolver.isSafeForDefaultEnablement` refuses to honour `defaultEnabled` for a write-capable tool, so an MCP tool is off until explicitly enabled.
+- `ToolExecutor` routes every call through `ToolApprovalBroker`, so the user confirms each invocation.
+
+A server-level `enabled=false` keeps that server's tools out of the registry entirely, so a switched-off server stays unreachable even if a model forges one of its tool names. Deriving a weaker policy from `readOnlyHint` is the specific escalation this boundary exists to prevent; `McpToolProviderTest` asserts that the most flattering hint set still yields per-call approval.
+
+### Authentication
+
+Bearer token plus custom headers, entered by the user and injected through the transport's request-builder lambda. A custom header cannot overwrite `Authorization`. Credentials are stored as plain text in `mcp_servers.auth_token`, matching how provider API keys already live in `platform_v2.token`. OAuth 2.1 (metadata discovery, dynamic client registration, PKCE) is not implemented, so OAuth-only hosted servers cannot be added.
+
+### Schema
+
+`McpSchemaTranslator` converts a server's `inputSchema` into the subset `ToolDefinition.Parameters` can express, or refuses the tool with a stable reason code the MCP settings screen explains. The accept/reject line is whether a keyword changes the *shape* of a valid argument object:
+
+- Structural keywords (`$ref`, `oneOf`/`anyOf`/`allOf`/`not`, `if`/`then`/`else`, tuple `items`, real union types, `const`) reject the whole tool, including when the offending property is optional. Silently dropping an optional property would hide a capability, and on a write-capable remote tool could drop something load-bearing like a `dry_run` flag.
+- Narrowing keywords (`pattern`, `exclusiveMinimum`, `multipleOf`, `minItems`, non-string `enum`, …) are dropped and the property kept. `ToolArgumentsValidator` is a pre-filter that keeps malformed calls off the wire, not the authority on validity; the server still enforces its own schema.
+
+`enum` belongs to the second group, which is not obvious. `Parameter.enumValues` is `List<String>`, so `enum: [1, 2, 3]` cannot be carried — but dropping it leaves `type: integer`, the same shape, merely accepting more values than the server will. Treating it as structural rejected almost every generated API schema, which is why integer enums are now narrowed away instead. Two related details: a mixed `enum` on a declared `string` type keeps only its string members, which is exact rather than lossy because a non-string member could never satisfy the type check anyway; and an `enum` with no declared `type` infers one from its members, since assuming `string` would mislabel every numeric enum.
+
+Concretely: a production ordering server had 7 of 29 tools rejected as `schema_non_string_enum`, and the 7 included `calculate-price`, `create-order`, and `query-meals` — the entire transactional path, lost to a `beType: {enum: [1,2,5,6]}` that changed nothing about the argument shape. All 29 translate now. `NON_STRING_ENUM` is retained but no longer produced, so rows cached by an older version still resolve to a label.
+
+`type: ["string","null"]` collapses to the concrete member, and a missing `type` is inferred from `properties`/`items`/`enum`. Both are stricter than the server, never looser. Depth and node ceilings mirror `ToolDefinitionValidator`, so an accepted translation always survives registry validation — `McpSchemaTranslatorTest` pins that by installing results into a real `ToolRegistry`.
+
+The SDK's typed `ToolSchema` drops root-level `additionalProperties`, so the root is fixed to `false`; that also blocks a model from sending arguments the server never advertised.
+
+### Naming
+
+`McpToolNamespace` maps a server tool to `mcp_<alias>_<tool>` within the 64-character `ToolDefinitionValidator` limit. Aliases are unique per server and assigned once at creation, because renaming a server would rename its tools and orphan every enablement override and approval binding keyed by the namespaced name. Truncated names carry a short digest of the `(serverId, toolName)` pair. Two tools that still collapse to one name are recorded as a per-tool `tool_name_collision` verdict rather than failing the catalog install. Resolution back to the origin goes through the registered provider, never by parsing the name.
+
+### Lifecycle
+
+`ToolRegistry` now holds an immutable, fully validated snapshot behind a volatile reference. `installDynamicProviders` validates a whole batch and swaps one reference; a batch is all-or-nothing, cannot shadow a built-in name, and a rejected batch leaves the previous snapshot untouched. Any snapshot a reader observes is still immutable — what changed is that the registry's identity no longer implies its contents. The public API is unchanged, so all existing construction sites and `ToolExecutor` wiring are untouched.
+
+`McpConnectionManager` keeps one session per server, serialized by a per-server mutex, with idle eviction and a connect timeout. `StreamableHttpClientTransport` is tried first, falling back to `SseClientTransport` for servers that only offer the older transport. Editing a server's URL, transport, or credentials invalidates its live session.
+
+Bridged tools are advertised as `ToolExposure.Resident`, and the advertisement budget is sized to fit a whole server (48 tools / 48,000 schema characters). A server is only useful as a set — the model cannot price a basket while `calculate-price` sits behind `discover_tools`. The numbers come from measurement, not taste: a production ordering server with 29 tools costs 23,544 characters of prompt text, and at the previous ceiling of 20 tools it was the *count* that truncated, not the characters. `maxInitialOnDemandTools` deliberately stays at 1: it governs only built-in on-demand tools, which MCP no longer competes with.
+
+Overflow degrades along two axes that were both wrong before, and both were found by running a real 29-tool server rather than by reading the code:
+
+- **The cut is ranked, not alphabetical.** Resident tools sort by priority, then by intent match against the request, then by name. Sorting by name alone dropped `query-meals` and `query-nearby-stores` purely because `q` sorts late, leaving a model that could price a basket it had no way to assemble.
+- **Discovery gets room to answer.** `discoveryHeadroom` reserves up to `maxDiscoveryResults` slots (capped at a quarter of the budget) instead of the single slot that only paid for the `discover_tools` entry itself. With one slot, residents filled everything else and a discovery call could surface at most one tool however many matched — so an overflowing server that needed four tools together could never assemble them. An earlier version of this document claimed truncation "still degrades safely" because a `discover_tools` slot was kept; that was false, and the fixture test now pins the corrected behaviour.
+
+Intent matching works for CJK. `ToolScopePlanner.discoveryWords` splits Latin script on word boundaries and additionally emits adjacent character bigrams for each CJK run — the standard segmenter-free approach. Without it a Chinese phrase stayed one long token, so *every* Chinese query scored zero against a Chinese description while the English `nearby stores` scored 106. Bigrams are emitted term-side only, so the existing substring test needs no query-side expansion, and an exact phrase still outranks an incidental overlap.
+
+`discover_tools` also distinguishes "nothing matched" from "budget exhausted". It previously reported `tool_scope_budget_exceeded` whenever a query matched nothing but other tools existed, which sent the model retrying a query that was never the problem instead of rewording it.
+
+Loop budgets are sized for a chain rather than a lookup. Completing a transaction — find a store, list a menu, price a basket, place an order — spends one round per step because each call needs the previous result, so `maxToolRounds` is 10 and `maxToolCallsPerChat` is 30. These are ceilings: a chat that needs one call still costs one call.
+
+Result caps are sized against a measured response, not guessed. `query-meals` on a real ordering server returns 29,418 characters and takes no narrowing parameter — no category, no keyword, no paging — so the menu arrives whole or not at all. At the previous 4,000-character MCP cap the model received 14% of a menu, cut mid-JSON, and then could not name a single product code; the server looked connected but was unusable. `MCP_MAX_RESULT_CHARS` and `maxToolResultChars` are now 32,000, with `maxTotalToolResultChars` at 120,000 for one catalog-sized result plus the smaller calls around it.
+
+Clipping says so, in band. `ToolResultBounds` appends an explicit truncation notice inside the character limit rather than cutting silently, because a silent clip is indistinguishable from a short answer and a clipped JSON payload merely looks malformed. A model that cannot tell the difference retries the same call hoping for a different result, which a deterministic size limit will never give it — that retry loop was observed on device before the notice existed.
+
+`McpToolSync` replaces a server's cached `tools/list` wholesale. A failed sync leaves the previous catalog in place, because a transient network drop should not strip tools the user already enabled. Truncation at the page/tool ceiling is recorded as `mcp_tool_list_truncated` rather than reading as a complete list. The cached raw schema lets `McpToolRegistrarImpl` rebuild the registry at cold start with no network, and lets a future app version with a wider subset re-translate without reconnecting.
+
+Results carry text and `structuredContent`. Images, audio, and embedded resources are counted and announced in the text rather than dropped in silence, because `ToolResult` has nowhere to put them. `McpServerUrlPolicy` reuses `WebFetchUrlValidator` so both paths share one definition of "publicly routable"; reaching a LAN server is a per-server opt-in.
+
 ## Current Scope
 
-The four native provider adapters and JSON fallback are supported. MCP, remote dynamic tools, plugin marketplaces, reflection-based discovery, downloaded providers, and arbitrary third-party tool endpoints are not supported. Adding any of those requires a separate trust, authentication, schema, permission, and lifecycle design.
+The four native provider adapters, JSON fallback, and remote MCP servers over Streamable HTTP or SSE are supported.
+
+Not supported: MCP resources and prompts, local stdio MCP servers, OAuth-authenticated MCP servers, non-text MCP result content, plugin marketplaces, reflection-based discovery, and downloaded providers. Adding MCP resources or prompts needs its own injection points and UI. Adding stdio needs a process model Android does not give third-party servers. Adding OAuth is a separate authentication project.
