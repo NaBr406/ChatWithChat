@@ -29,7 +29,7 @@
 ChatWithChat 不提供项目方托管的账号、模型或 API 中转服务。你需要使用自己的模型服务凭据，或者连接本机、局域网中的 Ollama / OpenAI 兼容服务。聊天记录、设置和长期记忆由应用在本地管理；发生模型请求、联网搜索、MCP 工具调用或记忆整理时，相关内容会发送到你配置的外部端点。
 
 > [!IMPORTANT]
-> 当前稳定版为 `v1.2.0`，可从 [GitHub Release](https://github.com/NaBr406/ChatWithChat/releases/tag/v1.2.0) 下载 [`v1.2.0.apk`](https://github.com/NaBr406/ChatWithChat/releases/download/v1.2.0/v1.2.0.apk)。APK 的 SHA-256 为 `edf3c0c000297db024fd255e2fda80134f2c49141164d140417999d832556265`。该 APK 的 `versionCode` 仍为 `23`，与 v1.1.0 相同；从旧版安装时请先导出记忆和会话，再卸载旧版后安装，以免被 Android 拒绝覆盖或丢失应用私有数据。项目尚未上架 Google Play 或 F-Droid，安装 GitHub APK 时需要允许浏览器或文件管理器安装未知来源应用。
+> 当前稳定版为 `v1.2.0`，可从 [GitHub Release](https://github.com/NaBr406/ChatWithChat/releases/tag/v1.2.0) 下载 [`v1.2.0.apk`](https://github.com/NaBr406/ChatWithChat/releases/download/v1.2.0/v1.2.0.apk)。APK 的 SHA-256 为 `edf3c0c000297db024fd255e2fda80134f2c49141164d140417999d832556265`。项目尚未上架 Google Play 或 F-Droid，安装 GitHub APK 时需要允许浏览器或文件管理器安装未知来源应用。
 
 > [!NOTE]
 > `v1.2.0` 对应 Room schema 23，包含参考聊天历史、长期记忆召回、按供应商配置的上下文管理与自动压缩、本地纯文本技能、远程 MCP 服务器接入、AnySearch 搜索后端、文档附件本地正文抽取，以及 Token 缓存命中统计。
