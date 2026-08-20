@@ -12,14 +12,14 @@
   <img alt="Android 12+" src="https://img.shields.io/badge/Android-12%2B-3DDC84?logo=android&logoColor=white">
   <img alt="Kotlin" src="https://img.shields.io/badge/Kotlin-2.3.20-7F52FF?logo=kotlin&logoColor=white">
   <img alt="Jetpack Compose" src="https://img.shields.io/badge/UI-Jetpack%20Compose-4285F4?logo=jetpackcompose&logoColor=white">
-  <a href="https://github.com/NaBr406/ChatWithChat/releases/tag/v1.1.0"><img alt="GitHub Release" src="https://img.shields.io/badge/Release-v1.1.0-0969DA?logo=github"></a>
+  <a href="https://github.com/NaBr406/ChatWithChat/releases/tag/v1.2.0"><img alt="GitHub Release" src="https://img.shields.io/badge/Release-v1.2.0-0969DA?logo=github"></a>
   <a href="./LICENSE"><img alt="GPL-3.0 license" src="https://img.shields.io/badge/License-GPL--3.0-blue"></a>
 </p>
 
 <p>
-  <a href="https://github.com/NaBr406/ChatWithChat/releases/download/v1.1.0/v1.1.0.apk"><strong>下载 v1.1.0 APK</strong></a>
+  <a href="https://github.com/NaBr406/ChatWithChat/releases/download/v1.2.0/v1.2.0.apk"><strong>下载 v1.2.0 APK</strong></a>
   ·
-  <a href="https://github.com/NaBr406/ChatWithChat/releases/tag/v1.1.0">查看发布说明</a>
+  <a href="https://github.com/NaBr406/ChatWithChat/releases/tag/v1.2.0">查看发布说明</a>
   ·
   <a href="#本地开发">从源码构建</a>
 </p>
@@ -29,10 +29,10 @@
 ChatWithChat 不提供项目方托管的账号、模型或 API 中转服务。你需要使用自己的模型服务凭据，或者连接本机、局域网中的 Ollama / OpenAI 兼容服务。聊天记录、设置和长期记忆由应用在本地管理；发生模型请求、联网搜索、MCP 工具调用或记忆整理时，相关内容会发送到你配置的外部端点。
 
 > [!IMPORTANT]
-> 当前稳定版为 `v1.1.0`，可从 [GitHub Release](https://github.com/NaBr406/ChatWithChat/releases/tag/v1.1.0) 下载 `v1.1.0.apk`。APK 的 SHA-256 为 `2831ccf376ecc94818bf78a7f7cfebe6b8ca239766de4b7bb9d5e99784eb48c6`。项目尚未上架 Google Play 或 F-Droid，安装 GitHub APK 时需要允许浏览器或文件管理器安装未知来源应用。
+> 当前稳定版为 `v1.2.0`，可从 [GitHub Release](https://github.com/NaBr406/ChatWithChat/releases/tag/v1.2.0) 下载 [`v1.2.0.apk`](https://github.com/NaBr406/ChatWithChat/releases/download/v1.2.0/v1.2.0.apk)。APK 的 SHA-256 为 `edf3c0c000297db024fd255e2fda80134f2c49141164d140417999d832556265`。该 APK 的 `versionCode` 仍为 `23`，与 v1.1.0 相同；从旧版安装时请先导出记忆和会话，再卸载旧版后安装，以免被 Android 拒绝覆盖或丢失应用私有数据。项目尚未上架 Google Play 或 F-Droid，安装 GitHub APK 时需要允许浏览器或文件管理器安装未知来源应用。
 
 > [!NOTE]
-> `v1.1.0` 对应 Room schema 20，已包含参考聊天历史与长期记忆召回。当前 `main` 已前进到 Room schema 23：schema 21 引入按供应商配置的上下文管理与自动压缩，schema 22 引入本地纯文本技能，schema 23 引入远程 MCP 服务器接入。此外还新增了 AnySearch 搜索后端、文档附件本地正文抽取，以及 Token 缓存命中统计。这些能力尚未进入正式 Release，需要自行从源码构建。
+> `v1.2.0` 对应 Room schema 23，包含参考聊天历史、长期记忆召回、按供应商配置的上下文管理与自动压缩、本地纯文本技能、远程 MCP 服务器接入、AnySearch 搜索后端、文档附件本地正文抽取，以及 Token 缓存命中统计。
 
 ## 核心能力
 
@@ -92,11 +92,13 @@ ChatWithChat 不只是更换了名称和图标。相较于 GPT Mobile 上游基�
   </tr>
   <tr>
     <td align="center"><img src="./images/screenshots/settings.jpg" alt="应用设置" width="260"><br><sub>应用设置</sub></td>
-    <td align="center"><img src="./images/screenshots/tools.jpg" alt="工具与联网搜索设置" width="260"><br><sub>工具与联网搜索</sub></td>
-    <td align="center"><img src="./images/screenshots/memory.jpg" alt="长期记忆页面" width="260"><br><sub>长期记忆</sub></td>
+    <td align="center"><img src="./images/screenshots/skills.jpg" alt="本地纯文本技能" width="260"><br><sub>本地技能</sub></td>
+    <td align="center"><img src="./images/screenshots/mcp-servers.jpg" alt="远程 MCP 服务器" width="260"><br><sub>MCP 服务器</sub></td>
   </tr>
   <tr>
-    <td colspan="3" align="center"><img src="./images/screenshots/sticker-library.jpg" alt="表情库" width="260"><br><sub>表情库</sub></td>
+    <td align="center"><img src="./images/screenshots/tools.jpg" alt="工具与联网搜索设置" width="260"><br><sub>工具与联网搜索</sub></td>
+    <td align="center"><img src="./images/screenshots/memory.jpg" alt="长期记忆页面" width="260"><br><sub>长期记忆</sub></td>
+    <td align="center"><img src="./images/screenshots/sticker-library.jpg" alt="表情库" width="260"><br><sub>表情库</sub></td>
   </tr>
 </table>
 
@@ -133,8 +135,8 @@ ChatWithChat 不只是更换了名称和图标。相较于 GPT Mobile 上游基�
 
 ### 安装发布版
 
-1. 下载 [ChatWithChat v1.1.0 APK](https://github.com/NaBr406/ChatWithChat/releases/download/v1.1.0/v1.1.0.apk)。
-2. 如需校验完整性，确认 SHA-256 为 `2831ccf376ecc94818bf78a7f7cfebe6b8ca239766de4b7bb9d5e99784eb48c6`。
+1. 下载 [ChatWithChat v1.2.0 APK](https://github.com/NaBr406/ChatWithChat/releases/download/v1.2.0/v1.2.0.apk)。从 v1.1.0 升级时，先在应用内导出记忆和会话，再卸载旧版。
+2. 如需校验完整性，确认 SHA-256 为 `edf3c0c000297db024fd255e2fda80134f2c49141164d140417999d832556265`。
 3. 在 Android 12 或更高版本设备上打开 APK，并按系统提示允许当前来源安装应用。
 
 ### 首次配置
@@ -502,7 +504,7 @@ flowchart LR
 - CodeQL 在 Pull Request 和每周定时任务中运行。
 - 推送标签或手动触发 Release workflow 时，会准备记忆模型、构建并签名 APK / AAB，再上传为 Actions artifact。
 - 当前 CI 不会运行完整 JVM / 设备测试，也不会自动创建 GitHub Release；Actions artifact 与正式发布仍是两个独立步骤。
-- `v1.1.0` 已作为正式 GitHub Release 发布，公开资产为 [`v1.1.0.apk`](https://github.com/NaBr406/ChatWithChat/releases/download/v1.1.0/v1.1.0.apk)。
+- `v1.2.0` 已作为正式 GitHub Release 发布，公开资产为 [`v1.2.0.apk`](https://github.com/NaBr406/ChatWithChat/releases/download/v1.2.0/v1.2.0.apk)。
 
 提交代码前，请至少运行与修改范围对应的单元测试和 `:app:compileDebugKotlin`；数据库、记忆、权限或 Android 生命周期改动还应补充设备测试。改动 MCP 客户端或升级 MCP SDK 时必须跑一次 `McpSdkBuildCanaryInstrumentedTest`——SDK 尚未到 1.0，也不声明支持 Android，需要在 ART 上实测能加载并完成握手。
 
