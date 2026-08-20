@@ -9,6 +9,7 @@ import cn.nabr.chatwithchat.data.repository.MemoryRepository
 import cn.nabr.chatwithchat.data.repository.SettingRepository
 import cn.nabr.chatwithchat.data.tool.ResolvedToolCatalogEntry
 import cn.nabr.chatwithchat.data.tool.ToolCallingMode
+import cn.nabr.chatwithchat.data.tool.ToolEnablementGroup
 import cn.nabr.chatwithchat.data.tool.ToolEnablementOverrides
 import cn.nabr.chatwithchat.data.tool.ToolEnablementResolver
 import cn.nabr.chatwithchat.data.tool.ToolRegistry
@@ -157,9 +158,17 @@ class SettingViewModelV2 @Inject constructor(
         }
     }
 
+    /**
+     * The general tool list. MCP-bridged tools are excluded on purpose: a single server can contribute
+     * dozens of them, which would bury the built-ins. They are managed per server on the MCP screen,
+     * which reuses the same [updateToolEnabled] path.
+     */
     private fun visibleTools(overrides: ToolEnablementOverrides): List<ResolvedToolCatalogEntry> =
         toolEnablementResolver.resolve(toolRegistry.catalog, overrides)
             .filter { entry -> entry.catalogEntry.settings.userVisible }
+            .filterNot { entry ->
+                entry.catalogEntry.settings.enablementGroup == ToolEnablementGroup.McpServer
+            }
 
     fun updateWebSearchMode(mode: WebSearchMode) {
         _webSearchSettings.update { currentState -> currentState.copy(mode = mode) }

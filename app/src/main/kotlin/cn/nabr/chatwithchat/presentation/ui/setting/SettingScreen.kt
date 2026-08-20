@@ -26,6 +26,7 @@ import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.EmojiEmotions
 import androidx.compose.material.icons.outlined.Event
 import androidx.compose.material.icons.outlined.Extension
+import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.LocationOn
@@ -95,6 +96,7 @@ fun SettingScreen(
     onNavigateToMemory: () -> Unit,
     onNavigateToStickerLibrary: () -> Unit,
     onNavigateToSkills: () -> Unit,
+    onNavigateToMcpServers: () -> Unit,
     onNavigateToAboutPage: () -> Unit
 ) {
     val platformState by settingViewModel.platformState.collectAsStateWithLifecycle()
@@ -184,6 +186,13 @@ fun SettingScreen(
                     description = stringResource(R.string.skills_description),
                     leadingIcon = Icons.Outlined.Extension,
                     onClick = onNavigateToSkills
+                )
+                SettingsRow(
+                    title = stringResource(R.string.mcp_servers),
+                    description = stringResource(R.string.mcp_servers_description),
+                    leadingIcon = Icons.Outlined.Hub,
+                    onClick = onNavigateToMcpServers,
+                    descriptionMaxLines = 2
                 )
             }
 

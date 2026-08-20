@@ -647,6 +647,11 @@ class ChatViewModel @Inject constructor(
         toolApprovalBroker.approve(requestId)
     }
 
+    /** Approves this call and stops asking for the same tool for the rest of this conversation. */
+    fun approveToolApprovalForSession(requestId: String) {
+        toolApprovalBroker.approveForSession(requestId)
+    }
+
     fun denyToolApproval(requestId: String) {
         toolApprovalBroker.deny(requestId)
     }

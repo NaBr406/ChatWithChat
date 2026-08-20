@@ -24,6 +24,7 @@ object Route {
     const val MEMORY = "memory"
     const val STICKER_LIBRARY = "sticker_library"
     const val SKILLS = "skills"
+    const val MCP_SERVERS = "mcp_servers"
     const val PROMPT_TRACE_DEBUG = "prompt_trace_debug"
 
     const val MIGRATE_V2 = "migrate_v2"

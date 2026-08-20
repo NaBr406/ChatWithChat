@@ -38,6 +38,7 @@ import cn.nabr.chatwithchat.presentation.ui.setting.ModelManagementScreen
 import cn.nabr.chatwithchat.presentation.ui.setting.PlatformSettingScreen
 import cn.nabr.chatwithchat.presentation.ui.setting.SettingScreen
 import cn.nabr.chatwithchat.presentation.ui.setting.SettingViewModelV2
+import cn.nabr.chatwithchat.presentation.ui.setting.McpServersScreen
 import cn.nabr.chatwithchat.presentation.ui.setting.SkillsScreen
 import cn.nabr.chatwithchat.presentation.ui.setting.StickerLibraryScreen
 import cn.nabr.chatwithchat.presentation.ui.setting.ToolSettingsScreen
@@ -314,6 +315,7 @@ fun NavGraphBuilder.settingNavigation(navController: NavHostController) {
                 onNavigateToMemory = { navController.navigate(Route.MEMORY) },
                 onNavigateToStickerLibrary = { navController.navigate(Route.STICKER_LIBRARY) },
                 onNavigateToSkills = { navController.navigate(Route.SKILLS) },
+                onNavigateToMcpServers = { navController.navigate(Route.MCP_SERVERS) },
                 onNavigateToAboutPage = { navController.navigate(Route.ABOUT_PAGE) }
             )
         }
@@ -396,6 +398,9 @@ fun NavGraphBuilder.settingNavigation(navController: NavHostController) {
         }
         composable(Route.SKILLS) {
             SkillsScreen(onNavigationClick = { navController.navigateUp() })
+        }
+        composable(Route.MCP_SERVERS) {
+            McpServersScreen(onNavigationClick = { navController.navigateUp() })
         }
         composable(Route.LICENSE) {
             LicenseScreen(onNavigationClick = { navController.navigateUp() })

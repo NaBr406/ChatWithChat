@@ -280,7 +280,9 @@ fun ChatScreen(
         ToolApprovalDialog(
             preview = pending.request.preview,
             onApprove = { chatViewModel.approveToolApproval(pending.requestId) },
-            onDeny = { chatViewModel.denyToolApproval(pending.requestId) }
+            onDeny = { chatViewModel.denyToolApproval(pending.requestId) },
+            canApproveForSession = pending.canGrantForSession,
+            onApproveForSession = { chatViewModel.approveToolApprovalForSession(pending.requestId) }
         )
     }
 
