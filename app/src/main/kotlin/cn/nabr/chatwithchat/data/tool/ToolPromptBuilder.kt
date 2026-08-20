@@ -20,7 +20,14 @@ class ToolPromptBuilder(
             appendLine("No tool: {\"type\":\"final_answer\",\"content\":\"answer text\"}")
             appendLine("Tool: {\"type\":\"tool_calls\",\"tool_calls\":[{\"name\":\"tool_name\",\"arguments\":{}}]}")
             appendLine("Rules:")
-            appendLine("- Use only an enabled tool signature below and one tool call per response.")
+            // The old wording was "one tool call per response", which contradicted
+            // `ToolLoopConfig.maxToolCallsPerRound` and the parser, both of which have always handled a
+            // batch. It cost a whole round per independent lookup for no reason.
+            appendLine(
+                "- Use only an enabled tool signature below. 相互独立的调用可以放进同一次响应的 tool_calls " +
+                    "数组（最多 ${config.maxToolCallsPerRound.coerceAtLeast(1)} 个）；" +
+                    "后一步要用到前一步的结果时，必须留到下一次响应。"
+            )
             appendLine("- Parameter names ending in ! are required; keep arguments concise.")
             appendLine("- 结果为 tool_permission_denied 时，说明缺少哪项 Android 权限，待用户开启后再重试。")
             if (tools.any { tool -> tool.name == ToolDefinition.DiscoverTools.name }) {
@@ -29,6 +36,7 @@ class ToolPromptBuilder(
             if (tools.any { tool -> tool.name == ToolDefinition.WebSearch.name }) {
                 appendLine("- web_search：生成聚焦的 query，加入有用的实体、日期、地点和来源词；不要查询设备时间或状态。")
             }
+            toolSelectionPriorityRules(tools).forEach { rule -> appendLine("- $rule") }
             if (tools.any { tool -> tool.name == ToolDefinition.FetchUrl.name }) {
                 appendLine("- fetch_url：只读取对回答有帮助的网页。")
             }
@@ -44,11 +52,12 @@ class ToolPromptBuilder(
             append(toolManifest)
         }.trim()
 
-        val formattedScratchpad = formatScratchpad(scratchpad, config)
         val scratchpadPrefix = "\n\nTool scratchpad:\n"
-        val remainingScratchpadChars = (maxPromptChars - promptPrefix.length - scratchpadPrefix.length).coerceAtLeast(0)
-        val boundedScratchpad = formattedScratchpad
-            ?.takeLast(remainingScratchpadChars)
+        val scratchpadBudget = minOf(
+            config.toolResultInjectionLimit(),
+            maxPromptChars - promptPrefix.length - scratchpadPrefix.length
+        ).coerceAtLeast(0)
+        val boundedScratchpad = formatScratchpad(scratchpad, config, scratchpadBudget)
             ?.trimStart()
             ?.takeIf { value -> value.isNotBlank() }
 
@@ -165,32 +174,111 @@ class ToolPromptBuilder(
         return text.clip(config.toolResultInjectionLimit()).takeIf { it.isNotBlank() }
     }
 
+    /**
+     * Renders the scratchpad to fit [budgetChars], newest step first.
+     *
+     * The previous version cut from both ends: [formatScratchpad] clipped the head off its own limit and the
+     * caller then applied `takeLast` to what survived, so what reached the model was a window out of the
+     * middle. One catalog-sized MCP result was enough to push every earlier step out of it, and the earlier
+     * steps are exactly what a chain needs — a basket cannot be priced from a menu if the `store_id` fetched
+     * two rounds ago is gone. The budget itself was part of the bug: a single result may be 32,000 chars
+     * against a 16,000-char scratchpad, so overflow was the normal case rather than the exception.
+     *
+     * Now every step is rendered twice, and the newest steps are kept in full while older ones degrade to a
+     * one-line summary before anything is dropped at all. The progress digest goes first and outlives every
+     * entry, so even a fully evicted scratchpad still says which tools have already run and how they ended.
+     */
     private fun formatScratchpad(
         scratchpad: List<ToolMessage>,
-        config: ToolLoopConfig
+        config: ToolLoopConfig,
+        budgetChars: Int
     ): String? {
-        if (scratchpad.isEmpty()) return null
+        if (scratchpad.isEmpty() || budgetChars <= 0) return null
 
-        val text = buildString {
-            scratchpad.forEachIndexed { index, message ->
-                appendLine("${index + 1}. ${message.role.name}:")
-                when {
-                    message.toolCall != null -> {
-                        appendLine("Tool call: ${message.toolCall.name} (${message.toolCall.id})")
-                        appendLine("Arguments: ${message.toolCall.arguments.clip(config.maxToolResultChars)}")
-                    }
-                    message.toolResult != null -> {
-                        appendLine("Tool result: ${message.toolResult.name} (${message.toolResult.callId})")
-                        appendLine("Status: ${if (message.toolResult.isError) "ERROR" else "OK"}")
-                        appendLine(message.toolResult.content.trim().clip(config.maxToolResultChars))
-                    }
-                    else -> appendLine(message.content.trim().clip(config.maxToolResultChars))
+        val entries = scratchpad.map { message -> message.toScratchpadEntry(config) }
+        val digest = scratchpad.progressDigest()
+        val kept = ArrayDeque<String>()
+        var usedChars = digest?.let { value -> value.length + ENTRY_SEPARATOR.length } ?: 0
+        var droppedEntries = 0
+
+        for (entry in entries.asReversed()) {
+            val full = entry.full.fitCost(usedChars)
+            val summary = entry.summary.fitCost(usedChars)
+            when {
+                full <= budgetChars -> {
+                    kept.addFirst(entry.full)
+                    usedChars = full
+                }
+                summary <= budgetChars -> {
+                    kept.addFirst(entry.summary)
+                    usedChars = summary
+                }
+                else -> {
+                    // Stop at the first step that will not fit even as a summary: keeping recency contiguous
+                    // matters more than squeezing in an older step that happens to be shorter.
+                    droppedEntries = entries.size - kept.size
+                    break
                 }
             }
-        }.trim()
+        }
 
-        return text.clip(config.toolResultInjectionLimit()).takeIf { it.isNotBlank() }
+        // Not even the newest step fits. Its tail is still the most useful thing to send, since that is
+        // where a tool result carries its outcome.
+        if (kept.isEmpty()) return entries.last().full.takeLast(budgetChars)
+
+        if (droppedEntries > 0) {
+            while (usedChars + EARLIER_ENTRIES_OMITTED.length + ENTRY_SEPARATOR.length > budgetChars &&
+                kept.size > 1
+            ) {
+                usedChars -= kept.removeFirst().length + ENTRY_SEPARATOR.length
+            }
+            kept.addFirst(EARLIER_ENTRIES_OMITTED)
+        }
+        digest?.let { value -> kept.addFirst(value) }
+
+        return kept.joinToString(separator = ENTRY_SEPARATOR).takeIf { value -> value.isNotBlank() }
     }
+
+    private fun String.fitCost(usedChars: Int): Int = usedChars + length + ENTRY_SEPARATOR.length
+
+    private fun ToolMessage.toScratchpadEntry(config: ToolLoopConfig): ScratchpadEntry = when {
+        toolCall != null -> ScratchpadEntry(
+            full = buildString {
+                appendLine("Tool call: ${toolCall.name} (${toolCall.id})")
+                append("Arguments: ${toolCall.arguments.clip(config.maxToolResultChars)}")
+            },
+            summary = "Tool call: ${toolCall.name} (${toolCall.id}) " +
+                "Arguments: ${toolCall.arguments.collapseWhitespace().clip(MAX_SCRATCHPAD_SUMMARY_CHARS)}"
+        )
+        toolResult != null -> ScratchpadEntry(
+            full = buildString {
+                appendLine("Tool result: ${toolResult.name} (${toolResult.callId}) - ${toolResult.status()}")
+                append(toolResult.content.trim().clip(config.maxToolResultChars))
+            },
+            summary = "Tool result: ${toolResult.name} (${toolResult.callId}) - ${toolResult.status()} " +
+                toolResult.content.collapseWhitespace().clip(MAX_SCRATCHPAD_SUMMARY_CHARS)
+        )
+        else -> ScratchpadEntry(
+            full = "${role.name}: ${content.trim().clip(config.maxToolResultChars)}",
+            summary = "${role.name}: ${content.collapseWhitespace().clip(MAX_SCRATCHPAD_SUMMARY_CHARS)}"
+        )
+    }
+
+    /**
+     * One line naming every tool that has already run and how it ended.
+     *
+     * Cheap enough to keep unconditionally, and it is the one part of the scratchpad that survives eviction —
+     * without it, a step whose result was dropped looks like a step that never happened, and the model calls
+     * it again.
+     */
+    private fun List<ToolMessage>.progressDigest(): String? = mapNotNull(ToolMessage::toolResult)
+        .joinToString(separator = ", ") { result -> "${result.name}=${result.status()}" }
+        .takeIf { value -> value.isNotBlank() }
+        ?.let { value -> "已完成: ${value.clip(MAX_PROGRESS_DIGEST_CHARS)}" }
+
+    private data class ScratchpadEntry(val full: String, val summary: String)
+
+    private fun ToolResult.status(): String = if (isError) "ERROR" else "OK"
 
     private fun ToolLoopConfig.toolResultInjectionLimit(): Int = minOf(
         maxScratchpadChars,
@@ -205,10 +293,25 @@ class ToolPromptBuilder(
 
     companion object {
         private const val DEFAULT_MAX_TOOL_DEFINITION_CHARS = 4_000
-        private const val DEFAULT_MAX_PROMPT_CHARS = 12_000
+
+        /**
+         * Raised with [ToolLoopConfig.maxScratchpadChars] so a catalog-sized MCP result and the smaller steps
+         * around it can occupy the same prompt. At 12,000 the prompt ceiling, not the scratchpad limit, was
+         * what truncated a chain.
+         */
+        private const val DEFAULT_MAX_PROMPT_CHARS = 48_000
         private const val MAX_FALLBACK_TOOL_SUMMARY_CHARS = 120
+        private const val MAX_SCRATCHPAD_SUMMARY_CHARS = 200
+        private const val MAX_PROGRESS_DIGEST_CHARS = 400
+        private const val ENTRY_SEPARATOR = "\n\n"
+        private const val EARLIER_ENTRIES_OMITTED =
+            "(更早的步骤已省略；上面的「已完成」列出了全部已运行的工具，不要重复调用。)"
     }
 }
+
+private fun String.collapseWhitespace(): String = trim().replace(SCRATCHPAD_WHITESPACE, " ")
+
+private val SCRATCHPAD_WHITESPACE = Regex("\\s+")
 
 private fun fallbackStickerToolUsageRules(tools: Collection<ToolDefinition>): List<String> {
     val activeToolNames = tools.map(ToolDefinition::name).toSet()
@@ -228,6 +331,45 @@ private fun fallbackStickerToolUsageRules(tools: Collection<ToolDefinition>): Li
         }
     }
 }
+
+/**
+ * Which tool to reach for, as opposed to how to call it.
+ *
+ * `web_search` used to win by default in every ambiguous case: it is enabled out of the box, it ranks above
+ * the device tools, and nothing in the prompt ever said another tool should be preferred. The result was a
+ * model that searched the web for the device's own clock and for places it had no name for. These rules only
+ * appear when `web_search` is actually active, since they are meaningless otherwise.
+ *
+ * "When to search at all" is deliberately not repeated here — the web_search guidance already carries it.
+ */
+internal fun toolSelectionPriorityRules(tools: Collection<ToolDefinition>): List<String> {
+    val activeToolNames = tools.map(ToolDefinition::name).toSet()
+    if (ToolDefinition.WebSearch.name !in activeToolNames) return emptyList()
+
+    return buildList {
+        if ((activeToolNames - WEB_FIRST_TOOL_NAMES).isNotEmpty()) {
+            add("某项信息有专用工具（设备工具、MCP 工具）能直接提供时就用它，不要改用 web_search 代替。")
+        }
+        if (ToolDefinition.DeviceLocation.name in activeToolNames) {
+            add(
+                "请求依赖「我在哪 / 附近 / 本地」时，先调用 device_location，" +
+                    "再把得到的位置写进 web_search 的 query；不要凭猜测的地名搜索。"
+            )
+        }
+    }
+}
+
+/**
+ * Tools that have no chance of answering in place of a web search: the web tools themselves, the scope
+ * control, and the sticker pair, which expresses tone rather than retrieving anything.
+ */
+private val WEB_FIRST_TOOL_NAMES = setOf(
+    ToolDefinition.WebSearch.name,
+    ToolDefinition.FetchUrl.name,
+    ToolDefinition.DiscoverTools.name,
+    ToolDefinition.SearchStickers.name,
+    ToolDefinition.SendSticker.name
+)
 
 internal fun stickerToolUsageRules(tools: Collection<ToolDefinition>): List<String> {
     val activeToolNames = tools.map(ToolDefinition::name).toSet()

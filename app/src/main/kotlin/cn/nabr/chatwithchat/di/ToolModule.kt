@@ -16,6 +16,8 @@ import cn.nabr.chatwithchat.data.tool.JsonToolCallParser
 import cn.nabr.chatwithchat.data.tool.NoOpToolAuditSink
 import cn.nabr.chatwithchat.data.tool.ToolApprovalAuthority
 import cn.nabr.chatwithchat.data.tool.ToolApprovalBroker
+import cn.nabr.chatwithchat.data.tool.ToolApprovalCoordinator
+import cn.nabr.chatwithchat.data.tool.ToolApprovalSessionGrants
 import cn.nabr.chatwithchat.data.tool.ToolAuditSink
 import cn.nabr.chatwithchat.data.tool.ToolExecutionContextFactory
 import cn.nabr.chatwithchat.data.tool.ToolExecutor
@@ -61,6 +63,17 @@ object ToolModule {
     @Provides
     @Singleton
     fun provideToolApprovalAuthority(): ToolApprovalAuthority = ToolApprovalAuthority()
+
+    @Provides
+    @Singleton
+    fun provideToolApprovalSessionGrants(): ToolApprovalSessionGrants = ToolApprovalSessionGrants()
+
+    @Provides
+    @Singleton
+    fun provideToolApprovalBroker(
+        coordinator: ToolApprovalCoordinator,
+        sessionGrants: ToolApprovalSessionGrants
+    ): ToolApprovalBroker = ToolApprovalBroker(coordinator, sessionGrants)
 
     @Provides
     @Singleton

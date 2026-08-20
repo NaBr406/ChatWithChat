@@ -9,12 +9,20 @@ import kotlinx.coroutines.flow.asStateFlow
 
 @Singleton
 class ToolApprovalBroker @Inject constructor(
-    private val coordinator: ToolApprovalCoordinator
+    private val coordinator: ToolApprovalCoordinator,
+    private val sessionGrants: ToolApprovalSessionGrants = ToolApprovalSessionGrants()
 ) {
     data class PendingApproval(
         val requestId: String,
         val call: ToolCall,
-        val request: ToolApprovalRequest
+        val request: ToolApprovalRequest,
+        /**
+         * Whether this tool allows "allow for this conversation".
+         *
+         * False for a tool that did not opt in, and false outside a persisted conversation, so the UI never
+         * offers a grant that could not be honoured.
+         */
+        val canGrantForSession: Boolean = false
     )
 
     sealed interface Decision {
@@ -24,6 +32,8 @@ class ToolApprovalBroker @Inject constructor(
 
     private data class ActiveApproval(
         val pending: PendingApproval,
+        val chatId: Int,
+        val scopeKey: String?,
         val decision: CompletableDeferred<Decision>
     )
 
@@ -32,14 +42,31 @@ class ToolApprovalBroker @Inject constructor(
     private val _pending = MutableStateFlow<PendingApproval?>(null)
     val pending = _pending.asStateFlow()
 
-    suspend fun awaitApproval(call: ToolCall): Decision {
+    /**
+     * Obtains authorization for [call], prompting only when no conversation-scoped grant already covers it.
+     *
+     * [chatId] of zero means "no conversation scope" — grants are neither consulted nor offered, so a
+     * caller that cannot identify the conversation falls back to strict per-call approval.
+     */
+    suspend fun awaitApproval(call: ToolCall, chatId: Int = 0): Decision {
+        val scopeKey = coordinator.sessionApprovalScope(call.name)
+        if (scopeKey != null && sessionGrants.isGranted(chatId, scopeKey)) {
+            return coordinator.approveFromSessionGrant(call)
+                .getOrNull()
+                ?.let(Decision::WithContext)
+                ?: Decision.Unavailable
+        }
+
         val request = coordinator.prepare(call).getOrElse { return Decision.Unavailable }
         val active = ActiveApproval(
             pending = PendingApproval(
                 requestId = UUID.randomUUID().toString(),
                 call = call,
-                request = request
+                request = request,
+                canGrantForSession = scopeKey != null && chatId > 0
             ),
+            chatId = chatId,
+            scopeKey = scopeKey,
             decision = CompletableDeferred()
         )
         synchronized(lock) {
@@ -62,6 +89,25 @@ class ToolApprovalBroker @Inject constructor(
                 .getOrNull()
                 ?.let(Decision::WithContext)
                 ?: Decision.Unavailable
+        }
+    }
+
+    /**
+     * Approves this call and records a grant so the rest of the conversation is not asked again.
+     *
+     * The grant is stored only once this call's own approval succeeds, so a rejected authorization cannot
+     * leave a grant behind. Falls back to a plain one-off approval if the tool never offered a grant.
+     */
+    fun approveForSession(requestId: String) {
+        complete(requestId) { active ->
+            val decision = coordinator.approve(active.pending.call, active.pending.request)
+                .getOrNull()
+                ?.let(Decision::WithContext)
+                ?: Decision.Unavailable
+            if (decision is Decision.WithContext && active.pending.canGrantForSession) {
+                active.scopeKey?.let { scope -> sessionGrants.grant(active.chatId, scope) }
+            }
+            decision
         }
     }
 

@@ -27,9 +27,27 @@ class DeviceLocationToolProvider(
         iconKey = "location"
     )
 
+    /**
+     * Resident, and ranked above `web_search`.
+     *
+     * As an on-demand tool this was effectively invisible: `maxInitialOnDemandTools` advertises only the
+     * best-matching on-demand tools, `web_search` outranked it, and the intent matcher never fired anyway
+     * because the tags below have to appear literally in the query — 「附近有什么好吃的」contains none of
+     * 位置/定位/坐标. The model then searched the web for a place it had no name for.
+     *
+     * Resident changes advertisement only. This tool stays `defaultEnabled = false` and every read still
+     * goes through the Android location permission check in [AndroidDeviceLocationReader], so a user who
+     * never enabled it is unaffected.
+     */
     override val discoveryMetadata: ToolDiscoveryMetadata = ToolDiscoveryMetadata(
-        intentTags = setOf("location", "gps", "where", "coordinate", "地图", "位置", "定位", "坐标", "我在哪"),
-        priority = 20
+        exposure = ToolExposure.Resident,
+        intentTags = setOf(
+            "location", "gps", "where", "coordinate", "nearby", "distance", "route", "directions",
+            "地图", "位置", "定位", "坐标", "我在哪", "我在", "附近", "周边", "最近", "这边", "身边",
+            "多远", "几公里", "怎么去", "路线", "导航", "天气"
+        ),
+        priority = 40,
+        supersedesWebSearch = true
     )
 
     override val securityPolicy: ToolSecurityPolicy = ToolSecurityPolicy.ReadOnlyPrivate

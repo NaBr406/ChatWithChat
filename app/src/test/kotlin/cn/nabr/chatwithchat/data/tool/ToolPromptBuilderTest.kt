@@ -283,6 +283,100 @@ class ToolPromptBuilderTest {
     }
 
     @Test
+    fun `fallback prompt allows a batch of independent calls but not a dependent one`() {
+        val prompt = ToolPromptBuilder().buildJsonFallbackPrompt(
+            tools = listOf(ToolDefinition.CurrentDateTime, ToolDefinition.DeviceLocation),
+            config = ToolLoopConfig(maxToolCallsPerRound = 4)
+        )
+
+        assertTrue(prompt.contains("相互独立的调用可以放进同一次响应的 tool_calls 数组（最多 4 个）"))
+        assertTrue(prompt.contains("后一步要用到前一步的结果时，必须留到下一次响应"))
+        assertFalse(prompt.contains("one tool call per response"))
+    }
+
+    @Test
+    fun `fallback prompt ranks a specialist tool above web search`() {
+        val prompt = ToolPromptBuilder().buildJsonFallbackPrompt(
+            tools = listOf(ToolDefinition.WebSearch, ToolDefinition.DeviceLocation)
+        )
+
+        assertTrue(prompt.contains("有专用工具（设备工具、MCP 工具）能直接提供时就用它"))
+        assertTrue(prompt.contains("先调用 device_location"))
+        assertTrue(prompt.contains("不要凭猜测的地名搜索"))
+    }
+
+    @Test
+    fun `priority rules stay silent when they cannot apply`() {
+        val withoutSearch = ToolPromptBuilder().buildJsonFallbackPrompt(
+            tools = listOf(ToolDefinition.DeviceLocation)
+        )
+        val searchOnly = toolSelectionPriorityRules(
+            listOf(ToolDefinition.WebSearch, ToolDefinition.FetchUrl, ToolDefinition.SendSticker)
+        )
+
+        // Nothing to rank against without web_search in play.
+        assertFalse(withoutSearch.contains("能直接提供时就用它"))
+        // web_search plus tools that cannot answer in its place: no specialist to prefer, no location rule.
+        assertTrue(searchOnly.isEmpty())
+    }
+
+    @Test
+    fun `a catalog sized result does not evict the earlier steps of a chain`() {
+        val menu = "MENU-".repeat(6_000)
+        val prompt = ToolPromptBuilder().buildJsonFallbackPrompt(
+            tools = listOf(ToolDefinition.CurrentDateTime),
+            scratchpad = listOf(
+                ToolMessage.modelToolCall(
+                    ToolCall(id = "c1", name = "mcp_shop_query_stores", arguments = """{"city":"上海"}""")
+                ),
+                ToolMessage.toolResult(
+                    ToolResult(callId = "c1", name = "mcp_shop_query_stores", content = "store_id=S-42")
+                ),
+                ToolMessage.modelToolCall(
+                    ToolCall(id = "c2", name = "mcp_shop_query_meals", arguments = """{"store_id":"S-42"}""")
+                ),
+                ToolMessage.toolResult(
+                    ToolResult(callId = "c2", name = "mcp_shop_query_meals", content = menu)
+                )
+            )
+        )
+
+        // The whole point: a 30k menu used to push the store_id out of the window, which left the model able
+        // to price a basket it could no longer address.
+        assertTrue(prompt.contains("store_id=S-42"))
+        assertTrue(prompt.contains("""Arguments: {"store_id":"S-42"}"""))
+        assertTrue(prompt.contains("MENU-MENU-"))
+        assertTrue(prompt.contains("已完成: mcp_shop_query_stores=OK, mcp_shop_query_meals=OK"))
+    }
+
+    @Test
+    fun `an overflowing chain degrades to summaries and says so`() {
+        val steps = (1..12).flatMap { index ->
+            listOf(
+                ToolMessage.modelToolCall(
+                    ToolCall(id = "c$index", name = "step_$index", arguments = """{"n":$index}""")
+                ),
+                ToolMessage.toolResult(
+                    ToolResult(callId = "c$index", name = "step_$index", content = "payload-$index-" + "z".repeat(400))
+                )
+            )
+        }
+
+        val prompt = ToolPromptBuilder(maxPromptChars = 3_000).buildJsonFallbackPrompt(
+            tools = listOf(ToolDefinition.CurrentDateTime),
+            scratchpad = steps
+        )
+
+        assertTrue(prompt.length <= 3_000)
+        // Newest step in full, oldest gone, and the digest still names every tool that ran so the model does
+        // not re-call one whose result was evicted.
+        assertTrue(prompt.contains("payload-12-"))
+        assertFalse(prompt.contains("payload-1-"))
+        assertTrue(prompt.contains("更早的步骤已省略"))
+        assertTrue(prompt.contains("step_1=OK"))
+    }
+
+    @Test
     fun `fallback prompt preserves the latest scratchpad result within its total budget`() {
         val prompt = ToolPromptBuilder(maxPromptChars = 700).buildJsonFallbackPrompt(
             tools = listOf(ToolDefinition.CurrentDateTime),

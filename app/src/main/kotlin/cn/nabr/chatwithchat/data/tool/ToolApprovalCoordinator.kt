@@ -60,6 +60,30 @@ class ToolApprovalCoordinator @Inject constructor(
         executionContextFactory.explicitRetry(call, request.pendingExecutionContext, approval).getOrThrow()
     }
 
+    /** The scope a conversation-scoped grant for [toolName] would cover, or `null` if grants are forbidden. */
+    fun sessionApprovalScope(toolName: String): String? = toolRegistry.providerFor(toolName)
+        ?.sessionApprovalScope
+        ?.trim()
+        ?.takeIf { scope -> scope.isNotBlank() }
+
+    /**
+     * Authorizes a call from an existing conversation-scoped grant, with no dialog.
+     *
+     * The approval token is minted for *this* call, so it stays bound to this tool name and these exact
+     * arguments. The grant only decides whether to ask; it is not itself a credential and cannot be
+     * replayed onto another operation. A tool that does not opt into grants is refused here.
+     */
+    fun approveFromSessionGrant(call: ToolCall): Result<ToolExecutionContext> = runCatching {
+        val entry = toolRegistry.catalogEntryFor(call.name)
+            ?: throw IllegalArgumentException("unknown_tool:${call.name}")
+        require(entry.securityPolicy.approvalPolicy == ToolApprovalPolicy.REQUIRE_EACH_CALL) {
+            "tool_approval_not_required"
+        }
+        require(sessionApprovalScope(call.name) != null) { "tool_session_grant_unsupported" }
+        val approval = approvalAuthority.approve(call).getOrThrow()
+        executionContextFactory.create(call, approval).getOrThrow()
+    }
+
     fun deny(
         call: ToolCall,
         request: ToolApprovalRequest

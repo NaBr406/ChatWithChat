@@ -66,7 +66,7 @@ fun ToolResult.boundPayload(
     }
 
     val contentLimit = minOf(bounds.maxContentChars, remainingChars)
-    val boundedContent = content.clipSafely(contentLimit)
+    val boundedContent = content.clipWithNotice(contentLimit)
     if (boundedContent != content) droppedParts += ToolResultPayloadPart.CONTENT
     remainingChars -= boundedContent.length
 
@@ -192,6 +192,30 @@ private fun String.clipSafely(maxChars: Int): String {
         clipped
     }
 }
+
+/**
+ * Clips content and says so, in band.
+ *
+ * A silent clip is indistinguishable from a short answer, and a clipped JSON payload is worse than either:
+ * it looks like a malformed response. A model that cannot tell the difference retries the same call hoping
+ * for a different result, which is exactly what a deterministic size limit will never give it. Naming the
+ * limit turns a mystery into a fact the model can plan around — narrow the request, or work with what
+ * arrived.
+ *
+ * The notice is counted inside [maxChars] rather than appended past it, so this cannot push a result back
+ * over a budget that another part of the bounding pass already accounted for.
+ */
+private fun String.clipWithNotice(maxChars: Int): String {
+    if (length <= maxChars) return this
+    if (maxChars <= TRUNCATION_NOTICE.length) return clipSafely(maxChars)
+    val body = clipSafely(maxChars - TRUNCATION_NOTICE.length)
+    return body + TRUNCATION_NOTICE
+}
+
+private const val TRUNCATION_NOTICE =
+    "\n\n[truncated: the result exceeded this app's per-result size limit and was cut here. " +
+        "Re-running the same call returns the same truncation — narrow the request instead, " +
+        "or continue with the part that arrived.]"
 
 private const val TOOL_RESULT_TOO_LARGE = "tool_result_too_large"
 private const val ERROR_CODE_METADATA_KEY = "error_code"

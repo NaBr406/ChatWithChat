@@ -37,9 +37,10 @@ class ToolLoopOrchestrator(
         .filter { artifact -> artifact.instanceId.isNotBlank() }
         .distinctBy { artifact -> artifact.instanceId }
 
-    fun createExecutionSession(): ToolLoopExecutionSession = ToolLoopExecutionSession(
+    fun createExecutionSession(chatId: Int = 0): ToolLoopExecutionSession = ToolLoopExecutionSession(
         config = config,
-        policyFor = toolExecutor::policyFor
+        policyFor = toolExecutor::policyFor,
+        chatId = chatId
     )
 
     fun createToolScope(
@@ -58,11 +59,13 @@ class ToolLoopOrchestrator(
         tools: List<ToolDefinition>,
         adapter: ToolCallingAdapter = defaultToolCallingAdapter,
         onProgress: suspend (ApiState) -> Unit = {},
+        chatId: Int = 0,
         requestModel: suspend (toolPrompt: String) -> Result<String>
     ): ToolLoopResult = runLoop(
         scope = createFullToolScope(tools),
         adapter = adapter,
         onProgress = onProgress,
+        chatId = chatId,
         requestModel = requestModel
     )
 
@@ -70,19 +73,26 @@ class ToolLoopOrchestrator(
         scope: ToolScope,
         adapter: ToolCallingAdapter = defaultToolCallingAdapter,
         onProgress: suspend (ApiState) -> Unit = {},
+        chatId: Int = 0,
         requestModel: suspend (toolPrompt: String) -> Result<String>
     ): ToolLoopResult = runLoopWithRoundPolicy(
         scope = scope,
         adapter = adapter,
-        onProgress = onProgress
+        onProgress = onProgress,
+        chatId = chatId
     ) { toolPrompt, _ ->
         requestModel(toolPrompt)
     }
 
+    /**
+     * [chatId] scopes conversation-level approval grants. Zero disables them, so a caller that cannot
+     * identify the conversation keeps strict per-call approval rather than silently widening consent.
+     */
     internal suspend fun runLoopWithRoundPolicy(
         scope: ToolScope,
         adapter: ToolCallingAdapter = defaultToolCallingAdapter,
         onProgress: suspend (ApiState) -> Unit = {},
+        chatId: Int = 0,
         requestModel: suspend (
             toolPrompt: String,
             reasoningPolicy: ToolRoundReasoningPolicy
@@ -96,7 +106,7 @@ class ToolLoopOrchestrator(
         val allCalls = mutableListOf<ToolCall>()
         val allResults = mutableListOf<ToolResult>()
         var hadToolInteraction = false
-        val executionSession = createExecutionSession()
+        val executionSession = createExecutionSession(chatId)
         val roundStateMachine = ToolRoundStateMachine(scope.definitions)
 
         var allowedRounds = maxRounds
@@ -299,7 +309,7 @@ class ToolLoopOrchestrator(
             sessionState = sessionState
         )
         if (result.metadata["error_code"] == ToolApprovalStatus.MISSING.recoverableErrorCode) {
-            when (val decision = toolApprovalBroker?.awaitApproval(call)) {
+            when (val decision = toolApprovalBroker?.awaitApproval(call, sessionState.chatId)) {
                 is ToolApprovalBroker.Decision.WithContext -> {
                     result = toolExecutor.execute(
                         call = call,
@@ -467,11 +477,12 @@ private const val DISCOVER_TOOLS_PROGRESS_LABEL = "正在查找可用工具"
 
 class ToolLoopExecutionSession internal constructor(
     config: ToolLoopConfig,
-    policyFor: (String) -> ToolPolicy
+    policyFor: (String) -> ToolPolicy,
+    chatId: Int = 0
 ) {
     private val toolBudget = ToolBudgetState(config, policyFor)
     private val resultPayloadBudget = ToolResultPayloadBudget(config)
-    internal val state = ToolExecutionSessionState()
+    internal val state = ToolExecutionSessionState(chatId)
 
     internal fun select(calls: List<ToolCall>): Pair<List<ToolCall>, List<ToolResult>> {
         val selection = toolBudget.select(calls)

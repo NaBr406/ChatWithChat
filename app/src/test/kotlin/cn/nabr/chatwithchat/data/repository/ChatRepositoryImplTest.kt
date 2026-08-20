@@ -2207,7 +2207,8 @@ class ChatRepositoryImplTest {
             openAIAPI = openAIAPI,
             settingRepository = settingRepository(
                 webSearchMode = WebSearchMode.Off,
-                toolCallingMode = ToolCallingMode.Auto
+                toolCallingMode = ToolCallingMode.Auto,
+                enabledOptInToolNames = setOf(ToolDefinition.DeviceLocation.name)
             ),
             toolLoopOrchestrator = toolLoopOrchestrator
         )
@@ -2274,6 +2275,71 @@ class ChatRepositoryImplTest {
         assertEquals(1, openAIAPI.streamChatCompletionCalls)
         assertTrue(openAIAPI.chatCompletionRequests.single().systemText().contains("已有针对用户最新请求的工具结果"))
         assertTrue(openAIAPI.chatCompletionRequests.single().systemText().contains("https://example.com/source"))
+    }
+
+    @Test
+    fun `an enabled location tool stands the search decision shortcut down`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            responsesResponses = mutableListOf(
+                flowOf(
+                    FunctionCallArgumentsDoneEvent(
+                        itemId = "fc_1",
+                        outputIndex = 0,
+                        callId = "call_1",
+                        name = "device_location",
+                        arguments = "{}"
+                    )
+                ),
+                flowOf(
+                    OutputTextDeltaEvent(
+                        itemId = "msg_1",
+                        outputIndex = 0,
+                        contentIndex = 0,
+                        delta = "Nearby answer"
+                    )
+                )
+            )
+        )
+        val webSearchRepository = RecordingWebSearchRepository(
+            Result.success(listOf(webSearchResult()))
+        )
+        var searchDecisionCalls = 0
+        val searchDecisionService = SearchDecisionService(
+            SearchDecisionModelClient { _, _ ->
+                searchDecisionCalls += 1
+                Result.success(
+                    SearchDecisionModelResponse(
+                        """{"shouldSearch":true,"queries":["附近好吃的店"],"reason":"nearby request"}"""
+                    )
+                )
+            }
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Auto,
+                toolCallingMode = ToolCallingMode.Auto,
+                enabledOptInToolNames = setOf(ToolDefinition.DeviceLocation.name)
+            ),
+            webSearchRepository = webSearchRepository,
+            searchDecisionService = searchDecisionService
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "附近有什么好吃的", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = openAIPlatform()
+        ).toList()
+
+        // The shortcut used to decide this turn on its own: it would have searched for a place the model had
+        // never looked up and returned a final-answer prompt, so the location tool never got a turn. Standing
+        // it down is the whole fix for "开了位置工具也照样联网搜索".
+        assertEquals(0, searchDecisionCalls)
+        assertTrue(webSearchRepository.queries.isEmpty())
+        assertTrue(states.contains(ApiState.Success("Nearby answer")))
+        val advertised = openAIAPI.responsesRequests[0].tools.orEmpty().map { tool -> tool.name }
+        assertTrue("location tool must be visible on the turn it is needed", advertised.contains(ToolDefinition.DeviceLocation.name))
+        assertTrue("standing the shortcut down must not hide web_search", advertised.contains(ToolDefinition.WebSearch.name))
     }
 
     @Test
@@ -4070,11 +4136,26 @@ class ChatRepositoryImplTest {
         const val BASELINE_MEMORY_PROMPT = "Relevant memory: user prefers concise Chinese replies."
         const val FALLBACK_TOOL_SCHEMA_MARKER = "Enabled tool signatures:"
         const val FALLBACK_TOOL_SCRATCHPAD_MARKER = "Tool scratchpad:"
+
+        /**
+         * Built-ins a real user has to switch on, kept out of the default fixture so it matches production.
+         *
+         * `device_location` ships `defaultEnabled = false` and `isSensitive = true`, but this fixture used to
+         * enable every built-in name unconditionally. That made an opt-in tool implicitly active in every
+         * test, so changing how it is advertised — or letting it stand the web-search shortcut down — failed
+         * fifteen tests that were never about location at all. Tests that want it opt in explicitly through
+         * `enabledOptInToolNames`.
+         */
+        val OPT_IN_BUILT_IN_TOOL_NAMES = setOf(ToolDefinition.DeviceLocation.name)
         val BASELINE_RUNTIME_DATE_TIME_REGEX = Regex("\\d{4}-\\d{2}-\\d{2} 星期.（[^）]*）")
         val EXPECTED_STICKER_BASELINE_ROWS = listOf(
-            "sticker-request-baseline|custom_json|3|2|1356,1415,704|611,523,251|1140,1187,509|67,67,67|54,54,54|159,73,0|0,247,0|0,0,0|1|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|ollama_json|3|2|1352,1411,700|614,526,254|1140,1187,509|67,67,67|54,54,54|159,73,0|0,247,0|0,0,0|1|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|groq_json|3|2|1407,1466,755|628,540,268|1140,1187,509|67,67,67|54,54,54|159,73,0|0,247,0|0,0,0|1|30/3/33|60/6/66|3|1",
+            // The three JSON rows carry +34 request chars against the previous baseline: the fallback prompt
+            // now permits a batch of independent tool calls instead of forbidding it, which buys back a whole
+            // round whenever a request needs two lookups. Native rows are unchanged — the priority rules only
+            // render when web_search is active, and this scenario is stickers only.
+            "sticker-request-baseline|custom_json|3|2|1390,1450,704|665,576,251|1174,1222,509|67,67,67|54,54,54|159,73,0|0,248,0|0,0,0|1|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|ollama_json|3|2|1386,1446,700|668,579,254|1174,1222,509|67,67,67|54,54,54|159,73,0|0,248,0|0,0,0|1|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|groq_json|3|2|1441,1501,755|682,593,268|1174,1222,509|67,67,67|54,54,54|159,73,0|0,248,0|0,0,0|1|30/3/33|60/6/66|3|1",
             "sticker-request-baseline|openai_responses|3|2|1514,1661,1172|639,641,556|571,631,722|42,42,42|54,54,54|803,361,0|0,479,334|2,1,0|2|30/3/33|60/6/66|3|1",
             "sticker-request-baseline|openrouter_native|3|2|1657,1797,1343|849,827,771|571,630,721|67,67,67|54,54,54|829,374,0|0,509,366|2,1,0|2|30/3/33|60/6/66|3|1",
             "sticker-request-baseline|anthropic_native|3|2|1510,1665,1245|822,802,753|571,631,722|67,67,67|54,54,54|742,331,0|0,502,359|2,1,0|2|30/3/33|60/6/66|3|1",
@@ -4915,6 +4996,7 @@ class ChatRepositoryImplTest {
         toolCallingMode: ToolCallingMode = ToolCallingMode.Off,
         webSearchBaseUrl: String = if (webSearchMode == WebSearchMode.Off) "" else "https://search.example",
         disabledToolNames: Set<String> = emptySet(),
+        enabledOptInToolNames: Set<String> = emptySet(),
         disabledToolNamesFailure: Throwable? = null,
         memoryEnabled: Boolean = false
     ): SettingRepository {
@@ -4928,7 +5010,10 @@ class ChatRepositoryImplTest {
                     ToolEnablementOverrides(
                         enabledToolNames = ToolDefinition.BuiltIns
                             .map { definition -> definition.name }
-                            .toSet() - disabledToolNames,
+                            .toSet()
+                            .minus(OPT_IN_BUILT_IN_TOOL_NAMES)
+                            .plus(enabledOptInToolNames)
+                            .minus(disabledToolNames),
                         disabledToolNames = disabledToolNames
                     )
                 }

@@ -149,8 +149,10 @@ import cn.nabr.chatwithchat.data.tool.provider.ToolCallingAdapter
 import cn.nabr.chatwithchat.data.tool.stickerContinuationInstruction
 import cn.nabr.chatwithchat.data.tool.stickerFinalAnswerInstruction
 import cn.nabr.chatwithchat.data.tool.stickerToolUsageRules
+import cn.nabr.chatwithchat.data.tool.supersedesWebSearchShortcut
 import cn.nabr.chatwithchat.data.tool.toolLimitErrorCodeOrNull
 import cn.nabr.chatwithchat.data.tool.toolProtocolJson
+import cn.nabr.chatwithchat.data.tool.toolSelectionPriorityRules
 import cn.nabr.chatwithchat.data.textskill.ChatRequestContext
 import cn.nabr.chatwithchat.data.textskill.TextSkillInvocationSnapshot
 import cn.nabr.chatwithchat.data.websearch.SearchDecision
@@ -584,6 +586,7 @@ class ChatRepositoryImpl @Inject constructor(
             adapter = toolCallingAdapter,
             onProgress = { progress -> emit(progress) },
             scope = toolScope,
+            chatId = userMessages.approvalChatId(),
             requestModel = { toolPrompt, reasoningPolicy ->
                 collectProviderText(
                     states = completeChatByProvider(
@@ -749,6 +752,11 @@ class ChatRepositoryImpl @Inject constructor(
         runtimeContextPrompt: String
     ): SearchDecisionExecution? {
         if (activeToolDefinitions.none { definition -> definition.name == ToolDefinition.WebSearch.name }) {
+            return null
+        }
+        // A tool that can answer better than a search engine has to be given the chance to. This shortcut
+        // ends the turn on its own, so running it first is the same as deciding no other tool may be used.
+        if (toolLoopOrchestrator.toolCatalog.supersedesWebSearchShortcut(activeToolDefinitions)) {
             return null
         }
 
@@ -982,7 +990,7 @@ class ChatRepositoryImpl @Inject constructor(
         val allResults = mutableListOf<ToolResult>()
         val toolUsageRecords = mutableListOf<TokenUsageRecord>()
         var hasToolInteraction = false
-        val toolExecutionSession = toolLoopOrchestrator.createExecutionSession()
+        val toolExecutionSession = toolLoopOrchestrator.createExecutionSession(userMessages.approvalChatId())
         val roundStateMachine = ToolRoundStateMachine(toolScope.definitions)
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)
 
@@ -1370,7 +1378,7 @@ class ChatRepositoryImpl @Inject constructor(
         val toolUsageRecords = mutableListOf<TokenUsageRecord>()
         searchDecisionExecution?.usage?.let { usage -> toolUsageRecords += usage }
         var hasToolInteraction = false
-        val toolExecutionSession = toolLoopOrchestrator.createExecutionSession()
+        val toolExecutionSession = toolLoopOrchestrator.createExecutionSession(userMessages.approvalChatId())
         val roundStateMachine = ToolRoundStateMachine(toolScope.definitions)
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)
 
@@ -1711,7 +1719,7 @@ class ChatRepositoryImpl @Inject constructor(
         val toolUsageRecords = mutableListOf<TokenUsageRecord>()
         searchDecisionExecution?.usage?.let { usage -> toolUsageRecords += usage }
         var hasToolInteraction = false
-        val toolExecutionSession = toolLoopOrchestrator.createExecutionSession()
+        val toolExecutionSession = toolLoopOrchestrator.createExecutionSession(userMessages.approvalChatId())
         val roundStateMachine = ToolRoundStateMachine(toolScope.definitions)
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)
 
@@ -2032,7 +2040,7 @@ class ChatRepositoryImpl @Inject constructor(
         val toolUsageRecords = mutableListOf<TokenUsageRecord>()
         searchDecisionExecution?.usage?.let { usage -> toolUsageRecords += usage }
         var hasToolInteraction = false
-        val toolExecutionSession = toolLoopOrchestrator.createExecutionSession()
+        val toolExecutionSession = toolLoopOrchestrator.createExecutionSession(userMessages.approvalChatId())
         val roundStateMachine = ToolRoundStateMachine(toolScope.definitions)
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)
 
@@ -4009,12 +4017,16 @@ internal fun openAINativeToolInstruction(activeToolDefinitions: List<ToolDefinit
     val webInstruction = OPENAI_NATIVE_WEB_SEARCH_INSTRUCTION.takeIf {
         activeToolDefinitions.any { definition -> definition.name == ToolDefinition.WebSearch.name }
     }
+    val priorityInstruction = toolSelectionPriorityRules(activeToolDefinitions)
+        .joinToString(separator = "")
+        .takeIf(String::isNotBlank)
     val stickerInstruction = stickerToolUsageRules(activeToolDefinitions)
         .joinToString(separator = " ")
         .takeIf(String::isNotBlank)
     return listOfNotNull(
         OPENAI_NATIVE_GENERIC_TOOL_INSTRUCTION,
         webInstruction,
+        priorityInstruction,
         stickerInstruction
     ).joinToString(separator = "\n\n")
 }
@@ -4333,3 +4345,11 @@ private fun chatCompletionStreamOptionsFor(platform: PlatformV2): ChatCompletion
     ClientType.GOOGLE,
     ClientType.CUSTOM -> null
 }
+
+/**
+ * Conversation id used to scope approval grants, or 0 before the chat row exists.
+ *
+ * Zero deliberately disables grants rather than sharing one bucket across unsaved chats, which would let a
+ * grant made in one conversation authorize calls in another.
+ */
+private fun List<MessageV2>.approvalChatId(): Int = lastOrNull()?.chatId?.takeIf { id -> id > 0 } ?: 0
