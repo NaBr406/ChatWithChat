@@ -55,6 +55,10 @@ import cn.nabr.chatwithchat.data.textskill.selectionKey
 import cn.nabr.chatwithchat.data.textskill.toSelectableTextSkills
 import cn.nabr.chatwithchat.data.title.ChatTitleGenerationService
 import cn.nabr.chatwithchat.data.title.ChatTitleTurn
+import cn.nabr.chatwithchat.data.tool.TOOL_ARGUMENTS_TOO_LARGE
+import cn.nabr.chatwithchat.data.tool.TOOL_BUDGET_EXCEEDED_PREFIX
+import cn.nabr.chatwithchat.data.tool.TOOL_PROTOCOL_RESPONSE_TOO_LARGE
+import cn.nabr.chatwithchat.data.tool.TOOL_RESULT_BUDGET_EXHAUSTED
 import cn.nabr.chatwithchat.data.tool.ToolApprovalBroker
 import cn.nabr.chatwithchat.data.tool.ToolDefinition
 import cn.nabr.chatwithchat.di.ApplicationScope
@@ -638,7 +642,8 @@ class ChatViewModel @Inject constructor(
                     markPlatformLoadingComplete(platformIndex)
                 },
                 revisionToAppendOnSuccess = revisionToAppendOnSuccess,
-                onToolProgress = { progress -> updateToolProgress(turnIndex, platformIndex, progress) }
+                onToolProgress = { progress -> updateToolProgress(turnIndex, platformIndex, progress) },
+                resolveErrorMessage = ::resolveToolErrorMessage
             )
         }
     }
@@ -992,7 +997,8 @@ class ChatViewModel @Inject constructor(
                 turnIndex = turnIndex,
                 platformIdx = currentPlatformIndex,
                 onLoadingComplete = { markPlatformLoadingComplete(currentPlatformIndex) },
-                onToolProgress = { progress -> updateToolProgress(turnIndex, currentPlatformIndex, progress) }
+                onToolProgress = { progress -> updateToolProgress(turnIndex, currentPlatformIndex, progress) },
+                resolveErrorMessage = ::resolveToolErrorMessage
             )
         }
     }
@@ -1006,6 +1012,24 @@ class ChatViewModel @Inject constructor(
         _toolProgressStates.update { current ->
             current + (key to current[key].orEmpty().appendToolProgress(progress))
         }
+    }
+
+    /**
+     * Replaces an internal tool-limit code with text a user can read.
+     *
+     * The repository emits these as data, so the substitution happens here, where string resources are
+     * reachable. Anything unrecognised is left alone — the same field carries genuine provider error text.
+     */
+    private fun resolveToolErrorMessage(message: String): String = when {
+        message.contains(TOOL_ARGUMENTS_TOO_LARGE) ->
+            context.getString(R.string.tool_error_arguments_too_large)
+        message.contains(TOOL_PROTOCOL_RESPONSE_TOO_LARGE) ->
+            context.getString(R.string.tool_error_response_too_large)
+        message.contains(TOOL_BUDGET_EXCEEDED_PREFIX) ->
+            context.getString(R.string.tool_error_budget_exhausted)
+        message.contains(TOOL_RESULT_BUDGET_EXHAUSTED) ->
+            context.getString(R.string.tool_error_result_budget_exhausted)
+        else -> message
     }
 
     private fun clearToolProgress(turnIndex: Int, platformIndex: Int) {

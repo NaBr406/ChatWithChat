@@ -233,6 +233,8 @@
     <string name="confirm">确定</string>
     <string name="cancel">取消</string>
     <string name="go_back">返回</string>
+    <string name="switch_to_light_theme">切换到浅色主题</string>
+    <string name="switch_to_dark_theme">切换到深色主题</string>
     <string name="more_options">更多选项</string>
     <string name="arrow_icon">箭头图标</string>
     <string name="on">开启</string>
@@ -652,6 +654,10 @@
     <string name="tool_running">正在使用工具</string>
     <string name="tool_finished">工具已完成</string>
     <string name="tool_failed">工具执行失败</string>
+    <string name="tool_error_arguments_too_large">工具参数过长，本次调用已中止</string>
+    <string name="tool_error_response_too_large">模型响应过长，本次工具调用已中止</string>
+    <string name="tool_error_budget_exhausted">本次请求的工具调用次数已用完</string>
+    <string name="tool_error_result_budget_exhausted">本次请求能携带的工具结果已满</string>
     <string name="initial_request_interrupted">请求已中断，请重试。</string>
     <string name="prompt_trace_title">完整提示词</string>
     <string name="prompt_trace_empty">暂无提示词记录</string>

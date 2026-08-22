@@ -52,6 +52,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import cn.nabr.chatwithchat.R
+import cn.nabr.chatwithchat.data.tool.TOOL_ARGUMENTS_TOO_LARGE
+import cn.nabr.chatwithchat.data.tool.TOOL_BUDGET_EXCEEDED_PREFIX
 import cn.nabr.chatwithchat.presentation.common.AppleGreen
 import cn.nabr.chatwithchat.presentation.common.AppleIndigo
 import cn.nabr.chatwithchat.presentation.common.AppleOrange
@@ -301,6 +303,12 @@ private fun ChatViewModel.ToolProgressState.secondaryText(isPermissionGranted: B
     ChatViewModel.ToolProgressStatus.Failed -> when {
         isPermissionGranted -> stringResource(R.string.tool_permission_granted_retry)
         errorCode == TOOL_PERMISSION_DENIED -> stringResource(R.string.tool_permission_required)
+        // A budget refusal is not a tool malfunction, and `tool_budget_exceeded:max_tool_calls_per_chat`
+        // means nothing to the person reading it.
+        message.orEmpty().contains(TOOL_BUDGET_EXCEEDED_PREFIX) ->
+            stringResource(R.string.tool_error_budget_exhausted)
+        message.orEmpty().contains(TOOL_ARGUMENTS_TOO_LARGE) ->
+            stringResource(R.string.tool_error_arguments_too_large)
         else -> message.toReadableFailureDetail()
     }
     ChatViewModel.ToolProgressStatus.Running,
