@@ -199,6 +199,155 @@ class ThinkingBlockInstrumentedTest {
         assertEquals(target, displayedStreamingText())
     }
 
+    @Test
+    fun resumedThinking_returnsToTheInProgressHeader() {
+        composeRule.mainClock.autoAdvance = false
+        lateinit var resumeThinking: () -> Unit
+        composeRule.setContent {
+            var thoughts by remember { mutableStateOf("First round reasoning") }
+            var isThinking by remember { mutableStateOf(false) }
+            resumeThinking = {
+                thoughts = "First round reasoning\n\nSecond round reasoning"
+                isThinking = true
+            }
+
+            ChatWithChatTheme {
+                ThinkingBlock(
+                    thoughts = thoughts,
+                    contentIdentity = "resumed-thinking",
+                    isLoading = true,
+                    isThinking = isThinking,
+                    initiallyExpanded = true
+                )
+            }
+        }
+
+        composeRule.mainClock.advanceTimeBy(2_500)
+        composeRule.onNodeWithTag(THINKING_HEADER_TEST_TAG)
+            .assertTextContains("已思考")
+
+        // 分步执行的下一轮推理回来了，表头必须跟着回到"思考中"。
+        composeRule.runOnIdle { resumeThinking() }
+        composeRule.mainClock.advanceTimeBy(48)
+        composeRule.onNodeWithTag(THINKING_HEADER_TEST_TAG)
+            .assertTextContains("思考中")
+    }
+
+    @Test
+    fun resumedStreaming_revealsTheNewTailGraduallyInsteadOfSnapping() {
+        composeRule.mainClock.autoAdvance = false
+        val firstSegment = "reasoning ".repeat(20)
+        val resumedTarget = firstSegment + "resumed ".repeat(400)
+        lateinit var pauseStreaming: () -> Unit
+        lateinit var resumeStreaming: () -> Unit
+        composeRule.setContent {
+            var isStreaming by remember { mutableStateOf(true) }
+            var target by remember { mutableStateOf(firstSegment) }
+            pauseStreaming = { isStreaming = false }
+            resumeStreaming = {
+                target = resumedTarget
+                isStreaming = true
+            }
+
+            Text(
+                text = rememberSmoothedStreamingText(
+                    targetText = target,
+                    isStreaming = isStreaming,
+                    contentIdentity = "resumed-drain"
+                ),
+                modifier = Modifier.testTag(STREAMING_TEXT_TEST_TAG)
+            )
+        }
+
+        composeRule.mainClock.advanceTimeBy(3_000)
+        assertEquals(firstSegment, displayedStreamingText())
+
+        // 排空一次：旧实现的动画循环在这里就永久退出了。
+        composeRule.runOnIdle { pauseStreaming() }
+        composeRule.mainClock.advanceTimeBy(3_000)
+        assertEquals(firstSegment, displayedStreamingText())
+
+        composeRule.runOnIdle { resumeStreaming() }
+        composeRule.mainClock.advanceTimeByFrame()
+        val resumedLength = displayedStreamingText().length
+        assertTrue(resumedLength > firstSegment.length)
+        assertTrue(resumedLength < resumedTarget.length)
+    }
+
+    @Test
+    fun answerArrival_collapsesThinkingSoTheAnswerStopsMoving() {
+        composeRule.mainClock.autoAdvance = false
+        lateinit var startAnswer: () -> Unit
+        composeRule.setContent {
+            var isAnswerVisible by remember { mutableStateOf(false) }
+            startAnswer = { isAnswerVisible = true }
+
+            ChatWithChatTheme {
+                ThinkingBlock(
+                    thoughts = "First round reasoning",
+                    contentIdentity = "auto-collapse",
+                    isLoading = true,
+                    isAnswerVisible = isAnswerVisible,
+                    initiallyExpanded = true
+                )
+            }
+        }
+
+        composeRule.mainClock.advanceTimeBy(300)
+        composeRule.onNodeWithTag(THINKING_CONTENT_TEST_TAG).assertIsDisplayed()
+
+        // 正文一落地思考块就收起，之后再长多少推理都不会推动正文。
+        composeRule.runOnIdle { startAnswer() }
+        composeRule.mainClock.advanceTimeBy(300)
+        composeRule.onAllNodesWithTag(THINKING_CONTENT_TEST_TAG).assertCountEquals(0)
+    }
+
+    @Test
+    fun answerAlreadyVisible_startsCollapsedWithoutFlashing() {
+        composeRule.setContent {
+            ChatWithChatTheme {
+                ThinkingBlock(
+                    thoughts = "Reasoning that arrived after the prose",
+                    contentIdentity = "prose-first",
+                    isLoading = true,
+                    isAnswerVisible = true,
+                    initiallyExpanded = true
+                )
+            }
+        }
+
+        composeRule.onAllNodesWithTag(THINKING_CONTENT_TEST_TAG).assertCountEquals(0)
+    }
+
+    @Test
+    fun userExpansion_survivesTheAnswerArriving() {
+        composeRule.mainClock.autoAdvance = false
+        lateinit var startAnswer: () -> Unit
+        composeRule.setContent {
+            var isAnswerVisible by remember { mutableStateOf(false) }
+            startAnswer = { isAnswerVisible = true }
+
+            ChatWithChatTheme {
+                ThinkingBlock(
+                    thoughts = "First round reasoning",
+                    contentIdentity = "manual-expansion",
+                    isLoading = true,
+                    isAnswerVisible = isAnswerVisible,
+                    initiallyExpanded = false
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag(THINKING_HEADER_TEST_TAG).performClick()
+        composeRule.mainClock.advanceTimeBy(300)
+        composeRule.onNodeWithTag(THINKING_CONTENT_TEST_TAG).assertIsDisplayed()
+
+        // 用户自己展开的，正文到来不能替他收起。
+        composeRule.runOnIdle { startAnswer() }
+        composeRule.mainClock.advanceTimeBy(300)
+        composeRule.onNodeWithTag(THINKING_CONTENT_TEST_TAG).assertIsDisplayed()
+    }
+
     private fun displayedStreamingText(): String = composeRule
         .onNodeWithTag(STREAMING_TEXT_TEST_TAG)
         .fetchSemanticsNode()

@@ -137,7 +137,12 @@ fun OpponentChatBubble(
     onShowPreviousRevision: () -> Unit = {},
     onShowNextRevision: () -> Unit = {}
 ) {
-    val isThinking = isLoading && thoughts.isNotBlank() && text.isBlank()
+    val isThinking = rememberThoughtStreamActive(
+        thoughts = thoughts,
+        text = text,
+        isLoading = isLoading,
+        contentIdentity = contentIdentity
+    )
     var hasObservedStreaming by remember(contentIdentity) { mutableStateOf(isLoading) }
     LaunchedEffect(isLoading) {
         if (isLoading) {
@@ -158,6 +163,7 @@ fun OpponentChatBubble(
                 contentIdentity = contentIdentity,
                 isLoading = isLoading,
                 isThinking = isThinking,
+                isAnswerVisible = text.isNotBlank(),
                 initiallyExpanded = isLoading || hasObservedStreaming
             )
         }
