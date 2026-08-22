@@ -54,7 +54,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -79,6 +78,7 @@ import cn.nabr.chatwithchat.data.model.ReasoningCapability
 import cn.nabr.chatwithchat.data.model.ReasoningCapabilityProfile
 import cn.nabr.chatwithchat.data.model.ReasoningMode
 import cn.nabr.chatwithchat.data.model.reasoningCapabilityForModel
+import cn.nabr.chatwithchat.presentation.common.isSettingsDarkTheme
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import kotlin.math.roundToInt
 
@@ -121,7 +121,7 @@ fun ModelSelectionMenu(
     val configuration = LocalConfiguration.current
     val popupWidth = modelSelectionPopupWidthDp(configuration.screenWidthDp).dp
     val popupMaxHeight = minOf(configuration.screenHeightDp.dp * 0.66f, 460.dp)
-    val isLightTheme = MaterialTheme.colorScheme.surface.luminance() >= 0.5f
+    val isLightTheme = !isSettingsDarkTheme()
     val popupMaterialColors = settingsMaterialColors()
     val popupContainerColor = popupMaterialColors.grouped.copy(alpha = if (isLightTheme) 0.96f else 0.94f)
     val popupBorderColor = popupMaterialColors.separatorStrong

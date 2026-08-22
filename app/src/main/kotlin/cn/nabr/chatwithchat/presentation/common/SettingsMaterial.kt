@@ -2,6 +2,9 @@ package cn.nabr.chatwithchat.presentation.common
 
 import android.content.Context
 import android.provider.Settings
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.withInfiniteAnimationFrameMillis
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -29,6 +32,8 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,6 +61,17 @@ import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 
+/**
+ * 深色画布刻意避开纯黑。灰阶 0 意味着子像素完全关断，字形每滑过一个像素都要做一次
+ * 全灭→全亮→全灭的整周期跃变，而三个通道的衰减时间并不一致（红色余晖最长），
+ * 快速滚动时拖影会明显偏红发棕。抬到灰阶 13 把背景移出低灰校准最差的区间，
+ * 白字对比度只从 21:1 降到 19.6:1，仍远超 WCAG AAA。
+ *
+ * [cn.nabr.chatwithchat.presentation.theme.ChatWithChatTheme] 内的 settingsColorScheme()
+ * 复用同一个值，两处必须一致，否则 Scaffold 画布和 MaterialTheme 的 surface 之间会出现色差。
+ */
+val SettingsCanvasDark = Color(0xFF0D0E0F)
+
 @Immutable
 data class SettingsMaterialColors(
     val canvas: Color,
@@ -70,37 +86,56 @@ data class SettingsMaterialColors(
     val controlFill: Color
 )
 
+val SettingsMaterialColorsLight = SettingsMaterialColors(
+    canvas = Color.White,
+    navigation = Color.White,
+    grouped = Color(0xFFF8F8FA),
+    field = Color.White.copy(alpha = 0.82f),
+    primaryLabel = Color(0xFF1C1C1E),
+    secondaryLabel = Color(0xFF6C6C70),
+    tertiaryLabel = Color(0xFFAEAEB2),
+    separator = Color(0x183C3C43),
+    separatorStrong = Color(0x303C3C43),
+    controlFill = Color(0xFFD1D1D6)
+)
+
+val SettingsMaterialColorsDark = SettingsMaterialColors(
+    canvas = SettingsCanvasDark,
+    navigation = SettingsCanvasDark,
+    grouped = Color(0xFF1C1C1E),
+    field = Color(0xFF2C2C2E).copy(alpha = 0.88f),
+    primaryLabel = Color.White,
+    secondaryLabel = Color(0xFFAEAEB2),
+    tertiaryLabel = Color(0xFF636366),
+    separator = Color(0x42545458),
+    separatorStrong = Color(0x66545458),
+    controlFill = Color(0xFF39393D)
+)
+
+/** 明暗切换的过渡时长。颜色插值和画布光晕的渐隐共用它，否则两者会不同步收尾。 */
+const val THEME_TRANSITION_MILLIS = 280
+
+/**
+ * 由 ChatWithChatTheme 下发插值中的调色板。缺省 null，好让脱离主题单独组合的
+ * `@Preview` 仍能回落到按背景亮度判定。
+ */
+val LocalSettingsMaterialColors = compositionLocalOf<SettingsMaterialColors?> { null }
+
+/**
+ * 目标明暗，而不是插值中的亮度。过渡期间画布必然扫过 luminance 0.5，任何按当前亮度
+ * 判定的**离散**开关——代码高亮主题、光晕开关、切换按钮图标——都会在动画中点突然翻转。
+ * 读这个 local 还顺带避免了它们订阅逐帧变化的颜色，省掉整屏 280ms 的逐帧重组。
+ */
+val LocalIsDarkTheme = compositionLocalOf<Boolean?> { null }
+
 @Composable
-fun settingsMaterialColors(): SettingsMaterialColors {
-    val isLight = MaterialTheme.colorScheme.background.luminance() > 0.5f
-    return if (isLight) {
-        SettingsMaterialColors(
-            canvas = Color.White,
-            navigation = Color.White,
-            grouped = Color(0xFFF8F8FA),
-            field = Color.White.copy(alpha = 0.82f),
-            primaryLabel = Color(0xFF1C1C1E),
-            secondaryLabel = Color(0xFF6C6C70),
-            tertiaryLabel = Color(0xFFAEAEB2),
-            separator = Color(0x183C3C43),
-            separatorStrong = Color(0x303C3C43),
-            controlFill = Color(0xFFD1D1D6)
-        )
-    } else {
-        SettingsMaterialColors(
-            canvas = Color.Black,
-            navigation = Color.Black,
-            grouped = Color(0xFF1C1C1E),
-            field = Color(0xFF2C2C2E).copy(alpha = 0.88f),
-            primaryLabel = Color.White,
-            secondaryLabel = Color(0xFFAEAEB2),
-            tertiaryLabel = Color(0xFF636366),
-            separator = Color(0x42545458),
-            separatorStrong = Color(0x66545458),
-            controlFill = Color(0xFF39393D)
-        )
-    }
-}
+fun settingsMaterialColors(): SettingsMaterialColors =
+    LocalSettingsMaterialColors.current
+        ?: if (isSettingsDarkTheme()) SettingsMaterialColorsDark else SettingsMaterialColorsLight
+
+@Composable
+fun isSettingsDarkTheme(): Boolean =
+    LocalIsDarkTheme.current ?: (MaterialTheme.colorScheme.background.luminance() <= 0.5f)
 
 /**
  * 绘制设置画布，并在深色模式下，在画布后方绘制数朵缓慢漂移的蓝色光晕。
@@ -114,8 +149,15 @@ fun settingsMaterialColors(): SettingsMaterialColors {
 @Composable
 fun Modifier.settingsCanvasBackground(): Modifier {
     val materialColors = settingsMaterialColors()
-    val isDark = MaterialTheme.colorScheme.background.luminance() <= 0.5f
-    if (!isDark) return background(materialColors.canvas)
+    val isDark = isSettingsDarkTheme()
+    // 光晕不能跟着 isDark 硬开关：切到浅色时它会在背景还是深色的第一帧就整块消失。
+    // 用同一条时长渐隐强度，让它跟画布一起走完过渡。
+    val glowAlpha by animateFloatAsState(
+        targetValue = if (isDark) 1f else 0f,
+        animationSpec = tween(durationMillis = THEME_TRANSITION_MILLIS, easing = FastOutSlowInEasing),
+        label = "canvas_glow_alpha"
+    )
+    if (glowAlpha <= 0f) return background(materialColors.canvas)
 
     val phase = remember { mutableFloatStateOf(0f) }
     val geometry = remember { mutableStateOf(CanvasGlowGeometry.Unset) }
@@ -146,14 +188,14 @@ fun Modifier.settingsCanvasBackground(): Modifier {
             // Draw modifiers are not clipped to their layout bounds, and a short bar's blooms are
             // centred well outside it. Unclipped they would also paint over the body below, which
             // double-adds under BlendMode.Plus.
-            clipRect { drawCanvasGlow(phase.floatValue, geometry.value) }
+            clipRect { drawCanvasGlow(phase.floatValue, geometry.value, glowAlpha) }
         }
 }
 
 private fun Context.animatorsEnabled(): Boolean =
     Settings.Global.getFloat(contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) != 0f
 
-private fun DrawScope.drawCanvasGlow(phase: Float, geometry: CanvasGlowGeometry) {
+private fun DrawScope.drawCanvasGlow(phase: Float, geometry: CanvasGlowGeometry, glowAlpha: Float) {
     val field = geometry.field
     if (field.minDimension <= 0f) return
     // Scaling off the narrow edge keeps a bloom roughly one screen-width across on any device;
@@ -173,8 +215,8 @@ private fun DrawScope.drawCanvasGlow(phase: Float, geometry: CanvasGlowGeometry)
                 // 直线从核心到透明的渐变在中间半径处保留了过多的光。额外的一档
                 // 将衰减向内收拢，这样泛光仍然读作泛光，而不是一种色调。
                 colorStops = arrayOf(
-                    0f to SettingsGlowColor.copy(alpha = bloom.alpha),
-                    0.45f to SettingsGlowColor.copy(alpha = bloom.alpha * 0.38f),
+                    0f to SettingsGlowColor.copy(alpha = bloom.alpha * glowAlpha),
+                    0.45f to SettingsGlowColor.copy(alpha = bloom.alpha * 0.38f * glowAlpha),
                     1f to Color.Transparent
                 ),
                 center = center,

@@ -1,6 +1,9 @@
 package cn.nabr.chatwithchat.presentation.theme
 
 import android.app.Activity
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
 import androidx.compose.foundation.text.selection.TextSelectionColors
@@ -15,12 +18,19 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import cn.nabr.chatwithchat.data.model.DynamicTheme
 import cn.nabr.chatwithchat.data.model.ThemeMode
-import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
+import cn.nabr.chatwithchat.presentation.common.LocalIsDarkTheme
+import cn.nabr.chatwithchat.presentation.common.LocalSettingsMaterialColors
+import cn.nabr.chatwithchat.presentation.common.SettingsCanvasDark
+import cn.nabr.chatwithchat.presentation.common.SettingsMaterialColors
+import cn.nabr.chatwithchat.presentation.common.SettingsMaterialColorsDark
+import cn.nabr.chatwithchat.presentation.common.SettingsMaterialColorsLight
+import cn.nabr.chatwithchat.presentation.common.THEME_TRANSITION_MILLIS
 
 @Immutable
 data class ExtendedColorScheme(
@@ -421,13 +431,18 @@ fun ChatWithChatTheme(
 
         else -> lightScheme
     }
-    val colorScheme = settingsColorScheme(baseColorScheme, useDarkTheme)
+    val colorScheme = settingsColorScheme(baseColorScheme, useDarkTheme).animateOnThemeChange()
+    val settingsColors = (if (useDarkTheme) SettingsMaterialColorsDark else SettingsMaterialColorsLight)
+        .animateOnThemeChange()
+    // 状态栏图标跟着插值中的画布亮度翻，而不是跟着目标值：t=0 就翻会让图标贴在还没变亮的
+    // 背景上将近三百毫秒，等于短暂消失。跨过中点再翻，过渡前后两侧都有对比度。
+    val isCanvasLight = colorScheme.background.luminance() > 0.5f
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
             WindowCompat.setDecorFitsSystemWindows(window, false)
-            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !useDarkTheme
+            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = isCanvasLight
         }
     }
 
@@ -435,11 +450,13 @@ fun ChatWithChatTheme(
         colorScheme = colorScheme,
         typography = AppTypography,
         content = {
-            val materialColors = settingsMaterialColors()
             CompositionLocalProvider(
+                // 目标明暗单独下发，让离散开关不必去读逐帧变化的颜色。
+                LocalIsDarkTheme provides useDarkTheme,
+                LocalSettingsMaterialColors provides settingsColors,
                 LocalTextSelectionColors provides TextSelectionColors(
-                    handleColor = materialColors.primaryLabel,
-                    backgroundColor = materialColors.primaryLabel.copy(alpha = 0.20f)
+                    handleColor = settingsColors.primaryLabel,
+                    backgroundColor = settingsColors.primaryLabel.copy(alpha = 0.20f)
                 ),
                 content = content
             )
@@ -447,8 +464,75 @@ fun ChatWithChatTheme(
     )
 }
 
+private val ThemeColorSpec = tween<Color>(
+    durationMillis = THEME_TRANSITION_MILLIS,
+    easing = FastOutSlowInEasing
+)
+
+@Composable
+private fun animateThemeColor(target: Color, label: String): Color =
+    animateColorAsState(targetValue = target, animationSpec = ThemeColorSpec, label = label).value
+
+/**
+ * 逐色插值整套 Material 配色。不少组件直读 `MaterialTheme.colorScheme`，而 app 的大部分
+ * 表面走 [SettingsMaterialColors]，两套必须用同一条时长同步渐变，否则一屏之内会一半渐变
+ * 一半瞬切。首帧 [animateColorAsState] 直接落在目标值上，所以冷启动不会有一次多余的动画。
+ */
+@Composable
+private fun ColorScheme.animateOnThemeChange() = copy(
+    primary = animateThemeColor(primary, "primary"),
+    onPrimary = animateThemeColor(onPrimary, "onPrimary"),
+    primaryContainer = animateThemeColor(primaryContainer, "primaryContainer"),
+    onPrimaryContainer = animateThemeColor(onPrimaryContainer, "onPrimaryContainer"),
+    secondary = animateThemeColor(secondary, "secondary"),
+    onSecondary = animateThemeColor(onSecondary, "onSecondary"),
+    secondaryContainer = animateThemeColor(secondaryContainer, "secondaryContainer"),
+    onSecondaryContainer = animateThemeColor(onSecondaryContainer, "onSecondaryContainer"),
+    tertiary = animateThemeColor(tertiary, "tertiary"),
+    onTertiary = animateThemeColor(onTertiary, "onTertiary"),
+    tertiaryContainer = animateThemeColor(tertiaryContainer, "tertiaryContainer"),
+    onTertiaryContainer = animateThemeColor(onTertiaryContainer, "onTertiaryContainer"),
+    error = animateThemeColor(error, "error"),
+    onError = animateThemeColor(onError, "onError"),
+    errorContainer = animateThemeColor(errorContainer, "errorContainer"),
+    onErrorContainer = animateThemeColor(onErrorContainer, "onErrorContainer"),
+    background = animateThemeColor(background, "background"),
+    onBackground = animateThemeColor(onBackground, "onBackground"),
+    surface = animateThemeColor(surface, "surface"),
+    onSurface = animateThemeColor(onSurface, "onSurface"),
+    surfaceVariant = animateThemeColor(surfaceVariant, "surfaceVariant"),
+    onSurfaceVariant = animateThemeColor(onSurfaceVariant, "onSurfaceVariant"),
+    outline = animateThemeColor(outline, "outline"),
+    outlineVariant = animateThemeColor(outlineVariant, "outlineVariant"),
+    scrim = animateThemeColor(scrim, "scrim"),
+    inverseSurface = animateThemeColor(inverseSurface, "inverseSurface"),
+    inverseOnSurface = animateThemeColor(inverseOnSurface, "inverseOnSurface"),
+    inversePrimary = animateThemeColor(inversePrimary, "inversePrimary"),
+    surfaceDim = animateThemeColor(surfaceDim, "surfaceDim"),
+    surfaceBright = animateThemeColor(surfaceBright, "surfaceBright"),
+    surfaceContainerLowest = animateThemeColor(surfaceContainerLowest, "surfaceContainerLowest"),
+    surfaceContainerLow = animateThemeColor(surfaceContainerLow, "surfaceContainerLow"),
+    surfaceContainer = animateThemeColor(surfaceContainer, "surfaceContainer"),
+    surfaceContainerHigh = animateThemeColor(surfaceContainerHigh, "surfaceContainerHigh"),
+    surfaceContainerHighest = animateThemeColor(surfaceContainerHighest, "surfaceContainerHighest")
+)
+
+@Composable
+private fun SettingsMaterialColors.animateOnThemeChange() = SettingsMaterialColors(
+    canvas = animateThemeColor(canvas, "canvas"),
+    navigation = animateThemeColor(navigation, "navigation"),
+    grouped = animateThemeColor(grouped, "grouped"),
+    field = animateThemeColor(field, "field"),
+    primaryLabel = animateThemeColor(primaryLabel, "primaryLabel"),
+    secondaryLabel = animateThemeColor(secondaryLabel, "secondaryLabel"),
+    tertiaryLabel = animateThemeColor(tertiaryLabel, "tertiaryLabel"),
+    separator = animateThemeColor(separator, "separator"),
+    separatorStrong = animateThemeColor(separatorStrong, "separatorStrong"),
+    controlFill = animateThemeColor(controlFill, "controlFill")
+)
+
 private fun settingsColorScheme(base: ColorScheme, isDark: Boolean): ColorScheme {
-    val canvas = if (isDark) Color.Black else Color.White
+    val canvas = if (isDark) SettingsCanvasDark else Color.White
     val grouped = if (isDark) Color(0xFF1C1C1E) else Color(0xFFF8F8FA)
     val field = if (isDark) Color(0xFF2C2C2E) else Color.White
     val primaryLabel = if (isDark) Color.White else Color(0xFF1C1C1E)

@@ -44,7 +44,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalDensity
@@ -66,6 +65,7 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.presentation.common.AppleGreen
+import cn.nabr.chatwithchat.presentation.common.isSettingsDarkTheme
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import com.mikepenz.markdown.annotator.annotatorSettings
 import com.mikepenz.markdown.compose.LocalMarkdownTypography
@@ -119,7 +119,7 @@ fun ChatMarkdown(
     style: ChatMarkdownStyle = ChatMarkdownStyle.ANSWER,
     modifier: Modifier = Modifier
 ) {
-    val isDarkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val isDarkTheme = isSettingsDarkTheme()
     val materialColors = settingsMaterialColors()
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()

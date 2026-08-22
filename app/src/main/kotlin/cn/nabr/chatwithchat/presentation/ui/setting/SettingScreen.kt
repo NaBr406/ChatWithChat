@@ -23,12 +23,14 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Alarm
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Cloud
+import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.EmojiEmotions
 import androidx.compose.material.icons.outlined.Event
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Language
+import androidx.compose.material.icons.outlined.LightMode
 import androidx.compose.material.icons.outlined.LocationOn
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.Notifications
@@ -37,6 +39,7 @@ import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -66,6 +69,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
+import cn.nabr.chatwithchat.data.model.ThemeMode
 import cn.nabr.chatwithchat.data.tool.ResolvedToolCatalogEntry
 import cn.nabr.chatwithchat.data.tool.ToolCallingMode
 import cn.nabr.chatwithchat.data.tool.ToolCatalogEntry
@@ -74,9 +78,11 @@ import cn.nabr.chatwithchat.data.websearch.WebSearchMode
 import cn.nabr.chatwithchat.presentation.common.AppleRed
 import cn.nabr.chatwithchat.presentation.common.HigActionDialog
 import cn.nabr.chatwithchat.presentation.common.LocalNotificationPermissionRequester
+import cn.nabr.chatwithchat.presentation.common.LocalThemeViewModel
 import cn.nabr.chatwithchat.presentation.common.LocalToolPermissionRequester
 import cn.nabr.chatwithchat.presentation.common.SettingsMaterialGroup
 import cn.nabr.chatwithchat.presentation.common.SettingsTopAppBar
+import cn.nabr.chatwithchat.presentation.common.isSettingsDarkTheme
 import cn.nabr.chatwithchat.presentation.common.settingsCanvasBackground
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.common.settingsSwitchColors
@@ -126,7 +132,8 @@ fun SettingScreen(
         topBar = {
             SettingsTopAppBar(
                 title = stringResource(R.string.settings),
-                onNavigationClick = onNavigationClick
+                onNavigationClick = onNavigationClick,
+                actions = { ThemeModeToggleAction() }
             )
         },
         containerColor = Color.Transparent
@@ -215,6 +222,32 @@ fun SettingScreen(
                 DeletePlatformDialog(settingViewModel)
             }
         }
+    }
+}
+
+/**
+ * 顶栏右上角的明暗切换。点一次就把 [ThemeMode] 钉死在 LIGHT 或 DARK，从此不再跟随系统。
+ *
+ * 取反的依据是**当前实际渲染出来的**明暗，而不是存储的 [ThemeMode]：默认值是 SYSTEM，
+ * 若按存储值取反（SYSTEM 视作浅色 -> 切到 DARK），在系统已经是深色时第一次点击等于原地不动，
+ * 看起来就是按钮失灵。读 colorScheme 的亮度能同时覆盖 SYSTEM 和 Material You 两种来源。
+ */
+@Composable
+private fun ThemeModeToggleAction() {
+    val themeViewModel = LocalThemeViewModel.current
+    val isDark = isSettingsDarkTheme()
+
+    IconButton(
+        onClick = {
+            themeViewModel.updateThemeMode(if (isDark) ThemeMode.LIGHT else ThemeMode.DARK)
+        }
+    ) {
+        Icon(
+            imageVector = if (isDark) Icons.Outlined.LightMode else Icons.Outlined.DarkMode,
+            contentDescription = stringResource(
+                if (isDark) R.string.switch_to_light_theme else R.string.switch_to_dark_theme
+            )
+        )
     }
 }
 
