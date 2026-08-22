@@ -13,8 +13,30 @@ package cn.nabr.chatwithchat.data.tool
  */
 data class ToolLoopConfig(
     val maxToolRounds: Int = 10,
-    val maxToolCallsPerRound: Int = 4,
-    val maxToolCallsPerChat: Int = 30,
+    /**
+     * Raised from 4, which was narrow enough to be the limit a real task hit first.
+     *
+     * Reading six files out of a repository, or pricing four items, is one step of work that happens to be
+     * six independent calls — at 4 the model either lost two of them or spent an extra round it did not need,
+     * and rounds are the scarcer budget. Overflow used to abort the provider stream mid-round and show the
+     * user a bare `tool_call_identity_limit_exceeded`; it now truncates and tells the model what to
+     * resubmit (see `ToolArgumentStreamLimiter.register`). Total volume is still held by
+     * [maxToolCallsPerChat], so this only controls how much of it may be spent at once.
+     */
+    val maxToolCallsPerRound: Int = 16,
+    /**
+     * Raised from 30, which was the limit almost every deep task actually hit.
+     *
+     * Sized against [maxToolRounds] × [maxToolCallsPerRound] rather than picked on its own. At 30 against a
+     * 16-per-round cap, a model that batched freely spent the whole request's allowance in five rounds and
+     * left half the round budget unusable — the two ceilings were 160 apart and the smaller one always won.
+     * 60 lets a repository walk or a multi-step order finish while still stopping a runaway well short of
+     * the 160 the rounds would otherwise permit.
+     *
+     * [maxTotalToolResultChars] had to move with it. Result volume, not call count, is what a raise really
+     * costs, and a call whose result no longer fits comes back empty.
+     */
+    val maxToolCallsPerChat: Int = 60,
     val toolTimeoutSeconds: Long = 20,
     val maxSearchResults: Int = 5,
     val maxFetchedPageChars: Int = 20_000,
@@ -37,10 +59,21 @@ data class ToolLoopConfig(
      */
     val maxScratchpadChars: Int = 40_000,
     /**
-     * Enough for one catalog-sized result plus the smaller calls around it — a menu (29k), a store list, a
-     * price quote, and an order confirmation all land in the same conversation.
+     * Raised with [maxToolCallsPerChat], but deliberately not in proportion.
+     *
+     * This is the budget a raise actually spends. The native loops accumulate every round's tool results in
+     * the continuation and re-send the whole thing on the next request, so a doubled call count multiplies
+     * upload rather than adding to it: 120,000 chars spread over five rounds is already about 600,000 chars
+     * on the wire. Doubling the calls while only raising this by two thirds keeps a deep task from running
+     * dry without turning one message into megabytes.
+     *
+     * Still enough for one catalog-sized result plus the smaller calls around it — a menu (29k), a store
+     * list, a price quote and an order confirmation — with room now for a repository walk on top.
+     *
+     * Note the JSON fallback path does not see the raise: its injection limit is
+     * `min(maxScratchpadChars, maxTotalToolResultChars)`, so [maxScratchpadChars] still clamps it to 40,000.
      */
-    val maxTotalToolResultChars: Int = 120_000,
+    val maxTotalToolResultChars: Int = 200_000,
     val fetchUrlBlockedDomains: Set<String> = emptySet(),
     val allowPrivateNetworkFetch: Boolean = false
 ) {

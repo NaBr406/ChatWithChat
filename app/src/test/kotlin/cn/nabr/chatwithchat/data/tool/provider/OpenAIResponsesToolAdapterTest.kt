@@ -9,7 +9,6 @@ import cn.nabr.chatwithchat.data.dto.openai.response.ResponsesStreamEvent
 import cn.nabr.chatwithchat.data.network.NetworkClient
 import cn.nabr.chatwithchat.data.tool.CurrentDateTimeToolProvider
 import cn.nabr.chatwithchat.data.tool.ToolArgumentsTooLargeException
-import cn.nabr.chatwithchat.data.tool.ToolCallIdentityLimitExceededException
 import cn.nabr.chatwithchat.data.tool.ToolDefinition
 import cn.nabr.chatwithchat.data.tool.ToolLoopConfig
 import cn.nabr.chatwithchat.data.tool.ToolResult
@@ -187,7 +186,7 @@ class OpenAIResponsesToolAdapterTest {
     }
 
     @Test
-    fun `openai response counts function calls without arguments`() {
+    fun `openai response truncates function calls past the round cap`() {
         val events = (0..1).map { index ->
             NetworkClient.openAIJson.decodeFromString<ResponsesStreamEvent>(
                 """
@@ -205,9 +204,9 @@ class OpenAIResponsesToolAdapterTest {
             )
         }
 
-        assertThrows(ToolCallIdentityLimitExceededException::class.java) {
-            adapter.toolCallsFromEvents(events, ToolLoopConfig(maxToolCallsPerRound = 1))
-        }
+        val calls = adapter.toolCallsFromEvents(events, ToolLoopConfig(maxToolCallsPerRound = 1))
+
+        assertEquals(listOf("call_0"), calls.map { call -> call.id })
     }
 
     @Test

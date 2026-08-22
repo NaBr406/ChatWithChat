@@ -513,6 +513,199 @@ class ChatRepositoryImplTest {
     }
 
     @Test
+    fun `final answer round keeps the used tool declared while forbidding another call`() = runBlocking {
+        val usedTool = ToolDefinition.FetchUrl
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatToolCallFlow("call_1", usedTool.name, "{\"url\":\"https://example.com\"}"),
+                chatCompletionFlow("最终回答")
+            )
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Auto,
+                toolCallingMode = ToolCallingMode.Auto
+            ),
+            toolLoopOrchestrator = ToolLoopOrchestrator(
+                toolExecutor = ToolExecutor(
+                    ToolRegistry(
+                        listOf(
+                            noOpToolProvider(
+                                definition = usedTool,
+                                discovery = ToolDiscoveryMetadata(exposure = ToolExposure.Resident)
+                            )
+                        )
+                    )
+                ),
+                // One round, so the loop falls through to the final-answer request instead of ending on a
+                // round that returned no calls.
+                config = ToolLoopConfig(maxToolRounds = 1)
+            )
+        )
+
+        repository.completeChat(
+            userMessages = listOf(MessageV2(content = "读一下这个页面", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform().copy(
+                apiUrl = "https://api.deepseek.com/v1",
+                model = "deepseek-v4-pro"
+            )
+        ).toList()
+
+        // Round 1 offers the tool; the final round keeps it declared but pins the choice to "none", so a
+        // model that is not finished still has a coherent interface instead of a reason to improvise one.
+        val toolRound = openAIAPI.chatCompletionRequests.first()
+        assertEquals(ChatCompletionToolChoice.Auto, toolRound.toolChoice)
+
+        val finalRound = openAIAPI.chatCompletionRequests.last()
+        assertEquals(listOf(usedTool.name), finalRound.tools.orEmpty().map { tool -> tool.function.name })
+        assertEquals(ChatCompletionToolChoice.None, finalRound.toolChoice)
+        assertTrue(
+            NetworkClient.openAIJson.encodeToString(finalRound).contains(""""tool_choice":"none"""")
+        )
+    }
+
+    @Test
+    fun `leaked tool call markup is diverted to thinking instead of the answer`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                flowOf(
+                    ChatCompletionChunk(
+                        choices = listOf(
+                            Choice(
+                                index = 0,
+                                delta = Delta(
+                                    reasoningContent = "Plan",
+                                    content = "我再看看仓库结构。"
+                                )
+                            )
+                        )
+                    ),
+                    // The model writes the call as prose rather than using the tool_calls field.
+                    ChatCompletionChunk(
+                        choices = listOf(
+                            Choice(
+                                index = 0,
+                                delta = Delta(content = "<|DSML|invoke name=\"current_datetime\">")
+                            )
+                        )
+                    )
+                )
+            )
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Off,
+                toolCallingMode = ToolCallingMode.Auto
+            )
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "翻一下仓库", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform().copy(
+                apiUrl = "https://api.deepseek.com/v1",
+                model = "deepseek-v4-pro"
+            )
+        ).toList()
+
+        val visible = states.filterIsInstance<ApiState.Success>().joinToString(separator = "") { it.textChunk }
+        val thinking = states.filterIsInstance<ApiState.Thinking>().joinToString(separator = "") { it.thinkingChunk }
+
+        assertEquals("我再看看仓库结构。", visible)
+        assertFalse(visible.contains("DSML"))
+        assertTrue(thinking.contains("<|DSML|invoke name=\"current_datetime\">"))
+    }
+
+    @Test
+    fun `tool calls past the round cap are truncated and reported back to the model`() = runBlocking {
+        val callsPerRound = 2
+        // A built-in tool, since the enablement overrides only ever enable built-ins, and one that takes a
+        // parameter so the four calls stay distinct rather than collapsing into one under dedupe.
+        val batchTool = ToolDefinition.FetchUrl
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                // Four distinct calls against a cap of two.
+                flowOf(
+                    ChatCompletionChunk(
+                        choices = listOf(
+                            Choice(
+                                index = 0,
+                                delta = Delta(
+                                    toolCalls = (0..3).map { index ->
+                                        ChatCompletionToolCallDelta(
+                                            index = index,
+                                            id = "call_$index",
+                                            type = "function",
+                                            function = ChatCompletionFunctionCallDelta(
+                                                name = batchTool.name,
+                                                arguments = "{\"url\":\"https://example.com/$index\"}"
+                                            )
+                                        )
+                                    }
+                                ),
+                                finishReason = "tool_calls"
+                            )
+                        )
+                    )
+                ),
+                chatCompletionFlow("最终回答")
+            )
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                // fetch_url is gated on web search being available; web_search itself is absent from the
+                // registry below, so the pre-flight search shortcut stays out of this round.
+                webSearchMode = WebSearchMode.Auto,
+                toolCallingMode = ToolCallingMode.Auto
+            ),
+            toolLoopOrchestrator = ToolLoopOrchestrator(
+                toolExecutor = ToolExecutor(
+                    ToolRegistry(
+                        listOf(
+                            noOpToolProvider(
+                                definition = batchTool,
+                                discovery = ToolDiscoveryMetadata(exposure = ToolExposure.Resident)
+                            )
+                        )
+                    )
+                ),
+                config = ToolLoopConfig(maxToolCallsPerRound = callsPerRound)
+            )
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "批量查一下", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform().copy(
+                apiUrl = "https://api.deepseek.com/v1",
+                model = "deepseek-v4-pro"
+            )
+        ).toList()
+
+        // The round completes on the calls that fit rather than failing the turn on the ones that did not.
+        assertTrue(states.none { state -> state is ApiState.Error })
+        assertEquals(callsPerRound, states.filterIsInstance<ApiState.ToolFinished>().size)
+        assertTrue(states.any { state -> state is ApiState.Success && state.textChunk == "最终回答" })
+
+        assertTrue(openAIAPI.chatCompletionRequests.first().systemText().contains("最多 $callsPerRound 个"))
+        // The dropped calls are named in the round that follows, not silently swallowed. The per-round
+        // instruction is appended as a second text part, which `systemText()` does not reach.
+        val secondRoundSystemText = openAIAPI.chatCompletionRequests[1]
+            .messages
+            .first()
+            .content
+            .orEmpty()
+            .filterIsInstance<OpenAITextContent>()
+            .joinToString(separator = "\n") { part -> part.text }
+        assertTrue(secondRoundSystemText.contains("其余 2 个未执行"))
+        assertTrue(secondRoundSystemText.contains("仍然需要的请在本轮重新提交"))
+    }
+
+    @Test
     fun `official deepseek falls back to json tools after a native tools rejection without losing reasoning`() = runBlocking {
         val openAIAPI = RecordingOpenAIAPI(
             chatCompletionResponses = mutableListOf(
@@ -1391,7 +1584,12 @@ class ChatRepositoryImplTest {
             openAIAPI.responsesRequests[0].tools.orEmpty().map { tool -> tool.name }
         )
         assertFalse(openAIAPI.responsesRequests[0].instructions.orEmpty().contains("web_search"))
-        assertNull(openAIAPI.responsesRequests[1].tools)
+        // The final round keeps the tool that ran declared, pinned to "none".
+        assertEquals(
+            listOf(ToolDefinition.CurrentDateTime.name),
+            openAIAPI.responsesRequests[1].tools.orEmpty().map { tool -> tool.name }
+        )
+        assertEquals(ResponseToolChoice.None, openAIAPI.responsesRequests[1].toolChoice)
         assertTrue(openAIAPI.responsesRequests[1].instructions.orEmpty().contains("不要再调用工具"))
         assertTrue(openAIAPI.responsesRequests[1].instructions.orEmpty().contains("function_call_output"))
         val chronologicalTraces = promptTraceStore.entries.value.asReversed()
@@ -1476,10 +1674,21 @@ class ChatRepositoryImplTest {
         assertTrue(instruction.contains("通常就用一张贴图表达"))
         assertTrue(instruction.contains("不要因为用户没提贴图就跳过"))
         assertFalse(instruction.contains("Use the available tools only when the latest user request needs current web information"))
+        // The per-round cap the native paths used to enforce silently.
+        assertTrue(instruction.contains("最多 ${ToolLoopConfig.Default.maxToolCallsPerRound} 个"))
+        assertTrue(instruction.contains("超出的不会执行"))
+        // The rule the JSON fallback prompt always had and the native paths did not, which is where a model
+        // was seen writing its whole tool-call envelope into the answer.
+        assertTrue(instruction.contains("不要把调用写进正文"))
 
         val noStickerInstruction = openAINativeToolInstruction(listOf(ToolDefinition.CurrentDateTime))
         assertFalse(noStickerInstruction.contains(ToolDefinition.SearchStickers.name))
         assertFalse(noStickerInstruction.contains(ToolDefinition.SendSticker.name))
+        assertTrue(
+            "every native path shares this instruction, so the rule must hold without stickers too",
+            noStickerInstruction.contains("不要把调用写进正文")
+        )
+
     }
 
     @Test
@@ -1550,8 +1759,11 @@ class ChatRepositoryImplTest {
         assertTrue(sendRequest.instructions.orEmpty().contains("不要再次搜索"))
         assertFalse(sendRequest.instructions.orEmpty().contains("再调用一次 search_stickers"))
         val finalRequest = openAIAPI.responsesRequests[2]
-        assertNull(finalRequest.tools)
-        assertNull(finalRequest.toolChoice)
+        assertEquals(
+            listOf(ToolDefinition.SearchStickers.name, ToolDefinition.SendSticker.name),
+            finalRequest.tools.orEmpty().map { tool -> tool.name }.sorted()
+        )
+        assertEquals(ResponseToolChoice.None, finalRequest.toolChoice)
         assertEquals(
             listOf(ToolDefinition.SendSticker.name),
             finalRequest.input.filterIsInstance<ResponseFunctionCallInputItem>().map { item -> item.name }
@@ -1598,7 +1810,10 @@ class ChatRepositoryImplTest {
         rows.filterNot { row -> row.name.endsWith("_json") }.forEach { row ->
             assertEquals("${row.name} model request baseline", 3, row.modelRequests)
             assertEquals("${row.name} local execution baseline", 2, row.toolExecutions)
-            assertEquals("${row.name} narrows sticker schemas", listOf(2, 1, 0), row.advertisedToolCounts)
+            // Narrowing across the two tool rounds is the point: the whole pair, then send-only. The final
+            // round names both again, but as the schema-less stubs `declaredForFinalAnswer` builds — the
+            // tool_schema_chars column is what shows they are stubs (330 against 803 for real schemas).
+            assertEquals("${row.name} narrows sticker schemas", listOf(2, 1, 2), row.advertisedToolCounts)
             assertEquals("${row.name} serializes candidates only before selection", 2, row.candidateOccurrences)
             assertTrue(
                 "${row.name} should reduce estimated input tokens by at least 20%",
@@ -4153,24 +4368,39 @@ class ChatRepositoryImplTest {
             // now permits a batch of independent tool calls instead of forbidding it, which buys back a whole
             // round whenever a request needs two lookups. Native rows are unchanged — the priority rules only
             // render when web_search is active, and this scenario is stickers only.
-            "sticker-request-baseline|custom_json|3|2|1390,1450,704|665,576,251|1174,1222,509|67,67,67|54,54,54|159,73,0|0,248,0|0,0,0|1|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|ollama_json|3|2|1386,1446,700|668,579,254|1174,1222,509|67,67,67|54,54,54|159,73,0|0,248,0|0,0,0|1|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|groq_json|3|2|1441,1501,755|682,593,268|1174,1222,509|67,67,67|54,54,54|159,73,0|0,248,0|0,0,0|1|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|openai_responses|3|2|1514,1661,1172|639,641,556|571,631,722|42,42,42|54,54,54|803,361,0|0,479,334|2,1,0|2|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|openrouter_native|3|2|1657,1797,1343|849,827,771|571,630,721|67,67,67|54,54,54|829,374,0|0,509,366|2,1,0|2|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|anthropic_native|3|2|1510,1665,1245|822,802,753|571,631,722|67,67,67|54,54,54|742,331,0|0,502,359|2,1,0|2|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|google_native|3|2|1482,1634,1210|811,789,740|571,630,721|51,51,51|54,54,54|707,327,0|0,460,334|2,1,0|2|30/3/33|60/6/66|3|1"
+            "sticker-request-baseline|custom_json|3|2|1391,1451,704|665,576,251|1175,1223,509|67,67,67|54,54,54|159,73,0|0,248,0|0,0,0|1|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|ollama_json|3|2|1387,1447,700|668,579,254|1175,1223,509|67,67,67|54,54,54|159,73,0|0,248,0|0,0,0|1|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|groq_json|3|2|1442,1502,755|682,593,268|1175,1223,509|67,67,67|54,54,54|159,73,0|0,248,0|0,0,0|1|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|openai_responses|3|2|1609,1756,1627|704,706,698|664,724,815|42,42,42|54,54,54|803,361,330|0,479,334|2,1,2|2|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|openrouter_native|3|2|1752,1892,1824|949,927,951|664,723,814|67,67,67|54,54,54|829,374,356|0,509,366|2,1,2|2|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|anthropic_native|3|2|1605,1760,1649|922,902,918|664,724,815|67,67,67|54,54,54|742,331,270|0,502,359|2,1,2|2|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|google_native|3|2|1577,1729,1604|911,889,904|664,723,814|51,51,51|54,54,54|707,327,235|0,460,334|2,1,2|2|30/3/33|60/6/66|3|1"
         )
         val JSON_STICKER_TOKEN_CEILINGS = mapOf(
             "custom_json" to 1_939,
             "ollama_json" to 1_948,
             "groq_json" to 1_987
         )
+        /**
+         * Raised three times, each for a change that was measured before it was accepted. Running total is
+         * roughly 420 estimated tokens per native tool turn:
+         *
+         *  - ~174 for `nativeToolCallBudgetInstruction`, which states the per-round call cap. Without it a
+         *    model was penalised for a rule it had never been given.
+         *  - ~120 for `declaredForFinalAnswer`. Declaring the tools that ran with their real schemas cost
+         *    350; the name-only stubs brought it down, since `tool_choice` forbids calling and no schema can
+         *    be consumed.
+         *  - ~126 for the "never write a call into the answer text" clause on
+         *    `OPENAI_NATIVE_GENERIC_TOOL_INSTRUCTION`. The JSON fallback prompt always had this rule; the
+         *    native paths, where the leak was actually observed, did not.
+         *
+         * The ceilings stay tight around the numbers so unjustified growth still trips them.
+         */
         val NATIVE_STICKER_TOKEN_CEILINGS = mapOf(
-            "openai_responses" to 1_957,
-            "openrouter_native" to 2_503,
-            "anthropic_native" to 2_428,
-            "google_native" to 2_383
+            "openai_responses" to 2_200,
+            "openrouter_native" to 2_915,
+            "anthropic_native" to 2_830,
+            "google_native" to 2_790
         )
     }
 
@@ -4383,8 +4613,11 @@ class ChatRepositoryImplTest {
             openAIAPI.responsesRequests[1].tools.orEmpty().map { tool -> tool.name }
         )
         val finalRequest = openAIAPI.responsesRequests[2]
-        assertNull(finalRequest.tools)
-        assertNull(finalRequest.toolChoice)
+        assertEquals(
+            listOf(ToolDefinition.SearchStickers.name, ToolDefinition.SendSticker.name),
+            finalRequest.tools.orEmpty().map { tool -> tool.name }.sorted()
+        )
+        assertEquals(ResponseToolChoice.None, finalRequest.toolChoice)
         assertEquals(
             listOf(ToolDefinition.SendSticker.name),
             finalRequest.input.filterIsInstance<ResponseFunctionCallInputItem>().map { item -> item.name }
@@ -4451,8 +4684,11 @@ class ChatRepositoryImplTest {
             openAIAPI.chatCompletionRequests[1].tools.orEmpty().map { tool -> tool.function.name }
         )
         val finalRequest = openAIAPI.chatCompletionRequests[2]
-        assertNull(finalRequest.tools)
-        assertNull(finalRequest.toolChoice)
+        assertEquals(
+            listOf(ToolDefinition.SearchStickers.name, ToolDefinition.SendSticker.name),
+            finalRequest.tools.orEmpty().map { tool -> tool.function.name }.sorted()
+        )
+        assertEquals(ChatCompletionToolChoice.None, finalRequest.toolChoice)
         assertEquals(
             listOf(ToolDefinition.SendSticker.name),
             finalRequest.messages.flatMap { message -> message.toolCalls.orEmpty() }.map { call -> call.function.name }
@@ -4522,8 +4758,11 @@ class ChatRepositoryImplTest {
             anthropicAPI.requests[1].tools.orEmpty().map { tool -> tool.name }
         )
         val finalRequest = anthropicAPI.requests[2]
-        assertNull(finalRequest.tools)
-        assertNull(finalRequest.toolChoice)
+        assertEquals(
+            listOf(ToolDefinition.SearchStickers.name, ToolDefinition.SendSticker.name),
+            finalRequest.tools.orEmpty().map { tool -> tool.name }.sorted()
+        )
+        assertEquals(AnthropicToolChoice.None, finalRequest.toolChoice)
         assertEquals(
             listOf(ToolDefinition.SendSticker.name),
             finalRequest.messages.flatMap { message -> message.content.filterIsInstance<ToolUseContent>() }.map { call -> call.name }
@@ -4588,8 +4827,11 @@ class ChatRepositoryImplTest {
             googleAPI.requests[1].tools.orEmpty().flatMap { tool -> tool.functionDeclarations }.map { function -> function.name }
         )
         val finalRequest = googleAPI.requests[2]
-        assertNull(finalRequest.tools)
-        assertNull(finalRequest.toolConfig)
+        assertEquals(
+            listOf(ToolDefinition.SearchStickers.name, ToolDefinition.SendSticker.name),
+            finalRequest.tools.orEmpty().flatMap { tool -> tool.functionDeclarations }.map { function -> function.name }.sorted()
+        )
+        assertEquals(GoogleToolConfig.None, finalRequest.toolConfig)
         assertEquals(
             listOf(ToolDefinition.SendSticker.name),
             finalRequest.contents.flatMap { content -> content.parts }.mapNotNull { part -> part.functionCall?.name }

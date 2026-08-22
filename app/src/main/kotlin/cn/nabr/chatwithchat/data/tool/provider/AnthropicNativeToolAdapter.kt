@@ -55,7 +55,7 @@ class AnthropicNativeToolAdapter {
             when (chunk) {
                 is ContentStartResponseChunk -> {
                     if (chunk.contentBlock.type == ContentBlockType.TOOL_USE) {
-                        argumentLimiter.register(chunk.index)
+                        if (!argumentLimiter.register(chunk.index)) return@forEach
                         val accumulator = accumulators.getOrPut(chunk.index) { ToolCallAccumulator(index = chunk.index) }
                         chunk.contentBlock.id?.takeIf { it.isNotBlank() }?.let { accumulator.id = it }
                         chunk.contentBlock.name?.takeIf { it.isNotBlank() }?.let { accumulator.name = it }
@@ -67,6 +67,7 @@ class AnthropicNativeToolAdapter {
                 }
                 is ContentDeltaResponseChunk -> {
                     if (chunk.delta.type == ContentBlockType.INPUT_JSON_DELTA) {
+                        if (!argumentLimiter.register(chunk.index)) return@forEach
                         val accumulator = accumulators.getOrPut(chunk.index) { ToolCallAccumulator(index = chunk.index) }
                         chunk.delta.partialJson?.let { fragment ->
                             argumentLimiter.append(chunk.index, fragment)

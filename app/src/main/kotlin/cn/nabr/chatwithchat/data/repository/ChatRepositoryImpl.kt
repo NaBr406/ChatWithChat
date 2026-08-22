@@ -961,7 +961,7 @@ class ChatRepositoryImpl @Inject constructor(
                 conversationSnapshot.runtimeContextPrompt,
                 memoryPrompt,
                 conversationSnapshot.context.summary,
-                openAINativeToolInstruction(toolScope.definitions)
+                openAINativeToolInstruction(toolScope.definitions, toolLoopOrchestrator.configuration)
             )
             fun requestFor(mode: ReasoningMode): OpenAIResponsesNativeToolRequest {
                 val reasoningParameters = mapReasoningMode(platform, mode)
@@ -1035,10 +1035,15 @@ class ChatRepositoryImpl @Inject constructor(
         var allowedRounds = maxRounds
         var discoveryRounds = 0
         var roundIndex = 0
+        var droppedToolCallInstruction: String? = null
         while (roundIndex < allowedRounds) {
-            roundStateMachine.updateAvailableDefinitions(toolScope.definitions)
+            roundStateMachine.updateAvailableDefinitions(
+                toolExecutionSession.availableWithinBudget(toolScope.definitions)
+            )
             val roundState = roundStateMachine.current
-            if (roundState.isFinalOnly) break
+            // Nothing left to offer: the sticker phase ended, or the budget is spent. Either way, fall
+            // through to the final-answer request rather than sending an empty tools array.
+            if (roundState.isFinalOnly || roundState.definitions.isEmpty()) break
             val round = collectOpenAIResponsesNativeRound(
                 request = prepared.forPolicy(roundState.reasoningPolicy).toRequest(
                     continuationItems = continuationItems,
@@ -1046,6 +1051,7 @@ class ChatRepositoryImpl @Inject constructor(
                     toolChoice = ResponseToolChoice.Auto,
                     extraInstruction = mergePromptSections(
                         nativeToolScopeInstruction(roundState.definitions),
+                        droppedToolCallInstruction,
                         stickerContinuationInstruction(allResults, roundState.allowedToolNames)
                     ),
                     nativePrefixItems = nativeExchange.replayItems,
@@ -1090,6 +1096,10 @@ class ChatRepositoryImpl @Inject constructor(
 
             val calls = toolLoopOrchestrator.boundToolCalls(
                 openAIResponsesToolAdapter.toolCallsFromEvents(round.events, config)
+            )
+            droppedToolCallInstruction = nativeDroppedToolCallInstruction(
+                executedCallCount = calls.size,
+                droppedCallCount = round.droppedToolCallCount
             )
             if (calls.isEmpty()) {
                 // The model answered instead of calling a tool, so this round ended the exchange and
@@ -1163,11 +1173,14 @@ class ChatRepositoryImpl @Inject constructor(
             return@flow
         }
 
+        val finalToolDefinitions = toolScope.definitions.declaredForFinalAnswer(allResults)
         val finalRound = collectOpenAIResponsesNativeRound(
             request = prepared.user.toRequest(
                 continuationItems = continuationItems,
-                tools = null,
-                toolChoice = null,
+                tools = finalToolDefinitions
+                    .takeIf { definitions -> definitions.isNotEmpty() }
+                    ?.let { definitions -> openAIResponsesToolAdapter.toResponseTools(definitions) },
+                toolChoice = ResponseToolChoice.None.takeIf { finalToolDefinitions.isNotEmpty() },
                 extraInstruction = nativeFinalToolInstruction(allResults),
                 nativePrefixItems = nativeExchange.replayItems,
                 contextManagement = nativeExchange.contextManagement,
@@ -1217,6 +1230,7 @@ class ChatRepositoryImpl @Inject constructor(
         var errorMessage: String? = null
         var emittedOutputTextDelta = false
         val outputText = StringBuilder()
+        val markupFilter = LeakedToolCallMarkupFilter()
         recordSystemPrompt(traceContext, traceStage, request.instructions)
 
         try {
@@ -1235,20 +1249,26 @@ class ChatRepositoryImpl @Inject constructor(
 
                     is OutputTextDeltaEvent -> {
                         emittedOutputTextDelta = true
-                        outputText.append(event.delta)
-                        emit(ApiState.Success(event.delta))
+                        emitToolRoundStates(
+                            states = listOf(ApiState.Success(event.delta)),
+                            markupFilter = markupFilter,
+                            outputText = outputText
+                        )
                     }
 
                     is OutputTextDoneEvent -> {
                         if (!emittedOutputTextDelta && event.text.isNotBlank()) {
                             emittedOutputTextDelta = true
-                            outputText.append(event.text)
-                            emit(ApiState.Success(event.text))
+                            emitToolRoundStates(
+                                states = listOf(ApiState.Success(event.text)),
+                                markupFilter = markupFilter,
+                                outputText = outputText
+                            )
                         }
                     }
 
                     is ResponseFailedEvent -> {
-                        errorMessage = event.response.error?.message ?: event.response.status ?: "鍝嶅簲澶辫触"
+                        errorMessage = event.response.error?.message ?: event.response.status ?: "响应失败"
                     }
 
                     is ResponseErrorEvent -> {
@@ -1266,9 +1286,12 @@ class ChatRepositoryImpl @Inject constructor(
             errorMessage = error.message ?: "provider_stream_failed"
         }
 
+        flushToolRoundMarkupFilter(markupFilter, outputText)
+
         return OpenAIResponsesNativeRound(
             events = events,
             errorMessage = errorMessage,
+            droppedToolCallCount = argumentLimiter.droppedIdentityCount,
             usage = openAIResponsesUsageFromEvents(
                 events = events,
                 request = request,
@@ -1349,7 +1372,7 @@ class ChatRepositoryImpl @Inject constructor(
                     conversationSnapshot.runtimeContextPrompt,
                     memoryPrompt,
                     conversationSnapshot.context.summary,
-                    openAINativeToolInstruction(toolScope.definitions)
+                    openAINativeToolInstruction(toolScope.definitions, toolLoopOrchestrator.configuration)
                 )
             )
             fun requestFor(mode: ReasoningMode): OpenAIChatCompletionsNativeToolRequest {
@@ -1385,10 +1408,15 @@ class ChatRepositoryImpl @Inject constructor(
         var allowedRounds = maxRounds
         var discoveryRounds = 0
         var roundIndex = 0
+        var droppedToolCallInstruction: String? = null
         while (roundIndex < allowedRounds) {
-            roundStateMachine.updateAvailableDefinitions(toolScope.definitions)
+            roundStateMachine.updateAvailableDefinitions(
+                toolExecutionSession.availableWithinBudget(toolScope.definitions)
+            )
             val roundState = roundStateMachine.current
-            if (roundState.isFinalOnly) break
+            // Nothing left to offer: the sticker phase ended, or the budget is spent. Either way, fall
+            // through to the final-answer request rather than sending an empty tools array.
+            if (roundState.isFinalOnly || roundState.definitions.isEmpty()) break
             val round = collectOpenAIChatCompletionsNativeRound(
                 request = prepared.forPolicy(roundState.reasoningPolicy).toRequest(
                     continuationMessages = continuationMessages,
@@ -1396,6 +1424,7 @@ class ChatRepositoryImpl @Inject constructor(
                     toolChoice = ChatCompletionToolChoice.Auto,
                     extraInstruction = mergePromptSections(
                         nativeToolScopeInstruction(roundState.definitions),
+                        droppedToolCallInstruction,
                         stickerContinuationInstruction(allResults, roundState.allowedToolNames)
                     )
                 ),
@@ -1451,6 +1480,10 @@ class ChatRepositoryImpl @Inject constructor(
 
             val calls = toolLoopOrchestrator.boundToolCalls(
                 openAIChatCompletionsToolAdapter.toolCallsFromChunks(round.chunks, config)
+            )
+            droppedToolCallInstruction = nativeDroppedToolCallInstruction(
+                executedCallCount = calls.size,
+                droppedCallCount = round.droppedToolCallCount
             )
             if (calls.isEmpty()) {
                 val usage = if (hasToolInteraction || searchDecisionExecution?.usage != null) {
@@ -1516,11 +1549,14 @@ class ChatRepositoryImpl @Inject constructor(
             return@flow
         }
 
+        val finalToolDefinitions = toolScope.definitions.declaredForFinalAnswer(allResults)
         val finalRound = collectOpenAIChatCompletionsNativeRound(
             request = prepared.user.toRequest(
                 continuationMessages = continuationMessages,
-                tools = null,
-                toolChoice = null,
+                tools = finalToolDefinitions
+                    .takeIf { definitions -> definitions.isNotEmpty() }
+                    ?.let { definitions -> openAIChatCompletionsToolAdapter.toChatCompletionTools(definitions) },
+                toolChoice = ChatCompletionToolChoice.None.takeIf { finalToolDefinitions.isNotEmpty() },
                 extraInstruction = nativeFinalToolInstruction(allResults)
             ),
             timeoutSeconds = platform.timeout,
@@ -1561,6 +1597,7 @@ class ChatRepositoryImpl @Inject constructor(
         var errorMessage: String? = null
         val outputText = StringBuilder()
         val reasoningParser = ReasoningStreamParser()
+        val markupFilter = LeakedToolCallMarkupFilter()
         recordSystemPrompt(traceContext, traceStage, request.systemPromptText())
 
         try {
@@ -1568,9 +1605,11 @@ class ChatRepositoryImpl @Inject constructor(
                 chunks += chunk
                 chunk.choices.orEmpty().forEach { choice ->
                     choice.delta.toolCalls.orEmpty().forEachIndexed { position, call ->
-                        argumentLimiter.register(choice.index to (call.index ?: position))
-                        call.function?.arguments?.let { fragment ->
-                            argumentLimiter.append(choice.index to (call.index ?: position), fragment)
+                        val identity = choice.index to (call.index ?: position)
+                        if (argumentLimiter.register(identity)) {
+                            call.function?.arguments?.let { fragment ->
+                                argumentLimiter.append(identity, fragment)
+                            }
                         }
                     }
                 }
@@ -1578,17 +1617,16 @@ class ChatRepositoryImpl @Inject constructor(
                     chunk.error != null -> errorMessage = chunk.error.message
 
                     else -> chunk.choices.orEmpty().forEach { choice ->
-                        reasoningParser.append(
-                            contentChunk = choice.delta.content,
-                            reasoningChunk = choice.delta.reasoningContent
-                                ?.takeIf { it.isNotEmpty() }
-                                ?: choice.delta.reasoning
-                        ).forEach { state ->
-                            if (state is ApiState.Success) {
-                                outputText.append(state.textChunk)
-                            }
-                            emit(state)
-                        }
+                        emitToolRoundStates(
+                            states = reasoningParser.append(
+                                contentChunk = choice.delta.content,
+                                reasoningChunk = choice.delta.reasoningContent
+                                    ?.takeIf { it.isNotEmpty() }
+                                    ?: choice.delta.reasoning
+                            ),
+                            markupFilter = markupFilter,
+                            outputText = outputText
+                        )
                     }
                 }
             }
@@ -1600,17 +1638,14 @@ class ChatRepositoryImpl @Inject constructor(
             errorMessage = error.message ?: "provider_stream_failed"
         }
 
-        reasoningParser.flush().forEach { state ->
-            if (state is ApiState.Success) {
-                outputText.append(state.textChunk)
-            }
-            emit(state)
-        }
+        emitToolRoundStates(reasoningParser.flush(), markupFilter, outputText)
+        flushToolRoundMarkupFilter(markupFilter, outputText)
 
         return OpenAIChatCompletionsNativeRound(
             chunks = chunks,
             errorMessage = errorMessage,
             reasoningContent = chunks.toolContinuationReasoning(),
+            droppedToolCallCount = argumentLimiter.droppedIdentityCount,
             usage = openAIChatUsageFromChunks(
                 chunks = chunks,
                 request = request,
@@ -1619,6 +1654,41 @@ class ChatRepositoryImpl @Inject constructor(
                 label = label
             )
         )
+    }
+
+    /**
+     * Streams one round's states to the UI, diverting any leaked tool-call markup out of the visible text.
+     *
+     * [outputText] tracks what the user actually sees, since it feeds the token-usage estimate — counting
+     * suppressed markup there would bill the user for text that was never shown.
+     */
+    private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.emitToolRoundStates(
+        states: List<ApiState>,
+        markupFilter: LeakedToolCallMarkupFilter,
+        outputText: StringBuilder
+    ) {
+        states.forEach { state ->
+            val visibleStates = if (state is ApiState.Success) {
+                markupFilter.append(state.textChunk)
+            } else {
+                listOf(state)
+            }
+            visibleStates.forEach { visible ->
+                if (visible is ApiState.Success) outputText.append(visible.textChunk)
+                emit(visible)
+            }
+        }
+    }
+
+    /** Releases the tail the filter held back in case a sentinel was split across chunks. */
+    private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.flushToolRoundMarkupFilter(
+        markupFilter: LeakedToolCallMarkupFilter,
+        outputText: StringBuilder
+    ) {
+        markupFilter.flush().forEach { visible ->
+            if (visible is ApiState.Success) outputText.append(visible.textChunk)
+            emit(visible)
+        }
     }
 
     private suspend fun completeChatWithAnthropicNativeToolLoop(
@@ -1688,7 +1758,7 @@ class ChatRepositoryImpl @Inject constructor(
                 conversationSnapshot.runtimeContextPrompt,
                 memoryPrompt,
                 conversationSnapshot.context.summary,
-                openAINativeToolInstruction(toolScope.definitions)
+                openAINativeToolInstruction(toolScope.definitions, toolLoopOrchestrator.configuration)
             )
             fun requestFor(mode: ReasoningMode): AnthropicNativeToolRequest {
                 val reasoningParameters = mapReasoningMode(platform, mode)
@@ -1726,10 +1796,15 @@ class ChatRepositoryImpl @Inject constructor(
         var allowedRounds = maxRounds
         var discoveryRounds = 0
         var roundIndex = 0
+        var droppedToolCallInstruction: String? = null
         while (roundIndex < allowedRounds) {
-            roundStateMachine.updateAvailableDefinitions(toolScope.definitions)
+            roundStateMachine.updateAvailableDefinitions(
+                toolExecutionSession.availableWithinBudget(toolScope.definitions)
+            )
             val roundState = roundStateMachine.current
-            if (roundState.isFinalOnly) break
+            // Nothing left to offer: the sticker phase ended, or the budget is spent. Either way, fall
+            // through to the final-answer request rather than sending an empty tools array.
+            if (roundState.isFinalOnly || roundState.definitions.isEmpty()) break
             val round = collectAnthropicNativeRound(
                 request = prepared.forPolicy(roundState.reasoningPolicy).toRequest(
                     continuationMessages = continuationMessages,
@@ -1737,6 +1812,7 @@ class ChatRepositoryImpl @Inject constructor(
                     toolChoice = AnthropicToolChoice.Auto,
                     extraInstruction = mergePromptSections(
                         nativeToolScopeInstruction(roundState.definitions),
+                        droppedToolCallInstruction,
                         stickerContinuationInstruction(allResults, roundState.allowedToolNames)
                     )
                 ),
@@ -1776,6 +1852,10 @@ class ChatRepositoryImpl @Inject constructor(
 
             val calls = toolLoopOrchestrator.boundToolCalls(
                 anthropicNativeToolAdapter.toolCallsFromChunks(round.chunks, config)
+            )
+            droppedToolCallInstruction = nativeDroppedToolCallInstruction(
+                executedCallCount = calls.size,
+                droppedCallCount = round.droppedToolCallCount
             )
             if (calls.isEmpty()) {
                 val usage = if (hasToolInteraction || searchDecisionExecution?.usage != null) {
@@ -1834,11 +1914,14 @@ class ChatRepositoryImpl @Inject constructor(
             return@flow
         }
 
+        val finalToolDefinitions = toolScope.definitions.declaredForFinalAnswer(allResults)
         val finalRound = collectAnthropicNativeRound(
             request = prepared.user.toRequest(
                 continuationMessages = continuationMessages,
-                tools = null,
-                toolChoice = null,
+                tools = finalToolDefinitions
+                    .takeIf { definitions -> definitions.isNotEmpty() }
+                    ?.let { definitions -> anthropicNativeToolAdapter.toAnthropicTools(definitions) },
+                toolChoice = AnthropicToolChoice.None.takeIf { finalToolDefinitions.isNotEmpty() },
                 extraInstruction = nativeFinalToolInstruction(allResults)
             ),
             timeoutSeconds = platform.timeout,
@@ -1878,6 +1961,7 @@ class ChatRepositoryImpl @Inject constructor(
         )
         var errorMessage: String? = null
         val outputText = StringBuilder()
+        val markupFilter = LeakedToolCallMarkupFilter()
         recordSystemPrompt(traceContext, traceStage, request.systemPrompt)
 
         try {
@@ -1902,9 +1986,12 @@ class ChatRepositoryImpl @Inject constructor(
                             }
 
                             ContentBlockType.DELTA -> {
-                                chunk.delta.text?.let {
-                                    outputText.append(it)
-                                    emit(ApiState.Success(it))
+                                chunk.delta.text?.let { text ->
+                                    emitToolRoundStates(
+                                        states = listOf(ApiState.Success(text)),
+                                        markupFilter = markupFilter,
+                                        outputText = outputText
+                                    )
                                 }
                             }
 
@@ -1927,9 +2014,12 @@ class ChatRepositoryImpl @Inject constructor(
             errorMessage = error.message ?: "provider_stream_failed"
         }
 
+        flushToolRoundMarkupFilter(markupFilter, outputText)
+
         return AnthropicNativeRound(
             chunks = chunks,
             errorMessage = errorMessage,
+            droppedToolCallCount = argumentLimiter.droppedIdentityCount,
             usage = anthropicUsageFromChunks(
                 chunks = chunks,
                 request = request,
@@ -2007,7 +2097,7 @@ class ChatRepositoryImpl @Inject constructor(
                 conversationSnapshot.runtimeContextPrompt,
                 memoryPrompt,
                 conversationSnapshot.context.summary,
-                openAINativeToolInstruction(toolScope.definitions)
+                openAINativeToolInstruction(toolScope.definitions, toolLoopOrchestrator.configuration)
             )?.let { prompt ->
                 Content(parts = listOf(Part.text(prompt)))
             }
@@ -2047,10 +2137,15 @@ class ChatRepositoryImpl @Inject constructor(
         var allowedRounds = maxRounds
         var discoveryRounds = 0
         var roundIndex = 0
+        var droppedToolCallInstruction: String? = null
         while (roundIndex < allowedRounds) {
-            roundStateMachine.updateAvailableDefinitions(toolScope.definitions)
+            roundStateMachine.updateAvailableDefinitions(
+                toolExecutionSession.availableWithinBudget(toolScope.definitions)
+            )
             val roundState = roundStateMachine.current
-            if (roundState.isFinalOnly) break
+            // Nothing left to offer: the sticker phase ended, or the budget is spent. Either way, fall
+            // through to the final-answer request rather than sending an empty tools array.
+            if (roundState.isFinalOnly || roundState.definitions.isEmpty()) break
             val round = collectGoogleNativeRound(
                 request = prepared.forPolicy(roundState.reasoningPolicy).toRequest(
                     continuationContents = continuationContents,
@@ -2058,6 +2153,7 @@ class ChatRepositoryImpl @Inject constructor(
                     toolConfig = GoogleToolConfig.Auto,
                     extraInstruction = mergePromptSections(
                         nativeToolScopeInstruction(roundState.definitions),
+                        droppedToolCallInstruction,
                         stickerContinuationInstruction(allResults, roundState.allowedToolNames)
                     )
                 ),
@@ -2098,6 +2194,10 @@ class ChatRepositoryImpl @Inject constructor(
 
             val calls = toolLoopOrchestrator.boundToolCalls(
                 googleNativeToolAdapter.toolCallsFromResponses(round.responses, config)
+            )
+            droppedToolCallInstruction = nativeDroppedToolCallInstruction(
+                executedCallCount = calls.size,
+                droppedCallCount = round.droppedToolCallCount
             )
             if (calls.isEmpty()) {
                 val usage = if (hasToolInteraction || searchDecisionExecution?.usage != null) {
@@ -2156,11 +2256,14 @@ class ChatRepositoryImpl @Inject constructor(
             return@flow
         }
 
+        val finalToolDefinitions = toolScope.definitions.declaredForFinalAnswer(allResults)
         val finalRound = collectGoogleNativeRound(
             request = prepared.user.toRequest(
                 continuationContents = continuationContents,
-                tools = null,
-                toolConfig = null,
+                tools = finalToolDefinitions
+                    .takeIf { definitions -> definitions.isNotEmpty() }
+                    ?.let { definitions -> googleNativeToolAdapter.toGoogleTools(definitions) },
+                toolConfig = GoogleToolConfig.None.takeIf { finalToolDefinitions.isNotEmpty() },
                 extraInstruction = nativeFinalToolInstruction(allResults)
             ),
             model = platform.model,
@@ -2203,6 +2306,7 @@ class ChatRepositoryImpl @Inject constructor(
         var errorMessage: String? = null
         val outputText = StringBuilder()
         var functionCallIndex = 0
+        val markupFilter = LeakedToolCallMarkupFilter()
         recordSystemPrompt(traceContext, traceStage, request.systemInstructionText())
 
         try {
@@ -2226,8 +2330,11 @@ class ChatRepositoryImpl @Inject constructor(
                                 if (part.thought == true) {
                                     emit(ApiState.Thinking(text))
                                 } else {
-                                    outputText.append(text)
-                                    emit(ApiState.Success(text))
+                                    emitToolRoundStates(
+                                        states = listOf(ApiState.Success(text)),
+                                        markupFilter = markupFilter,
+                                        outputText = outputText
+                                    )
                                 }
                             }
                         }
@@ -2242,9 +2349,12 @@ class ChatRepositoryImpl @Inject constructor(
             errorMessage = error.message ?: "provider_stream_failed"
         }
 
+        flushToolRoundMarkupFilter(markupFilter, outputText)
+
         return GoogleNativeRound(
             responses = responses,
             errorMessage = errorMessage,
+            droppedToolCallCount = argumentLimiter.droppedIdentityCount,
             usage = googleUsageFromResponses(
                 responses = responses,
                 request = request,
@@ -3700,9 +3810,22 @@ private const val OPENAI_NATIVE_WEB_SEARCH_INSTRUCTION =
         "query 应简洁，并加入有用的实体、主题、时间范围、地区、来源范围和一手来源词。" +
         "查询区域事实时优先使用用户的语言；不要用 web_search 查询本地日期、时间、时区、设备状态或应用设置。" +
         "回答采用网页信息时引用来源 URL。"
+/**
+ * Ends with the rule the native paths were missing.
+ *
+ * The JSON fallback prompt has always said `Never use Markdown, XML, tool tags, or bare IDs`, twice. The
+ * native paths said nothing of the kind, and the native paths are where a model was observed writing its
+ * whole tool-call envelope into the answer text. Saying it costs a few tokens on every request of a tool
+ * turn; a leak costs the round.
+ *
+ * A `stop` sequence would be stronger but is not usable here: the delimiter varies (`<|`, `<||`, `<｜`), the
+ * only shared prefix would truncate any answer that discusses chat templates, and some providers build their
+ * real tool-call channel out of those same tokens — a stop on them could cut a legitimate call in half.
+ */
 private const val OPENAI_NATIVE_GENERIC_TOOL_INSTRUCTION =
     "除非工具定义明确允许用于自主表达，否则只有最新用户请求确实需要相应能力时才调用工具。" +
-        "参数保持简洁；仅凭对话即可回答的事实问题应直接作答。"
+        "参数保持简洁；仅凭对话即可回答的事实问题应直接作答。" +
+        "调用工具只能走工具调用通道；不要把调用写进正文，也不要用标签或伪代码模拟调用。"
 private const val OPENAI_NATIVE_FINAL_TOOL_INSTRUCTION =
     "不要再调用工具。相关时使用已有 function_call_output，并给出最终回答。" +
         "若请求较宽泛或不够具体但工具结果可用，请按最合理的默认范围直接回答，简短说明该范围，不要在给出有用内容前先追问。"
@@ -3803,6 +3926,7 @@ private fun List<ResponseInputItem>.currentUserMessageTail(): List<ResponseInput
 private data class OpenAIResponsesNativeRound(
     val events: List<ResponsesStreamEvent>,
     val errorMessage: String?,
+    val droppedToolCallCount: Int,
     val usage: TokenUsageRecord?
 )
 
@@ -3837,6 +3961,7 @@ private data class OpenAIChatCompletionsNativeRound(
     val chunks: List<ChatCompletionChunk>,
     val errorMessage: String?,
     val reasoningContent: String,
+    val droppedToolCallCount: Int,
     val usage: TokenUsageRecord?
 )
 
@@ -3895,6 +4020,7 @@ private data class AnthropicNativeToolRequest(
 private data class AnthropicNativeRound(
     val chunks: List<MessageResponseChunk>,
     val errorMessage: String?,
+    val droppedToolCallCount: Int,
     val usage: TokenUsageRecord?
 )
 
@@ -3920,6 +4046,7 @@ private data class GoogleNativeToolRequest(
 private data class GoogleNativeRound(
     val responses: List<GenerateContentResponse>,
     val errorMessage: String?,
+    val droppedToolCallCount: Int,
     val usage: TokenUsageRecord?
 )
 
@@ -4013,7 +4140,10 @@ internal fun currentRuntimeContextPrompt(): String {
 private val RUNTIME_CONTEXT_DATE_FORMATTER: DateTimeFormatter =
     DateTimeFormatter.ofPattern("yyyy-MM-dd EEEE", Locale.SIMPLIFIED_CHINESE)
 
-internal fun openAINativeToolInstruction(activeToolDefinitions: List<ToolDefinition>): String {
+internal fun openAINativeToolInstruction(
+    activeToolDefinitions: List<ToolDefinition>,
+    config: ToolLoopConfig = ToolLoopConfig.Default
+): String {
     val webInstruction = OPENAI_NATIVE_WEB_SEARCH_INSTRUCTION.takeIf {
         activeToolDefinitions.any { definition -> definition.name == ToolDefinition.WebSearch.name }
     }
@@ -4025,10 +4155,24 @@ internal fun openAINativeToolInstruction(activeToolDefinitions: List<ToolDefinit
         .takeIf(String::isNotBlank)
     return listOfNotNull(
         OPENAI_NATIVE_GENERIC_TOOL_INSTRUCTION,
+        nativeToolCallBudgetInstruction(config),
         webInstruction,
         priorityInstruction,
         stickerInstruction
     ).joinToString(separator = "\n\n")
+}
+
+/**
+ * The per-round call cap, which the native paths never used to mention.
+ *
+ * The JSON fallback prompt has always stated it (`ToolPromptBuilder.buildJsonFallbackPrompt`); the native
+ * ones enforced it and stayed silent, so a model that batched more calls than allowed was penalised for a
+ * rule it was never given.
+ */
+private fun nativeToolCallBudgetInstruction(config: ToolLoopConfig): String {
+    val maxCallsPerRound = config.maxToolCallsPerRound.coerceAtLeast(1)
+    return "相互独立的调用可放进同一次响应（最多 $maxCallsPerRound 个），超出的不会执行；" +
+        "后一步依赖前一步结果时留到下一次响应。"
 }
 
 private fun nativeToolScopeInstruction(toolDefinitions: List<ToolDefinition>): String? = buildList {
@@ -4045,10 +4189,60 @@ private fun nativeToolScopeInstruction(toolDefinitions: List<ToolDefinition>): S
 }.joinToString(separator = "\n")
     .takeIf(String::isNotBlank)
 
+/**
+ * Which tools stay declared on the final-answer request, as name-only stubs.
+ *
+ * The final round used to send no tools at all, which is what gave a model that was not finished a reason to
+ * write its next call out as prose: the history is full of `tool_calls` and tool results, then the interface
+ * they belong to vanishes. Declaring them again with a "must not call" choice leaves nothing to improvise
+ * around.
+ *
+ * Two economies keep that from being expensive, because the first cut of this measured at roughly 350 extra
+ * estimated tokens on every native tool turn — more than the leak it guards against is worth:
+ *  - only the tools that actually ran are named, since those are the ones the history references;
+ *  - descriptions and parameter schemas are dropped. `tool_choice` forbids calling, so nothing can consume a
+ *    schema, and the full sticker pair alone was 803 chars of it.
+ *
+ * Empty means nothing ran, so there is no history to be coherent with and the old no-tools request is right.
+ *
+ * Worth being clear about the evidence: that a declared-but-disabled interface discourages the prose
+ * fallback is a hypothesis about model behaviour, not something measured here. The deterministic backstop is
+ * recovering the prose call itself.
+ */
+private fun List<ToolDefinition>.declaredForFinalAnswer(results: List<ToolResult>): List<ToolDefinition> {
+    val usedToolNames = results.mapTo(mutableSetOf(), ToolResult::name)
+    return filter { definition -> definition.name in usedToolNames }
+        .map { definition ->
+            ToolDefinition(
+                name = definition.name,
+                description = "",
+                parameters = ToolDefinition.Parameters()
+            )
+        }
+}
+
 private fun nativeFinalToolInstruction(results: Collection<ToolResult>): String = listOfNotNull(
     OPENAI_NATIVE_FINAL_TOOL_INSTRUCTION,
     stickerFinalAnswerInstruction(results)
 ).joinToString(separator = "\n\n")
+
+/**
+ * Tells the model which of its calls did not run, so it can reissue them.
+ *
+ * Delivered as an instruction rather than a synthetic tool result because a dropped call has no id to
+ * attach one to: the assistant continuation message is built from the calls that survived bounding
+ * (`OpenAIChatCompletionsToolAdapter.continuationMessages`), and a tool message referencing an id that is
+ * not in it is a protocol error.
+ */
+private fun nativeDroppedToolCallInstruction(
+    executedCallCount: Int,
+    droppedCallCount: Int
+): String? {
+    if (droppedCallCount <= 0) return null
+    return "上一轮你提交了 ${executedCallCount + droppedCallCount} 个工具调用，" +
+        "只执行了前 $executedCallCount 个，其余 $droppedCallCount 个未执行（超出单轮上限或与已有调用重复）。" +
+        "仍然需要的请在本轮重新提交。"
+}
 
 private fun Collection<ToolResult>.hasStickerSendResult(): Boolean = any { result ->
     result.name == ToolDefinition.SendSticker.name

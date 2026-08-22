@@ -8,6 +8,7 @@ import cn.nabr.chatwithchat.data.database.entity.MessageSourceType
 import cn.nabr.chatwithchat.data.database.entity.MessageStickerRef
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.dto.ApiState
+import cn.nabr.chatwithchat.data.tool.TOOL_ARGUMENTS_TOO_LARGE
 import cn.nabr.chatwithchat.presentation.ui.chat.ChatViewModel
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
@@ -31,6 +32,60 @@ class ApiStateFlowExtensionsTest {
         assertEquals(
             "错误：Request timed out.",
             buildAssistantErrorContent("", "Request timed out.")
+        )
+    }
+
+    @Test
+    fun `handleStates writes the resolved error text rather than the internal code`() = runBlocking {
+        val messageFlow = MutableStateFlow(
+            ChatViewModel.GroupedMessages(
+                userMessages = listOf(MessageV2(content = "Hello", platformType = null)),
+                assistantMessages = listOf(
+                    listOf(MessageV2(content = "", platformType = "platform-1"))
+                )
+            )
+        )
+        val resolved = mutableListOf<String>()
+
+        flowOf(ApiState.Error(TOOL_ARGUMENTS_TOO_LARGE)).handleStates(
+            messageFlow = messageFlow,
+            turnIndex = 0,
+            platformIdx = 0,
+            onLoadingComplete = {},
+            resolveErrorMessage = { message ->
+                resolved += message
+                if (message == TOOL_ARGUMENTS_TOO_LARGE) "工具参数过长，本次调用已中止" else message
+            }
+        )
+
+        assertEquals(listOf(TOOL_ARGUMENTS_TOO_LARGE), resolved)
+        assertEquals(
+            "错误：工具参数过长，本次调用已中止",
+            messageFlow.value.assistantMessages.last().first().content
+        )
+    }
+
+    @Test
+    fun `handleStates leaves an unrecognised provider error untouched`() = runBlocking {
+        val messageFlow = MutableStateFlow(
+            ChatViewModel.GroupedMessages(
+                userMessages = listOf(MessageV2(content = "Hello", platformType = null)),
+                assistantMessages = listOf(
+                    listOf(MessageV2(content = "", platformType = "platform-1"))
+                )
+            )
+        )
+
+        flowOf(ApiState.Error("Upstream refused the connection")).handleStates(
+            messageFlow = messageFlow,
+            turnIndex = 0,
+            platformIdx = 0,
+            onLoadingComplete = {}
+        )
+
+        assertEquals(
+            "错误：Upstream refused the connection",
+            messageFlow.value.assistantMessages.last().first().content
         )
     }
 
@@ -508,6 +563,139 @@ class ApiStateFlowExtensionsTest {
     }
 
     @Test
+    fun `handleStates separates consecutive tool rounds into paragraphs`() = runBlocking {
+        val messageFlow = singlePlatformMessageFlow()
+
+        flowOf(
+            ApiState.Success("好的大哥，我再直接拉一次 README 试试。"),
+            ApiState.ToolStarted("get_file_contents", "README.md"),
+            ApiState.ToolFinished("get_file_contents", "README.md"),
+            ApiState.Success("大哥，我直接拉 README 的原文试了下，"),
+            ApiState.Success("结果那工具只转发纯文本。"),
+            ApiState.Done
+        ).handleStates(
+            messageFlow = messageFlow,
+            turnIndex = 0,
+            platformIdx = 0,
+            onLoadingComplete = {}
+        )
+
+        assertEquals(
+            "好的大哥，我再直接拉一次 README 试试。\n\n大哥，我直接拉 README 的原文试了下，结果那工具只转发纯文本。",
+            messageFlow.value.assistantMessages[0][0].content
+        )
+    }
+
+    @Test
+    fun `handleStates separates consecutive tool rounds of reasoning into paragraphs`() = runBlocking {
+        val messageFlow = singlePlatformMessageFlow()
+
+        flowOf(
+            ApiState.Thinking("先看看仓库顶层有哪些文档。"),
+            ApiState.ToolStarted("get_file_contents", "README.md"),
+            ApiState.ToolFinished("get_file_contents", "README.md"),
+            ApiState.Thinking("换个路子，用 blob SHA 直取。"),
+            ApiState.Done
+        ).handleStates(
+            messageFlow = messageFlow,
+            turnIndex = 0,
+            platformIdx = 0,
+            onLoadingComplete = {}
+        )
+
+        assertEquals(
+            "先看看仓库顶层有哪些文档。\n\n换个路子，用 blob SHA 直取。",
+            messageFlow.value.assistantMessages[0][0].thoughts
+        )
+    }
+
+    @Test
+    fun `handleStates does not open the answer with a paragraph break`() = runBlocking {
+        val messageFlow = singlePlatformMessageFlow()
+
+        flowOf(
+            ApiState.ToolStarted("web_search", "latest Android SDK"),
+            ApiState.ToolFinished("web_search", "latest Android SDK"),
+            ApiState.Success("Answer"),
+            ApiState.Done
+        ).handleStates(
+            messageFlow = messageFlow,
+            turnIndex = 0,
+            platformIdx = 0,
+            onLoadingComplete = {}
+        )
+
+        assertEquals("Answer", messageFlow.value.assistantMessages[0][0].content)
+    }
+
+    @Test
+    fun `handleStates reuses newlines the model already sent at a round boundary`() = runBlocking {
+        val messageFlow = singlePlatformMessageFlow()
+
+        flowOf(
+            ApiState.Success("First round.\n"),
+            ApiState.ToolStarted("get_file_contents", "README.md"),
+            ApiState.ToolFinished("get_file_contents", "README.md"),
+            ApiState.Success("\nSecond round."),
+            ApiState.Done
+        ).handleStates(
+            messageFlow = messageFlow,
+            turnIndex = 0,
+            platformIdx = 0,
+            onLoadingComplete = {}
+        )
+
+        assertEquals(
+            "First round.\n\nSecond round.",
+            messageFlow.value.assistantMessages[0][0].content
+        )
+    }
+
+    @Test
+    fun `handleStates leaves no trailing break when a round ends the response`() = runBlocking {
+        val messageFlow = singlePlatformMessageFlow()
+
+        flowOf(
+            ApiState.Success("Answer"),
+            ApiState.ToolStarted("web_search", "follow up"),
+            ApiState.ToolFinished("web_search", "follow up"),
+            ApiState.Done
+        ).handleStates(
+            messageFlow = messageFlow,
+            turnIndex = 0,
+            platformIdx = 0,
+            onLoadingComplete = {}
+        )
+
+        assertEquals("Answer", messageFlow.value.assistantMessages[0][0].content)
+    }
+
+    @Test
+    fun `handleStates breaks only once across a silent tool round`() = runBlocking {
+        val messageFlow = singlePlatformMessageFlow()
+
+        flowOf(
+            ApiState.Success("First round."),
+            ApiState.ToolStarted("get_file_contents", "README.md"),
+            ApiState.ToolFinished("get_file_contents", "README.md"),
+            ApiState.ToolStarted("get_file_contents", "AGENTS.md"),
+            ApiState.ToolFinished("get_file_contents", "AGENTS.md"),
+            ApiState.Success("Third round."),
+            ApiState.Done
+        ).handleStates(
+            messageFlow = messageFlow,
+            turnIndex = 0,
+            platformIdx = 0,
+            onLoadingComplete = {}
+        )
+
+        assertEquals(
+            "First round.\n\nThird round.",
+            messageFlow.value.assistantMessages[0][0].content
+        )
+    }
+
+    @Test
     fun `handleStates completion timestamps only the requested turn and platform`() = runBlocking {
         val originalTimestamp = 10L
         val untouchedTimestamp = 20L
@@ -616,4 +804,13 @@ class ApiStateFlowExtensionsTest {
         assertEquals("Previous answer", assistantMessage.revisions[0].content)
         assertEquals("Older answer", assistantMessage.revisions[1].content)
     }
+
+    private fun singlePlatformMessageFlow() = MutableStateFlow(
+        ChatViewModel.GroupedMessages(
+            userMessages = listOf(MessageV2(content = "Hello", platformType = null)),
+            assistantMessages = listOf(
+                listOf(MessageV2(content = "", platformType = "platform-1"))
+            )
+        )
+    )
 }

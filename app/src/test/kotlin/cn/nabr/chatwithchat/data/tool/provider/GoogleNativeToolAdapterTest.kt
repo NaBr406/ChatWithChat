@@ -10,7 +10,6 @@ import cn.nabr.chatwithchat.data.network.NetworkClient
 import cn.nabr.chatwithchat.data.tool.CurrentDateTimeToolProvider
 import cn.nabr.chatwithchat.data.tool.ToolArgumentsTooLargeException
 import cn.nabr.chatwithchat.data.tool.ToolCall
-import cn.nabr.chatwithchat.data.tool.ToolCallIdentityLimitExceededException
 import cn.nabr.chatwithchat.data.tool.ToolDefinition
 import cn.nabr.chatwithchat.data.tool.ToolLoopConfig
 import cn.nabr.chatwithchat.data.tool.ToolResult
@@ -188,7 +187,7 @@ class GoogleNativeToolAdapterTest {
     }
 
     @Test
-    fun `google counts every function call occurrence`() {
+    fun `google truncates function call occurrences past the round cap`() {
         val response = NetworkClient.json.decodeFromString<GenerateContentResponse>(
             """
             {
@@ -205,9 +204,9 @@ class GoogleNativeToolAdapterTest {
             """.trimIndent()
         )
 
-        assertThrows(ToolCallIdentityLimitExceededException::class.java) {
-            adapter.toolCallsFromResponses(listOf(response), ToolLoopConfig(maxToolCallsPerRound = 1))
-        }
+        val calls = adapter.toolCallsFromResponses(listOf(response), ToolLoopConfig(maxToolCallsPerRound = 1))
+
+        assertEquals(1, calls.size)
     }
 
     @Test

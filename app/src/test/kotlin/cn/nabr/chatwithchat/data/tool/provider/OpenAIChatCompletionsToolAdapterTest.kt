@@ -10,7 +10,6 @@ import cn.nabr.chatwithchat.data.network.NetworkClient
 import cn.nabr.chatwithchat.data.tool.CurrentDateTimeToolProvider
 import cn.nabr.chatwithchat.data.tool.ToolArgumentsTooLargeException
 import cn.nabr.chatwithchat.data.tool.ToolCall
-import cn.nabr.chatwithchat.data.tool.ToolCallIdentityLimitExceededException
 import cn.nabr.chatwithchat.data.tool.ToolDefinition
 import cn.nabr.chatwithchat.data.tool.ToolLoopConfig
 import cn.nabr.chatwithchat.data.tool.ToolResult
@@ -238,7 +237,7 @@ class OpenAIChatCompletionsToolAdapterTest {
     }
 
     @Test
-    fun `chat completions count tool calls without argument fragments`() {
+    fun `chat completions truncate tool calls past the round cap`() {
         val chunk = NetworkClient.openAIJson.decodeFromString<ChatCompletionChunk>(
             """
             {
@@ -255,9 +254,9 @@ class OpenAIChatCompletionsToolAdapterTest {
             """.trimIndent()
         )
 
-        assertThrows(ToolCallIdentityLimitExceededException::class.java) {
-            adapter.toolCallsFromChunks(listOf(chunk), ToolLoopConfig(maxToolCallsPerRound = 1))
-        }
+        val calls = adapter.toolCallsFromChunks(listOf(chunk), ToolLoopConfig(maxToolCallsPerRound = 1))
+
+        assertEquals(listOf("call_1"), calls.map { call -> call.id })
     }
 
     @Test

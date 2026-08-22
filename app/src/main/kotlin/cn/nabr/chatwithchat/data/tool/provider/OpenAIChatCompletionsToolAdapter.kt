@@ -51,13 +51,14 @@ class OpenAIChatCompletionsToolAdapter {
         chunks.forEach { chunk ->
             chunk.choices.orEmpty().forEach { choice ->
                 choice.delta.toolCalls.orEmpty().forEachIndexed { position, delta ->
-                    argumentLimiter.register(choice.index to (delta.index ?: position))
+                    val identity = choice.index to (delta.index ?: position)
+                    if (!argumentLimiter.register(identity)) return@forEachIndexed
                     val index = delta.index ?: position
                     val accumulator = accumulators.getOrPut(index) { ToolCallAccumulator(index = index) }
                     delta.id?.takeIf { it.isNotBlank() }?.let { accumulator.id = it }
                     delta.function?.name?.takeIf { it.isNotBlank() }?.let { accumulator.name = it }
                     delta.function?.arguments?.let { fragment ->
-                        argumentLimiter.append(choice.index to (delta.index ?: position), fragment)
+                        argumentLimiter.append(identity, fragment)
                         accumulator.arguments.appendToolArgumentFragment(fragment, config.maxToolArgumentChars)
                     }
                 }

@@ -21,15 +21,28 @@ class ToolArgumentLimitTest {
     }
 
     @Test
-    fun `stream limiter counts tool identities without arguments`() {
+    fun `stream limiter skips tool identities past the round cap instead of failing the round`() {
         val limiter = ToolArgumentStreamLimiter(maxArgumentChars = 4, maxCallIdentities = 1)
-        limiter.register("call-1")
 
-        val exception = assertThrows(ToolCallIdentityLimitExceededException::class.java) {
-            limiter.register("call-2")
-        }
+        assertTrue(limiter.register("call-1"))
+        assertFalse(limiter.register("call-2"))
+        // Repeats of an overflowing identity must not be counted twice.
+        assertFalse(limiter.register("call-2"))
+        assertTrue(limiter.register("call-1"))
 
-        assertEquals(TOOL_CALL_IDENTITY_LIMIT_EXCEEDED, exception.message)
+        assertEquals(1, limiter.droppedIdentityCount)
+    }
+
+    @Test
+    fun `stream limiter charges no argument budget to a skipped identity`() {
+        val limiter = ToolArgumentStreamLimiter(maxArgumentChars = 4, maxCallIdentities = 1)
+        limiter.append("call-1", "1234")
+
+        // Would exceed maxArgumentChars if it were accounted for, but the identity never got a slot.
+        limiter.append("call-2", "oversized")
+        limiter.checkComplete("call-2", "also oversized")
+
+        assertEquals(1, limiter.droppedIdentityCount)
     }
 
     @Test

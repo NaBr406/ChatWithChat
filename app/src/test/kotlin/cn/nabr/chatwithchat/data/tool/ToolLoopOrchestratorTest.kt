@@ -510,6 +510,162 @@ class ToolLoopOrchestratorTest {
     }
 
     @Test
+    fun `an exhausted result budget refuses the call instead of returning an empty success`() = runBlocking {
+        val executedCalls = mutableListOf<ToolCall>()
+        val provider = recordingProvider(
+            definition = ToolDefinition(
+                name = "current_datetime",
+                description = "Returns the current date and time.",
+                parameters = ToolDefinition.Parameters()
+            ),
+            executedCalls = executedCalls
+        )
+        val orchestrator = ToolLoopOrchestrator(
+            toolExecutor = ToolExecutor(ToolRegistry(listOf(provider))),
+            // Too little room to carry even a truncation notice, which is the case that used to come back
+            // as an empty success the model could not interpret.
+            config = ToolLoopConfig(maxToolRounds = 2, maxTotalToolResultChars = 8)
+        )
+        val executionSession = orchestrator.createExecutionSession()
+
+        val results = orchestrator.executeToolCalls(
+            calls = listOf(ToolCall("call_1", "current_datetime", "{}")),
+            tools = orchestrator.toolDefinitions,
+            executionSession = executionSession
+        )
+
+        val result = results.single()
+        assertTrue(result.isError)
+        assertTrue(result.content.contains("tool_result_budget_exhausted"))
+        assertEquals("tool_result_budget_exhausted", result.metadata["error_code"])
+    }
+
+    @Test
+    fun `an exhausted result budget also stops tools being advertised`() = runBlocking {
+        // One call's worth of result fits; what is left afterwards does not, which is the transition the
+        // advertisement gate has to notice.
+        val bulkyProvider = object : ToolProvider {
+            override val definition = ToolDefinition(
+                name = "bulk_probe",
+                description = "Returns more text than the request can carry twice.",
+                parameters = ToolDefinition.Parameters()
+            )
+            override val securityPolicy: ToolSecurityPolicy = ToolSecurityPolicy.ReadOnlyPublic
+
+            override suspend fun execute(call: ToolCall, config: ToolLoopConfig): ToolResult = ToolResult(
+                callId = call.id,
+                name = call.name,
+                content = "x".repeat(700)
+            )
+        }
+        val orchestrator = ToolLoopOrchestrator(
+            toolExecutor = ToolExecutor(ToolRegistry(listOf(bulkyProvider))),
+            config = ToolLoopConfig(maxToolRounds = 3, maxTotalToolResultChars = 1_000)
+        )
+        val advertisedPerRound = mutableListOf<Boolean>()
+        val responses = mutableListOf(
+            """{"type":"tool_calls","tool_calls":[{"id":"call_1","name":"bulk_probe","arguments":{}}]}""",
+            """{"type":"final_answer","content":"没有结果空间了"}"""
+        )
+
+        orchestrator.runLoop(tools = orchestrator.toolDefinitions) { toolPrompt ->
+            advertisedPerRound += toolPrompt.contains("bulk_probe(")
+            Result.success(responses.removeAt(0))
+        }
+
+        // Round two must not offer a tool whose result could not be carried back anyway.
+        assertEquals(listOf(true, false), advertisedPerRound)
+    }
+
+    @Test
+    fun `a request that cannot carry any result never advertises tools at all`() = runBlocking {
+        val executedCalls = mutableListOf<ToolCall>()
+        val orchestrator = ToolLoopOrchestrator(
+            toolExecutor = recordingExecutor(executedCalls),
+            config = ToolLoopConfig(maxToolRounds = 2, maxTotalToolResultChars = 8)
+        )
+        var sawToolManifest = false
+
+        orchestrator.runLoop(tools = orchestrator.toolDefinitions) { toolPrompt ->
+            sawToolManifest = sawToolManifest || toolPrompt.contains("Enabled tool signatures:")
+            Result.success("""{"type":"final_answer","content":"直接回答"}""")
+        }
+
+        assertFalse(sawToolManifest)
+        assertTrue(executedCalls.isEmpty())
+    }
+
+    @Test
+    fun `an exhausted tool stops being advertised instead of being offered and refused`() = runBlocking {
+        val executedCalls = mutableListOf<ToolCall>()
+        val advertisedPerRound = mutableListOf<List<String>>()
+        val provider = recordingProvider(
+            definition = ToolDefinition(
+                name = "current_datetime",
+                description = "Returns the current date and time.",
+                parameters = ToolDefinition.Parameters()
+            ),
+            executedCalls = executedCalls,
+            policy = ToolPolicy(maxCallsPerChat = 1)
+        )
+        val orchestrator = ToolLoopOrchestrator(
+            toolExecutor = ToolExecutor(ToolRegistry(listOf(provider))),
+            config = ToolLoopConfig(maxToolRounds = 3)
+        )
+        val responses = mutableListOf(
+            """{"type":"tool_calls","tool_calls":[{"id":"call_1","name":"current_datetime","arguments":{}}]}""",
+            """{"type":"final_answer","content":"已经查过了"}"""
+        )
+
+        val result = orchestrator.runLoop(tools = orchestrator.toolDefinitions) { toolPrompt ->
+            // The signature manifest is what the model can call from; the results digest names the tool too,
+            // which is why this looks for the signature rather than the bare name.
+            advertisedPerRound += listOf("current_datetime")
+                .filter { name -> toolPrompt.contains("$name(") }
+            Result.success(responses.removeAt(0))
+        }
+
+        assertEquals(listOf("call_1"), executedCalls.map { call -> call.id })
+        assertEquals(listOf(listOf("current_datetime"), emptyList()), advertisedPerRound)
+        assertTrue(result is ToolLoopResult.CompletedWithToolResults)
+        assertEquals("已经查过了", (result as ToolLoopResult.CompletedWithToolResults).content)
+    }
+
+    @Test
+    fun `a call for an unadvertised exhausted tool is refused for being out of budget`() = runBlocking {
+        val executedCalls = mutableListOf<ToolCall>()
+        val provider = recordingProvider(
+            definition = ToolDefinition(
+                name = "current_datetime",
+                description = "Returns the current date and time.",
+                parameters = ToolDefinition.Parameters()
+            ),
+            executedCalls = executedCalls,
+            policy = ToolPolicy(maxCallsPerChat = 1)
+        )
+        val orchestrator = ToolLoopOrchestrator(
+            toolExecutor = ToolExecutor(ToolRegistry(listOf(provider))),
+            config = ToolLoopConfig(maxToolRounds = 2)
+        )
+        val responses = mutableListOf(
+            """{"type":"tool_calls","tool_calls":[{"id":"call_1","name":"current_datetime","arguments":{}}]}""",
+            """{"type":"tool_calls","tool_calls":[{"id":"call_2","name":"current_datetime","arguments":{}}]}"""
+        )
+
+        val result = orchestrator.runLoop(tools = orchestrator.toolDefinitions) {
+            Result.success(responses.removeAt(0))
+        }
+
+        val toolResults = result as ToolLoopResult.ToolResults
+        assertEquals(listOf("call_1"), executedCalls.map { call -> call.id })
+        // Not "tool_unavailable": the tool exists, it simply has nothing left.
+        assertTrue(
+            toolResults.results.single { it.callId == "call_2" }.content
+                .contains("tool_budget_exceeded:max_current_datetime_calls_per_chat")
+        )
+    }
+
+    @Test
     fun `custom tool policy chat budget is enforced across rounds`() = runBlocking {
         val executedCalls = mutableListOf<ToolCall>()
         val provider = recordingProvider(

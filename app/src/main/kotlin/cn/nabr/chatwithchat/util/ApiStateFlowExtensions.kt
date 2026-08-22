@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 private const val STREAM_PUBLISH_INTERVAL_MILLIS = 50L
+private const val PARAGRAPH_BREAK_NEWLINES = 2
 
 suspend fun Flow<ApiState>.handleStates(
     messageFlow: MutableStateFlow<ChatViewModel.GroupedMessages>,
@@ -27,7 +28,15 @@ suspend fun Flow<ApiState>.handleStates(
     onLoadingComplete: () -> Unit,
     currentTimeProvider: () -> Long = { System.currentTimeMillis() / 1000 },
     revisionToAppendOnSuccess: AssistantRevision? = null,
-    onToolProgress: (ApiState) -> Unit = {}
+    onToolProgress: (ApiState) -> Unit = {},
+    /**
+     * Maps an internal error code to display text before it is written into the message.
+     *
+     * The repository emits codes like `tool_arguments_too_large` as data — it has no business resolving
+     * string resources — and this is the last point before the code is baked into content the user reads.
+     * Defaults to a pass-through so callers that do not care (and tests) see the code unchanged.
+     */
+    resolveErrorMessage: (String) -> String = { message -> message }
 ) = coroutineScope {
     val buffer = StreamingMessageBuffer()
     val pendingStickers = linkedMapOf<String, MessageStickerRef>()
@@ -80,12 +89,15 @@ suspend fun Flow<ApiState>.handleStates(
                 }
 
                 is ApiState.Error -> {
-                    terminalError = chunk.message
+                    terminalError = resolveErrorMessage(chunk.message)
                 }
 
                 is ApiState.ToolStarted,
                 is ApiState.ToolFinished,
                 is ApiState.ToolFailed -> {
+                    // 工具调用夹在两轮模型请求之间，是唯一可靠的轮次边界信号：
+                    // 下一轮再吐正文/推理时要另起一段。
+                    buffer.onRoundBoundary()
                     onToolProgress(chunk)
                 }
 
@@ -179,35 +191,41 @@ private class StreamingMessageBuffer {
     private val content = StringBuilder()
     private var publishedThoughtLength = 0
     private var publishedContentLength = 0
+    private var contentNeedsParagraphBreak = false
+    private var thoughtsNeedParagraphBreak = false
+
+    /**
+     * 一轮工具调用结束，下一轮的叙述和推理都属于新的段落。裸拼接会让两轮挤成一句
+     * （"……试试。大哥，我直接拉原文试了下"），markdown 只看到一个超长段落，排版全丢。
+     * 这里只是记账：真正补空行要等下一轮第一个 chunk 到了再补，否则一轮什么都不输出就会多出空行。
+     */
+    fun onRoundBoundary() = synchronized(lock) {
+        contentNeedsParagraphBreak = contentNeedsParagraphBreak || content.isNotEmpty()
+        thoughtsNeedParagraphBreak = thoughtsNeedParagraphBreak || thoughts.isNotEmpty()
+    }
 
     fun appendThought(chunk: String): AppendResult = synchronized(lock) {
-        when {
-            chunk.isEmpty() -> AppendResult.EMPTY
-            thoughts.isEmpty() -> {
-                thoughts.append(chunk)
-                AppendResult.FIRST
-            }
+        if (chunk.isEmpty()) return@synchronized AppendResult.EMPTY
 
-            else -> {
-                thoughts.append(chunk)
-                AppendResult.PENDING
-            }
+        val isFirstChunk = thoughts.isEmpty()
+        if (thoughtsNeedParagraphBreak) {
+            thoughts.append(paragraphBreak(thoughts, chunk))
+            thoughtsNeedParagraphBreak = false
         }
+        thoughts.append(chunk)
+        if (isFirstChunk) AppendResult.FIRST else AppendResult.PENDING
     }
 
     fun appendContent(chunk: String): AppendResult = synchronized(lock) {
-        when {
-            chunk.isEmpty() -> AppendResult.EMPTY
-            content.isEmpty() -> {
-                content.append(chunk)
-                AppendResult.FIRST
-            }
+        if (chunk.isEmpty()) return@synchronized AppendResult.EMPTY
 
-            else -> {
-                content.append(chunk)
-                AppendResult.PENDING
-            }
+        val isFirstChunk = content.isEmpty()
+        if (contentNeedsParagraphBreak) {
+            content.append(paragraphBreak(content, chunk))
+            contentNeedsParagraphBreak = false
         }
+        content.append(chunk)
+        if (isFirstChunk) AppendResult.FIRST else AppendResult.PENDING
     }
 
     fun publishPending(
@@ -244,6 +262,22 @@ private class StreamingMessageBuffer {
 
     private fun hasPendingChanges(): Boolean = content.length != publishedContentLength || thoughts.length != publishedThoughtLength
 }
+
+/** 补到恰好隔一个空行。模型自己已经带的换行照算，不重复堆。 */
+private fun paragraphBreak(buffered: StringBuilder, chunk: String): String {
+    val existingNewlines = buffered.trailingNewlineCount() + chunk.leadingNewlineCount()
+    return "\n".repeat((PARAGRAPH_BREAK_NEWLINES - existingNewlines).coerceAtLeast(0))
+}
+
+private fun StringBuilder.trailingNewlineCount(): Int {
+    var count = 0
+    while (count < length && this[length - 1 - count] == '\n') {
+        count++
+    }
+    return count
+}
+
+private fun String.leadingNewlineCount(): Int = takeWhile { character -> character == '\n' }.length
 
 private fun MutableStateFlow<ChatViewModel.GroupedMessages>.addStickerReference(
     turnIndex: Int,

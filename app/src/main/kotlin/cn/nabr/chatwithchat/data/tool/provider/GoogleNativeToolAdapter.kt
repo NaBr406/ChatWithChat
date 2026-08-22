@@ -55,6 +55,7 @@ class GoogleNativeToolAdapter {
                 val name = functionCall.name.trim()
                 if (name.isBlank()) return@mapIndexedNotNull null
                 val arguments = functionCall.args.toString().ifBlank { "{}" }
+                if (!argumentLimiter.register(index)) return@mapIndexedNotNull null
                 argumentLimiter.checkComplete(index, arguments)
                 ToolCall(
                     id = functionCall.id?.takeIf { it.isNotBlank() } ?: "function_${index + 1}",

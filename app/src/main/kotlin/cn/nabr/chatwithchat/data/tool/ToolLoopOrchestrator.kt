@@ -113,9 +113,12 @@ class ToolLoopOrchestrator(
         var discoveryRounds = 0
         var roundIndex = 0
         while (roundIndex < allowedRounds) {
-            roundStateMachine.updateAvailableDefinitions(scope.definitions)
+            roundStateMachine.updateAvailableDefinitions(executionSession.availableWithinBudget(scope.definitions))
             val roundState = roundStateMachine.current
-            val toolPrompt = if (roundState.isFinalOnly) {
+            // No tools left to offer — either the sticker phase ended or the budget is spent — so this round
+            // is already the final answer and its content is the answer, not a draft.
+            val isFinalAnswerRound = roundState.isFinalOnly || roundState.definitions.isEmpty()
+            val toolPrompt = if (isFinalAnswerRound) {
                 adapter.buildFinalAnswerEnvelopePrompt(
                     scratchpad = scratchpad,
                     config = config
@@ -150,7 +153,7 @@ class ToolLoopOrchestrator(
             when (modelOutput) {
                 is JsonToolModelOutput.FinalAnswer -> {
                     return if (allResults.isNotEmpty()) {
-                        if (roundState.isFinalOnly) {
+                        if (isFinalAnswerRound) {
                             ToolLoopResult.CompletedWithToolResults(
                                 content = modelOutput.content,
                                 calls = allCalls,
@@ -243,7 +246,11 @@ class ToolLoopOrchestrator(
         onProgress: suspend (ApiState) -> Unit = {}
     ): List<ToolResult> {
         val activeToolNames = scope.advertisedToolNames.intersect(allowedToolNames)
-        val availableCalls = calls.selectAvailable(activeToolNames)
+        val availableCalls = calls.selectAvailable(activeToolNames) { call ->
+            // A tool that stopped being advertised because its budget ran out is refused for that reason,
+            // not for not existing.
+            executionSession.exhaustionReason(call.name) ?: "tool_unavailable:${call.name}"
+        }
         val (allowedCalls, budgetRejectedCalls) = executionSession.select(availableCalls.allowed)
         val rejectedCalls = availableCalls.rejected + budgetRejectedCalls
         rejectedCalls.forEach { rejected ->
@@ -401,7 +408,10 @@ class ToolLoopOrchestrator(
     ): String? = adapter.buildFinalAnswerPrompt(results, draftFinalAnswer, config)
 }
 
-private fun List<ToolCall>.selectAvailable(activeToolNames: Set<String>): BudgetedToolCalls {
+private fun List<ToolCall>.selectAvailable(
+    activeToolNames: Set<String>,
+    unavailableReason: (ToolCall) -> String = { call -> "tool_unavailable:${call.name}" }
+): BudgetedToolCalls {
     val allowed = mutableListOf<ToolCall>()
     val rejected = mutableListOf<ToolResult>()
 
@@ -409,7 +419,7 @@ private fun List<ToolCall>.selectAvailable(activeToolNames: Set<String>): Budget
         if (call.name in activeToolNames) {
             allowed += call
         } else {
-            rejected += call.errorResult("tool_unavailable:${call.name}")
+            rejected += call.errorResult(unavailableReason(call))
         }
     }
 
@@ -419,8 +429,7 @@ private fun List<ToolCall>.selectAvailable(activeToolNames: Set<String>): Budget
 private class ToolBudgetState(
     config: ToolLoopConfig,
     private val policyFor: (String) -> ToolPolicy
-) {
-    private var remainingToolCalls = config.maxToolCallsPerChat.coerceAtLeast(0)
+) {    private var remainingToolCalls = config.maxToolCallsPerChat.coerceAtLeast(0)
     private val remainingToolCallsByName = mutableMapOf<String, Int>()
 
     fun select(calls: List<ToolCall>): BudgetedToolCalls {
@@ -433,11 +442,11 @@ private class ToolBudgetState(
             val requestToolCalls = requestToolCallsByName[call.name] ?: 0
             val remainingPolicyCalls = remainingPolicyCalls(call.name, policy)
             val rejection = when {
-                remainingToolCalls <= 0 -> "tool_budget_exceeded:max_tool_calls_per_chat"
+                remainingToolCalls <= 0 -> "${TOOL_BUDGET_EXCEEDED_PREFIX}max_tool_calls_per_chat"
                 policy.maxCallsPerRequest != null && requestToolCalls >= policy.maxCallsPerRequest.coerceAtLeast(0) ->
-                    "tool_budget_exceeded:${policy.maxCallsPerRequestKey(call.name)}"
+                    "$TOOL_BUDGET_EXCEEDED_PREFIX${policy.maxCallsPerRequestKey(call.name)}"
                 remainingPolicyCalls != null && remainingPolicyCalls <= 0 ->
-                    "tool_budget_exceeded:${policy.maxCallsPerChatKey(call.name)}"
+                    "$TOOL_BUDGET_EXCEEDED_PREFIX${policy.maxCallsPerChatKey(call.name)}"
                 else -> null
             }
 
@@ -461,6 +470,27 @@ private class ToolBudgetState(
             remainingToolCallsByName.getOrPut(toolName) { limit }
         }
 
+    /** False once the shared per-request allowance is gone, whatever the individual tool policies say. */
+    fun hasRemainingBudget(): Boolean = remainingToolCalls > 0
+
+    /**
+     * Why [toolName] can no longer run in this request, or null while it still can.
+     *
+     * Read before a round is built, not only when a call arrives: enforcing the budget purely at execution
+     * time meant an exhausted tool stayed in the advertised list, so the model kept calling it, kept
+     * collecting `tool_budget_exceeded`, and burned rounds against the round ceiling for nothing.
+     *
+     * Returning the reason rather than a bare boolean keeps the message honest once the tool stops being
+     * advertised: a call that arrives anyway is refused for being out of budget, not for not existing.
+     */
+    fun exhaustionReason(toolName: String): String? {
+        if (remainingToolCalls <= 0) return "${TOOL_BUDGET_EXCEEDED_PREFIX}max_tool_calls_per_chat"
+        val policy = policyFor(toolName)
+        val limit = policy.maxCallsPerChat?.coerceAtLeast(0) ?: return null
+        if ((remainingToolCallsByName[toolName] ?: limit) > 0) return null
+        return "$TOOL_BUDGET_EXCEEDED_PREFIX${policy.maxCallsPerChatKey(toolName)}"
+    }
+
     private fun ToolPolicy.maxCallsPerRequestKey(toolName: String): String =
         maxCallsPerRequestErrorKey ?: "max_${toolName}_calls_per_request"
 
@@ -474,6 +504,12 @@ private data class BudgetedToolCalls(
 )
 
 private const val DISCOVER_TOOLS_PROGRESS_LABEL = "正在查找可用工具"
+
+/** Marks a call the budget refused, so the UI can say so in words rather than echoing the code. */
+internal const val TOOL_BUDGET_EXCEEDED_PREFIX = "tool_budget_exceeded:"
+
+/** Marks a call refused because the request has no room left to carry its result back. */
+internal const val TOOL_RESULT_BUDGET_EXHAUSTED = "tool_result_budget_exhausted"
 
 class ToolLoopExecutionSession internal constructor(
     config: ToolLoopConfig,
@@ -489,6 +525,20 @@ class ToolLoopExecutionSession internal constructor(
         return selection.allowed to selection.rejected
     }
 
+    /**
+     * [definitions] minus anything the budget can no longer afford, so the model is only ever shown tools it
+     * can actually call. Empty means the request's whole allowance is spent — either the call count or the
+     * room left to carry results back.
+     */
+    internal fun availableWithinBudget(definitions: List<ToolDefinition>): List<ToolDefinition> =
+        if (!toolBudget.hasRemainingBudget() || !resultPayloadBudget.hasRemainingBudget()) {
+            emptyList()
+        } else {
+            definitions.filterNot { definition -> toolBudget.exhaustionReason(definition.name) != null }
+        }
+
+    internal fun exhaustionReason(toolName: String): String? = toolBudget.exhaustionReason(toolName)
+
     internal fun bound(results: List<ToolResult>): List<ToolResult> = resultPayloadBudget.bound(results)
 }
 
@@ -500,17 +550,45 @@ private class ToolResultPayloadBudget(
         config.maxTotalToolResultChars.toLong() - usedPayloadChars.coerceAtLeast(0).toLong()
         ).coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
 
+    /**
+     * False once there is no room left to carry a result worth reading.
+     *
+     * Exposed so the loop can stop offering tools, the same way it does when the call budget runs out. Before
+     * this, an exhausted result budget was invisible: calls kept being made and kept "succeeding" with empty
+     * content, because `clipWithNotice(0)` has no room for its own truncation notice.
+     */
+    fun hasRemainingBudget(): Boolean = remainingPayloadChars >= MIN_USEFUL_RESULT_CHARS
+
     fun bound(results: List<ToolResult>): List<ToolResult> = results.map { result ->
-        val bounded = result.boundPayload(
-            ToolResultBounds(
-                maxContentChars = config.maxToolResultChars.coerceAtLeast(0),
-                maxStructuredContentChars = config.maxToolResultChars.coerceAtLeast(0),
-                maxSourcePayloadChars = config.maxToolResultChars.coerceAtLeast(0),
-                maxMetadataChars = config.maxToolResultChars.coerceAtLeast(0),
-                maxTotalPayloadChars = remainingPayloadChars
+        if (result.isError || remainingPayloadChars >= MIN_USEFUL_RESULT_CHARS) {
+            val bounded = result.boundPayload(
+                ToolResultBounds(
+                    maxContentChars = config.maxToolResultChars.coerceAtLeast(0),
+                    maxStructuredContentChars = config.maxToolResultChars.coerceAtLeast(0),
+                    maxSourcePayloadChars = config.maxToolResultChars.coerceAtLeast(0),
+                    maxMetadataChars = config.maxToolResultChars.coerceAtLeast(0),
+                    maxTotalPayloadChars = remainingPayloadChars
+                )
+            ).result
+            remainingPayloadChars = (remainingPayloadChars - bounded.payloadCharCount()).coerceAtLeast(0)
+            bounded
+        } else {
+            // Saying so beats handing back an empty success the model cannot interpret.
+            ToolResult(
+                callId = result.callId,
+                name = result.name,
+                content = "$TOOL_RESULT_BUDGET_EXHAUSTED:${result.name}",
+                isError = true,
+                metadata = mapOf("error_code" to TOOL_RESULT_BUDGET_EXHAUSTED)
             )
-        ).result
-        remainingPayloadChars = (remainingPayloadChars - bounded.payloadCharCount()).coerceAtLeast(0)
-        bounded
+        }
+    }
+
+    private companion object {
+        /**
+         * Below this much remaining room a result cannot carry its own truncation notice, let alone content,
+         * so the call is refused instead of silently emptied.
+         */
+        private const val MIN_USEFUL_RESULT_CHARS = 512
     }
 }

@@ -9,7 +9,6 @@ import cn.nabr.chatwithchat.data.dto.anthropic.response.MessageResponseChunk
 import cn.nabr.chatwithchat.data.tool.CurrentDateTimeToolProvider
 import cn.nabr.chatwithchat.data.tool.ToolArgumentsTooLargeException
 import cn.nabr.chatwithchat.data.tool.ToolCall
-import cn.nabr.chatwithchat.data.tool.ToolCallIdentityLimitExceededException
 import cn.nabr.chatwithchat.data.tool.ToolDefinition
 import cn.nabr.chatwithchat.data.tool.ToolLoopConfig
 import cn.nabr.chatwithchat.data.tool.ToolResult
@@ -198,7 +197,7 @@ class AnthropicNativeToolAdapterTest {
     }
 
     @Test
-    fun `anthropic counts tool use blocks without input`() {
+    fun `anthropic truncates tool use blocks past the round cap`() {
         val chunks = (0..1).map { index ->
             json.decodeFromString<MessageResponseChunk>(
                 """
@@ -215,9 +214,9 @@ class AnthropicNativeToolAdapterTest {
             )
         }
 
-        assertThrows(ToolCallIdentityLimitExceededException::class.java) {
-            adapter.toolCallsFromChunks(chunks, ToolLoopConfig(maxToolCallsPerRound = 1))
-        }
+        val calls = adapter.toolCallsFromChunks(chunks, ToolLoopConfig(maxToolCallsPerRound = 1))
+
+        assertEquals(listOf("toolu_0"), calls.map { call -> call.id })
     }
 
     @Test
