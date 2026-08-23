@@ -13,9 +13,13 @@ import cn.nabr.chatwithchat.data.tool.ToolExposure
 import cn.nabr.chatwithchat.data.tool.ToolLoopConfig
 import cn.nabr.chatwithchat.data.tool.ToolProvider
 import cn.nabr.chatwithchat.data.tool.ToolRegistry
+import io.modelcontextprotocol.kotlin.sdk.types.BlobResourceContents
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
+import io.modelcontextprotocol.kotlin.sdk.types.EmbeddedResource
 import io.modelcontextprotocol.kotlin.sdk.types.ImageContent
+import io.modelcontextprotocol.kotlin.sdk.types.ResourceLink
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
+import io.modelcontextprotocol.kotlin.sdk.types.TextResourceContents
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -177,6 +181,114 @@ class McpToolProviderTest {
         assertTrue(result.content.contains("here is the chart"))
         assertTrue("the model must learn the image existed", result.content.contains("1 non-text content"))
         assertEquals("1", result.metadata["mcp_omitted_content_blocks"])
+    }
+
+    @Test
+    fun execute_forwardsTheTextOfAnEmbeddedResource() = runBlocking {
+        // The shape github-mcp-server's get_file_contents actually returns: a one-line note plus the file
+        // body as a resource. Filtering to TextContent kept the note and threw away the file.
+        val provider = provider(
+            invoker = invoker(
+                CallToolResult(
+                    listOf(
+                        TextContent("successfully downloaded text file (SHA: abc123)"),
+                        EmbeddedResource(
+                            TextResourceContents(
+                                text = "plugins { id(\"com.android.application\") }",
+                                uri = "repo://NaBr406/ChatWithChat/contents/app/build.gradle.kts",
+                                mimeType = "text/plain"
+                            )
+                        )
+                    ),
+                    false
+                )
+            )
+        )
+
+        val result = provider.execute(call("{}"), ToolLoopConfig.Default)
+
+        assertTrue(result.content.contains("successfully downloaded text file"))
+        assertTrue("the file body is the point of the call", result.content.contains("com.android.application"))
+        assertFalse(result.isError)
+        assertNull("nothing was lost, so nothing should be announced as lost", result.metadata["mcp_omitted_content_blocks"])
+    }
+
+    @Test
+    fun execute_labelsEachForwardedResourceWithItsUri() = runBlocking {
+        val provider = provider(
+            invoker = invoker(
+                CallToolResult(
+                    listOf(
+                        EmbeddedResource(TextResourceContents(text = "alpha", uri = "repo://one.kt")),
+                        EmbeddedResource(TextResourceContents(text = "beta", uri = "repo://two.kt"))
+                    ),
+                    false
+                )
+            )
+        )
+
+        val result = provider.execute(call("{}"), ToolLoopConfig.Default)
+
+        assertTrue(result.content.contains("repo://one.kt"))
+        assertTrue(result.content.contains("alpha"))
+        assertTrue(result.content.contains("repo://two.kt"))
+        assertTrue(result.content.contains("beta"))
+        assertTrue(
+            "each body must follow its own label",
+            result.content.indexOf("alpha") < result.content.indexOf("repo://two.kt")
+        )
+    }
+
+    @Test
+    fun execute_countsABlobResourceAsOmittedRatherThanForwardingBase64() = runBlocking {
+        val provider = provider(
+            invoker = invoker(
+                CallToolResult(
+                    listOf(
+                        TextContent("successfully downloaded binary file"),
+                        EmbeddedResource(
+                            BlobResourceContents(
+                                blob = "QUFBQUFBQUE=",
+                                uri = "repo://app/release.apk",
+                                mimeType = "application/vnd.android.package-archive"
+                            )
+                        )
+                    ),
+                    false
+                )
+            )
+        )
+
+        val result = provider.execute(call("{}"), ToolLoopConfig.Default)
+
+        assertFalse("base64 bytes would spend the result budget on nothing", result.content.contains("QUFBQUFBQUE="))
+        assertTrue(result.content.contains("1 non-text content"))
+        assertEquals("1", result.metadata["mcp_omitted_content_blocks"])
+    }
+
+    @Test
+    fun execute_describesAResourceLinkRatherThanCountingItAsLost() = runBlocking {
+        val provider = provider(
+            invoker = invoker(
+                CallToolResult(
+                    listOf(
+                        ResourceLink(
+                            name = "huge.json",
+                            uri = "https://example.test/huge.json",
+                            mimeType = "application/json",
+                            size = 2_097_152L
+                        )
+                    ),
+                    false
+                )
+            )
+        )
+
+        val result = provider.execute(call("{}"), ToolLoopConfig.Default)
+
+        assertTrue(result.content.contains("https://example.test/huge.json"))
+        assertTrue(result.content.contains("2097152"))
+        assertNull("the link is the payload, not a casualty", result.metadata["mcp_omitted_content_blocks"])
     }
 
     @Test

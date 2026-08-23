@@ -26,7 +26,7 @@ class ToolApprovalSessionGrantTest {
         val decision = harness.broker.awaitApproval(call(READ_TOOL), CHAT_ID)
 
         assertTrue(decision is ToolApprovalBroker.Decision.WithContext)
-        assertNull("no dialog should have been raised", harness.broker.pending.value)
+        assertNull("no dialog should have been raised", harness.broker.pending)
     }
 
     @Test
@@ -85,7 +85,7 @@ class ToolApprovalSessionGrantTest {
             CHAT_ID
         )
         assertTrue(second is ToolApprovalBroker.Decision.WithContext)
-        assertNull(harness.broker.pending.value)
+        assertNull(harness.broker.pending)
     }
 
     @Test
@@ -159,13 +159,54 @@ class ToolApprovalSessionGrantTest {
         assertTrue(grants.isGranted(OTHER_CHAT_ID, SCOPE_READ))
     }
 
+    /**
+     * A prompt nobody is there to answer must not silence every other conversation's.
+     *
+     * The queue is app-wide and used to publish only its head, so an unanswered prompt from a chat the
+     * user had navigated away from occupied the single slot indefinitely — the wait has no timeout, and
+     * cancelling the turn was the only thing that ever freed it. Every other chat's dialog was then
+     * unreachable, which made those turns hang too.
+     */
+    @Test
+    fun anUnansweredPromptDoesNotHideAnotherConversationsPrompt() = runBlocking {
+        val harness = harness()
+
+        val abandoned = launch { harness.broker.awaitApproval(call(READ_TOOL), CHAT_ID) }
+        val abandonedPrompt = harness.broker.awaitPending()
+        val second = launch { harness.broker.awaitApproval(call(WRITE_TOOL), OTHER_CHAT_ID) }
+        harness.broker.awaitQueued(2)
+
+        val forOtherChat = harness.broker.queued.value.firstOrNull { it.chatId == OTHER_CHAT_ID }
+        assertNotNull("the second conversation's prompt must be reachable", forOtherChat)
+        assertEquals(WRITE_TOOL, forOtherChat!!.call.name)
+        // Answering it must not depend on the first one being resolved.
+        harness.broker.deny(forOtherChat.requestId)
+        second.join()
+
+        assertEquals(
+            "the abandoned prompt is still waiting, as it should be",
+            listOf(abandonedPrompt.requestId),
+            harness.broker.queued.value.map { it.requestId }
+        )
+        harness.broker.deny(abandonedPrompt.requestId)
+        abandoned.join()
+    }
+
     /** The broker publishes the pending approval before suspending, so yielding is enough to observe it. */
     private suspend fun ToolApprovalBroker.awaitPending(): ToolApprovalBroker.PendingApproval {
         repeat(MAX_YIELDS) {
-            pending.value?.let { current -> return current }
+            pending?.let { current -> return current }
             yield()
         }
         error("no pending approval was published")
+    }
+
+    private suspend fun ToolApprovalBroker.awaitQueued(size: Int) {
+        repeat(MAX_YIELDS) {
+            if (queued.value.size >= size) return
+            yield()
+        }
+        error("only ${queued.value.size} of $size approvals were published")
     }
 
     private class Harness(

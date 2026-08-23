@@ -15,7 +15,11 @@ import cn.nabr.chatwithchat.data.tool.ToolResult
 import cn.nabr.chatwithchat.data.tool.ToolSecurityPolicy
 import cn.nabr.chatwithchat.data.tool.ToolSettingsMetadata
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
+import io.modelcontextprotocol.kotlin.sdk.types.ContentBlock
+import io.modelcontextprotocol.kotlin.sdk.types.EmbeddedResource
+import io.modelcontextprotocol.kotlin.sdk.types.ResourceLink
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
+import io.modelcontextprotocol.kotlin.sdk.types.TextResourceContents
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -162,18 +166,28 @@ class McpToolProvider(
     /**
      * Maps an MCP result onto [ToolResult].
      *
-     * Only text crosses over: [ToolResult] carries text plus structured JSON, so images, audio, and
-     * embedded resources have nowhere to go. They are counted and announced rather than dropped in
-     * silence, so the model can say the content exists instead of acting as though the tool returned
-     * nothing. `structuredContent` maps across directly.
+     * Text crosses over, and so does the text of an embedded resource. A `resource` block is how a server
+     * hands back a document it just read, not an attachment it wants rendered: github-mcp-server returns
+     * every file body that way — a [TextResourceContents] sitting beside a one-line "successfully
+     * downloaded text file" note — so filtering to [TextContent] told the model the read had succeeded and
+     * then handed it none of the file. That is worse than an outright failure, because the result is not
+     * even marked as an error: the model sees a successful read of nothing, and retries the same call in
+     * different shapes until the round budget is gone. A [ResourceLink] is forwarded as its own
+     * description, since there the link *is* the payload.
+     *
+     * Bytes still have nowhere to go: [ToolResult] carries text plus structured JSON, so images, audio and
+     * blob resources are counted and announced rather than dropped in silence, and the model can say the
+     * content exists instead of acting as though the tool returned nothing. `structuredContent` maps
+     * across directly.
+     *
+     * Nothing is clipped here. `ToolExecutor` bounds the result against [MCP_MAX_RESULT_CHARS] and attaches
+     * a truncation notice; a silent cut here is what would make a large file unreadable rather than short.
      */
     private fun CallToolResult.toToolResult(call: ToolCall): ToolResult {
-        val textLines = content
-            .filterIsInstance<TextContent>()
-            .mapNotNull { block -> block.text?.takeIf { text -> text.isNotBlank() } }
-        val nonTextBlocks = content.count { block -> block !is TextContent }
+        val forwarded = content.map { block -> block.textForModelOrNull() }
+        val nonTextBlocks = forwarded.count { text -> text == null }
         val body = buildList {
-            addAll(textLines)
+            addAll(forwarded.filterNotNull().filter { text -> text.isNotBlank() })
             if (nonTextBlocks > 0) {
                 add("($nonTextBlocks non-text content block(s) omitted: this app forwards text only)")
             }
@@ -190,6 +204,40 @@ class McpToolProvider(
                 if (nonTextBlocks > 0) put("mcp_omitted_content_blocks", nonTextBlocks.toString())
             }
         )
+    }
+
+    /**
+     * The block as text the model can read, or null when it carries bytes that cannot cross over.
+     *
+     * A text resource is prefixed with its uri because a tool may return several of them in one result —
+     * "read these four files" is one call — and an unlabelled run of bodies leaves the model guessing which
+     * is which. One short line per resource is cheaper than that ambiguity.
+     */
+    private fun ContentBlock.textForModelOrNull(): String? = when (this) {
+        is TextContent -> text
+        is EmbeddedResource -> when (val contents = resource) {
+            is TextResourceContents -> contents.uri
+                .takeIf { uri -> uri.isNotBlank() }
+                ?.let { uri -> "[resource $uri]\n${contents.text}" }
+                ?: contents.text
+            // A blob is base64 bytes: forwarding it would spend the whole result budget on something the
+            // model cannot read, so it is counted as omitted like an image.
+            else -> null
+        }
+        // The link is the payload here — a server sends one instead of the content, typically because the
+        // content is too large to embed — so describing it loses nothing.
+        is ResourceLink -> describeForModel()
+        else -> null
+    }
+
+    private fun ResourceLink.describeForModel(): String = buildString {
+        append("(resource link: ")
+        append(title?.takeIf { value -> value.isNotBlank() } ?: name)
+        append(" — ").append(uri)
+        mimeType?.takeIf { value -> value.isNotBlank() }?.let { value -> append(", ").append(value) }
+        size?.let { bytes -> append(", ").append(bytes).append(" bytes") }
+        description?.takeIf { value -> value.isNotBlank() }?.let { value -> append("; ").append(value) }
+        append(")")
     }
 
     private fun ToolCall.argumentsObjectOrNull(): JsonObject? = runCatching {

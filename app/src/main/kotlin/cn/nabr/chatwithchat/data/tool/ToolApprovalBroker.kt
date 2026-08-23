@@ -22,7 +22,15 @@ class ToolApprovalBroker @Inject constructor(
          * False for a tool that did not opt in, and false outside a persisted conversation, so the UI never
          * offers a grant that could not be honoured.
          */
-        val canGrantForSession: Boolean = false
+        val canGrantForSession: Boolean = false,
+        /**
+         * The conversation this call belongs to, so a screen can pick out its own prompts.
+         *
+         * Zero means "not a persisted conversation yet" — a chat still on its first turn — and is a real
+         * routing value, not a missing one: the app only ever has one unsaved chat at a time, and its
+         * messages carry the same zero until the first save assigns an id.
+         */
+        val chatId: Int = 0
     )
 
     sealed interface Decision {
@@ -39,8 +47,22 @@ class ToolApprovalBroker @Inject constructor(
 
     private val lock = Any()
     private val queue = ArrayDeque<ActiveApproval>()
-    private val _pending = MutableStateFlow<PendingApproval?>(null)
-    val pending = _pending.asStateFlow()
+
+    /**
+     * Every prompt currently waiting, oldest first — not just the one at the head.
+     *
+     * Publishing only the head made one unanswered prompt block every other conversation's: the flow is
+     * app-wide and a screen showed whatever was in it, so a chat left waiting off-screen kept the slot
+     * and no other chat's dialog could appear. Callers filter by [PendingApproval.chatId] and take the
+     * first match, which is the same prompt they used to get whenever there was only one conversation
+     * involved.
+     */
+    private val _queued = MutableStateFlow<List<PendingApproval>>(emptyList())
+    val queued = _queued.asStateFlow()
+
+    /** The oldest waiting prompt across every conversation. Prefer [queued] filtered by chat. */
+    val pending: PendingApproval?
+        get() = _queued.value.firstOrNull()
 
     /**
      * Obtains authorization for [call], prompting only when no conversation-scoped grant already covers it.
@@ -63,7 +85,8 @@ class ToolApprovalBroker @Inject constructor(
                 requestId = UUID.randomUUID().toString(),
                 call = call,
                 request = request,
-                canGrantForSession = scopeKey != null && chatId > 0
+                canGrantForSession = scopeKey != null && chatId > 0,
+                chatId = chatId
             ),
             chatId = chatId,
             scopeKey = scopeKey,
@@ -135,6 +158,6 @@ class ToolApprovalBroker @Inject constructor(
     }
 
     private fun publishPendingLocked() {
-        _pending.value = queue.firstOrNull()?.pending
+        _queued.value = queue.map { active -> active.pending }
     }
 }
