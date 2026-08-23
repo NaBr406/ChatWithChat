@@ -6,10 +6,9 @@ import cn.nabr.chatwithchat.data.dto.openai.request.ResponseInputItem
 import cn.nabr.chatwithchat.data.dto.openai.request.ResponsesCompactRequest
 import cn.nabr.chatwithchat.data.model.ClientType
 import cn.nabr.chatwithchat.data.network.OpenAIAPI
+import cn.nabr.chatwithchat.data.network.providerEndpoint
 import cn.nabr.chatwithchat.data.network.OpenAICompactionException
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 
 /** Why native compaction could not be used for a request. */
 enum class NativeCompactionFailure(val code: String) {
@@ -61,8 +60,7 @@ sealed interface NativeCompactionInitOutcome {
  * summary of a summary.
  */
 class OpenAINativeCompactionService(
-    private val openAIAPI: OpenAIAPI,
-    private val clientMutex: Mutex = Mutex()
+    private val openAIAPI: OpenAIAPI
 ) {
 
     fun supports(platform: PlatformV2): Boolean =
@@ -133,20 +131,17 @@ class OpenAINativeCompactionService(
         }
 
         return try {
-            val result = clientMutex.withLock {
-                openAIAPI.setToken(platform.token)
-                openAIAPI.setAPIUrl(platform.apiUrl)
-                openAIAPI.compactResponses(
-                    request = ResponsesCompactRequest(
-                        model = platform.model,
-                        input = input,
-                        // Explicitly false: the compaction chain is replayed from local storage, so
-                        // it must never depend on server-retained state.
-                        store = false
-                    ),
-                    timeoutSeconds = platform.timeout
-                )
-            }
+            val result = openAIAPI.compactResponses(
+                request = ResponsesCompactRequest(
+                    model = platform.model,
+                    input = input,
+                    // Explicitly false: the compaction chain is replayed from local storage, so
+                    // it must never depend on server-retained state.
+                    store = false
+                ),
+                timeoutSeconds = platform.timeout,
+                endpoint = platform.providerEndpoint()
+            )
             NativeCompactionInitOutcome.Initialized(
                 outputWindowJson = result.outputWindowJson,
                 itemCount = result.outputItemCount

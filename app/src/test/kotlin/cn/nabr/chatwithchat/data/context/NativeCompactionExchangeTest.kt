@@ -29,6 +29,7 @@ import cn.nabr.chatwithchat.data.memory.RecordingWorkEnqueuer
 import cn.nabr.chatwithchat.data.model.ClientType
 import cn.nabr.chatwithchat.data.network.OpenAIAPI
 import cn.nabr.chatwithchat.data.network.OpenAICompactionException
+import cn.nabr.chatwithchat.data.network.ProviderEndpoint
 import cn.nabr.chatwithchat.data.network.UploadedProviderFile
 import java.time.Clock
 import java.time.Instant
@@ -685,26 +686,24 @@ class NativeCompactionExchangeTest {
      * the network — which is itself the bug.
      */
     private class UnusedOpenAIAPI : OpenAIAPI {
-        override fun setToken(token: String?) = unexpected()
-
-        override fun setAPIUrl(url: String) = unexpected()
-
         override fun streamChatCompletion(
             request: ChatCompletionRequest,
-            timeoutSeconds: Int
+            timeoutSeconds: Int,
+            endpoint: ProviderEndpoint
         ): Flow<ChatCompletionChunk> = unexpected()
 
-        override fun streamResponses(request: ResponsesRequest, timeoutSeconds: Int): Flow<ResponsesStreamEvent> =
+        override fun streamResponses(request: ResponsesRequest, timeoutSeconds: Int, endpoint: ProviderEndpoint): Flow<ResponsesStreamEvent> =
             unexpected()
 
-        override suspend fun uploadFile(filePath: String, fileName: String, mimeType: String): UploadedProviderFile =
+        override suspend fun uploadFile(filePath: String, fileName: String, mimeType: String, endpoint: ProviderEndpoint): UploadedProviderFile =
             unexpected()
 
-        override suspend fun isFileAvailable(fileId: String): Boolean = unexpected()
+        override suspend fun isFileAvailable(fileId: String, endpoint: ProviderEndpoint): Boolean = unexpected()
 
         override suspend fun compactResponses(
             request: ResponsesCompactRequest,
-            timeoutSeconds: Int
+            timeoutSeconds: Int,
+            endpoint: ProviderEndpoint
         ): ResponsesCompactResult = unexpected()
 
         private fun unexpected(): Nothing =

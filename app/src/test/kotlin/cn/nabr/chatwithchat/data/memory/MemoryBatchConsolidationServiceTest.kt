@@ -20,6 +20,7 @@ import cn.nabr.chatwithchat.data.model.ClientType
 import cn.nabr.chatwithchat.data.network.AnthropicAPI
 import cn.nabr.chatwithchat.data.network.GoogleAPI
 import cn.nabr.chatwithchat.data.network.OpenAIAPI
+import cn.nabr.chatwithchat.data.network.ProviderEndpoint
 import cn.nabr.chatwithchat.data.network.UploadedProviderFile
 import java.io.File
 import java.lang.reflect.InvocationHandler
@@ -2276,16 +2277,12 @@ private class BaselineMemoryOpenAIAPI(
     var lastChatCompletionRequest: ChatCompletionRequest? = null
         private set
 
-    override fun setToken(token: String?) {
-        configuredToken = token
-    }
-
-    override fun setAPIUrl(url: String) = Unit
-
     override fun streamChatCompletion(
         request: ChatCompletionRequest,
-        timeoutSeconds: Int
+        timeoutSeconds: Int,
+        endpoint: ProviderEndpoint
     ): Flow<ChatCompletionChunk> {
+        configuredToken = endpoint.token
         lastChatCompletionRequest = request
         val content = response ?: return emptyFlow()
         return flowOf(
@@ -2295,21 +2292,23 @@ private class BaselineMemoryOpenAIAPI(
         )
     }
 
-    override fun streamResponses(request: ResponsesRequest, timeoutSeconds: Int): Flow<ResponsesStreamEvent> =
+    override fun streamResponses(request: ResponsesRequest, timeoutSeconds: Int, endpoint: ProviderEndpoint): Flow<ResponsesStreamEvent> =
         emptyFlow()
 
     override suspend fun compactResponses(
         request: ResponsesCompactRequest,
-        timeoutSeconds: Int
+        timeoutSeconds: Int,
+        endpoint: ProviderEndpoint
     ): ResponsesCompactResult = error("Not used")
 
     override suspend fun uploadFile(
         filePath: String,
         fileName: String,
-        mimeType: String
+        mimeType: String,
+        endpoint: ProviderEndpoint
     ): UploadedProviderFile = error("Not used")
 
-    override suspend fun isFileAvailable(fileId: String): Boolean = false
+    override suspend fun isFileAvailable(fileId: String, endpoint: ProviderEndpoint): Boolean = false
 }
 
 private enum class CommitInterruptionPoint {

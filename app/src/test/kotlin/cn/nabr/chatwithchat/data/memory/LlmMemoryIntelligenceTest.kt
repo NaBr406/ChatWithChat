@@ -24,6 +24,7 @@ import cn.nabr.chatwithchat.data.model.ClientType
 import cn.nabr.chatwithchat.data.network.AnthropicAPI
 import cn.nabr.chatwithchat.data.network.GoogleAPI
 import cn.nabr.chatwithchat.data.network.OpenAIAPI
+import cn.nabr.chatwithchat.data.network.ProviderEndpoint
 import cn.nabr.chatwithchat.data.network.UploadedProviderFile
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
@@ -616,10 +617,7 @@ private class RecordingOpenAIAPI(
     var lastChatTimeoutSeconds: Int? = null
     var lastResponsesTimeoutSeconds: Int? = null
 
-    override fun setToken(token: String?) = Unit
-    override fun setAPIUrl(url: String) = Unit
-
-    override fun streamChatCompletion(request: ChatCompletionRequest, timeoutSeconds: Int): Flow<ChatCompletionChunk> {
+    override fun streamChatCompletion(request: ChatCompletionRequest, timeoutSeconds: Int, endpoint: ProviderEndpoint): Flow<ChatCompletionChunk> {
         streamChatCompletionCalls += 1
         lastChatRequest = request
         lastSystemPrompt = request.messages.firstOrNull()?.content?.filterIsInstance<OpenAiTextContent>()
@@ -629,7 +627,7 @@ private class RecordingOpenAIAPI(
         return chatChunkProvider?.invoke() ?: chatChunks
     }
 
-    override fun streamResponses(request: ResponsesRequest, timeoutSeconds: Int): Flow<ResponsesStreamEvent> {
+    override fun streamResponses(request: ResponsesRequest, timeoutSeconds: Int, endpoint: ProviderEndpoint): Flow<ResponsesStreamEvent> {
         streamResponsesCalls += 1
         lastResponsesRequest = request
         lastSystemPrompt = request.instructions
@@ -639,12 +637,13 @@ private class RecordingOpenAIAPI(
 
     override suspend fun compactResponses(
         request: ResponsesCompactRequest,
-        timeoutSeconds: Int
+        timeoutSeconds: Int,
+        endpoint: ProviderEndpoint
     ): ResponsesCompactResult = error("Not used")
 
-    override suspend fun uploadFile(filePath: String, fileName: String, mimeType: String): UploadedProviderFile =
+    override suspend fun uploadFile(filePath: String, fileName: String, mimeType: String, endpoint: ProviderEndpoint): UploadedProviderFile =
         error("Not used")
-    override suspend fun isFileAvailable(fileId: String): Boolean = error("Not used")
+    override suspend fun isFileAvailable(fileId: String, endpoint: ProviderEndpoint): Boolean = error("Not used")
 }
 
 private class RecordingAnthropicAPI(
@@ -654,12 +653,10 @@ private class RecordingAnthropicAPI(
     var lastRequest: cn.nabr.chatwithchat.data.dto.anthropic.request.MessageRequest? = null
     var lastTimeoutSeconds: Int? = null
 
-    override fun setToken(token: String?) = Unit
-    override fun setAPIUrl(url: String) = Unit
-
     override fun streamChatMessage(
         messageRequest: cn.nabr.chatwithchat.data.dto.anthropic.request.MessageRequest,
-        timeoutSeconds: Int
+        timeoutSeconds: Int,
+        endpoint: ProviderEndpoint
     ): Flow<cn.nabr.chatwithchat.data.dto.anthropic.response.MessageResponseChunk> {
         streamCalls += 1
         lastRequest = messageRequest
@@ -667,9 +664,9 @@ private class RecordingAnthropicAPI(
         return chunks
     }
 
-    override suspend fun uploadFile(filePath: String, fileName: String, mimeType: String): UploadedProviderFile =
+    override suspend fun uploadFile(filePath: String, fileName: String, mimeType: String, endpoint: ProviderEndpoint): UploadedProviderFile =
         error("Not used")
-    override suspend fun isFileAvailable(fileId: String): Boolean = error("Not used")
+    override suspend fun isFileAvailable(fileId: String, endpoint: ProviderEndpoint): Boolean = error("Not used")
 }
 
 private class RecordingGoogleAPI(
@@ -680,13 +677,11 @@ private class RecordingGoogleAPI(
     var lastModel: String? = null
     var lastTimeoutSeconds: Int? = null
 
-    override fun setToken(token: String?) = Unit
-    override fun setAPIUrl(url: String) = Unit
-
     override fun streamGenerateContent(
         request: cn.nabr.chatwithchat.data.dto.google.request.GenerateContentRequest,
         model: String,
-        timeoutSeconds: Int
+        timeoutSeconds: Int,
+        endpoint: ProviderEndpoint
     ): Flow<GenerateContentResponse> {
         streamCalls += 1
         lastRequest = request
@@ -695,9 +690,9 @@ private class RecordingGoogleAPI(
         return responses
     }
 
-    override suspend fun uploadFile(filePath: String, fileName: String, mimeType: String): UploadedProviderFile =
+    override suspend fun uploadFile(filePath: String, fileName: String, mimeType: String, endpoint: ProviderEndpoint): UploadedProviderFile =
         error("Not used")
-    override suspend fun isFileAvailable(fileName: String): Boolean = error("Not used")
+    override suspend fun isFileAvailable(fileName: String, endpoint: ProviderEndpoint): Boolean = error("Not used")
 }
 
 private class RecordingMemoryActivityLogger : MemoryActivityLogger {

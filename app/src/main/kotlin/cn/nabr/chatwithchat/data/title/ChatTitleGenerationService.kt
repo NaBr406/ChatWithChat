@@ -19,10 +19,13 @@ import kotlinx.coroutines.withTimeout
  * nobody left to name the chat for.
  *
  * The network seam is [ContextCompactionModelClient], reused rather than reimplemented. It is
- * already exactly this shape — one system prompt, one user payload, a token cap, no tool plumbing —
- * and it carries the mutex that stops concurrent auxiliary calls from interleaving `setToken` on the
- * shared API singletons. A third hand-rolled copy of the five-provider fan-out would be the actual
- * bug risk here.
+ * already exactly this shape — one system prompt, one user payload, a token cap, no tool plumbing.
+ * A third hand-rolled copy of the five-provider fan-out would be the actual bug risk here.
+ *
+ * That reuse also matters because this runs on the application scope, outliving the chat screen: it
+ * can land while the user's next message is already streaming. Credentials travel per call as a
+ * `ProviderEndpoint`, so an overlapping title call cannot send this chat's request to another
+ * platform's host.
  */
 class ChatTitleGenerationService(
     private val modelClient: ContextCompactionModelClient

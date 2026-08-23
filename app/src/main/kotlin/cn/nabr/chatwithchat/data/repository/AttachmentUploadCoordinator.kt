@@ -13,6 +13,7 @@ import cn.nabr.chatwithchat.data.network.AnthropicAPI
 import cn.nabr.chatwithchat.data.network.GoogleAPI
 import cn.nabr.chatwithchat.data.network.OpenAIAPI
 import cn.nabr.chatwithchat.data.network.ProviderFileUploadException
+import cn.nabr.chatwithchat.data.network.providerEndpoint
 import cn.nabr.chatwithchat.util.AttachmentNaming
 import cn.nabr.chatwithchat.util.FileUtils
 import java.io.File
@@ -58,15 +59,15 @@ class AttachmentUploadCoordinator @Inject constructor(
         // 谁也不认的 file id，然后拼出非法的 image/file content block。文档靠内联文本投递。
         val updatedAttachments = when (platform.compatibleType) {
             ClientType.OPENAI -> message.attachments.map { attachment ->
-                if (isImageAttachment(attachment)) ensureOpenAIRef(attachment, platform.uid) else attachment
+                if (isImageAttachment(attachment)) ensureOpenAIRef(attachment, platform) else attachment
             }
 
             ClientType.ANTHROPIC -> message.attachments.map { attachment ->
-                if (isImageAttachment(attachment)) ensureAnthropicRef(attachment, platform.uid) else attachment
+                if (isImageAttachment(attachment)) ensureAnthropicRef(attachment, platform) else attachment
             }
 
             ClientType.GOOGLE -> message.attachments.map { attachment ->
-                if (isImageAttachment(attachment)) ensureGoogleRef(attachment, platform.uid) else attachment
+                if (isImageAttachment(attachment)) ensureGoogleRef(attachment, platform) else attachment
             }
 
             else -> message.attachments
@@ -103,9 +104,11 @@ class AttachmentUploadCoordinator @Inject constructor(
         }
     }
 
-    private suspend fun ensureOpenAIRef(attachment: ChatAttachment, platformUid: String): ChatAttachment {
+    private suspend fun ensureOpenAIRef(attachment: ChatAttachment, platform: PlatformV2): ChatAttachment {
+        val platformUid = platform.uid
+        val endpoint = platform.providerEndpoint()
         val existingRef = attachment.providerRefFor(platformUid)
-        if (existingRef?.remoteType == AttachmentRemoteType.OPENAI_FILE && openAIAPI.isFileAvailable(existingRef.remoteId)) {
+        if (existingRef?.remoteType == AttachmentRemoteType.OPENAI_FILE && openAIAPI.isFileAvailable(existingRef.remoteId, endpoint)) {
             return attachment
         }
 
@@ -113,7 +116,8 @@ class AttachmentUploadCoordinator @Inject constructor(
             openAIAPI.uploadFile(
                 filePath = resolveUploadFilePath(attachment),
                 fileName = attachment.resolvedDisplayName,
-                mimeType = resolveMimeType(attachment)
+                mimeType = resolveMimeType(attachment),
+                endpoint = endpoint
             )
         } catch (e: ProviderFileUploadException) {
             if (e.isEndpointUnavailable) {
@@ -132,16 +136,19 @@ class AttachmentUploadCoordinator @Inject constructor(
         )
     }
 
-    private suspend fun ensureAnthropicRef(attachment: ChatAttachment, platformUid: String): ChatAttachment {
+    private suspend fun ensureAnthropicRef(attachment: ChatAttachment, platform: PlatformV2): ChatAttachment {
+        val platformUid = platform.uid
+        val endpoint = platform.providerEndpoint()
         val existingRef = attachment.providerRefFor(platformUid)
-        if (existingRef?.remoteType == AttachmentRemoteType.ANTHROPIC_FILE && anthropicAPI.isFileAvailable(existingRef.remoteId)) {
+        if (existingRef?.remoteType == AttachmentRemoteType.ANTHROPIC_FILE && anthropicAPI.isFileAvailable(existingRef.remoteId, endpoint)) {
             return attachment
         }
 
         val uploadFile = anthropicAPI.uploadFile(
             filePath = resolveUploadFilePath(attachment),
             fileName = attachment.resolvedDisplayName,
-            mimeType = resolveMimeType(attachment)
+            mimeType = resolveMimeType(attachment),
+            endpoint = endpoint
         )
         return attachment.upsertProviderRef(
             AttachmentProviderRef(
@@ -154,12 +161,14 @@ class AttachmentUploadCoordinator @Inject constructor(
         )
     }
 
-    private suspend fun ensureGoogleRef(attachment: ChatAttachment, platformUid: String): ChatAttachment {
+    private suspend fun ensureGoogleRef(attachment: ChatAttachment, platform: PlatformV2): ChatAttachment {
+        val platformUid = platform.uid
+        val endpoint = platform.providerEndpoint()
         val existingRef = attachment.providerRefFor(platformUid)
         if (
             existingRef?.remoteType == AttachmentRemoteType.GOOGLE_FILE &&
             !existingRef.remoteName.isNullOrBlank() &&
-            googleAPI.isFileAvailable(existingRef.remoteName)
+            googleAPI.isFileAvailable(existingRef.remoteName, endpoint)
         ) {
             return attachment
         }
@@ -167,7 +176,8 @@ class AttachmentUploadCoordinator @Inject constructor(
         val uploadFile = googleAPI.uploadFile(
             filePath = resolveUploadFilePath(attachment),
             fileName = attachment.resolvedDisplayName,
-            mimeType = resolveMimeType(attachment)
+            mimeType = resolveMimeType(attachment),
+            endpoint = endpoint
         )
         return attachment.upsertProviderRef(
             AttachmentProviderRef(

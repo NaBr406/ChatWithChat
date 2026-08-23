@@ -28,22 +28,16 @@ class GoogleAPIImpl @Inject constructor(
     private val networkClient: NetworkClient
 ) : GoogleAPI {
 
-    private var token: String? = null
-    private var apiUrl: String = "https://generativelanguage.googleapis.com"
-
-    override fun setToken(token: String?) {
-        this.token = token
-    }
-
-    override fun setAPIUrl(url: String) {
-        this.apiUrl = url
-    }
-
-    override suspend fun uploadFile(filePath: String, fileName: String, mimeType: String): UploadedProviderFile {
+    override suspend fun uploadFile(
+        filePath: String,
+        fileName: String,
+        mimeType: String,
+        endpoint: ProviderEndpoint
+    ): UploadedProviderFile {
         val file = File(filePath)
-        val startEndpoint = joinApiEndpoint(apiUrl, "upload/v1beta/files")
+        val startEndpoint = joinApiEndpoint(endpoint.apiUrl, "upload/v1beta/files")
         val uploadUrl = networkClient().preparePost(startEndpoint) {
-            parameter("key", token ?: "")
+            parameter("key", endpoint.token ?: "")
             contentType(ContentType.Application.Json)
             header("X-Goog-Upload-Protocol", "resumable")
             header("X-Goog-Upload-Command", "start")
@@ -91,11 +85,11 @@ class GoogleAPIImpl @Inject constructor(
         )
     }
 
-    override suspend fun isFileAvailable(fileName: String): Boolean {
-        val endpoint = joinApiEndpoint(apiUrl, "v1beta/$fileName")
+    override suspend fun isFileAvailable(fileName: String, endpoint: ProviderEndpoint): Boolean {
+        val url = joinApiEndpoint(endpoint.apiUrl, "v1beta/$fileName")
         return try {
-            networkClient().prepareGet(endpoint) {
-                parameter("key", token ?: "")
+            networkClient().prepareGet(url) {
+                parameter("key", endpoint.token ?: "")
             }.execute { response ->
                 if (!response.status.isSuccess()) {
                     false
@@ -109,13 +103,18 @@ class GoogleAPIImpl @Inject constructor(
         }
     }
 
-    override fun streamGenerateContent(request: GenerateContentRequest, model: String, timeoutSeconds: Int): Flow<GenerateContentResponse> = flow {
+    override fun streamGenerateContent(
+        request: GenerateContentRequest,
+        model: String,
+        timeoutSeconds: Int,
+        endpoint: ProviderEndpoint
+    ): Flow<GenerateContentResponse> = flow {
         try {
-            val endpoint = joinApiEndpoint(apiUrl, "v1beta/models/$model:streamGenerateContent")
+            val url = joinApiEndpoint(endpoint.apiUrl, "v1beta/models/$model:streamGenerateContent")
 
-            networkClient().preparePost(endpoint) {
+            networkClient().preparePost(url) {
                 applyPlatformStreamingTimeout(timeoutSeconds)
-                parameter("key", token ?: "")
+                parameter("key", endpoint.token ?: "")
                 parameter("alt", "sse")
                 contentType(ContentType.Application.Json)
                 setBody(NetworkClient.json.encodeToString(request))

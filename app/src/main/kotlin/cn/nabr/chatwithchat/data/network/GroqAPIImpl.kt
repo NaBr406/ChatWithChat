@@ -30,19 +30,18 @@ class GroqAPIImpl @Inject constructor(
     override fun streamChatCompletion(
         request: GroqChatCompletionRequest,
         timeoutSeconds: Int,
-        token: String?,
-        apiUrl: String
+        endpoint: ProviderEndpoint
     ): Flow<GroqChatCompletionChunk> = flow {
         try {
-            val resolvedApiUrl = apiUrl.ifBlank { ModelConstants.GROQ_API_URL }
-            val endpoint = if (resolvedApiUrl.endsWith("/")) "${resolvedApiUrl}v1/chat/completions" else "$resolvedApiUrl/v1/chat/completions"
+            val resolvedApiUrl = endpoint.apiUrl.ifBlank { ModelConstants.GROQ_API_URL }
+            val url = if (resolvedApiUrl.endsWith("/")) "${resolvedApiUrl}v1/chat/completions" else "$resolvedApiUrl/v1/chat/completions"
 
-            networkClient().preparePost(endpoint) {
+            networkClient().preparePost(url) {
                 applyPlatformStreamingTimeout(timeoutSeconds)
                 contentType(ContentType.Application.Json)
                 setBody(NetworkClient.openAIJson.encodeToString(request))
                 accept(if (request.stream) ContentType.Text.EventStream else ContentType.Application.Json)
-                token?.let { bearerAuth(it) }
+                endpoint.token?.let { bearerAuth(it) }
             }.execute { response ->
                 if (!response.status.isSuccess()) {
                     val errorBody = response.body<String>()

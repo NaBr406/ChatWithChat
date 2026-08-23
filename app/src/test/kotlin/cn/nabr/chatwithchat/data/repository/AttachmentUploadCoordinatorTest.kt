@@ -20,6 +20,7 @@ import cn.nabr.chatwithchat.data.model.ClientType
 import cn.nabr.chatwithchat.data.network.AnthropicAPI
 import cn.nabr.chatwithchat.data.network.GoogleAPI
 import cn.nabr.chatwithchat.data.network.OpenAIAPI
+import cn.nabr.chatwithchat.data.network.ProviderEndpoint
 import cn.nabr.chatwithchat.data.network.ProviderFileUploadException
 import cn.nabr.chatwithchat.data.network.UploadedProviderFile
 import java.io.File
@@ -253,64 +254,115 @@ class AttachmentUploadCoordinatorTest {
         }
     }
 
+    /**
+     * The upload used to inherit whatever endpoint the previous chat request had left on the shared
+     * `@Singleton` client, because this path never set one: two OpenAI-compatible platforms with
+     * different keys and hosts would upload to whichever had run last. Both calls the coordinator
+     * makes are checked, since probing an existing file against the wrong host reports it missing and
+     * silently re-uploads.
+     */
+    @Test
+    fun `upload and availability probe both use the requested platform's own endpoint`() = runBlocking {
+        val openAIAPI = FakeOpenAIAPI()
+        val coordinator = AttachmentUploadCoordinator(openAIAPI, FakeAnthropicAPI(), FakeGoogleAPI())
+        val tempFile = File.createTempFile("attachment", ".png").apply {
+            writeBytes(ByteArray(32))
+            deleteOnExit()
+        }
+
+        coordinator.ensureMessageAttachmentsForPlatform(
+            MessageV2(
+                content = "describe",
+                platformType = null,
+                attachments = listOf(
+                    ChatAttachment(
+                        localFilePath = tempFile.absolutePath,
+                        preparedFilePath = tempFile.absolutePath,
+                        displayName = tempFile.name,
+                        mimeType = "image/png",
+                        sizeBytes = tempFile.length(),
+                        providerRefs = listOf(
+                            AttachmentProviderRef(
+                                platformUid = "second-openai-platform",
+                                remoteType = AttachmentRemoteType.OPENAI_FILE,
+                                remoteId = "file-from-the-other-host",
+                                mimeType = "image/png",
+                                uploadedAt = 1L
+                            )
+                        )
+                    )
+                )
+            ),
+            PlatformV2(
+                uid = "second-openai-platform",
+                name = "Second OpenAI-compatible",
+                compatibleType = ClientType.OPENAI,
+                apiUrl = "https://second.example.com/",
+                token = "second-platform-key",
+                model = "gpt-4.1"
+            )
+        )
+
+        val expected = ProviderEndpoint(token = "second-platform-key", apiUrl = "https://second.example.com/")
+        assertEquals(expected, openAIAPI.availabilityEndpoint)
+        assertEquals(expected, openAIAPI.uploadEndpoint)
+    }
+
     private class FakeOpenAIAPI(
         private val isAvailable: Boolean = false,
         private val uploadFailure: ProviderFileUploadException? = null
     ) : OpenAIAPI {
         var uploadCount = 0
+        var uploadEndpoint: ProviderEndpoint? = null
+        var availabilityEndpoint: ProviderEndpoint? = null
 
-        override fun setToken(token: String?) = Unit
+        override fun streamChatCompletion(request: ChatCompletionRequest, timeoutSeconds: Int, endpoint: ProviderEndpoint): Flow<ChatCompletionChunk> = emptyFlow()
 
-        override fun setAPIUrl(url: String) = Unit
-
-        override fun streamChatCompletion(request: ChatCompletionRequest, timeoutSeconds: Int): Flow<ChatCompletionChunk> = emptyFlow()
-
-        override fun streamResponses(request: ResponsesRequest, timeoutSeconds: Int): Flow<ResponsesStreamEvent> = emptyFlow()
+        override fun streamResponses(request: ResponsesRequest, timeoutSeconds: Int, endpoint: ProviderEndpoint): Flow<ResponsesStreamEvent> = emptyFlow()
 
         override suspend fun compactResponses(
             request: ResponsesCompactRequest,
-            timeoutSeconds: Int
+            timeoutSeconds: Int,
+            endpoint: ProviderEndpoint
         ): ResponsesCompactResult = error("Not used")
 
-        override suspend fun uploadFile(filePath: String, fileName: String, mimeType: String): UploadedProviderFile {
+        override suspend fun uploadFile(filePath: String, fileName: String, mimeType: String, endpoint: ProviderEndpoint): UploadedProviderFile {
             uploadCount += 1
+            uploadEndpoint = endpoint
             uploadFailure?.let { throw it }
             return UploadedProviderFile(id = "file-uploaded", mimeType = mimeType)
         }
 
-        override suspend fun isFileAvailable(fileId: String): Boolean = isAvailable
+        override suspend fun isFileAvailable(fileId: String, endpoint: ProviderEndpoint): Boolean {
+            availabilityEndpoint = endpoint
+            return isAvailable
+        }
     }
 
     private class FakeAnthropicAPI : AnthropicAPI {
-        override fun setToken(token: String?) = Unit
-
-        override fun setAPIUrl(url: String) = Unit
-
-        override fun streamChatMessage(messageRequest: MessageRequest, timeoutSeconds: Int): Flow<MessageResponseChunk> = emptyFlow()
+        override fun streamChatMessage(messageRequest: MessageRequest, timeoutSeconds: Int, endpoint: ProviderEndpoint): Flow<MessageResponseChunk> = emptyFlow()
 
         override suspend fun uploadFile(
             filePath: String,
             fileName: String,
-            mimeType: String
+            mimeType: String,
+            endpoint: ProviderEndpoint
         ): UploadedProviderFile = UploadedProviderFile(id = "anthropic-file", mimeType = mimeType)
 
-        override suspend fun isFileAvailable(fileId: String): Boolean = false
+        override suspend fun isFileAvailable(fileId: String, endpoint: ProviderEndpoint): Boolean = false
     }
 
     private class FakeGoogleAPI : GoogleAPI {
         var uploadCount = 0
 
-        override fun setToken(token: String?) = Unit
-
-        override fun setAPIUrl(url: String) = Unit
-
         override fun streamGenerateContent(
             request: GenerateContentRequest,
             model: String,
-            timeoutSeconds: Int
+            timeoutSeconds: Int,
+            endpoint: ProviderEndpoint
         ): Flow<GenerateContentResponse> = emptyFlow()
 
-        override suspend fun uploadFile(filePath: String, fileName: String, mimeType: String): UploadedProviderFile {
+        override suspend fun uploadFile(filePath: String, fileName: String, mimeType: String, endpoint: ProviderEndpoint): UploadedProviderFile {
             uploadCount += 1
             return UploadedProviderFile(
                 id = "google-id",
@@ -320,6 +372,6 @@ class AttachmentUploadCoordinatorTest {
             )
         }
 
-        override suspend fun isFileAvailable(fileName: String): Boolean = false
+        override suspend fun isFileAvailable(fileName: String, endpoint: ProviderEndpoint): Boolean = false
     }
 }

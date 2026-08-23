@@ -1,6 +1,5 @@
 package cn.nabr.chatwithchat.data.network
 
-import cn.nabr.chatwithchat.data.ModelConstants
 import cn.nabr.chatwithchat.data.dto.anthropic.request.MessageRequest
 import cn.nabr.chatwithchat.data.dto.anthropic.response.ErrorDetail
 import cn.nabr.chatwithchat.data.dto.anthropic.response.ErrorResponseChunk
@@ -34,9 +33,6 @@ class AnthropicAPIImpl @Inject constructor(
     private val networkClient: NetworkClient
 ) : AnthropicAPI {
 
-    private var token: String? = null
-    private var apiUrl: String = ModelConstants.ANTHROPIC_API_URL
-
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
@@ -44,17 +40,14 @@ class AnthropicAPIImpl @Inject constructor(
         explicitNulls = false
     }
 
-    override fun setToken(token: String?) {
-        this.token = token
-    }
-
-    override fun setAPIUrl(url: String) {
-        this.apiUrl = url
-    }
-
-    override suspend fun uploadFile(filePath: String, fileName: String, mimeType: String): UploadedProviderFile {
-        val endpoint = joinApiEndpoint(apiUrl, "v1/files")
-        val responseBody = networkClient().preparePost(endpoint) {
+    override suspend fun uploadFile(
+        filePath: String,
+        fileName: String,
+        mimeType: String,
+        endpoint: ProviderEndpoint
+    ): UploadedProviderFile {
+        val url = joinApiEndpoint(endpoint.apiUrl, "v1/files")
+        val responseBody = networkClient().preparePost(url) {
             setBody(
                 MultiPartFormDataContent(
                     formData {
@@ -70,7 +63,7 @@ class AnthropicAPIImpl @Inject constructor(
                 )
             )
             headers {
-                append(API_KEY_HEADER, token ?: "")
+                append(API_KEY_HEADER, endpoint.token ?: "")
                 append(VERSION_HEADER, ANTHROPIC_VERSION)
                 append(BETA_HEADER, ANTHROPIC_FILES_BETA)
             }
@@ -95,12 +88,12 @@ class AnthropicAPIImpl @Inject constructor(
         )
     }
 
-    override suspend fun isFileAvailable(fileId: String): Boolean {
-        val endpoint = joinApiEndpoint(apiUrl, "v1/files/$fileId")
+    override suspend fun isFileAvailable(fileId: String, endpoint: ProviderEndpoint): Boolean {
+        val url = joinApiEndpoint(endpoint.apiUrl, "v1/files/$fileId")
         return try {
-            networkClient().prepareGet(endpoint) {
+            networkClient().prepareGet(url) {
                 headers {
-                    append(API_KEY_HEADER, token ?: "")
+                    append(API_KEY_HEADER, endpoint.token ?: "")
                     append(VERSION_HEADER, ANTHROPIC_VERSION)
                     append(BETA_HEADER, ANTHROPIC_FILES_BETA)
                 }
@@ -112,17 +105,21 @@ class AnthropicAPIImpl @Inject constructor(
         }
     }
 
-    override fun streamChatMessage(messageRequest: MessageRequest, timeoutSeconds: Int): Flow<MessageResponseChunk> = flow {
+    override fun streamChatMessage(
+        messageRequest: MessageRequest,
+        timeoutSeconds: Int,
+        endpoint: ProviderEndpoint
+    ): Flow<MessageResponseChunk> = flow {
         try {
-            val endpoint = joinApiEndpoint(apiUrl, "v1/messages")
+            val url = joinApiEndpoint(endpoint.apiUrl, "v1/messages")
 
-            networkClient().preparePost(endpoint) {
+            networkClient().preparePost(url) {
                 applyPlatformStreamingTimeout(timeoutSeconds)
                 contentType(ContentType.Application.Json)
                 setBody(json.encodeToString(messageRequest))
                 accept(ContentType.Text.EventStream)
                 headers {
-                    append(API_KEY_HEADER, token ?: "")
+                    append(API_KEY_HEADER, endpoint.token ?: "")
                     append(VERSION_HEADER, ANTHROPIC_VERSION)
                     append(BETA_HEADER, ANTHROPIC_FILES_BETA)
                 }

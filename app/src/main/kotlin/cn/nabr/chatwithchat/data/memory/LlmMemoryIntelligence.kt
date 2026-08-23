@@ -33,6 +33,7 @@ import cn.nabr.chatwithchat.data.model.ClientType
 import cn.nabr.chatwithchat.data.network.AnthropicAPI
 import cn.nabr.chatwithchat.data.network.GoogleAPI
 import cn.nabr.chatwithchat.data.network.OpenAIAPI
+import cn.nabr.chatwithchat.data.network.providerEndpoint
 import cn.nabr.chatwithchat.data.repository.usesOfficialDeepSeekApi
 import javax.inject.Inject
 import kotlinx.coroutines.delay
@@ -295,8 +296,6 @@ class LlmMemoryIntelligence @Inject constructor(
             return MemoryModelCallResponse.failure("memory_token_missing")
         }
 
-        openAIAPI.setToken(platform.token)
-        openAIAPI.setAPIUrl(platform.apiUrl)
 
         return when (platform.compatibleType) {
             ClientType.OPENAI -> requestResponsesJson(operation, platform, systemPrompt, userJson)
@@ -346,7 +345,7 @@ class LlmMemoryIntelligence @Inject constructor(
         var chunks = emptyList<ChatCompletionChunk>()
         for (attempt in 0 until MEMORY_NETWORK_ATTEMPTS) {
             chunks = runCatching {
-                openAIAPI.streamChatCompletion(request, timeoutSeconds).toList()
+                openAIAPI.streamChatCompletion(request, timeoutSeconds, platform.providerEndpoint()).toList()
             }.onSuccess {
                 logRequestSuccess(operation, platform, timeoutSeconds, startedAt)
             }.onFailure { throwable ->
@@ -409,7 +408,8 @@ class LlmMemoryIntelligence @Inject constructor(
                         null
                     }
                 ),
-                timeoutSeconds = timeoutSeconds
+                timeoutSeconds = timeoutSeconds,
+                endpoint = platform.providerEndpoint()
             ).toList()
         }.onSuccess {
             logRequestSuccess(operation, platform, timeoutSeconds, startedAt)
@@ -439,8 +439,6 @@ class LlmMemoryIntelligence @Inject constructor(
         val startedAt = System.currentTimeMillis()
         logRequestStart(operation, platform, timeoutSeconds)
         val chunks = runCatching {
-            anthropicAPI.setToken(platform.token)
-            anthropicAPI.setAPIUrl(platform.apiUrl)
             anthropicAPI.streamChatMessage(
                 messageRequest = AnthropicMessageRequest(
                     model = platform.model,
@@ -457,7 +455,8 @@ class LlmMemoryIntelligence @Inject constructor(
                     topP = 1f,
                     thinking = null
                 ),
-                timeoutSeconds = timeoutSeconds
+                timeoutSeconds = timeoutSeconds,
+                endpoint = platform.providerEndpoint()
             ).toList()
         }.onSuccess {
             logRequestSuccess(operation, platform, timeoutSeconds, startedAt)
@@ -499,8 +498,6 @@ class LlmMemoryIntelligence @Inject constructor(
         val startedAt = System.currentTimeMillis()
         logRequestStart(operation, platform, timeoutSeconds)
         val responses = runCatching {
-            googleAPI.setToken(platform.token)
-            googleAPI.setAPIUrl(platform.apiUrl)
             googleAPI.streamGenerateContent(
                 request = GenerateContentRequest(
                     contents = listOf(
@@ -518,7 +515,8 @@ class LlmMemoryIntelligence @Inject constructor(
                     systemInstruction = GoogleContent(parts = listOf(GooglePart.text(systemPrompt)))
                 ),
                 model = platform.model,
-                timeoutSeconds = timeoutSeconds
+                timeoutSeconds = timeoutSeconds,
+                endpoint = platform.providerEndpoint()
             ).toList()
         }.onSuccess {
             logRequestSuccess(operation, platform, timeoutSeconds, startedAt)

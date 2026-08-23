@@ -9,12 +9,26 @@ import cn.nabr.chatwithchat.data.dto.openai.response.ResponsesStreamEvent
 import kotlinx.coroutines.flow.Flow
 
 interface OpenAIAPI {
-    fun setToken(token: String?)
-    fun setAPIUrl(url: String)
-    fun streamChatCompletion(request: ChatCompletionRequest, timeoutSeconds: Int): Flow<ChatCompletionChunk>
-    fun streamResponses(request: ResponsesRequest, timeoutSeconds: Int): Flow<ResponsesStreamEvent>
-    suspend fun uploadFile(filePath: String, fileName: String, mimeType: String): UploadedProviderFile
-    suspend fun isFileAvailable(fileId: String): Boolean
+    fun streamChatCompletion(
+        request: ChatCompletionRequest,
+        timeoutSeconds: Int,
+        endpoint: ProviderEndpoint
+    ): Flow<ChatCompletionChunk>
+
+    fun streamResponses(
+        request: ResponsesRequest,
+        timeoutSeconds: Int,
+        endpoint: ProviderEndpoint
+    ): Flow<ResponsesStreamEvent>
+
+    suspend fun uploadFile(
+        filePath: String,
+        fileName: String,
+        mimeType: String,
+        endpoint: ProviderEndpoint
+    ): UploadedProviderFile
+
+    suspend fun isFileAvailable(fileId: String, endpoint: ProviderEndpoint): Boolean
 
     /**
      * Non-streaming `POST /v1/responses/compact`. Only for initialising native compaction state for a
@@ -23,5 +37,9 @@ interface OpenAIAPI {
      *
      * Returns the canonical output window with every output item preserved as raw JSON.
      */
-    suspend fun compactResponses(request: ResponsesCompactRequest, timeoutSeconds: Int): ResponsesCompactResult
+    suspend fun compactResponses(
+        request: ResponsesCompactRequest,
+        timeoutSeconds: Int,
+        endpoint: ProviderEndpoint
+    ): ResponsesCompactResult
 }

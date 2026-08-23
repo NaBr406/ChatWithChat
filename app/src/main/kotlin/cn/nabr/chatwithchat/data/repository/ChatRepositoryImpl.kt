@@ -62,6 +62,7 @@ import cn.nabr.chatwithchat.data.dto.anthropic.response.ErrorResponseChunk
 import cn.nabr.chatwithchat.data.dto.anthropic.response.MessageDeltaResponseChunk
 import cn.nabr.chatwithchat.data.dto.anthropic.response.MessageResponseChunk
 import cn.nabr.chatwithchat.data.dto.anthropic.response.MessageStartResponseChunk
+import cn.nabr.chatwithchat.data.dto.anthropic.response.StopReason
 import cn.nabr.chatwithchat.data.dto.google.common.Content
 import cn.nabr.chatwithchat.data.dto.google.common.Part
 import cn.nabr.chatwithchat.data.dto.google.common.Role as GoogleRole
@@ -116,6 +117,7 @@ import cn.nabr.chatwithchat.data.network.GoogleAPI
 import cn.nabr.chatwithchat.data.network.GroqAPI
 import cn.nabr.chatwithchat.data.network.NetworkClient
 import cn.nabr.chatwithchat.data.network.OpenAIAPI
+import cn.nabr.chatwithchat.data.network.providerEndpoint
 import cn.nabr.chatwithchat.data.sticker.StickerPresentationArtifact
 import cn.nabr.chatwithchat.data.sticker.toMessageStickerRef
 import cn.nabr.chatwithchat.data.token.TokenCacheStatus
@@ -939,8 +941,6 @@ class ChatRepositoryImpl @Inject constructor(
         activeToolDefinitions: List<ToolDefinition>
     ): Flow<ApiState> = flow {
         emit(ApiState.Loading)
-        openAIAPI.setToken(platform.token)
-        openAIAPI.setAPIUrl(platform.apiUrl)
         val traceContext = promptTraceContext(userMessages, platform)
         val toolScope = toolLoopOrchestrator.createToolScope(
             activeToolDefinitions = activeToolDefinitions,
@@ -1036,6 +1036,8 @@ class ChatRepositoryImpl @Inject constructor(
         var discoveryRounds = 0
         var roundIndex = 0
         var droppedToolCallInstruction: String? = null
+        var lostToolCallInstruction: String? = null
+        var lostToolCallRecoveries = 0
         while (roundIndex < allowedRounds) {
             roundStateMachine.updateAvailableDefinitions(
                 toolExecutionSession.availableWithinBudget(toolScope.definitions)
@@ -1052,6 +1054,7 @@ class ChatRepositoryImpl @Inject constructor(
                     extraInstruction = mergePromptSections(
                         nativeToolScopeInstruction(roundState.definitions),
                         droppedToolCallInstruction,
+                        lostToolCallInstruction,
                         stickerContinuationInstruction(allResults, roundState.allowedToolNames)
                     ),
                     nativePrefixItems = nativeExchange.replayItems,
@@ -1102,9 +1105,21 @@ class ChatRepositoryImpl @Inject constructor(
                 droppedCallCount = round.droppedToolCallCount
             )
             if (calls.isEmpty()) {
+                val evidence = round.lostToolCallEvidence
+                // The round meant to call a tool and the call never arrived as one. Ask once for it to be
+                // resent through the tool channel rather than reading this as a finished answer. The retry
+                // does not spend a round, because the round produced nothing to build on.
+                if (evidence.isLostToolCall && lostToolCallRecoveries < MAX_LOST_TOOL_CALL_RECOVERIES) {
+                    lostToolCallRecoveries += 1
+                    lostToolCallInstruction = LOST_TOOL_CALL_RECOVERY_INSTRUCTION
+                    continue
+                }
                 // The model answered instead of calling a tool, so this round ended the exchange and
                 // any compaction item it emitted is final.
                 nativeExchange.commit()
+                if (evidence.isLostToolCall && !evidence.hadVisibleText) {
+                    emit(ApiState.Error(TOOL_CALL_CHANNEL_LOST))
+                }
                 val usage = if (hasToolInteraction || searchDecisionExecution?.usage != null) {
                     aggregateToolUsage(round.usage, toolUsageRecords)
                 } else {
@@ -1117,6 +1132,7 @@ class ChatRepositoryImpl @Inject constructor(
                 return@flow
             }
             hasToolInteraction = true
+            lostToolCallInstruction = null
 
             val results = toolLoopOrchestrator.executeScopedToolCalls(
                 calls = calls,
@@ -1234,7 +1250,7 @@ class ChatRepositoryImpl @Inject constructor(
         recordSystemPrompt(traceContext, traceStage, request.instructions)
 
         try {
-            openAIAPI.streamResponses(request, timeoutSeconds).collect { event ->
+            openAIAPI.streamResponses(request, timeoutSeconds, platform.providerEndpoint()).collect { event ->
                 events += event
                 when (event) {
                     is FunctionCallArgumentsDeltaEvent -> argumentLimiter.append(event.outputIndex, event.delta)
@@ -1292,6 +1308,12 @@ class ChatRepositoryImpl @Inject constructor(
             events = events,
             errorMessage = errorMessage,
             droppedToolCallCount = argumentLimiter.droppedIdentityCount,
+            lostToolCallEvidence = LostToolCallEvidence(
+                leakedMarkup = markupFilter.hasSuppressedToolCallMarkup,
+                providerClaimedToolCalls = events.hasFunctionCallOutputItem(),
+                outputTruncated = events.hasIncompleteResponseStatus(),
+                hadVisibleText = outputText.isNotBlank()
+            ),
             usage = openAIResponsesUsageFromEvents(
                 events = events,
                 request = request,
@@ -1312,8 +1334,6 @@ class ChatRepositoryImpl @Inject constructor(
         fallbackToJsonToolLoop: Boolean = false
     ): Flow<ApiState> = flow {
         emit(ApiState.Loading)
-        openAIAPI.setToken(platform.token)
-        openAIAPI.setAPIUrl(platform.apiUrl)
         val traceContext = promptTraceContext(userMessages, platform)
         val toolScope = toolLoopOrchestrator.createToolScope(
             activeToolDefinitions = activeToolDefinitions,
@@ -1409,6 +1429,8 @@ class ChatRepositoryImpl @Inject constructor(
         var discoveryRounds = 0
         var roundIndex = 0
         var droppedToolCallInstruction: String? = null
+        var lostToolCallInstruction: String? = null
+        var lostToolCallRecoveries = 0
         while (roundIndex < allowedRounds) {
             roundStateMachine.updateAvailableDefinitions(
                 toolExecutionSession.availableWithinBudget(toolScope.definitions)
@@ -1425,6 +1447,7 @@ class ChatRepositoryImpl @Inject constructor(
                     extraInstruction = mergePromptSections(
                         nativeToolScopeInstruction(roundState.definitions),
                         droppedToolCallInstruction,
+                        lostToolCallInstruction,
                         stickerContinuationInstruction(allResults, roundState.allowedToolNames)
                     )
                 ),
@@ -1486,6 +1509,21 @@ class ChatRepositoryImpl @Inject constructor(
                 droppedCallCount = round.droppedToolCallCount
             )
             if (calls.isEmpty()) {
+                val evidence = round.lostToolCallEvidence
+                // The round meant to call a tool and the call never arrived as one. Ask once for it to be
+                // resent through the tool channel instead of reading this as a finished answer. The retry
+                // does not spend a round, because the round produced nothing to build on.
+                if (evidence.isLostToolCall && lostToolCallRecoveries < MAX_LOST_TOOL_CALL_RECOVERIES) {
+                    lostToolCallRecoveries += 1
+                    lostToolCallInstruction = LOST_TOOL_CALL_RECOVERY_INSTRUCTION
+                    continue
+                }
+                // Out of retries. A leak that came with a real answer still ends the turn on that answer;
+                // a leak with nothing visible behind it would otherwise be saved as a successful empty
+                // message, which is the failure that looks like the app quit mid-sentence.
+                if (evidence.isLostToolCall && !evidence.hadVisibleText) {
+                    emit(ApiState.Error(TOOL_CALL_CHANNEL_LOST))
+                }
                 val usage = if (hasToolInteraction || searchDecisionExecution?.usage != null) {
                     aggregateToolUsage(round.usage, toolUsageRecords)
                 } else {
@@ -1498,6 +1536,7 @@ class ChatRepositoryImpl @Inject constructor(
                 return@flow
             }
             hasToolInteraction = true
+            lostToolCallInstruction = null
 
             val results = toolLoopOrchestrator.executeScopedToolCalls(
                 calls = calls,
@@ -1601,7 +1640,7 @@ class ChatRepositoryImpl @Inject constructor(
         recordSystemPrompt(traceContext, traceStage, request.systemPromptText())
 
         try {
-            openAIAPI.streamChatCompletion(request, timeoutSeconds).collect { chunk ->
+            openAIAPI.streamChatCompletion(request, timeoutSeconds, platform.providerEndpoint()).collect { chunk ->
                 chunks += chunk
                 chunk.choices.orEmpty().forEach { choice ->
                     choice.delta.toolCalls.orEmpty().forEachIndexed { position, call ->
@@ -1646,6 +1685,12 @@ class ChatRepositoryImpl @Inject constructor(
             errorMessage = errorMessage,
             reasoningContent = chunks.toolContinuationReasoning(),
             droppedToolCallCount = argumentLimiter.droppedIdentityCount,
+            lostToolCallEvidence = LostToolCallEvidence(
+                leakedMarkup = markupFilter.hasSuppressedToolCallMarkup,
+                providerClaimedToolCalls = chunks.hasFinishReason(OPENAI_FINISH_REASON_TOOL_CALLS),
+                outputTruncated = chunks.hasFinishReason(OPENAI_FINISH_REASON_LENGTH),
+                hadVisibleText = outputText.isNotBlank()
+            ),
             usage = openAIChatUsageFromChunks(
                 chunks = chunks,
                 request = request,
@@ -1700,8 +1745,6 @@ class ChatRepositoryImpl @Inject constructor(
         activeToolDefinitions: List<ToolDefinition>
     ): Flow<ApiState> = flow {
         emit(ApiState.Loading)
-        anthropicAPI.setToken(platform.token)
-        anthropicAPI.setAPIUrl(platform.apiUrl)
         val traceContext = promptTraceContext(userMessages, platform)
         val toolScope = toolLoopOrchestrator.createToolScope(
             activeToolDefinitions = activeToolDefinitions,
@@ -1797,6 +1840,8 @@ class ChatRepositoryImpl @Inject constructor(
         var discoveryRounds = 0
         var roundIndex = 0
         var droppedToolCallInstruction: String? = null
+        var lostToolCallInstruction: String? = null
+        var lostToolCallRecoveries = 0
         while (roundIndex < allowedRounds) {
             roundStateMachine.updateAvailableDefinitions(
                 toolExecutionSession.availableWithinBudget(toolScope.definitions)
@@ -1813,6 +1858,7 @@ class ChatRepositoryImpl @Inject constructor(
                     extraInstruction = mergePromptSections(
                         nativeToolScopeInstruction(roundState.definitions),
                         droppedToolCallInstruction,
+                        lostToolCallInstruction,
                         stickerContinuationInstruction(allResults, roundState.allowedToolNames)
                     )
                 ),
@@ -1858,6 +1904,21 @@ class ChatRepositoryImpl @Inject constructor(
                 droppedCallCount = round.droppedToolCallCount
             )
             if (calls.isEmpty()) {
+                val evidence = round.lostToolCallEvidence
+                // The round meant to call a tool and the call never arrived as one. Ask once for it to be
+                // resent through the tool channel rather than reading this as a finished answer. The retry
+                // does not spend a round, because the round produced nothing to build on.
+                if (evidence.isLostToolCall && lostToolCallRecoveries < MAX_LOST_TOOL_CALL_RECOVERIES) {
+                    lostToolCallRecoveries += 1
+                    lostToolCallInstruction = LOST_TOOL_CALL_RECOVERY_INSTRUCTION
+                    continue
+                }
+                // Out of retries. A leak that came with a real answer still ends the turn on that answer;
+                // a leak with nothing visible behind it would otherwise be saved as a successful empty
+                // message, which is the failure that looks like the app quit mid-sentence.
+                if (evidence.isLostToolCall && !evidence.hadVisibleText) {
+                    emit(ApiState.Error(TOOL_CALL_CHANNEL_LOST))
+                }
                 val usage = if (hasToolInteraction || searchDecisionExecution?.usage != null) {
                     aggregateToolUsage(round.usage, toolUsageRecords)
                 } else {
@@ -1870,6 +1931,7 @@ class ChatRepositoryImpl @Inject constructor(
                 return@flow
             }
             hasToolInteraction = true
+            lostToolCallInstruction = null
 
             val results = toolLoopOrchestrator.executeScopedToolCalls(
                 calls = calls,
@@ -1965,7 +2027,7 @@ class ChatRepositoryImpl @Inject constructor(
         recordSystemPrompt(traceContext, traceStage, request.systemPrompt)
 
         try {
-            anthropicAPI.streamChatMessage(request, timeoutSeconds).collect { chunk ->
+            anthropicAPI.streamChatMessage(request, timeoutSeconds, platform.providerEndpoint()).collect { chunk ->
                 chunks += chunk
                 when (chunk) {
                     is ContentStartResponseChunk -> if (chunk.contentBlock.type == ContentBlockType.TOOL_USE) {
@@ -2020,6 +2082,12 @@ class ChatRepositoryImpl @Inject constructor(
             chunks = chunks,
             errorMessage = errorMessage,
             droppedToolCallCount = argumentLimiter.droppedIdentityCount,
+            lostToolCallEvidence = LostToolCallEvidence(
+                leakedMarkup = markupFilter.hasSuppressedToolCallMarkup,
+                providerClaimedToolCalls = chunks.hasStopReason(StopReason.TOOL_USE),
+                outputTruncated = chunks.hasStopReason(StopReason.MAX_TOKENS),
+                hadVisibleText = outputText.isNotBlank()
+            ),
             usage = anthropicUsageFromChunks(
                 chunks = chunks,
                 request = request,
@@ -2039,8 +2107,6 @@ class ChatRepositoryImpl @Inject constructor(
         activeToolDefinitions: List<ToolDefinition>
     ): Flow<ApiState> = flow {
         emit(ApiState.Loading)
-        googleAPI.setToken(platform.token)
-        googleAPI.setAPIUrl(platform.apiUrl)
         val traceContext = promptTraceContext(userMessages, platform)
         val toolScope = toolLoopOrchestrator.createToolScope(
             activeToolDefinitions = activeToolDefinitions,
@@ -2138,6 +2204,8 @@ class ChatRepositoryImpl @Inject constructor(
         var discoveryRounds = 0
         var roundIndex = 0
         var droppedToolCallInstruction: String? = null
+        var lostToolCallInstruction: String? = null
+        var lostToolCallRecoveries = 0
         while (roundIndex < allowedRounds) {
             roundStateMachine.updateAvailableDefinitions(
                 toolExecutionSession.availableWithinBudget(toolScope.definitions)
@@ -2154,6 +2222,7 @@ class ChatRepositoryImpl @Inject constructor(
                     extraInstruction = mergePromptSections(
                         nativeToolScopeInstruction(roundState.definitions),
                         droppedToolCallInstruction,
+                        lostToolCallInstruction,
                         stickerContinuationInstruction(allResults, roundState.allowedToolNames)
                     )
                 ),
@@ -2200,6 +2269,21 @@ class ChatRepositoryImpl @Inject constructor(
                 droppedCallCount = round.droppedToolCallCount
             )
             if (calls.isEmpty()) {
+                val evidence = round.lostToolCallEvidence
+                // The round meant to call a tool and the call never arrived as one. Ask once for it to be
+                // resent through the tool channel rather than reading this as a finished answer. The retry
+                // does not spend a round, because the round produced nothing to build on.
+                if (evidence.isLostToolCall && lostToolCallRecoveries < MAX_LOST_TOOL_CALL_RECOVERIES) {
+                    lostToolCallRecoveries += 1
+                    lostToolCallInstruction = LOST_TOOL_CALL_RECOVERY_INSTRUCTION
+                    continue
+                }
+                // Out of retries. A leak that came with a real answer still ends the turn on that answer;
+                // a leak with nothing visible behind it would otherwise be saved as a successful empty
+                // message, which is the failure that looks like the app quit mid-sentence.
+                if (evidence.isLostToolCall && !evidence.hadVisibleText) {
+                    emit(ApiState.Error(TOOL_CALL_CHANNEL_LOST))
+                }
                 val usage = if (hasToolInteraction || searchDecisionExecution?.usage != null) {
                     aggregateToolUsage(round.usage, toolUsageRecords)
                 } else {
@@ -2212,6 +2296,7 @@ class ChatRepositoryImpl @Inject constructor(
                 return@flow
             }
             hasToolInteraction = true
+            lostToolCallInstruction = null
 
             val results = toolLoopOrchestrator.executeScopedToolCalls(
                 calls = calls,
@@ -2310,7 +2395,7 @@ class ChatRepositoryImpl @Inject constructor(
         recordSystemPrompt(traceContext, traceStage, request.systemInstructionText())
 
         try {
-            googleAPI.streamGenerateContent(request, model, timeoutSeconds).collect { response ->
+            googleAPI.streamGenerateContent(request, model, timeoutSeconds, platform.providerEndpoint()).collect { response ->
                 responses += response
                 response.candidates.orEmpty().forEach { candidate ->
                     candidate.content.parts.forEach { part ->
@@ -2355,6 +2440,14 @@ class ChatRepositoryImpl @Inject constructor(
             responses = responses,
             errorMessage = errorMessage,
             droppedToolCallCount = argumentLimiter.droppedIdentityCount,
+            lostToolCallEvidence = LostToolCallEvidence(
+                leakedMarkup = markupFilter.hasSuppressedToolCallMarkup,
+                // Gemini has no "stopped to call a tool" reason: a function call is a part of a STOP
+                // response, so a lost call shows up only as leaked markup or as a truncated one.
+                providerClaimedToolCalls = false,
+                outputTruncated = responses.hasCandidateFinishReason(GOOGLE_FINISH_REASON_MAX_TOKENS),
+                hadVisibleText = outputText.isNotBlank()
+            ),
             usage = googleUsageFromResponses(
                 responses = responses,
                 request = request,
@@ -2375,8 +2468,6 @@ class ChatRepositoryImpl @Inject constructor(
         emitEstimatedUsageWithoutOutput: Boolean = false,
         conversationSnapshot: ProviderConversationSnapshot? = null
     ): Flow<ApiState> = try {
-        openAIAPI.setToken(platform.token)
-        openAIAPI.setAPIUrl(platform.apiUrl)
         val traceContext = promptTraceContext(userMessages, platform)
         // Captured by `prepare` and read back by `stream`. `streamPreparedApiState` runs the two in
         // that order on the same coroutine, so the assignment is visible without extra
@@ -2433,7 +2524,7 @@ class ChatRepositoryImpl @Inject constructor(
                     val outputText = StringBuilder()
                     var emittedOutputTextDelta = false
                     var streamFailed = false
-                    openAIAPI.streamResponses(prepared.request, platform.timeout).collect { event ->
+                    openAIAPI.streamResponses(prepared.request, platform.timeout, platform.providerEndpoint()).collect { event ->
                         events += event
                         when (event) {
                             is ReasoningSummaryTextDeltaEvent -> emit(ApiState.Thinking(event.delta))
@@ -2540,8 +2631,7 @@ class ChatRepositoryImpl @Inject constructor(
                     groqAPI.streamChatCompletion(
                         request = prepared.request,
                         timeoutSeconds = platform.timeout,
-                        token = platform.token,
-                        apiUrl = platform.apiUrl
+                        endpoint = platform.providerEndpoint()
                     ).collect { chunk ->
                         chunks += chunk
                         when {
@@ -2602,8 +2692,6 @@ class ChatRepositoryImpl @Inject constructor(
         emitEstimatedUsageWithoutOutput: Boolean = false,
         conversationSnapshot: ProviderConversationSnapshot? = null
     ): Flow<ApiState> = try {
-        openAIAPI.setToken(platform.token)
-        openAIAPI.setAPIUrl(platform.apiUrl)
         val traceContext = promptTraceContext(userMessages, platform)
 
         streamPreparedApiState(
@@ -2654,7 +2742,7 @@ class ChatRepositoryImpl @Inject constructor(
                     val chunks = mutableListOf<ChatCompletionChunk>()
                     val outputText = StringBuilder()
                     val reasoningParser = ReasoningStreamParser()
-                    openAIAPI.streamChatCompletion(prepared.request, platform.timeout).collect { chunk ->
+                    openAIAPI.streamChatCompletion(prepared.request, platform.timeout, platform.providerEndpoint()).collect { chunk ->
                         chunks += chunk
                         when {
                             chunk.error != null -> {
@@ -3087,8 +3175,6 @@ class ChatRepositoryImpl @Inject constructor(
         emitEstimatedUsageWithoutOutput: Boolean = false,
         conversationSnapshot: ProviderConversationSnapshot? = null
     ): Flow<ApiState> = try {
-        anthropicAPI.setToken(platform.token)
-        anthropicAPI.setAPIUrl(platform.apiUrl)
         val traceContext = promptTraceContext(userMessages, platform)
 
         streamPreparedApiState(
@@ -3133,7 +3219,7 @@ class ChatRepositoryImpl @Inject constructor(
                     )
                     val chunks = mutableListOf<MessageResponseChunk>()
                     val outputText = StringBuilder()
-                    anthropicAPI.streamChatMessage(prepared.request, platform.timeout).collect { chunk ->
+                    anthropicAPI.streamChatMessage(prepared.request, platform.timeout, platform.providerEndpoint()).collect { chunk ->
                         chunks += chunk
                         when (chunk) {
                             is cn.nabr.chatwithchat.data.dto.anthropic.response.ContentDeltaResponseChunk -> {
@@ -3234,8 +3320,6 @@ class ChatRepositoryImpl @Inject constructor(
         emitEstimatedUsageWithoutOutput: Boolean = false,
         conversationSnapshot: ProviderConversationSnapshot? = null
     ): Flow<ApiState> = try {
-        googleAPI.setToken(platform.token)
-        googleAPI.setAPIUrl(platform.apiUrl)
         val traceContext = promptTraceContext(userMessages, platform)
 
         streamPreparedApiState(
@@ -3283,7 +3367,7 @@ class ChatRepositoryImpl @Inject constructor(
                     )
                     val responses = mutableListOf<GenerateContentResponse>()
                     val outputText = StringBuilder()
-                    googleAPI.streamGenerateContent(prepared.request, platform.model, platform.timeout).collect { response ->
+                    googleAPI.streamGenerateContent(prepared.request, platform.model, platform.timeout, platform.providerEndpoint()).collect { response ->
                         responses += response
                         when {
                             response.error != null -> {
@@ -3927,8 +4011,32 @@ private data class OpenAIResponsesNativeRound(
     val events: List<ResponsesStreamEvent>,
     val errorMessage: String?,
     val droppedToolCallCount: Int,
+    val lostToolCallEvidence: LostToolCallEvidence,
     val usage: TokenUsageRecord?
 )
+
+/**
+ * Whether the stream announced a finished `function_call` output item.
+ *
+ * The Responses API has no `finish_reason: tool_calls`; a completed call item is the equivalent claim. If one
+ * arrived and no call could be parsed out of the stream, the round wanted a tool and did not get one.
+ */
+private fun List<ResponsesStreamEvent>.hasFunctionCallOutputItem(): Boolean = any { event ->
+    event is OutputItemDoneEvent && event.item.type == OPENAI_FUNCTION_CALL_TYPE
+}
+
+/**
+ * Whether the response finished in any state other than `completed` — which is how a truncated response
+ * reports itself, when it reports at all. `response.incomplete` is not modelled as its own event, so this is
+ * best-effort: the leaked-markup signal is what carries this case for providers that stay silent.
+ */
+private fun List<ResponsesStreamEvent>.hasIncompleteResponseStatus(): Boolean = any { event ->
+    event is ResponseCompletedEvent &&
+        !event.response.status.isNullOrBlank() &&
+        !event.response.status.equals(OPENAI_RESPONSE_STATUS_COMPLETED, ignoreCase = true)
+}
+
+private const val OPENAI_RESPONSE_STATUS_COMPLETED = "completed"
 
 private data class OpenAIChatCompletionsNativeToolRequest(
     val model: String,
@@ -3962,6 +4070,7 @@ private data class OpenAIChatCompletionsNativeRound(
     val errorMessage: String?,
     val reasoningContent: String,
     val droppedToolCallCount: Int,
+    val lostToolCallEvidence: LostToolCallEvidence,
     val usage: TokenUsageRecord?
 )
 
@@ -3973,6 +4082,19 @@ private fun List<ChatCompletionChunk>.toolContinuationReasoning(): String = asSe
             ?: choice.delta.reasoning?.takeIf { content -> content.isNotEmpty() }
     }
     .joinToString(separator = "")
+
+/**
+ * Whether any choice in the stream ended for [reason].
+ *
+ * Parsed since the DTO was written and read nowhere until now, which is why the tool loops could not tell a
+ * model that had finished answering from one whose call never made it into the tool-call field.
+ */
+private fun List<ChatCompletionChunk>.hasFinishReason(reason: String): Boolean = any { chunk ->
+    chunk.choices.orEmpty().any { choice -> choice.finishReason.equals(reason, ignoreCase = true) }
+}
+
+private const val OPENAI_FINISH_REASON_TOOL_CALLS = "tool_calls"
+private const val OPENAI_FINISH_REASON_LENGTH = "length"
 
 private fun String.isNativeToolRequestRejected(): Boolean {
     val normalized = lowercase()
@@ -4021,8 +4143,28 @@ private data class AnthropicNativeRound(
     val chunks: List<MessageResponseChunk>,
     val errorMessage: String?,
     val droppedToolCallCount: Int,
+    val lostToolCallEvidence: LostToolCallEvidence,
     val usage: TokenUsageRecord?
 )
+
+/**
+ * Whether the message stopped for [reason].
+ *
+ * `tool_use` is Anthropic's way of saying it stopped in order to call a tool. The adapter already reads it
+ * for `hasToolCallIntent`; the loop needs the same fact to tell a call that went missing from an answer that
+ * simply finished.
+ */
+private fun List<MessageResponseChunk>.hasStopReason(reason: StopReason): Boolean = asSequence()
+    .filterIsInstance<MessageDeltaResponseChunk>()
+    .any { chunk -> chunk.delta.stopReason == reason }
+
+private fun List<GenerateContentResponse>.hasCandidateFinishReason(reason: String): Boolean = any { response ->
+    response.candidates.orEmpty().any { candidate ->
+        candidate.finishReason.equals(reason, ignoreCase = true)
+    }
+}
+
+private const val GOOGLE_FINISH_REASON_MAX_TOKENS = "MAX_TOKENS"
 
 private data class GoogleNativeToolRequest(
     val contents: List<Content>,
@@ -4047,6 +4189,7 @@ private data class GoogleNativeRound(
     val responses: List<GenerateContentResponse>,
     val errorMessage: String?,
     val droppedToolCallCount: Int,
+    val lostToolCallEvidence: LostToolCallEvidence,
     val usage: TokenUsageRecord?
 )
 

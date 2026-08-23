@@ -34,11 +34,11 @@ import cn.nabr.chatwithchat.data.network.AnthropicAPI
 import cn.nabr.chatwithchat.data.network.GoogleAPI
 import cn.nabr.chatwithchat.data.network.GroqAPI
 import cn.nabr.chatwithchat.data.network.OpenAIAPI
+import cn.nabr.chatwithchat.data.network.ProviderEndpoint
+import cn.nabr.chatwithchat.data.network.providerEndpoint
 import cn.nabr.chatwithchat.data.repository.usesOfficialDeepSeekApi
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 
 data class ContextCompactionModelResponse(
     val content: String,
@@ -77,21 +77,18 @@ fun interface ContextCompactionModelClient {
  * `stream = true` everywhere. Only OpenAI exposes a non-streaming endpoint, and it is compaction
  * specific; streaming-then-accumulating is what the rest of the app does and keeps one code path.
  *
- * [clientMutex] serialises compaction calls against each other. `OpenAIAPI`, `AnthropicAPI` and
- * `GoogleAPI` are `@Singleton`s carrying mutable token/URL state, so two concurrent folds on
- * different providers could otherwise interleave `setToken` and send the wrong credentials.
- *
- * It does **not** protect against the user-facing chat path, which mutates the same singletons
- * without taking this lock. That hazard predates context management and is not fixed here; the
- * shared lock at least keeps this feature from adding new concurrent writers of its own, and folds
- * are rare enough that serialising them costs nothing.
+ * This used to hold a mutex. `OpenAIAPI`, `AnthropicAPI` and `GoogleAPI` carried mutable token/URL
+ * fields, so two concurrent folds on different providers could interleave `setToken` and send one
+ * platform's payload to another's host. The lock kept this file's own calls from colliding but could
+ * not cover the chat path, which wrote the same fields without taking it. Credentials now travel per
+ * call as a [ProviderEndpoint], so there is nothing left to serialise and folds on different
+ * providers may run concurrently again.
  */
 class ProviderContextCompactionModelClient(
     private val openAIAPI: OpenAIAPI,
     private val groqAPI: GroqAPI,
     private val anthropicAPI: AnthropicAPI,
-    private val googleAPI: GoogleAPI,
-    private val clientMutex: Mutex = Mutex()
+    private val googleAPI: GoogleAPI
 ) : ContextCompactionModelClient {
 
     override suspend fun requestCompaction(
@@ -141,10 +138,7 @@ class ProviderContextCompactionModelClient(
         userPayload: String,
         maxOutputTokens: Int,
         timeoutSeconds: Int
-    ): ContextCompactionModelResponse = clientMutex.withLock {
-        openAIAPI.setToken(platform.token)
-        openAIAPI.setAPIUrl(platform.apiUrl)
-
+    ): ContextCompactionModelResponse {
         val output = StringBuilder()
         var usage: ProviderUsage? = null
         openAIAPI.streamResponses(
@@ -160,7 +154,8 @@ class ProviderContextCompactionModelClient(
                 instructions = systemPrompt,
                 maxOutputTokens = maxOutputTokens
             ),
-            timeoutSeconds = timeoutSeconds
+            timeoutSeconds = timeoutSeconds,
+            endpoint = platform.providerEndpoint()
         ).collect { event ->
             when (event) {
                 is OutputTextDeltaEvent -> output.append(event.delta)
@@ -171,7 +166,7 @@ class ProviderContextCompactionModelClient(
                 else -> Unit
             }
         }
-        ContextCompactionModelResponse(output.toString(), usage)
+        return ContextCompactionModelResponse(output.toString(), usage)
     }
 
     private suspend fun openAICompatible(
@@ -180,10 +175,7 @@ class ProviderContextCompactionModelClient(
         userPayload: String,
         maxOutputTokens: Int,
         timeoutSeconds: Int
-    ): ContextCompactionModelResponse = clientMutex.withLock {
-        openAIAPI.setToken(platform.token)
-        openAIAPI.setAPIUrl(platform.apiUrl)
-
+    ): ContextCompactionModelResponse {
         val output = StringBuilder()
         var usage: ProviderUsage? = null
         // The official DeepSeek API rejects temperature/top_p when a thinking config is present, so
@@ -202,13 +194,14 @@ class ProviderContextCompactionModelClient(
                 streamOptions = ChatCompletionStreamOptions()
                     .takeIf { platform.compatibleType == ClientType.OPENROUTER }
             ),
-            timeoutSeconds = timeoutSeconds
+            timeoutSeconds = timeoutSeconds,
+            endpoint = platform.providerEndpoint()
         ).collect { chunk ->
             chunk.error?.let { error -> throw IllegalStateException(error.message) }
             chunk.choices?.firstOrNull()?.delta?.content?.let { output.append(it) }
             usage = chunk.usage ?: usage
         }
-        ContextCompactionModelResponse(output.toString(), usage)
+        return ContextCompactionModelResponse(output.toString(), usage)
     }
 
     private suspend fun groq(
@@ -230,8 +223,7 @@ class ProviderContextCompactionModelClient(
                 maxCompletionTokens = maxOutputTokens
             ),
             timeoutSeconds = timeoutSeconds,
-            token = platform.token,
-            apiUrl = platform.apiUrl
+            endpoint = platform.providerEndpoint()
         ).collect { chunk ->
             chunk.error?.let { error -> throw IllegalStateException(error.message) }
             val choice = chunk.choices?.firstOrNull()
@@ -248,10 +240,7 @@ class ProviderContextCompactionModelClient(
         userPayload: String,
         maxOutputTokens: Int,
         timeoutSeconds: Int
-    ): ContextCompactionModelResponse = clientMutex.withLock {
-        anthropicAPI.setToken(platform.token)
-        anthropicAPI.setAPIUrl(platform.apiUrl)
-
+    ): ContextCompactionModelResponse {
         val output = StringBuilder()
         var inputTokens: Int? = null
         var outputTokens: Int? = null
@@ -270,7 +259,8 @@ class ProviderContextCompactionModelClient(
                 temperature = 0f,
                 topP = 1f
             ),
-            timeoutSeconds = timeoutSeconds
+            timeoutSeconds = timeoutSeconds,
+            endpoint = platform.providerEndpoint()
         ).collect { chunk ->
             when (chunk) {
                 is ContentDeltaResponseChunk -> chunk.delta.text?.let { output.append(it) }
@@ -288,7 +278,7 @@ class ProviderContextCompactionModelClient(
             }
         }
 
-        ContextCompactionModelResponse(
+        return ContextCompactionModelResponse(
             content = output.toString(),
             usage = if (inputTokens != null || outputTokens != null) {
                 ProviderUsage(inputTokens = inputTokens ?: 0, outputTokens = outputTokens ?: 0)
@@ -304,10 +294,7 @@ class ProviderContextCompactionModelClient(
         userPayload: String,
         maxOutputTokens: Int,
         timeoutSeconds: Int
-    ): ContextCompactionModelResponse = clientMutex.withLock {
-        googleAPI.setToken(platform.token)
-        googleAPI.setAPIUrl(platform.apiUrl)
-
+    ): ContextCompactionModelResponse {
         val output = StringBuilder()
         var usage: ProviderUsage? = null
         googleAPI.streamGenerateContent(
@@ -326,7 +313,8 @@ class ProviderContextCompactionModelClient(
                 systemInstruction = Content(parts = listOf(Part.text(systemPrompt)))
             ),
             model = platform.model,
-            timeoutSeconds = timeoutSeconds
+            timeoutSeconds = timeoutSeconds,
+            endpoint = platform.providerEndpoint()
         ).collect { response ->
             response.error?.let { error -> throw IllegalStateException(error.message) }
             response.usageMetadata?.let { metadata ->
@@ -342,7 +330,7 @@ class ProviderContextCompactionModelClient(
                 }
             }
         }
-        ContextCompactionModelResponse(output.toString(), usage)
+        return ContextCompactionModelResponse(output.toString(), usage)
     }
 
     private fun chatMessages(systemPrompt: String, userPayload: String): List<ChatMessage> = listOf(

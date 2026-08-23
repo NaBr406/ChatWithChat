@@ -5,9 +5,18 @@ import cn.nabr.chatwithchat.data.dto.anthropic.response.MessageResponseChunk
 import kotlinx.coroutines.flow.Flow
 
 interface AnthropicAPI {
-    fun setToken(token: String?)
-    fun setAPIUrl(url: String)
-    fun streamChatMessage(messageRequest: MessageRequest, timeoutSeconds: Int): Flow<MessageResponseChunk>
-    suspend fun uploadFile(filePath: String, fileName: String, mimeType: String): UploadedProviderFile
-    suspend fun isFileAvailable(fileId: String): Boolean
+    fun streamChatMessage(
+        messageRequest: MessageRequest,
+        timeoutSeconds: Int,
+        endpoint: ProviderEndpoint
+    ): Flow<MessageResponseChunk>
+
+    suspend fun uploadFile(
+        filePath: String,
+        fileName: String,
+        mimeType: String,
+        endpoint: ProviderEndpoint
+    ): UploadedProviderFile
+
+    suspend fun isFileAvailable(fileId: String, endpoint: ProviderEndpoint): Boolean
 }

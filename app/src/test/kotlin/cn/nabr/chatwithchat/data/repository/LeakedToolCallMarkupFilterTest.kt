@@ -2,6 +2,8 @@ package cn.nabr.chatwithchat.data.repository
 
 import cn.nabr.chatwithchat.data.dto.ApiState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LeakedToolCallMarkupFilterTest {
@@ -130,6 +132,30 @@ class LeakedToolCallMarkupFilterTest {
 
         assertEquals(emptyList<ApiState>(), filter.append(""))
         assertEquals(emptyList<ApiState>(), filter.flush())
+    }
+
+    @Test
+    fun `a leak is reported to the caller, not only hidden from the answer`() {
+        val filter = LeakedToolCallMarkupFilter()
+
+        filter.append("大哥，我去看看。")
+        // The tool loop reads this to tell a lost tool call from a finished answer, so a filter that only
+        // suppressed would leave the loop ending the turn on a call that never ran.
+        assertFalse(filter.hasSuppressedToolCallMarkup)
+
+        filter.append("<||DSML||tool_calls>")
+
+        assertTrue(filter.hasSuppressedToolCallMarkup)
+    }
+
+    @Test
+    fun `ordinary markup does not report a leak`() {
+        val filter = LeakedToolCallMarkupFilter()
+
+        filter.append("<div>看这里</div> a < b，还有 <parameter> 这个词")
+        filter.flush()
+
+        assertFalse(filter.hasSuppressedToolCallMarkup)
     }
 
     /**

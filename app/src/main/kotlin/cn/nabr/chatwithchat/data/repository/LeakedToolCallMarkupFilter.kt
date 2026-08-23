@@ -28,6 +28,17 @@ internal class LeakedToolCallMarkupFilter {
     private val pending = StringBuilder()
     private var isSuppressing = false
 
+    /**
+     * Whether this round wrote a tool-call envelope into its text.
+     *
+     * The filter is the only component that knows: it recognises the envelope in order to suppress it, and
+     * for a long time it kept that to itself, so a round whose call had leaked was indistinguishable from a
+     * round that had simply finished answering — and the native loops end the turn on "no tool calls". The
+     * flag latches, because a leak anywhere in the round is what matters, not where.
+     */
+    val hasSuppressedToolCallMarkup: Boolean
+        get() = isSuppressing
+
     fun append(textChunk: String): List<ApiState> {
         if (textChunk.isEmpty()) return emptyList()
         if (isSuppressing) return suppress(textChunk)

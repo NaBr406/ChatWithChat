@@ -49,7 +49,6 @@ import cn.nabr.chatwithchat.data.dto.groq.response.GroqDelta
 import cn.nabr.chatwithchat.data.dto.openai.common.Role as OpenAIRole
 import cn.nabr.chatwithchat.data.dto.openai.common.TextContent as OpenAITextContent
 import cn.nabr.chatwithchat.data.dto.openai.request.ChatCompletionRequest
-import cn.nabr.chatwithchat.data.dto.openai.request.ResponsesCompactRequest
 import cn.nabr.chatwithchat.data.dto.openai.request.ChatCompletionToolChoice
 import cn.nabr.chatwithchat.data.dto.openai.request.ChatMessage
 import cn.nabr.chatwithchat.data.dto.openai.request.ResponseFunctionCallInputItem
@@ -57,6 +56,7 @@ import cn.nabr.chatwithchat.data.dto.openai.request.ResponseFunctionCallOutputIt
 import cn.nabr.chatwithchat.data.dto.openai.request.ResponseInputContent
 import cn.nabr.chatwithchat.data.dto.openai.request.ResponseInputMessage
 import cn.nabr.chatwithchat.data.dto.openai.request.ResponseToolChoice
+import cn.nabr.chatwithchat.data.dto.openai.request.ResponsesCompactRequest
 import cn.nabr.chatwithchat.data.dto.openai.request.ResponsesRequest
 import cn.nabr.chatwithchat.data.dto.openai.response.ChatCompletionChunk
 import cn.nabr.chatwithchat.data.dto.openai.response.ChatCompletionFunctionCallDelta
@@ -83,6 +83,7 @@ import cn.nabr.chatwithchat.data.network.GoogleAPI
 import cn.nabr.chatwithchat.data.network.GroqAPI
 import cn.nabr.chatwithchat.data.network.NetworkClient
 import cn.nabr.chatwithchat.data.network.OpenAIAPI
+import cn.nabr.chatwithchat.data.network.ProviderEndpoint
 import cn.nabr.chatwithchat.data.network.UploadedProviderFile
 import cn.nabr.chatwithchat.data.sticker.StickerCatalogItem
 import cn.nabr.chatwithchat.data.sticker.StickerImportBatchResult
@@ -617,6 +618,196 @@ class ChatRepositoryImplTest {
         assertEquals("我再看看仓库结构。", visible)
         assertFalse(visible.contains("DSML"))
         assertTrue(thinking.contains("<|DSML|invoke name=\"current_datetime\">"))
+    }
+
+    @Test
+    fun `a tool call written as prose is asked for again through the tool channel`() = runBlocking {
+        // A tool that is not gated behind web search, so the scope is non-empty with search off.
+        val usedTool = ToolDefinition.CurrentDateTime
+        var toolExecuted = false
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                // Round 1 writes the call as text, so nothing parses out of the tool_calls field. Read as a
+                // finished answer, this used to end the turn here.
+                proseToolCallFlow(visibleText = "我去翻一下仓库。"),
+                // The retry uses the tool channel properly.
+                chatToolCallFlow("call_1", usedTool.name, "{}"),
+                chatCompletionFlow("最终回答")
+            )
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Off,
+                toolCallingMode = ToolCallingMode.Auto
+            ),
+            toolLoopOrchestrator = ToolLoopOrchestrator(
+                toolExecutor = ToolExecutor(
+                    ToolRegistry(
+                        listOf(
+                            noOpToolProvider(
+                                definition = usedTool,
+                                discovery = ToolDiscoveryMetadata(exposure = ToolExposure.Resident),
+                                onExecute = { toolExecuted = true }
+                            )
+                        )
+                    )
+                ),
+                config = ToolLoopConfig(maxToolRounds = 1)
+            )
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "翻一下仓库", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform().copy(
+                apiUrl = "https://api.deepseek.com/v1",
+                model = "deepseek-v4-pro"
+            )
+        ).toList()
+
+        // Three requests: the leaked round, the retry that recovered it, and the final answer. The retry does
+        // not spend a round, so the tool round budget of one still covers the call that mattered.
+        assertEquals(3, openAIAPI.streamChatCompletionCalls)
+        assertTrue("the recovered call must actually run", toolExecuted)
+        assertFalse(openAIAPI.chatCompletionRequests[0].allSystemText().contains("没有产生可执行的工具调用"))
+        assertTrue(openAIAPI.chatCompletionRequests[1].allSystemText().contains("没有产生可执行的工具调用"))
+        // Recovered, so nothing is reported to the user.
+        assertTrue(states.filterIsInstance<ApiState.Error>().isEmpty())
+        val visible = states.filterIsInstance<ApiState.Success>().joinToString(separator = "") { it.textChunk }
+        assertTrue(visible.contains("最终回答"))
+        assertFalse(visible.contains("DSML"))
+    }
+
+    @Test
+    fun `a prose tool call the retry cannot recover is reported instead of ending the turn quietly`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                proseToolCallFlow(),
+                proseToolCallFlow()
+            )
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Off,
+                toolCallingMode = ToolCallingMode.Auto
+            )
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "翻一下仓库", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform().copy(
+                apiUrl = "https://api.deepseek.com/v1",
+                model = "deepseek-v4-pro"
+            )
+        ).toList()
+
+        // One retry, then stop asking.
+        assertEquals(2, openAIAPI.streamChatCompletionCalls)
+        // Nothing reached the bubble, so a bare Done would have saved an empty message as a success — the
+        // failure that reads as the app quitting mid-answer.
+        assertEquals(
+            listOf(TOOL_CALL_CHANNEL_LOST),
+            states.filterIsInstance<ApiState.Error>().map { state -> state.message }
+        )
+        assertTrue(states.contains(ApiState.Done))
+    }
+
+    @Test
+    fun `a leaked call alongside a real answer ends the turn on the answer`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                proseToolCallFlow(),
+                proseToolCallFlow(visibleText = "配置文件我拿不到，先按现有信息说结论。")
+            )
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Off,
+                toolCallingMode = ToolCallingMode.Auto
+            )
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "翻一下仓库", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform().copy(
+                apiUrl = "https://api.deepseek.com/v1",
+                model = "deepseek-v4-pro"
+            )
+        ).toList()
+
+        assertEquals(2, openAIAPI.streamChatCompletionCalls)
+        // The model did answer, so reporting a failure over the top of it would be the wrong call.
+        assertTrue(states.filterIsInstance<ApiState.Error>().isEmpty())
+        val visible = states.filterIsInstance<ApiState.Success>().joinToString(separator = "") { it.textChunk }
+        assertTrue(visible.contains("配置文件我拿不到"))
+        assertFalse(visible.contains("DSML"))
+    }
+
+    @Test
+    fun `a finish reason of tool_calls without parsable calls is treated as a lost call`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                // No markup to catch: the provider simply claimed tool calls and sent none.
+                flowOf(
+                    ChatCompletionChunk(
+                        choices = listOf(
+                            Choice(index = 0, delta = Delta(content = ""), finishReason = "tool_calls")
+                        )
+                    )
+                ),
+                chatCompletionFlow("好，直接回答")
+            )
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Off,
+                toolCallingMode = ToolCallingMode.Auto
+            )
+        )
+
+        repository.completeChat(
+            userMessages = listOf(MessageV2(content = "翻一下仓库", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform().copy(
+                apiUrl = "https://api.deepseek.com/v1",
+                model = "deepseek-v4-pro"
+            )
+        ).toList()
+
+        assertEquals(2, openAIAPI.streamChatCompletionCalls)
+        assertTrue(openAIAPI.chatCompletionRequests[1].allSystemText().contains("没有产生可执行的工具调用"))
+    }
+
+    @Test
+    fun `a round that simply answered is not retried`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(chatCompletionFlow("不需要工具，直接回答"))
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Off,
+                toolCallingMode = ToolCallingMode.Auto
+            )
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "你好", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform().copy(
+                apiUrl = "https://api.deepseek.com/v1",
+                model = "deepseek-v4-pro"
+            )
+        ).toList()
+
+        assertEquals(1, openAIAPI.streamChatCompletionCalls)
+        assertTrue(states.filterIsInstance<ApiState.Error>().isEmpty())
     }
 
     @Test
@@ -5137,6 +5328,14 @@ class ChatRepositoryImplTest {
         ?.text
         .orEmpty()
 
+    /** Every text part of the system message, since per-round instructions arrive as extra parts. */
+    private fun ChatCompletionRequest.allSystemText(): String = messages
+        .firstOrNull()
+        ?.content
+        ?.filterIsInstance<OpenAITextContent>()
+        ?.joinToString(separator = "\n") { part -> part.text }
+        .orEmpty()
+
     private fun List<ChatMessage>.systemText(): String =
         firstOrNull()
             ?.content
@@ -5311,6 +5510,32 @@ class ChatRepositoryImplTest {
             )
         ),
         *usage?.let { providerUsage -> arrayOf(ChatCompletionChunk(usage = providerUsage)) }.orEmpty()
+    )
+
+    /**
+     * A round that writes its tool call into the text channel instead of the tool_calls field — what a relay
+     * produces when it cannot parse its model's native call tokens back into structured calls.
+     */
+    private fun proseToolCallFlow(
+        visibleText: String? = null,
+        finishReason: String? = null
+    ): Flow<ChatCompletionChunk> = flowOf(
+        *visibleText
+            ?.let { text ->
+                arrayOf(ChatCompletionChunk(choices = listOf(Choice(index = 0, delta = Delta(content = text)))))
+            }
+            .orEmpty(),
+        ChatCompletionChunk(
+            choices = listOf(
+                Choice(
+                    index = 0,
+                    delta = Delta(
+                        content = "<||DSML||tool_calls> <||DSML||invoke name=\"mcp_github_get_file_contents\">"
+                    ),
+                    finishReason = finishReason
+                )
+            )
+        )
     )
 
     private fun chatToolCallFlow(
@@ -5597,8 +5822,7 @@ class ChatRepositoryImplTest {
         override fun streamChatCompletion(
             request: GroqChatCompletionRequest,
             timeoutSeconds: Int,
-            token: String?,
-            apiUrl: String
+            endpoint: ProviderEndpoint
         ): Flow<GroqChatCompletionChunk> {
             streamCalls += 1
             lastRequest = request
@@ -5623,11 +5847,7 @@ class ChatRepositoryImplTest {
         val chatCompletionRequests = mutableListOf<ChatCompletionRequest>()
         val responsesRequests = mutableListOf<ResponsesRequest>()
 
-        override fun setToken(token: String?) = Unit
-
-        override fun setAPIUrl(url: String) = Unit
-
-        override fun streamChatCompletion(request: ChatCompletionRequest, timeoutSeconds: Int): Flow<ChatCompletionChunk> {
+        override fun streamChatCompletion(request: ChatCompletionRequest, timeoutSeconds: Int, endpoint: ProviderEndpoint): Flow<ChatCompletionChunk> {
             streamChatCompletionCalls += 1
             lastChatCompletionRequest = request
             chatCompletionRequests += request
@@ -5638,7 +5858,7 @@ class ChatRepositoryImplTest {
             }
         }
 
-        override fun streamResponses(request: ResponsesRequest, timeoutSeconds: Int): Flow<ResponsesStreamEvent> {
+        override fun streamResponses(request: ResponsesRequest, timeoutSeconds: Int, endpoint: ProviderEndpoint): Flow<ResponsesStreamEvent> {
             streamResponsesCalls += 1
             lastResponsesRequest = request
             responsesRequests += request
@@ -5651,19 +5871,21 @@ class ChatRepositoryImplTest {
 
         override suspend fun compactResponses(
             request: ResponsesCompactRequest,
-            timeoutSeconds: Int
+            timeoutSeconds: Int,
+            endpoint: ProviderEndpoint
         ): ResponsesCompactResult = error("Not used")
 
         override suspend fun uploadFile(
             filePath: String,
             fileName: String,
-            mimeType: String
+            mimeType: String,
+            endpoint: ProviderEndpoint
         ): UploadedProviderFile {
             uploadFileCalls += 1
             return UploadedProviderFile(id = "file-uploaded", mimeType = mimeType)
         }
 
-        override suspend fun isFileAvailable(fileId: String): Boolean = false
+        override suspend fun isFileAvailable(fileId: String, endpoint: ProviderEndpoint): Boolean = false
     }
 
     private class RecordingAnthropicAPI(
@@ -5673,11 +5895,7 @@ class ChatRepositoryImplTest {
         var uploadFileCalls = 0
         val requests = mutableListOf<MessageRequest>()
 
-        override fun setToken(token: String?) = Unit
-
-        override fun setAPIUrl(url: String) = Unit
-
-        override fun streamChatMessage(messageRequest: MessageRequest, timeoutSeconds: Int): Flow<MessageResponseChunk> {
+        override fun streamChatMessage(messageRequest: MessageRequest, timeoutSeconds: Int, endpoint: ProviderEndpoint): Flow<MessageResponseChunk> {
             streamCalls += 1
             requests += messageRequest
             return if (responses.isNotEmpty()) {
@@ -5690,13 +5908,14 @@ class ChatRepositoryImplTest {
         override suspend fun uploadFile(
             filePath: String,
             fileName: String,
-            mimeType: String
+            mimeType: String,
+            endpoint: ProviderEndpoint
         ): UploadedProviderFile {
             uploadFileCalls += 1
             return UploadedProviderFile(id = "anthropic-file", mimeType = mimeType)
         }
 
-        override suspend fun isFileAvailable(fileId: String): Boolean = false
+        override suspend fun isFileAvailable(fileId: String, endpoint: ProviderEndpoint): Boolean = false
     }
 
     private class RecordingGoogleAPI(
@@ -5706,14 +5925,11 @@ class ChatRepositoryImplTest {
         var uploadFileCalls = 0
         val requests = mutableListOf<GenerateContentRequest>()
 
-        override fun setToken(token: String?) = Unit
-
-        override fun setAPIUrl(url: String) = Unit
-
         override fun streamGenerateContent(
             request: GenerateContentRequest,
             model: String,
-            timeoutSeconds: Int
+            timeoutSeconds: Int,
+            endpoint: ProviderEndpoint
         ): Flow<GenerateContentResponse> {
             streamCalls += 1
             requests += request
@@ -5727,12 +5943,13 @@ class ChatRepositoryImplTest {
         override suspend fun uploadFile(
             filePath: String,
             fileName: String,
-            mimeType: String
+            mimeType: String,
+            endpoint: ProviderEndpoint
         ): UploadedProviderFile {
             uploadFileCalls += 1
             return UploadedProviderFile(id = "google-file", mimeType = mimeType)
         }
 
-        override suspend fun isFileAvailable(fileName: String): Boolean = false
+        override suspend fun isFileAvailable(fileName: String, endpoint: ProviderEndpoint): Boolean = false
     }
 }

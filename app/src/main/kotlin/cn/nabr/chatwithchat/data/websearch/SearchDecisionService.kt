@@ -34,6 +34,7 @@ import cn.nabr.chatwithchat.data.network.AnthropicAPI
 import cn.nabr.chatwithchat.data.network.GoogleAPI
 import cn.nabr.chatwithchat.data.network.GroqAPI
 import cn.nabr.chatwithchat.data.network.OpenAIAPI
+import cn.nabr.chatwithchat.data.network.providerEndpoint
 import cn.nabr.chatwithchat.data.repository.usesOfficialDeepSeekApi
 import cn.nabr.chatwithchat.data.token.TokenUsageEstimator
 import cn.nabr.chatwithchat.data.token.TokenUsageRecord
@@ -138,8 +139,6 @@ class ProviderSearchDecisionModelClient(
     }
 
     private suspend fun requestOpenAIResponsesDecision(platform: PlatformV2, prompt: String): SearchDecisionModelResponse {
-        openAIAPI.setToken(platform.token)
-        openAIAPI.setAPIUrl(platform.apiUrl)
         val output = StringBuilder()
         var usage: ProviderUsage? = null
         openAIAPI.streamResponses(
@@ -155,7 +154,8 @@ class ProviderSearchDecisionModelClient(
                 instructions = DECISION_SYSTEM_PROMPT,
                 maxOutputTokens = DECISION_MAX_OUTPUT_TOKENS
             ),
-            timeoutSeconds = platform.timeout
+            timeoutSeconds = platform.timeout,
+            endpoint = platform.providerEndpoint()
         ).collect { event ->
             when (event) {
                 is OutputTextDeltaEvent -> output.append(event.delta)
@@ -169,13 +169,12 @@ class ProviderSearchDecisionModelClient(
     }
 
     private suspend fun requestOpenAICompatibleDecision(platform: PlatformV2, prompt: String): SearchDecisionModelResponse {
-        openAIAPI.setToken(platform.token)
-        openAIAPI.setAPIUrl(platform.apiUrl)
         val output = StringBuilder()
         var usage: ProviderUsage? = null
         openAIAPI.streamChatCompletion(
             request = createOpenAICompatibleSearchDecisionRequest(platform, prompt),
-            timeoutSeconds = platform.timeout
+            timeoutSeconds = platform.timeout,
+            endpoint = platform.providerEndpoint()
         ).collect { chunk ->
             chunk.error?.let { error -> throw IllegalStateException(error.message) }
             chunk.choices?.firstOrNull()?.delta?.content?.let { output.append(it) }
@@ -197,8 +196,7 @@ class ProviderSearchDecisionModelClient(
                 maxCompletionTokens = DECISION_MAX_OUTPUT_TOKENS
             ),
             timeoutSeconds = platform.timeout,
-            token = platform.token,
-            apiUrl = platform.apiUrl
+            endpoint = platform.providerEndpoint()
         ).collect { chunk ->
             chunk.error?.let { error -> throw IllegalStateException(error.message) }
             val choice = chunk.choices?.firstOrNull()
@@ -210,8 +208,6 @@ class ProviderSearchDecisionModelClient(
     }
 
     private suspend fun requestAnthropicDecision(platform: PlatformV2, prompt: String): SearchDecisionModelResponse {
-        anthropicAPI.setToken(platform.token)
-        anthropicAPI.setAPIUrl(platform.apiUrl)
         val output = StringBuilder()
         var inputTokens: Int? = null
         var outputTokens: Int? = null
@@ -230,7 +226,8 @@ class ProviderSearchDecisionModelClient(
                 temperature = 0f,
                 topP = 1f
             ),
-            timeoutSeconds = platform.timeout
+            timeoutSeconds = platform.timeout,
+            endpoint = platform.providerEndpoint()
         ).collect { chunk ->
             when (chunk) {
                 is ContentDeltaResponseChunk -> chunk.delta.text?.let { output.append(it) }
@@ -258,8 +255,6 @@ class ProviderSearchDecisionModelClient(
     }
 
     private suspend fun requestGoogleDecision(platform: PlatformV2, prompt: String): SearchDecisionModelResponse {
-        googleAPI.setToken(platform.token)
-        googleAPI.setAPIUrl(platform.apiUrl)
         val output = StringBuilder()
         var usage: ProviderUsage? = null
         googleAPI.streamGenerateContent(
@@ -278,7 +273,8 @@ class ProviderSearchDecisionModelClient(
                 systemInstruction = Content(parts = listOf(Part.text(DECISION_SYSTEM_PROMPT)))
             ),
             model = platform.model,
-            timeoutSeconds = platform.timeout
+            timeoutSeconds = platform.timeout,
+            endpoint = platform.providerEndpoint()
         ).collect { response ->
             response.error?.let { error -> throw IllegalStateException(error.message) }
             response.usageMetadata?.let { metadata ->
