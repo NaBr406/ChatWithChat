@@ -222,6 +222,7 @@ fun ChatScreen(
         onTextSkillRemoved = chatViewModel::removeOneShotTextSkill,
         onSessionTextSkillEnabled = chatViewModel::setSessionTextSkillEnabled,
         onSessionTextSkillRemoved = chatViewModel::removeSessionTextSkill,
+        onStopButtonClick = chatViewModel::stopGeneration,
         onSendButtonClick = chatViewModel::askQuestion,
         onModelOptionSelected = { option ->
             chatViewModel.updateChatPlatformModelAndRemember(option.platformUid, option.model)
@@ -360,6 +361,7 @@ private fun ChatContent(
     onTextSkillRemoved: (cn.nabr.chatwithchat.data.textskill.SelectedTextSkill) -> Unit,
     onSessionTextSkillEnabled: (cn.nabr.chatwithchat.data.database.entity.SessionTextSkillBinding, Boolean) -> Unit,
     onSessionTextSkillRemoved: (cn.nabr.chatwithchat.data.database.entity.SessionTextSkillBinding) -> Unit,
+    onStopButtonClick: () -> Unit,
     onSendButtonClick: () -> Unit,
     navigationIcon: ImageVector,
     navigationIconContentDescription: String
@@ -731,6 +733,8 @@ private fun ChatContent(
                 inputState = inputState,
                 chatEnabled = canUseChat,
                 sendButtonEnabled = canSubmitOrEdit,
+                isGenerating = !isIdle,
+                onStopButtonClick = onStopButtonClick,
                 isAttachmentImportInProgress = isAttachmentImportInProgress,
                 selectedAttachments = selectedAttachments,
                 selectedTextSkills = selectedTextSkills,
@@ -805,14 +809,24 @@ private fun ChatMessagePair(
     val assistantThoughts = selectedAssistantMessage?.effectiveThoughts()?.stripInternalStickerMarkers() ?: ""
     val assistantStickerRefs = selectedAssistantMessage?.effectiveStickerRefs().orEmpty()
     val selectedTokenUsage = selectedAssistantMessage?.effectiveTokenUsage()
-    val canShowPreviousRevision = selectedAssistantMessage?.let { assistantMessage ->
-        assistantMessage.revisions.isNotEmpty() &&
-            assistantMessage.activeRevisionIndex < assistantMessage.revisions.lastIndex
-    } ?: false
-    val canShowNextRevision = selectedAssistantMessage?.let { assistantMessage ->
-        assistantMessage.revisions.isNotEmpty() &&
-            assistantMessage.activeRevisionIndex != ACTIVE_REVISION_LATEST
-    } ?: false
+    // Gated on `canSubmitOrEdit` for the same reason editing is: switching revisions rewrites the
+    // message list and persists a snapshot, and both are unsafe while a turn is streaming into that
+    // same list or a completed turn is being saved. Nothing stops the user scrolling up to an older
+    // turn mid-stream, so without this the arrows were reachable exactly when they must not be.
+    val canShowPreviousRevision = canSubmitOrEdit &&
+        (
+            selectedAssistantMessage?.let { assistantMessage ->
+                assistantMessage.revisions.isNotEmpty() &&
+                    assistantMessage.activeRevisionIndex < assistantMessage.revisions.lastIndex
+            } ?: false
+            )
+    val canShowNextRevision = canSubmitOrEdit &&
+        (
+            selectedAssistantMessage?.let { assistantMessage ->
+                assistantMessage.revisions.isNotEmpty() &&
+                    assistantMessage.activeRevisionIndex != ACTIVE_REVISION_LATEST
+            } ?: false
+            )
     val selectedPlatformUid = selectedAssistantMessage?.platformType.orEmpty()
     val selectedPlatformModel = selectedAssistantMessage?.effectiveTokenUsage()?.model.orEmpty()
     val sessionTokenUsages = remember(allAssistantMessages, selectedPlatformUid, selectedPlatformModel) {

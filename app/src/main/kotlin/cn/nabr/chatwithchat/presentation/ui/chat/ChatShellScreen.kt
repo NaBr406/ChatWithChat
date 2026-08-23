@@ -40,6 +40,7 @@ import cn.nabr.chatwithchat.presentation.ui.home.modelsOrEmpty
 import cn.nabr.chatwithchat.presentation.ui.home.shouldResetSelectionAfterDrawerTransition
 import java.util.UUID
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 
 /**
@@ -143,6 +144,20 @@ fun ChatShellScreen(
             homeViewModel.fetchChats()
             homeViewModel.fetchPlatformStatus()
         }
+    }
+
+    // 抽屉每次打开都重读会话列表。会话是在首次发送时才入库的，而抽屉和聊天页在同一个 shell 里，所以
+    // "发送 → 拉开抽屉"这条路上根本没有 RESUMED 事件——上面那次刷新早就过去了。不刷新就看不到刚建的
+    // 会话，看不到就回不去，回不去就没法处理那一轮的工具审批。挂在 targetValue 上而不是写进
+    // openDrawer()，同样是为了覆盖侧滑和返回手势触发的开合。
+    LaunchedEffect(drawerState) {
+        snapshotFlow { drawerState.targetValue }
+            .filter { targetValue -> targetValue == DrawerValue.Open }
+            .collect {
+                if (!chatListState.isSelectionMode && !chatListState.isSearchMode) {
+                    homeViewModel.fetchChats()
+                }
+            }
     }
 
     // 抽屉不是独立窗口，打开它并不会让聊天输入框失焦，键盘于是赖着不走。这里在每次开合抽屉时主动收键盘；

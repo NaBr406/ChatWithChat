@@ -16,6 +16,7 @@ import cn.nabr.chatwithchat.data.repository.SettingRepository
 import cn.nabr.chatwithchat.data.textskill.SelectedTextSkill
 import cn.nabr.chatwithchat.data.textskill.TextSkillPackageRepository
 import cn.nabr.chatwithchat.data.textskill.toSelectableTextSkills
+import cn.nabr.chatwithchat.presentation.ui.chat.ChatTurnCoordinator
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.FlowPreview
@@ -54,7 +55,8 @@ internal fun HomeModelsState.shouldShowAddProvider(): Boolean =
 class HomeViewModel @Inject constructor(
     private val chatRepository: ChatRepository,
     private val settingRepository: SettingRepository,
-    private val textSkillPackageRepository: TextSkillPackageRepository
+    private val textSkillPackageRepository: TextSkillPackageRepository,
+    private val chatTurnCoordinator: ChatTurnCoordinator
 ) : ViewModel() {
 
     companion object {
@@ -64,6 +66,14 @@ class HomeViewModel @Inject constructor(
 
     data class ChatListState(
         val chats: List<ChatRoomV2> = listOf(),
+        /**
+         * Chats with a turn running right now.
+         *
+         * Turns outlive their screen, so without this the list is the only place the user looks and the
+         * only place that cannot tell them anything — including which chat is sitting on an unanswered
+         * tool-approval prompt.
+         */
+        val runningChatIds: Set<Int> = emptySet(),
         val isSelectionMode: Boolean = false,
         val isSearchMode: Boolean = false,
         val selectedChats: List<Boolean> = listOf(),
@@ -93,6 +103,11 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             textSkillPackageRepository.packages.collect { packages ->
                 _availableTextSkills.value = packages.toSelectableTextSkills()
+            }
+        }
+        viewModelScope.launch {
+            chatTurnCoordinator.runningChatIds.collect { running ->
+                _chatListState.update { it.copy(runningChatIds = running) }
             }
         }
         // Set up debounced search
@@ -133,6 +148,9 @@ class HomeViewModel @Inject constructor(
                 _chatListState.value.selectedChats[index]
             }
 
+            // Dropped before the rows go, and dropped rather than saved: `saveChat` upserts, so letting a
+            // running turn finish would recreate the chat the user just deleted.
+            chatTurnCoordinator.cancelForChats(selectedChats.map { it.id }.toSet())
             chatRepository.deleteChatsV2(selectedChats)
             _chatListState.update { it.copy(chats = chatRepository.fetchChatListV2()) }
             disableSelectionMode()

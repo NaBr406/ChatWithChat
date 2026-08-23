@@ -36,7 +36,21 @@ suspend fun Flow<ApiState>.handleStates(
      * string resources — and this is the last point before the code is baked into content the user reads.
      * Defaults to a pass-through so callers that do not care (and tests) see the code unchanged.
      */
-    resolveErrorMessage: (String) -> String = { message -> message }
+    resolveErrorMessage: (String) -> String = { message -> message },
+    /**
+     * Whether a cancellation came from the user pressing stop, rather than the screen going away.
+     *
+     * Only consulted when the stream did not finish, and it changes what the partial answer becomes. A
+     * stop is a *completion*: the text already on screen is kept, pending stickers are attached and a
+     * timestamp is written, exactly as if the model had finished there. Without that distinction a
+     * stopped retry would be pure data loss — `revisionToAppendOnSuccess` carries the answer being
+     * replaced, and it is only appended on the success branch, so the previous answer would vanish
+     * along with the partial new one.
+     *
+     * Defaults to false, which reproduces the old behaviour: a turn that dies with its scope leaves the
+     * message untimestamped and unsaved.
+     */
+    wasStoppedByUser: () -> Boolean = { false }
 ) = coroutineScope {
     val buffer = StreamingMessageBuffer()
     val pendingStickers = linkedMapOf<String, MessageStickerRef>()
@@ -110,6 +124,7 @@ suspend fun Flow<ApiState>.handleStates(
         publisher.cancel()
         buffer.flush(messageFlow, turnIndex, platformIdx)
         val error = terminalError
+        val stoppedByUser = !streamCompletedNormally && error == null && wasStoppedByUser()
         when {
             error != null -> messageFlow.setErrorMessage(
                 turnIndex = turnIndex,
@@ -119,7 +134,7 @@ suspend fun Flow<ApiState>.handleStates(
                 revisionToAppend = revisionToAppendOnSuccess
             )
 
-            streamCompletedNormally && isCompletedSuccessfully -> {
+            (streamCompletedNormally && isCompletedSuccessfully) || stoppedByUser -> {
                 pendingStickers.values.forEach { sticker ->
                     messageFlow.addStickerReference(turnIndex, platformIdx, sticker)
                 }

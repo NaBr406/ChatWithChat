@@ -49,6 +49,7 @@ import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.rounded.ArrowUpward
+import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -133,6 +134,16 @@ fun ChatComposer(
     onFileRemoved: (String) -> Unit = {},
     onTextSkillsSelected: (List<SelectedTextSkill>, TextSkillSelectionScope) -> Unit = { _, _ -> },
     onTextSkillRemoved: (SelectedTextSkill) -> Unit = {},
+    /**
+     * Turns the send button into a stop button. False leaves the composer exactly as it was.
+     *
+     * Shares the button rather than adding a second one: the two actions are mutually exclusive by
+     * definition — nothing can be sent while a turn runs, which is why [sendButtonEnabled] is already
+     * false throughout — so a separate control would be dead half the time and would take space from
+     * the input field on a phone.
+     */
+    isGenerating: Boolean = false,
+    onStopButtonClick: () -> Unit = {},
     onSendButtonClick: () -> Unit = {}
 ) {
     val localStyle = LocalTextStyle.current
@@ -448,22 +459,32 @@ fun ChatComposer(
                                 modifier = Modifier
                                     .size(36.dp)
                                     .background(
-                                        color = if (canSend) materialColors.primaryLabel else materialColors.controlFill,
+                                        color = if (isGenerating || canSend) {
+                                            materialColors.primaryLabel
+                                        } else {
+                                            materialColors.controlFill
+                                        },
                                         shape = CircleShape
                                     )
                             )
                             IconButton(
-                                enabled = canSend,
-                                onClick = onSendButtonClick,
+                                enabled = isGenerating || canSend,
+                                onClick = if (isGenerating) onStopButtonClick else onSendButtonClick,
                                 colors = IconButtonDefaults.iconButtonColors(
                                     contentColor = materialColors.canvas,
                                     disabledContentColor = materialColors.tertiaryLabel
                                 )
                             ) {
                                 Icon(
-                                    modifier = Modifier.size(20.dp),
-                                    imageVector = Icons.Rounded.ArrowUpward,
-                                    contentDescription = stringResource(R.string.send)
+                                    modifier = Modifier.size(if (isGenerating) 16.dp else 20.dp),
+                                    imageVector = if (isGenerating) {
+                                        Icons.Rounded.Stop
+                                    } else {
+                                        Icons.Rounded.ArrowUpward
+                                    },
+                                    contentDescription = stringResource(
+                                        if (isGenerating) R.string.stop_generating else R.string.send
+                                    )
                                 )
                             }
                         }

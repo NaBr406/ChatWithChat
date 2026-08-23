@@ -29,7 +29,6 @@ import cn.nabr.chatwithchat.data.database.entity.resetActiveRevision
 import cn.nabr.chatwithchat.data.database.entity.selectRevision
 import cn.nabr.chatwithchat.data.database.entity.snapshotLatestAssistantRevision
 import cn.nabr.chatwithchat.data.dto.ApiState
-import cn.nabr.chatwithchat.data.memory.MemoryCompletedTurnInput
 import cn.nabr.chatwithchat.data.memory.PreparedMemoryContext
 import cn.nabr.chatwithchat.data.model.AvailableChatModel
 import cn.nabr.chatwithchat.data.model.ChatPlatformConfig
@@ -54,11 +53,6 @@ import cn.nabr.chatwithchat.data.textskill.TextSkillVariantKey
 import cn.nabr.chatwithchat.data.textskill.selectionKey
 import cn.nabr.chatwithchat.data.textskill.toSelectableTextSkills
 import cn.nabr.chatwithchat.data.title.ChatTitleGenerationService
-import cn.nabr.chatwithchat.data.title.ChatTitleTurn
-import cn.nabr.chatwithchat.data.tool.TOOL_ARGUMENTS_TOO_LARGE
-import cn.nabr.chatwithchat.data.tool.TOOL_BUDGET_EXCEEDED_PREFIX
-import cn.nabr.chatwithchat.data.tool.TOOL_PROTOCOL_RESPONSE_TOO_LARGE
-import cn.nabr.chatwithchat.data.tool.TOOL_RESULT_BUDGET_EXHAUSTED
 import cn.nabr.chatwithchat.data.tool.ToolApprovalBroker
 import cn.nabr.chatwithchat.data.tool.ToolDefinition
 import cn.nabr.chatwithchat.di.ApplicationScope
@@ -73,8 +67,16 @@ import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -96,6 +98,7 @@ class ChatViewModel @Inject constructor(
     private val contextCheckpointRepository: ContextCheckpointRepository,
     private val textSkillPackageRepository: TextSkillPackageRepository,
     private val textSkillInvocationCompiler: TextSkillInvocationCompiler,
+    private val chatTurnCoordinator: ChatTurnCoordinator,
     @param:ApplicationScope private val applicationScope: CoroutineScope
 ) : ViewModel() {
     sealed class LoadingState {
@@ -144,6 +147,31 @@ class ChatViewModel @Inject constructor(
     private val launchState = ChatLaunchState(savedStateHandle, routeChatRoomId)
     private val chatRoomId: Int
         get() = launchState.chatRoomId
+
+    /**
+     * Which of [chatTurnCoordinator]'s turns belong to this screen.
+     *
+     * Recomputed on every read rather than cached: a new chat's key changes the moment its first save
+     * assigns an id, and from then on the id-based key is what makes one-turn-per-chat true.
+     */
+    private val turnKey: String
+        get() = turnKeyFor(chatRoomId, launchState.draftTurnNonce)
+
+    /**
+     * [turnKey] as a stream, because it changes exactly once per new chat.
+     *
+     * A chat sends while it still has id `0`, gets saved, and from that moment keys on `chat:<id>`
+     * instead of its draft nonce. A mirror that read the key once would go on watching the nonce and
+     * never see the turn it just started — the sending screen would sit on the user's message forever
+     * while the answer streamed into a flow nobody was reading. Republished from [_chatRoom] because
+     * that is what the save updates, together with the launch state the key is derived from.
+     */
+    private val turnKeyFlow: StateFlow<String> by lazy {
+        _chatRoom
+            .map { turnKey }
+            .distinctUntilChanged()
+            .stateIn(viewModelScope, SharingStarted.Eagerly, turnKey)
+    }
     private val enabledPlatformString: String = checkNotNull(savedStateHandle["enabledPlatforms"])
     private val initialQuestion: String = Uri.decode(savedStateHandle.get<String>("initialQuestion").orEmpty())
     private val initialModel: String = Uri.decode(savedStateHandle.get<String>("initialModel").orEmpty())
@@ -258,11 +286,21 @@ class ChatViewModel @Inject constructor(
     val loadingStates = _loadingStates.asStateFlow()
     private val _isPersistingCompletion = MutableStateFlow(false)
     val isPersistingCompletion = _isPersistingCompletion.asStateFlow()
-    private val loadingCompletionLock = Any()
 
     private val _toolProgressStates = MutableStateFlow<Map<String, List<ToolProgressState>>>(emptyMap())
     val toolProgressStates = _toolProgressStates.asStateFlow()
-    val pendingToolApproval = toolApprovalBroker.pending
+    /**
+     * Only this conversation's approval prompts.
+     *
+     * The broker's queue is app-wide, so an unfiltered view showed another chat's prompt here — and,
+     * worse, let a prompt nobody could answer sit at the head and keep every other chat's dialog from
+     * appearing. [chatRoomId] is the same value the repository stamps onto messages and passes as the
+     * approval scope, so the two agree by construction, including the zero a chat carries until its
+     * first save.
+     */
+    val pendingToolApproval: StateFlow<ToolApprovalBroker.PendingApproval?> = toolApprovalBroker.queued
+        .map { waiting -> waiting.firstOrNull { approval -> approval.chatId == chatRoomId } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     // Used for text data to show in SelectText Bottom Sheet
     private val _selectedText = MutableStateFlow("")
@@ -356,6 +394,16 @@ class ChatViewModel @Inject constructor(
         sendQuestion(questionText, _selectedAttachments.value)
     }
 
+    /**
+     * Cleans up only what this chat owns.
+     *
+     * It used to end with `AttachmentPayloadCache.clear()`. That cache is a process-level object keyed
+     * on file paths, shared by every chat and by the repository's encoder, so wiping it wholesale made
+     * leaving one chat throw away payloads another chat was still using — re-encoding at best, and once
+     * turns outlive their screen, dropping them out from under a request in flight. Both draft cleanup
+     * (via [deleteDraftFiles]) and the pending paths below now evict exactly the entries whose files
+     * they delete; everything else stays under the cache's own LRU bound.
+     */
     override fun onCleared() {
         val selectedDrafts = _selectedAttachments.value
         val editDrafts = _messageEditSession.value?.attachments.orEmpty()
@@ -366,8 +414,10 @@ class ChatViewModel @Inject constructor(
         _messageEditSession.value = null
         selectedDrafts.forEach(::deleteDraftFiles)
         editDrafts.forEach(::deleteDraftFiles)
-        pendingPaths.forEach { filePath -> java.io.File(filePath).delete() }
-        AttachmentPayloadCache.clear()
+        pendingPaths.forEach { filePath ->
+            AttachmentPayloadCache.remove(filePath)
+            java.io.File(filePath).delete()
+        }
         super.onCleared()
     }
 
@@ -618,8 +668,13 @@ class ChatViewModel @Inject constructor(
             }
         }
 
-        viewModelScope.launch {
-            val retryContext = groupedMessagesThroughTurn(_groupedMessages.value, turnIndex)
+        startTurn(
+            turnIndex = turnIndex,
+            platformIndex = platformIndex,
+            memoryActivityAt = null,
+            memoryPlatform = platformSelection.platform
+        ) { turn ->
+            val retryContext = groupedMessagesThroughTurn(turn.messages.value, turnIndex)
             val memoryContext = prepareMemoryContextForTurn(retryContext, platformSelection.platform)
             val frozenTextSkillSnapshot = retryContext.userMessages.lastOrNull()
                 ?.id
@@ -635,17 +690,85 @@ class ChatViewModel @Inject constructor(
                 ),
                 reasoningMode = platformSelection.reasoningMode
             ).handleStates(
-                messageFlow = _groupedMessages,
+                messageFlow = turn.messagesFlow,
                 turnIndex = turnIndex,
                 platformIdx = platformIndex,
-                onLoadingComplete = {
-                    markPlatformLoadingComplete(platformIndex)
-                },
+                onLoadingComplete = { turn.markPlatformIdle(platformIndex) },
                 revisionToAppendOnSuccess = revisionToAppendOnSuccess,
-                onToolProgress = { progress -> updateToolProgress(turnIndex, platformIndex, progress) },
-                resolveErrorMessage = ::resolveToolErrorMessage
+                onToolProgress = { progress -> turn.appendToolProgress(turnIndex, platformIndex, progress) },
+                resolveErrorMessage = chatTurnCoordinator::resolveToolErrorMessage,
+                wasStoppedByUser = { turn.stopRequested }
             )
         }
+    }
+
+    /**
+     * Hands a turn to [chatTurnCoordinator] so it outlives this screen.
+     *
+     * Every callback writes into the turn's own flows rather than this view model's. That is the whole
+     * point: a screen that goes away must not take the stream's destination with it, and a screen that
+     * arrives later has to find the progress that happened while it was gone. The mirror set up in
+     * `init` copies those flows back here for rendering.
+     *
+     * Returns false when a turn is already running under this key, which is how one-turn-per-chat is
+     * enforced. Callers have already reset the loading state by then, so they restore it.
+     */
+    private fun startTurn(
+        turnIndex: Int,
+        platformIndex: Int,
+        memoryActivityAt: Long?,
+        memoryPlatform: PlatformV2?,
+        block: suspend (ChatTurnCoordinator.LiveTurn) -> Unit
+    ): Boolean {
+        val started = chatTurnCoordinator.start(
+            key = turnKey,
+            request = ChatTurnCoordinator.TurnRequest(
+                chatRoom = _chatRoom,
+                chatPlatformModels = _chatPlatformModels,
+                seedMessages = _groupedMessages.value,
+                seedLoadingStates = _loadingStates.value,
+                turnIndex = turnIndex,
+                platformIndex = platformIndex,
+                memoryActivityAt = memoryActivityAt,
+                preferredMemoryPlatform = memoryPlatform
+            ),
+            block = block
+        )
+        if (started == null) {
+            _loadingStates.update { emptyList() }
+            return false
+        }
+        return true
+    }
+
+    /**
+     * Stops the running turn, keeping everything it produced.
+     *
+     * Cancelling the job is enough to reach the whole turn: the provider stream, the sequential tool
+     * executions and a pending approval wait are all suspended inside it. `handleStates` then treats
+     * this as a completion rather than a loss — see its `wasStoppedByUser` parameter — so the partial
+     * answer is timestamped, the loading state clears, and `observeStateChanges` persists the turn.
+     *
+     * Also covers the window before a turn exists. [askQuestion] shows the loading state while
+     * attachments are still being prepared, and the button follows that state, so without the queued
+     * question branch pressing stop there would do nothing at all and leave the composer stuck looking
+     * busy. The typed text goes back into the input field, as it does when an attachment fails.
+     *
+     * Deliberately does nothing once the turn has finished and only persistence is left: cancelling
+     * there would abort the save, which is the one thing a stop must not do.
+     */
+    fun stopGeneration() {
+        if (_isPersistingCompletion.value) return
+
+        val queuedQuestion = pendingQuestionText
+        if (queuedQuestion != null) {
+            pendingQuestionText = null
+            restoreQueuedQuestion(queuedQuestion)
+            _loadingStates.update { emptyList() }
+            return
+        }
+
+        chatTurnCoordinator.stop(turnKey)
     }
 
     fun approveToolApproval(requestId: String) {
@@ -854,7 +977,7 @@ class ChatViewModel @Inject constructor(
 
         // An edit starts a new request. It recompiles only current session bindings, never draft one-shot choices.
         if (textSkillSnapshot == null) {
-            completeChat()
+            completeChatAfterEnsuringChatRow()
         } else {
             persistTextSkillSnapshotThenComplete(textSkillSnapshot, clearOneShotAfterPersistence = false)
         }
@@ -982,10 +1105,16 @@ class ChatViewModel @Inject constructor(
         val groupedMessages = _groupedMessages.value
         val memoryPlatform = preferredMemoryPlatform()
 
-        viewModelScope.launch {
+        startTurn(
+            turnIndex = turnIndex,
+            platformIndex = currentPlatformIndex,
+            memoryActivityAt = pendingMemoryTurnActivityAt,
+            memoryPlatform = memoryPlatform
+        ) { turn ->
             val memoryContext = prepareMemoryContextForTurn(groupedMessages, memoryPlatform)
+            turn.memoryEnabled = refreshMemoryEnabled()
 
-            val latestGroupedMessages = _groupedMessages.value
+            val latestGroupedMessages = turn.messages.value
             chatRepository.completeChat(
                 latestGroupedMessages.userMessages,
                 latestGroupedMessages.assistantMessages,
@@ -993,43 +1122,17 @@ class ChatViewModel @Inject constructor(
                 requestContext.copy(memoryPrompt = memoryContext.prompt),
                 reasoningMode = platformSelection.reasoningMode
             ).handleStates(
-                messageFlow = _groupedMessages,
+                messageFlow = turn.messagesFlow,
                 turnIndex = turnIndex,
                 platformIdx = currentPlatformIndex,
-                onLoadingComplete = { markPlatformLoadingComplete(currentPlatformIndex) },
-                onToolProgress = { progress -> updateToolProgress(turnIndex, currentPlatformIndex, progress) },
-                resolveErrorMessage = ::resolveToolErrorMessage
+                onLoadingComplete = { turn.markPlatformIdle(currentPlatformIndex) },
+                onToolProgress = { progress -> turn.appendToolProgress(turnIndex, currentPlatformIndex, progress) },
+                resolveErrorMessage = chatTurnCoordinator::resolveToolErrorMessage,
+                wasStoppedByUser = { turn.stopRequested }
             )
         }
-    }
-
-    private fun updateToolProgress(
-        turnIndex: Int,
-        platformIndex: Int,
-        progress: ApiState
-    ) {
-        val key = toolProgressKey(turnIndex, platformIndex)
-        _toolProgressStates.update { current ->
-            current + (key to current[key].orEmpty().appendToolProgress(progress))
-        }
-    }
-
-    /**
-     * Replaces an internal tool-limit code with text a user can read.
-     *
-     * The repository emits these as data, so the substitution happens here, where string resources are
-     * reachable. Anything unrecognised is left alone — the same field carries genuine provider error text.
-     */
-    private fun resolveToolErrorMessage(message: String): String = when {
-        message.contains(TOOL_ARGUMENTS_TOO_LARGE) ->
-            context.getString(R.string.tool_error_arguments_too_large)
-        message.contains(TOOL_PROTOCOL_RESPONSE_TOO_LARGE) ->
-            context.getString(R.string.tool_error_response_too_large)
-        message.contains(TOOL_BUDGET_EXCEEDED_PREFIX) ->
-            context.getString(R.string.tool_error_budget_exhausted)
-        message.contains(TOOL_RESULT_BUDGET_EXHAUSTED) ->
-            context.getString(R.string.tool_error_result_budget_exhausted)
-        else -> message
+        // Handed off: the coordinator now owns the memory activity stamp for this turn.
+        pendingMemoryTurnActivityAt = null
     }
 
     private fun clearToolProgress(turnIndex: Int, platformIndex: Int) {
@@ -1070,7 +1173,17 @@ class ChatViewModel @Inject constructor(
             )
         }
         _currentReasoningMode.update { nextReasoningMode }
-        _loadingStates.update { emptyList() }
+        // `_loadingStates` is indexed by platform position, so adding a platform can invalidate it —
+        // but only reset it when no turn owns the list. The model menu stays enabled during a turn
+        // (picking the model for the next message while reading the current answer is normal), and
+        // clearing under a live turn made `isIdle` true mid-stream: the stop button disappeared, sending
+        // unlocked, `observeStateChanges` persisted a half-written answer, and the turn's own completion
+        // then found its index gone — `markPlatformLoadingComplete` returns early on an out-of-range
+        // index — so the finished answer was never saved at all. Clearing during the persist window is
+        // just as wrong: `emptyList()` differs from all-Idle, so it re-emits and starts a second save.
+        if (!isTurnInFlight()) {
+            _loadingStates.update { emptyList() }
+        }
 
         viewModelScope.launch {
             settingRepository.updateLastSelectedModel(selectedModel.platformUid, selectedModel.modelId, nextReasoningMode)
@@ -1470,29 +1583,12 @@ class ChatViewModel @Inject constructor(
         recordUserActivityIfEnabled(_chatRoom.value.id, activityAt)
         question.clearText()
         clearSelectedFiles()
-        if (isInitialRequestInFlight) {
-            _loadingStates.update { listOf(LoadingState.Loading) }
-            viewModelScope.launch {
-                try {
-                    if (textSkillSnapshot == null) {
-                        persistInitialRequestBeforeCompletion()
-                        completeChat()
-                    } else {
-                        persistTextSkillSnapshotThenComplete(textSkillSnapshot)
-                    }
-                } catch (error: CancellationException) {
-                    throw error
-                } catch (error: Throwable) {
-                    _attachmentNotice.update { error.message ?: error::class.simpleName.orEmpty() }
-                    _loadingStates.update { emptyList() }
-                }
-            }
+        // Both branches now save before the turn; the initial request only differs in also marking itself
+        // consumed, which `persistChatBeforeTurnIfNeeded` does.
+        if (textSkillSnapshot != null) {
+            persistTextSkillSnapshotThenComplete(textSkillSnapshot)
         } else {
-            if (textSkillSnapshot != null) {
-                persistTextSkillSnapshotThenComplete(textSkillSnapshot)
-            } else {
-                completeChat()
-            }
+            completeChatAfterEnsuringChatRow()
         }
     }
 
@@ -1689,11 +1785,7 @@ class ChatViewModel @Inject constructor(
         question.setTextAndPlaceCursorAtEnd(questionText)
     }
 
-    private fun deleteDraftFiles(attachment: ChatAttachmentDraft) {
-        attachment.ownedPathsToDeleteOnDiscard().forEach { filePath ->
-            java.io.File(filePath).delete()
-        }
-    }
+    private fun deleteDraftFiles(attachment: ChatAttachmentDraft) = discardDraftFiles(attachment)
 
     /**
      * Assistant revisions are stored newest-first: revisions[0] is the newest
@@ -1704,6 +1796,12 @@ class ChatViewModel @Inject constructor(
         platformIndex: Int,
         nextIndex: (MessageV2) -> Int
     ) {
+        // The arrows are already disabled while a turn runs, but the guard belongs here too: this is the
+        // last write to `_groupedMessages` that was reachable mid-stream, and the rule it upholds — the
+        // running turn is the only writer for as long as it runs — has to hold whatever the UI decides to
+        // render. Without it the write races the stream, and `persistCurrentChatSnapshot` below saves a
+        // half-written answer that the end-of-turn save then has to overwrite.
+        if (isTurnInFlight()) return
         _groupedMessages.update {
             updateAssistantSlot(
                 groupedMessages = it,
@@ -1716,6 +1814,11 @@ class ChatViewModel @Inject constructor(
         persistCurrentChatSnapshot()
     }
 
+    private fun isTurnInFlight(): Boolean = isTurnInFlight(
+        loadingStates = _loadingStates.value,
+        isPersistingCompletion = _isPersistingCompletion.value
+    )
+
     private fun formatCurrentDateTime(): String {
         val currentDate = java.util.Date()
         val format = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
@@ -1723,6 +1826,15 @@ class ChatViewModel @Inject constructor(
     }
 
     private suspend fun fetchMessages() {
+        // A running turn holds newer state than the database does — it has not saved yet — so reading
+        // over it would replace a streaming answer with the pre-turn history and clear the loading
+        // state, leaving the screen idle-looking while the work continued out of sight. The mirror in
+        // `observeStateChanges` supplies the messages instead.
+        if (shouldYieldRoomLoad(chatTurnCoordinator.isLive(turnKey))) {
+            _isLoaded.update { true }
+            return
+        }
+
         // If the room isn't new
         if (chatRoomId != 0) {
             _groupedMessages.update { fetchGroupedMessages(chatRoomId) }
@@ -1741,23 +1853,8 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    private suspend fun fetchGroupedMessages(chatId: Int): GroupedMessages {
-        val messages = chatRepository.fetchMessagesV2(chatId).sortedBy { it.createdAt }
-
-        val userMessages = mutableListOf<MessageV2>()
-        val assistantMessages = mutableListOf<MutableList<MessageV2>>()
-
-        messages.forEach { message ->
-            if (message.platformType == null) {
-                userMessages.add(message)
-                assistantMessages.add(mutableListOf())
-            } else {
-                assistantMessages.last().add(message)
-            }
-        }
-
-        return GroupedMessages(userMessages, assistantMessages)
-    }
+    private suspend fun fetchGroupedMessages(chatId: Int): GroupedMessages =
+        chatRepository.groupedMessagesFor(chatId)
 
     private fun recoverInitialRequestIfNeeded() {
         if (initialRequestRecoveryComplete) return
@@ -1789,8 +1886,27 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    private suspend fun persistInitialRequestBeforeCompletion() {
+    /**
+     * Gives the chat a database row before its turn starts, if it does not have one yet.
+     *
+     * Turns outlive their screen, which only helps if the user can get back to the screen. A chat that
+     * has never been saved has no row, so it is absent from the history list and unreachable — and with
+     * a tool loop that means an approval prompt nobody can answer, on a turn nobody can watch or stop.
+     * The prompt was not even inert: it carries the chat id, which is `0` for every unsaved chat, so it
+     * surfaced in whichever *new* chat the user opened next, attached to a turn whose messages were
+     * nowhere on screen.
+     *
+     * Saving first also settles the turn key. [turnKeyFor] falls back to a per-entry nonce only while the
+     * id is `0`, so from here on every turn keys on `chat:<id>` and one-turn-per-chat is real.
+     *
+     * The Skill path already did this through `saveChatWithTextSkillInvocation`; this is the same
+     * guarantee for the ordinary send, which is the common case and the one that broke.
+     */
+    private suspend fun persistChatBeforeTurnIfNeeded() {
+        if (_chatRoom.value.id > 0) return
         val snapshot = _groupedMessages.value
+        if (snapshot.userMessages.isEmpty()) return
+
         val savedChatRoom = withContext(Dispatchers.IO) {
             chatRepository.saveChat(
                 chatRoom = _chatRoom.value,
@@ -1799,11 +1915,42 @@ class ChatViewModel @Inject constructor(
             )
         }
         recordPersistedChatRoom(savedChatRoom.id)
-        launchState.recordInitialRequestPersisted()
+        if (isInitialRequestInFlight) {
+            launchState.recordInitialRequestPersisted()
+            isInitialRequestInFlight = false
+        }
         _chatRoom.value = savedChatRoom
-        isInitialRequestInFlight = false
+        // Re-read so the messages carry the ids the database assigned. The empty assistant row is not
+        // persisted — `persistableMessages` drops it — and `ensureCurrentTurnAssistantSlot` recreates it
+        // in the turn that follows.
         _groupedMessages.value = withContext(Dispatchers.IO) {
             fetchGroupedMessages(savedChatRoom.id)
+        }
+    }
+
+    /**
+     * Saves the chat if needed, then starts the turn.
+     *
+     * The save is on `viewModelScope` because it has to finish before the turn begins. That window is one
+     * database insert; losing it to navigation costs the unsent message and nothing else, and the user
+     * sees the notice below rather than a chat that silently went nowhere.
+     */
+    private fun completeChatAfterEnsuringChatRow(requestContext: ChatRequestContext = ChatRequestContext()) {
+        if (_chatRoom.value.id > 0) {
+            completeChat(requestContext)
+            return
+        }
+        _loadingStates.update { listOf(LoadingState.Loading) }
+        viewModelScope.launch {
+            try {
+                persistChatBeforeTurnIfNeeded()
+                completeChat(requestContext)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                _attachmentNotice.update { error.message ?: error::class.simpleName.orEmpty() }
+                _loadingStates.update { emptyList() }
+            }
         }
     }
 
@@ -1915,13 +2062,18 @@ class ChatViewModel @Inject constructor(
                 chatRoom.copy(enabledPlatform = chatRoom.enabledPlatform + selectedModel.platformUid)
             }
         }
-        _loadingStates.update { emptyList() }
+        // Same reason as in [fetchMessages]: this runs during startup, and a turn adopted from the
+        // coordinator is newer than anything the database can offer.
+        val yieldToLiveTurn = shouldYieldRoomLoad(chatTurnCoordinator.isLive(turnKey))
+        if (!yieldToLiveTurn) {
+            _loadingStates.update { emptyList() }
+        }
         _chatPlatformModels.update { mergedModels }
 
         if (chatRoomId != 0 && mergedModels != persistedModels) {
             chatRepository.saveChatPlatformModels(chatRoomId, mergedModels)
         }
-        if (chatRoomId != 0) {
+        if (chatRoomId != 0 && !yieldToLiveTurn) {
             _groupedMessages.update { fetchGroupedMessages(chatRoomId) }
             _indexStates.update { current ->
                 List(_groupedMessages.value.assistantMessages.size) { index -> current.getOrElse(index) { 0 } }
@@ -1970,91 +2122,75 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    private fun markPlatformLoadingComplete(platformIndex: Int) {
-        synchronized(loadingCompletionLock) {
-            val current = _loadingStates.value
-            if (platformIndex !in current.indices) return
-            val next = current.toMutableList().apply { this[platformIndex] = LoadingState.Idle }
-            val completionNeedsPersistence = current[platformIndex] == LoadingState.Loading &&
-                next.all { it == LoadingState.Idle } &&
-                _chatRoom.value.id != -1 &&
-                _groupedMessages.value.userMessages.isNotEmpty() &&
-                _groupedMessages.value.userMessages.size == _groupedMessages.value.assistantMessages.size
-            if (completionNeedsPersistence) {
-                _isPersistingCompletion.value = true
+    /**
+     * Mirrors the running turn and finishes what the coordinator cannot.
+     *
+     * The save itself moved to [ChatTurnCoordinator]: it used to hang off a `_loadingStates` collector
+     * here, which is precisely why a departing screen lost its answer — the collector died with the
+     * scope before it could ever see the turn complete. What is left is the part that only makes sense
+     * with a screen present, driven by the coordinator's completion event.
+     *
+     * The mirror is one-way. Sending and editing are already blocked while a turn runs, and revision
+     * navigation is guarded by `isTurnInFlight`, so nothing here can be fighting the coordinator for
+     * `_groupedMessages`.
+     */
+    private fun observeStateChanges() {
+        viewModelScope.launch {
+            turnKeyFlow
+                .flatMapLatest { key -> chatTurnCoordinator.liveTurn(key) }
+                .collectLatest { turn ->
+                    if (turn == null) {
+                        // Cleared explicitly rather than mirrored: `collectLatest` cancels the inner
+                        // collectors as soon as the turn is removed, so the final `false` may never arrive.
+                        _isPersistingCompletion.value = false
+                        return@collectLatest
+                    }
+                    coroutineScope {
+                        launch { turn.messages.collect { messages -> _groupedMessages.value = messages } }
+                        launch { turn.loadingStates.collect { states -> _loadingStates.value = states } }
+                        launch { turn.toolProgress.collect { progress -> _toolProgressStates.value = progress } }
+                        launch { turn.isPersisting.collect { persisting -> _isPersistingCompletion.value = persisting } }
+                    }
+                }
+        }
+
+        viewModelScope.launch {
+            chatTurnCoordinator.completions.collect { completion ->
+                if (completion.key != turnKeyFlow.value) return@collect
+                onTurnPersisted(completion)
             }
-            _loadingStates.value = next
         }
     }
 
-    private fun observeStateChanges() {
-        viewModelScope.launch {
-            _loadingStates.collect { states ->
-                if (_chatRoom.value.id != -1 &&
-                    states.all { it == LoadingState.Idle } &&
-                    (_groupedMessages.value.userMessages.isNotEmpty() && _groupedMessages.value.assistantMessages.isNotEmpty()) &&
-                    (_groupedMessages.value.userMessages.size == _groupedMessages.value.assistantMessages.size)
-                ) {
-                    try {
-                        val chatRoom = _chatRoom.value
-                        val groupedMessages = _groupedMessages.value
-                        val chatPlatformModels = _chatPlatformModels.value
-                        val activityAt = pendingMemoryTurnActivityAt
-                        val preferredMemoryPlatformUid = preferredMemoryPlatform()?.uid
-
-                        val (savedChatRoom, persistedGroupedMessages) = withContext(Dispatchers.IO) {
-                            val saved = chatRepository.saveChat(
-                                chatRoom = chatRoom,
-                                messages = persistableMessages(groupedMessages),
-                                chatPlatformModels = chatPlatformModels
-                            )
-                            saved to fetchGroupedMessages(saved.id)
-                        }
-                        recordPersistedChatRoom(savedChatRoom.id)
-                        _chatRoom.update { currentChatRoom ->
-                            if (currentChatRoom.id == chatRoom.id && chatRoom.id == 0) {
-                                savedChatRoom
-                            } else {
-                                // Only the timestamp is adopted: the rest of the row may have been
-                                // edited meanwhile (a rename), but keeping the pre-save last-use time
-                                // would let the next save write an older value back over this one.
-                                currentChatRoom.copy(updatedAt = savedChatRoom.updatedAt)
-                            }
-                        }
-                        if (activityAt != null) {
-                            pendingMemoryTurnActivityAt = null
-                            val userMessage = persistedGroupedMessages.userMessages.lastOrNull()
-                            val assistantMessages = persistedGroupedMessages.assistantMessages.lastOrNull().orEmpty()
-                            if (refreshMemoryEnabled() && userMessage != null) {
-                                applicationScope.launch(Dispatchers.IO) {
-                                    memoryRepository.recordUserActivity(savedChatRoom.id, activityAt)
-                                    memoryRepository.recordCompletedTurn(
-                                        MemoryCompletedTurnInput(
-                                            chatRoom = savedChatRoom,
-                                            userMessage = userMessage,
-                                            assistantMessages = assistantMessages,
-                                            preferredPlatformUid = preferredMemoryPlatformUid,
-                                            stablePlatformOrder = savedChatRoom.enabledPlatform,
-                                            completedAt = currentTimeStamp
-                                        )
-                                    )
-                                }
-                            }
-                        }
-
-                        // Sync message ids
-                        _groupedMessages.value = persistedGroupedMessages
-                        maybeGenerateChatTitle(savedChatRoom, persistedGroupedMessages)
-                        refreshContextCompactionNotice()
-                    } catch (error: CancellationException) {
-                        throw error
-                    } catch (error: Throwable) {
-                        _attachmentNotice.update { error.message ?: error::class.simpleName.orEmpty() }
-                    } finally {
-                        _isPersistingCompletion.value = false
-                    }
+    /**
+     * The screen-side half of finishing a turn: adopt the ids and timestamps the save assigned.
+     *
+     * Skipped entirely when no screen is alive, which is correct — none of it changes stored data.
+     */
+    private suspend fun onTurnPersisted(completion: ChatTurnCoordinator.TurnCompletion) {
+        try {
+            val savedChatRoom = completion.savedChatRoom
+            val wasNewChat = _chatRoom.value.id == 0
+            recordPersistedChatRoom(savedChatRoom.id)
+            _chatRoom.update { currentChatRoom ->
+                if (wasNewChat) {
+                    savedChatRoom
+                } else {
+                    // Only the timestamp is adopted: the rest of the row may have been edited meanwhile
+                    // (a rename), but keeping the pre-save last-use time would let the next save write an
+                    // older value back over this one.
+                    currentChatRoom.copy(updatedAt = savedChatRoom.updatedAt)
                 }
             }
+            _groupedMessages.value = completion.persistedMessages
+            _indexStates.update { current ->
+                List(completion.persistedMessages.assistantMessages.size) { index -> current.getOrElse(index) { 0 } }
+            }
+            refreshContextCompactionNotice()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            _attachmentNotice.update { error.message ?: error::class.simpleName.orEmpty() }
         }
     }
 
@@ -2088,67 +2224,6 @@ class ChatViewModel @Inject constructor(
         val chatPlatform = currentChatPlatform() ?: return null
         return resolvePlatformSelection(chatPlatform).platform
     }
-
-    /**
-     * Names the chat with one LLM call after its first complete turn.
-     *
-     * Runs on [applicationScope], not [viewModelScope]: the user very often leaves the chat as soon
-     * as the answer finishes, and a title that dies with the screen would leave the truncated first
-     * message behind exactly in the case it is least wanted.
-     *
-     * Deliberately narrow: first turn only, and only while the stored title is still the truncated
-     * first message that `saveChat` writes. Comparing against that truncation — rather than against
-     * whatever the title was a moment ago — is what keeps this idempotent: reopening a one-turn chat
-     * re-enters this path, and a chat already named by the model or renamed by hand no longer matches,
-     * so it is never regenerated. The title is re-read from the database immediately before the write
-     * because [updateChatTitle] can land while the request is in flight.
-     */
-    private fun maybeGenerateChatTitle(chatRoom: ChatRoomV2, groupedMessages: GroupedMessages) {
-        if (chatRoom.id <= 0) return
-        if (groupedMessages.userMessages.size != 1) return
-
-        val platform = preferredMemoryPlatform() ?: return
-        val userMessage = groupedMessages.userMessages.firstOrNull()?.content?.takeIf { it.isNotBlank() } ?: return
-        val assistantMessage = groupedMessages.assistantMessages
-            .firstOrNull()
-            ?.firstOrNull { it.effectiveContent().isNotBlank() }
-            ?.effectiveContent()
-        val autoTitle = chatRepository.generateDefaultChatTitle(groupedMessages.userMessages) ?: return
-        if (chatRoom.title != autoTitle) return
-
-        applicationScope.launch(Dispatchers.IO) {
-            try {
-                val generated = chatTitleGenerationService.generateTitle(
-                    platform = platform,
-                    turns = listOf(
-                        ChatTitleTurn(
-                            userMessage = userMessage,
-                            assistantMessage = assistantMessage
-                        )
-                    )
-                ) ?: return@launch
-
-                val storedTitle = chatRepository.fetchChatListV2().firstOrNull { it.id == chatRoom.id }?.title
-                if (storedTitle != autoTitle) return@launch
-                if (generated == autoTitle) return@launch
-
-                chatRepository.updateChatTitle(chatRoom, generated)
-                _chatRoom.update { current ->
-                    if (current.id == chatRoom.id && current.title == autoTitle) {
-                        current.copy(title = generated)
-                    } else {
-                        current
-                    }
-                }
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (_: Throwable) {
-                // A title is cosmetic and the truncated first message is already stored, so nothing
-                // here may surface as a chat error.
-            }
-        }
-    }
-
     private fun persistCurrentChatSnapshot() {
         viewModelScope.launch {
             val chatRoom = _chatRoom.value
@@ -2192,6 +2267,40 @@ internal fun PendingTextSkillSelection.toSessionBinding(chatId: Int, orderIndex:
         orderIndex = orderIndex,
         isEnabled = isEnabled
     )
+
+/**
+ * Whether a turn owns the message list right now.
+ *
+ * The rule this encodes is that a running turn is the only writer of `_groupedMessages` for as long as
+ * it runs. Sending and editing were already blocked by the composer, but revision navigation was not —
+ * nothing stops the user scrolling to an older turn while the newest one streams — and the model menu
+ * stays open on purpose, so both need a guard that does not depend on what the UI chose to render.
+ *
+ * The persisting half matters as much as the loading half: once `markPlatformLoadingComplete` has
+ * flipped `isPersistingCompletion`, `saveChat` is in flight against the same list, and a write landing
+ * there is saved or lost depending on timing.
+ */
+/**
+ * Deletes the files a discarded draft owns, and drops their cached payloads with them.
+ *
+ * The eviction lives here, next to the delete, so the two cannot drift: a payload keyed on a path whose
+ * file has just been removed can only ever be stale. Targeting exact paths is also the point — the
+ * cache is a process-level object shared by every chat and by the repository's encoder, so the previous
+ * blanket `clear()` on teardown threw away payloads other chats were still using.
+ *
+ * Paths not owned by the draft are left alone; see [ownedPathsToDeleteOnDiscard] for what that means.
+ */
+internal fun discardDraftFiles(attachment: ChatAttachmentDraft) {
+    attachment.ownedPathsToDeleteOnDiscard().forEach { filePath ->
+        AttachmentPayloadCache.remove(filePath)
+        java.io.File(filePath).delete()
+    }
+}
+
+internal fun isTurnInFlight(
+    loadingStates: List<ChatViewModel.LoadingState>,
+    isPersistingCompletion: Boolean
+): Boolean = isPersistingCompletion || loadingStates.any { it == ChatViewModel.LoadingState.Loading }
 
 internal fun shouldRecoverInitialRequest(
     routeChatRoomId: Int,
@@ -2318,6 +2427,30 @@ internal fun groupedMessagesThroughTurn(
     userMessages = groupedMessages.userMessages.take(turnIndex + 1),
     assistantMessages = groupedMessages.assistantMessages.take(turnIndex + 1)
 )
+
+/**
+ * Reads a chat's stored messages back into the turn-grouped shape the screen renders.
+ *
+ * Shared by the view model and [ChatTurnCoordinator] — the coordinator has to re-read after its own
+ * save, to pick up the ids the database assigned, and neither should own the grouping rule alone.
+ */
+internal suspend fun ChatRepository.groupedMessagesFor(chatId: Int): ChatViewModel.GroupedMessages {
+    val messages = fetchMessagesV2(chatId).sortedBy { it.createdAt }
+
+    val userMessages = mutableListOf<MessageV2>()
+    val assistantMessages = mutableListOf<MutableList<MessageV2>>()
+
+    messages.forEach { message ->
+        if (message.platformType == null) {
+            userMessages.add(message)
+            assistantMessages.add(mutableListOf())
+        } else {
+            assistantMessages.last().add(message)
+        }
+    }
+
+    return ChatViewModel.GroupedMessages(userMessages, assistantMessages)
+}
 
 internal fun persistableMessages(groupedMessages: ChatViewModel.GroupedMessages): List<MessageV2> {
     val merged = groupedMessages.userMessages + groupedMessages.assistantMessages.flatten()

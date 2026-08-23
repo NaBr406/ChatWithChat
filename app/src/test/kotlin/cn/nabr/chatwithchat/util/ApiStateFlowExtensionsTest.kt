@@ -351,6 +351,91 @@ class ApiStateFlowExtensionsTest {
         assertEquals("Answer preserved", assistantMessage.content)
     }
 
+    /**
+     * A stop is a completion, so the partial answer is timestamped and kept — and, critically, the
+     * answer it was replacing survives. `revisionToAppendOnSuccess` is only appended on the success
+     * branch, so before stopping was distinguishable from a dying scope, pressing stop on a retry
+     * destroyed both the old answer and the new one.
+     */
+    @Test
+    fun `handleStates treats a user stop as a completion and keeps the replaced revision`() = runBlocking {
+        val messageFlow = MutableStateFlow(
+            ChatViewModel.GroupedMessages(
+                userMessages = listOf(MessageV2(content = "Hello", platformType = null)),
+                assistantMessages = listOf(
+                    listOf(MessageV2(content = "", platformType = "platform-1"))
+                )
+            )
+        )
+        val replaced = AssistantRevision(content = "The answer being retried", createdAt = 11L)
+        val chunksEmitted = CompletableDeferred<Unit>()
+
+        val collection = launch {
+            flow {
+                emit(ApiState.Success("Half an "))
+                emit(ApiState.Success("answer"))
+                chunksEmitted.complete(Unit)
+                awaitCancellation()
+            }.handleStates(
+                messageFlow = messageFlow,
+                turnIndex = 0,
+                platformIdx = 0,
+                onLoadingComplete = {},
+                currentTimeProvider = { 42L },
+                revisionToAppendOnSuccess = replaced,
+                wasStoppedByUser = { true }
+            )
+        }
+
+        chunksEmitted.await()
+        collection.cancelAndJoin()
+
+        val assistantMessage = messageFlow.value.assistantMessages[0][0]
+        assertEquals("Half an answer", assistantMessage.content)
+        assertEquals(42L, assistantMessage.createdAt)
+        assertEquals(listOf(replaced), assistantMessage.revisions)
+    }
+
+    /**
+     * The other half of the pair: a turn that dies with its screen must stay untimestamped, because
+     * nothing has decided it is finished.
+     */
+    @Test
+    fun `handleStates leaves a scope-death cancellation untimestamped`() = runBlocking {
+        val messageFlow = MutableStateFlow(
+            ChatViewModel.GroupedMessages(
+                userMessages = listOf(MessageV2(content = "Hello", platformType = null)),
+                assistantMessages = listOf(
+                    listOf(MessageV2(content = "", platformType = "platform-1", createdAt = 0L))
+                )
+            )
+        )
+        val chunksEmitted = CompletableDeferred<Unit>()
+
+        val collection = launch {
+            flow {
+                emit(ApiState.Success("Half an answer"))
+                chunksEmitted.complete(Unit)
+                awaitCancellation()
+            }.handleStates(
+                messageFlow = messageFlow,
+                turnIndex = 0,
+                platformIdx = 0,
+                onLoadingComplete = {},
+                currentTimeProvider = { 42L },
+                revisionToAppendOnSuccess = AssistantRevision(content = "The answer being retried", createdAt = 11L)
+            )
+        }
+
+        chunksEmitted.await()
+        collection.cancelAndJoin()
+
+        val assistantMessage = messageFlow.value.assistantMessages[0][0]
+        assertEquals("Half an answer", assistantMessage.content)
+        assertEquals(0L, assistantMessage.createdAt)
+        assertEquals(emptyList<AssistantRevision>(), assistantMessage.revisions)
+    }
+
     @Test
     fun `handleStates updates only the requested turn and platform`() = runBlocking {
         val untouchedTurn = listOf(

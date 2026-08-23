@@ -30,6 +30,7 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -47,6 +48,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -169,7 +172,8 @@ fun ChatHistoryDrawer(
                         title = chatRoom.title,
                         platformLabel = stringResource(R.string.using_certain_platform, usingPlatform),
                         isSelectionMode = chatListState.isSelectionMode,
-                        selected = selected
+                        selected = selected,
+                        isRunning = chatRoom.id in chatListState.runningChatIds
                     )
                 }
             }
@@ -207,8 +211,17 @@ fun ChatHistoryRow(
     title: String,
     platformLabel: String,
     isSelectionMode: Boolean,
-    selected: Boolean
+    selected: Boolean,
+    /**
+     * Whether this chat has a turn running.
+     *
+     * Turns outlive the screen that started them, so this row is the only thing that can tell the user
+     * work is still happening somewhere — including a chat waiting on a tool-approval prompt, which
+     * resolves only once they go back in and answer it.
+     */
+    isRunning: Boolean = false
 ) {
+    val runningDescription = stringResource(R.string.chat_turn_running)
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(12.dp),
@@ -225,12 +238,27 @@ fun ChatHistoryRow(
             }
 
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.titleMedium
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        modifier = Modifier.weight(1f, fill = false),
+                        text = title,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    if (isRunning) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        CircularProgressIndicator(
+                            modifier = Modifier
+                                .size(12.dp)
+                                .semantics {
+                                    contentDescription = runningDescription
+                                },
+                            strokeWidth = 1.5.dp,
+                            color = settingsMaterialColors().primaryLabel
+                        )
+                    }
+                }
                 Text(
                     modifier = Modifier.padding(top = 4.dp),
                     text = platformLabel,

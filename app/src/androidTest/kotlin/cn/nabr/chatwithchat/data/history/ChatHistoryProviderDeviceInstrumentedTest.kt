@@ -15,6 +15,7 @@ import cn.nabr.chatwithchat.data.dto.openai.request.ChatCompletionRequest
 import cn.nabr.chatwithchat.data.dto.openai.request.ChatMessage
 import cn.nabr.chatwithchat.data.network.NetworkClient
 import cn.nabr.chatwithchat.data.network.OpenAIAPIImpl
+import cn.nabr.chatwithchat.data.network.ProviderEndpoint
 import io.ktor.client.engine.cio.CIO
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
@@ -113,8 +114,6 @@ class ChatHistoryProviderDeviceInstrumentedTest {
         assertFalse(history.prompt.orEmpty().contains("chat:501:user:1"))
 
         val api = OpenAIAPIImpl(NetworkClient(CIO))
-        api.setToken(token)
-        api.setAPIUrl(apiUrl)
         val responseChunks = api.streamChatCompletion(
             ChatCompletionRequest(
                 model = model,
@@ -128,7 +127,8 @@ class ChatHistoryProviderDeviceInstrumentedTest {
                 stream = true,
                 maxTokens = 128
             ),
-            timeoutSeconds = 90
+            timeoutSeconds = 90,
+            endpoint = ProviderEndpoint(token = token, apiUrl = apiUrl)
         ).toList()
         val error = responseChunks.firstNotNullOfOrNull { it.error }
         assertTrue("provider returned an error: ${error?.message}", error == null)

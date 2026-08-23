@@ -2,6 +2,13 @@ package cn.nabr.chatwithchat.util
 
 import cn.nabr.chatwithchat.data.attachment.DocumentText
 
+/**
+ * Process-wide cache of encoded attachment payloads, keyed on file path.
+ *
+ * Being process-wide is the point — the same image referenced from two chats encodes once — and it is
+ * also the trap: no single screen owns any entry. Drop entries with [remove], for a path whose file is
+ * actually gone; everything else is the LRU bounds' job.
+ */
 object AttachmentPayloadCache {
     internal const val MAX_ENTRIES: Int = 32
 
@@ -43,6 +50,10 @@ object AttachmentPayloadCache {
         }
     }
 
+    /**
+     * Test-only reset. Deliberately has no production caller: this cache is shared by every chat and by
+     * the repository's encoder, so wiping it wholesale discards payloads other work is still using.
+     */
     internal fun clear() {
         synchronized(this) {
             payloads.clear()
