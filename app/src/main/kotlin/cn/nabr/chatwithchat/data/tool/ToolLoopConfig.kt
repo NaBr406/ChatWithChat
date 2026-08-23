@@ -12,7 +12,25 @@ package cn.nabr.chatwithchat.data.tool
  * cost of raising them is paid only by conversations that actually go deep.
  */
 data class ToolLoopConfig(
-    val maxToolRounds: Int = 10,
+    /**
+     * Raised from 10, which was the ceiling a dependent chain hit first.
+     *
+     * Rounds and calls are not interchangeable. [maxToolCallsPerRound] only helps work that can be batched;
+     * a chain where each step needs the previous step's answer — list a directory, read a file, follow what
+     * the file names, read that — spends exactly one round per step, so 10 rounds meant ten dependent steps
+     * however much of the 60-call allowance was left over. Surveying a repository runs past that.
+     *
+     * Safe to raise on its own, which was not obvious: the worry is that every round re-sends the whole
+     * accumulated continuation, so more rounds means more upload. It grows linearly, not quadratically,
+     * because [maxTotalToolResultChars] caps the *cumulative* result payload a turn may produce — no round
+     * can carry more than that ceiling no matter how many rounds precede it. The two limits also fence each
+     * other in: a chain that genuinely needs sixteen rounds is reading one small thing per step, while a
+     * chain pulling 32,000-char results exhausts the payload budget and stops being offered tools long
+     * before round sixteen.
+     *
+     * Discovery still adds up to `maxDiscoveryCalls` rounds on top of this; see `ToolScopePlanner`.
+     */
+    val maxToolRounds: Int = 16,
     /**
      * Raised from 4, which was narrow enough to be the limit a real task hit first.
      *
@@ -29,9 +47,13 @@ data class ToolLoopConfig(
      *
      * Sized against [maxToolRounds] × [maxToolCallsPerRound] rather than picked on its own. At 30 against a
      * 16-per-round cap, a model that batched freely spent the whole request's allowance in five rounds and
-     * left half the round budget unusable — the two ceilings were 160 apart and the smaller one always won.
-     * 60 lets a repository walk or a multi-step order finish while still stopping a runaway well short of
-     * the 160 the rounds would otherwise permit.
+     * left most of the round budget unusable — the smaller ceiling always won. 60 lets a repository walk or a
+     * multi-step order finish while still stopping a runaway well short of the 256 the rounds would otherwise
+     * permit.
+     *
+     * Left alone when [maxToolRounds] went to 16, on purpose. The extra rounds exist for chains that cannot
+     * batch — one call per step — and 60 calls is far more than sixteen such steps need. A model that batches
+     * hard enough to spend 60 calls in four rounds is not the one that was running out of rounds.
      *
      * [maxTotalToolResultChars] had to move with it. Result volume, not call count, is what a raise really
      * costs, and a call whose result no longer fits comes back empty.
