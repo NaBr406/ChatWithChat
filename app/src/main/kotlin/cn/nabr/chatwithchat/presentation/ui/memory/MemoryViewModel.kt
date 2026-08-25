@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import cn.nabr.chatwithchat.data.database.dao.MemoryActivityLogDao
 import cn.nabr.chatwithchat.data.database.entity.MemoryActivityLog
 import cn.nabr.chatwithchat.data.memory.MarkdownMemoryCodec
+import cn.nabr.chatwithchat.data.memory.MemoryFilePaths
 import cn.nabr.chatwithchat.data.memory.MemoryImportException
 import cn.nabr.chatwithchat.data.memory.MemoryImportOutcome
 import cn.nabr.chatwithchat.data.memory.MemoryImportService
@@ -15,6 +16,12 @@ import cn.nabr.chatwithchat.data.memory.MemoryLongTermPlanResult
 import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceJobStatus
 import cn.nabr.chatwithchat.data.memory.MemoryModelPreference
 import cn.nabr.chatwithchat.data.memory.MemoryModelResolver
+import cn.nabr.chatwithchat.data.memory.MemoryMutationCommitResult
+import cn.nabr.chatwithchat.data.memory.MemoryMutationCoordinator
+import cn.nabr.chatwithchat.data.memory.MemoryMutationTarget
+import cn.nabr.chatwithchat.data.memory.MemorySource
+import cn.nabr.chatwithchat.data.memory.vector.MemoryVectorIndexDefaults
+import cn.nabr.chatwithchat.data.memory.normalizeExactMemoryText
 import cn.nabr.chatwithchat.data.model.AvailableChatModel
 import cn.nabr.chatwithchat.data.repository.MemoryRepository
 import cn.nabr.chatwithchat.data.repository.SettingRepository
@@ -38,7 +45,8 @@ class MemoryViewModel @Inject constructor(
     private val memoryLongTermConsolidationScheduler: MemoryLongTermConsolidationScheduler? = null,
     memoryActivityLogDao: MemoryActivityLogDao,
     private val memoryLongTermConsolidationRunner: MemoryLongTermConsolidationRunner? = null,
-    private val memoryImportService: MemoryImportService? = null
+    private val memoryImportService: MemoryImportService? = null,
+    private val memoryMutationCoordinator: MemoryMutationCoordinator? = null
 ) : ViewModel() {
 
     private val markdownMemoryCodec = MarkdownMemoryCodec()
@@ -78,6 +86,18 @@ class MemoryViewModel @Inject constructor(
 
         data class MemoryImportFailed(
             val error: MemoryImportUiError
+        ) : Event
+
+        data class MemoryEntryEdited(
+            val entryId: String
+        ) : Event
+
+        data class MemoryEntryDeleted(
+            val entryId: String
+        ) : Event
+
+        data class MemoryEntryMutationFailed(
+            val error: MemoryEntryMutationUiError
         ) : Event
     }
 
@@ -135,6 +155,95 @@ class MemoryViewModel @Inject constructor(
 
     fun closeExport() {
         _uiState.update { it.copy(exportMarkdown = null) }
+    }
+
+    fun editMemoryEntry(entryId: String, text: String) {
+        mutateMemoryEntry(entryId = entryId, replacementText = text, delete = false)
+    }
+
+    fun deleteMemoryEntry(entryId: String) {
+        mutateMemoryEntry(entryId = entryId, replacementText = null, delete = true)
+    }
+
+    private fun mutateMemoryEntry(entryId: String, replacementText: String?, delete: Boolean) {
+        if (entryId.isBlank()) return
+        viewModelScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    val coordinator = memoryMutationCoordinator
+                        ?: throw MemoryEntryMutationException(MemoryEntryMutationUiError.UNAVAILABLE)
+                    val markdown = memoryRepository.getLongTermMarkdown()
+                    val parsed = markdownMemoryCodec.parse(markdown)
+                    if (parsed.skippedEntries.isNotEmpty()) {
+                        throw MemoryEntryMutationException(MemoryEntryMutationUiError.INVALID)
+                    }
+                    val current = parsed.entries.firstOrNull { entry -> entry.id == entryId }
+                        ?: throw MemoryEntryMutationException(MemoryEntryMutationUiError.INVALID)
+                    val now = System.currentTimeMillis()
+                    val editedMarkdown = if (delete) {
+                        val cleanedReferences = parsed.entries
+                            .filter { entry -> entry.id != entryId && entry.supersededBy == entryId }
+                            .map { entry -> entry.copy(supersededBy = null, updatedAt = now) }
+                        val removal = markdownMemoryCodec.removeEntriesById(markdown, setOf(entryId))
+                        check(removal.deletedCount == 1) { "memory entry was not removed" }
+                        val replacement = markdownMemoryCodec.replaceEntriesById(
+                            removal.markdown,
+                            cleanedReferences
+                        )
+                        replacement.markdown to (1 + replacement.replacedCount)
+                    } else {
+                        val normalizedText = normalizeExactMemoryText(replacementText.orEmpty())
+                        if (normalizedText.isBlank()) {
+                            throw MemoryEntryMutationException(MemoryEntryMutationUiError.INVALID)
+                        }
+                        val replacement = markdownMemoryCodec.replaceEntriesById(
+                            markdown,
+                            listOf(
+                                current.copy(
+                                    text = normalizedText,
+                                    source = MemorySource.USER_CONFIRMED,
+                                    updatedAt = now,
+                                    lastObservedAt = now
+                                )
+                            )
+                        )
+                        check(replacement.replacedCount == 1) { "memory entry was not replaced" }
+                        replacement.markdown to 1
+                    }
+                    if (editedMarkdown.first != markdown) {
+                        val prepared = coordinator.prepareLocalMutation(
+                            operationKey = "memory-ui-${if (delete) "delete" else "edit"}:$entryId",
+                            targets = listOf(
+                                MemoryMutationTarget(
+                                    sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+                                    baseContent = markdown,
+                                    targetContent = editedMarkdown.first,
+                                    targetIndexFingerprint = MemoryVectorIndexDefaults.configuration.fingerprint(),
+                                    materialMutationCount = editedMarkdown.second
+                                )
+                            )
+                        )
+                        when (coordinator.reconcile(prepared)) {
+                            is MemoryMutationCommitResult.CanonicalCommitted -> Unit
+                            is MemoryMutationCommitResult.Conflict ->
+                                throw MemoryEntryMutationException(MemoryEntryMutationUiError.CONFLICT)
+                        }
+                    }
+                    delete
+                }
+                _events.emit(
+                    if (result) Event.MemoryEntryDeleted(entryId) else Event.MemoryEntryEdited(entryId)
+                )
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (exception: MemoryEntryMutationException) {
+                _events.emit(Event.MemoryEntryMutationFailed(exception.error))
+            } catch (_: Throwable) {
+                _events.emit(
+                    Event.MemoryEntryMutationFailed(MemoryEntryMutationUiError.WRITE_FAILED)
+                )
+            }
+        }
     }
 
     fun openMemoryImportSourcePicker() {
@@ -350,6 +459,17 @@ enum class MemoryImportUiError {
     CONFLICT,
     WRITE_FAILED
 }
+
+enum class MemoryEntryMutationUiError {
+    UNAVAILABLE,
+    INVALID,
+    CONFLICT,
+    WRITE_FAILED
+}
+
+private class MemoryEntryMutationException(
+    val error: MemoryEntryMutationUiError
+) : IllegalStateException()
 
 private fun MemoryImportException.Reason.toUiError(): MemoryImportUiError = when (this) {
     MemoryImportException.Reason.EMPTY_INPUT,

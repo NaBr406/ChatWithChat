@@ -31,6 +31,8 @@ import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.AutoFixHigh
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.Info
@@ -46,6 +48,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Snackbar
@@ -105,6 +108,7 @@ import cn.nabr.chatwithchat.presentation.common.SettingsTopAppBar
 import cn.nabr.chatwithchat.presentation.common.settingsCanvasBackground
 import cn.nabr.chatwithchat.presentation.common.settingsDropdownMenuItemColors
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
+import cn.nabr.chatwithchat.presentation.common.settingsTextFieldColors
 import java.io.ByteArrayOutputStream
 import java.nio.charset.StandardCharsets
 import java.time.Instant
@@ -126,6 +130,8 @@ fun MemoryScreen(
     var selectedTab by rememberSaveable { mutableIntStateOf(MEMORY_TAB) }
     var isActionsMenuOpen by remember { mutableStateOf(false) }
     var pendingImportSource by rememberSaveable { mutableStateOf<MemoryImportSource?>(null) }
+    var editingEntry by remember { mutableStateOf<MemoryProjectionEntry?>(null) }
+    var deletingEntry by remember { mutableStateOf<MemoryProjectionEntry?>(null) }
     val lifecycleOwner = LocalLifecycleOwner.current
     val context = LocalContext.current
     val materialColors = settingsMaterialColors()
@@ -167,6 +173,12 @@ fun MemoryScreen(
                 is MemoryViewModel.Event.MemoryImportFailed -> context.getString(
                     memoryImportErrorString(event.error)
                 )
+                is MemoryViewModel.Event.MemoryEntryEdited ->
+                    context.getString(R.string.memory_entry_edit_completed)
+                is MemoryViewModel.Event.MemoryEntryDeleted ->
+                    context.getString(R.string.memory_entry_delete_completed)
+                is MemoryViewModel.Event.MemoryEntryMutationFailed ->
+                    context.getString(memoryEntryMutationErrorString(event.error))
             }
             snackbarHostState.showSnackbar(message)
         }
@@ -376,7 +388,9 @@ fun MemoryScreen(
                     sections = uiState.sections,
                     historyEntries = uiState.historyEntries,
                     hiddenHistoryCount = uiState.hiddenHistoryCount,
-                    parseStatus = uiState.parseStatus
+                    parseStatus = uiState.parseStatus,
+                    onEditEntry = { editingEntry = it },
+                    onDeleteEntry = { deletingEntry = it }
                 )
             } else {
                 MemoryActivityLogList(uiState.activityLogs)
@@ -418,6 +432,28 @@ fun MemoryScreen(
         ForceLongTermConsolidationConfirmationDialog(
             onConfirm = memoryViewModel::forceLongTermConsolidationNow,
             onDismiss = memoryViewModel::dismissForceLongTermConsolidationConfirmation
+        )
+    }
+
+    editingEntry?.let { entry ->
+        MemoryEntryEditDialog(
+            entry = entry,
+            onConfirm = { text ->
+                editingEntry = null
+                memoryViewModel.editMemoryEntry(entry.id, text)
+            },
+            onDismiss = { editingEntry = null }
+        )
+    }
+
+    deletingEntry?.let { entry ->
+        MemoryEntryDeleteDialog(
+            entry = entry,
+            onConfirm = {
+                deletingEntry = null
+                memoryViewModel.deleteMemoryEntry(entry.id)
+            },
+            onDismiss = { deletingEntry = null }
         )
     }
 }
@@ -513,13 +549,104 @@ private fun ForceLongTermConsolidationConfirmationDialog(
 }
 
 @Composable
+private fun MemoryEntryEditDialog(
+    entry: MemoryProjectionEntry,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val materialColors = settingsMaterialColors()
+    var text by remember(entry.id) { mutableStateOf(entry.text) }
+    val normalizedText = text.trim()
+    MemoryDialogFrame(onDismissRequest = onDismiss) {
+        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 18.dp)) {
+            Text(
+                text = stringResource(R.string.memory_entry_edit_title),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = materialColors.primaryLabel
+            )
+            OutlinedTextField(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 12.dp),
+                value = text,
+                onValueChange = { text = it },
+                label = { Text(stringResource(R.string.memory_entry_text_label)) },
+                minLines = 3,
+                maxLines = 8,
+                colors = settingsTextFieldColors()
+            )
+        }
+        HorizontalDivider(thickness = 0.5.dp, color = materialColors.separatorStrong)
+        MemoryDialogAction(
+            label = stringResource(R.string.memory_entry_save),
+            enabled = normalizedText.isNotBlank(),
+            onClick = { onConfirm(normalizedText) }
+        )
+        HorizontalDivider(thickness = 0.5.dp, color = materialColors.separatorStrong)
+        MemoryDialogAction(
+            label = stringResource(R.string.cancel),
+            enabled = true,
+            onClick = onDismiss
+        )
+    }
+}
+
+@Composable
+private fun MemoryEntryDeleteDialog(
+    entry: MemoryProjectionEntry,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val materialColors = settingsMaterialColors()
+    MemoryDialogFrame(onDismissRequest = onDismiss) {
+        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 18.dp)) {
+            Text(
+                text = stringResource(R.string.memory_entry_delete_title),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = materialColors.primaryLabel
+            )
+            Text(
+                modifier = Modifier.padding(top = 10.dp),
+                text = stringResource(R.string.memory_entry_delete_confirmation),
+                style = MaterialTheme.typography.bodyMedium,
+                color = materialColors.secondaryLabel
+            )
+            Text(
+                modifier = Modifier.padding(top = 10.dp),
+                text = entry.text,
+                style = MaterialTheme.typography.bodySmall,
+                color = materialColors.primaryLabel,
+                maxLines = 4,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        HorizontalDivider(thickness = 0.5.dp, color = materialColors.separatorStrong)
+        MemoryDialogAction(
+            label = stringResource(R.string.memory_entry_delete),
+            enabled = true,
+            onClick = onConfirm
+        )
+        HorizontalDivider(thickness = 0.5.dp, color = materialColors.separatorStrong)
+        MemoryDialogAction(
+            label = stringResource(R.string.cancel),
+            enabled = true,
+            onClick = onDismiss
+        )
+    }
+}
+
+@Composable
 private fun MemoryContent(
     memoryEnabled: Boolean,
     markdown: String,
     sections: List<MemoryProjectionSection>,
     historyEntries: List<MemoryProjectionEntry>,
     hiddenHistoryCount: Int,
-    parseStatus: MemoryProjectionParseStatus
+    parseStatus: MemoryProjectionParseStatus,
+    onEditEntry: (MemoryProjectionEntry) -> Unit,
+    onDeleteEntry: (MemoryProjectionEntry) -> Unit
 ) {
     val materialColors = settingsMaterialColors()
     LazyColumn(
@@ -541,7 +668,11 @@ private fun MemoryContent(
         }
         if (sections.isNotEmpty()) {
             items(sections, key = { section -> section.type }) { section ->
-                MemoryProjectionSectionGroup(section)
+                MemoryProjectionSectionGroup(
+                    section = section,
+                    onEditEntry = onEditEntry,
+                    onDeleteEntry = onDeleteEntry
+                )
             }
         } else if (markdown.isBlank()) {
             item {
@@ -561,7 +692,11 @@ private fun MemoryContent(
         }
         if (hiddenHistoryCount > 0) {
             item {
-                MemoryHistoryGroup(historyEntries)
+                MemoryHistoryGroup(
+                    historyEntries = historyEntries,
+                    onEditEntry = onEditEntry,
+                    onDeleteEntry = onDeleteEntry
+                )
             }
         }
     }
@@ -631,7 +766,11 @@ private fun MemoryProjectionNotice(status: MemoryProjectionParseStatus) {
 }
 
 @Composable
-private fun MemoryProjectionSectionGroup(section: MemoryProjectionSection) {
+private fun MemoryProjectionSectionGroup(
+    section: MemoryProjectionSection,
+    onEditEntry: (MemoryProjectionEntry) -> Unit,
+    onDeleteEntry: (MemoryProjectionEntry) -> Unit
+) {
     var expanded by rememberSaveable(section.type) { mutableStateOf(true) }
     val materialColors = settingsMaterialColors()
     SettingsMaterialGroup {
@@ -647,14 +786,22 @@ private fun MemoryProjectionSectionGroup(section: MemoryProjectionSection) {
                 if (index > 0) {
                     HorizontalDivider(thickness = 0.5.dp, color = materialColors.separator)
                 }
-                MemoryProjectionEntryRow(entry)
+                MemoryProjectionEntryRow(
+                    entry = entry,
+                    onEditClick = { onEditEntry(entry) },
+                    onDeleteClick = { onDeleteEntry(entry) }
+                )
             }
         }
     }
 }
 
 @Composable
-private fun MemoryHistoryGroup(historyEntries: List<MemoryProjectionEntry>) {
+private fun MemoryHistoryGroup(
+    historyEntries: List<MemoryProjectionEntry>,
+    onEditEntry: (MemoryProjectionEntry) -> Unit,
+    onDeleteEntry: (MemoryProjectionEntry) -> Unit
+) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     val materialColors = settingsMaterialColors()
     SettingsMaterialGroup {
@@ -670,7 +817,12 @@ private fun MemoryHistoryGroup(historyEntries: List<MemoryProjectionEntry>) {
                 if (index > 0) {
                     HorizontalDivider(thickness = 0.5.dp, color = materialColors.separator)
                 }
-                MemoryProjectionEntryRow(entry, historyStatus = memoryHistoryStatus(entry))
+                MemoryProjectionEntryRow(
+                    entry = entry,
+                    historyStatus = memoryHistoryStatus(entry),
+                    onEditClick = { onEditEntry(entry) },
+                    onDeleteClick = { onDeleteEntry(entry) }
+                )
             }
         }
     }
@@ -718,33 +870,79 @@ private fun MemoryProjectionGroupHeader(
 @Composable
 private fun MemoryProjectionEntryRow(
     entry: MemoryProjectionEntry,
-    historyStatus: String? = null
+    historyStatus: String? = null,
+    onEditClick: () -> Unit,
+    onDeleteClick: () -> Unit
 ) {
     val materialColors = settingsMaterialColors()
+    var isMenuOpen by remember { mutableStateOf(false) }
     val metadata = buildList {
         historyStatus?.let(::add)
         add(memorySourceLabel(entry.source))
         add(memorySensitivityLabel(entry.sensitivity))
         add(memoryScopeLabel(entry.scope))
     }.joinToString(" · ")
-    Column(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .padding(start = 16.dp, top = 10.dp, end = 8.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.Top
     ) {
-        SelectionContainer {
+        Column(modifier = Modifier.weight(1f)) {
+            SelectionContainer {
+                Text(
+                    text = entry.text,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = materialColors.primaryLabel
+                )
+            }
             Text(
-                text = entry.text,
-                style = MaterialTheme.typography.bodyMedium,
-                color = materialColors.primaryLabel
+                modifier = Modifier.padding(top = 6.dp),
+                text = metadata,
+                style = MaterialTheme.typography.bodySmall,
+                color = materialColors.secondaryLabel
             )
         }
-        Text(
-            modifier = Modifier.padding(top = 6.dp),
-            text = metadata,
-            style = MaterialTheme.typography.bodySmall,
-            color = materialColors.secondaryLabel
-        )
+        Box {
+            IconButton(
+                onClick = { isMenuOpen = true },
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.MoreVert,
+                    contentDescription = stringResource(R.string.memory_entry_actions),
+                    tint = materialColors.secondaryLabel
+                )
+            }
+            DropdownMenu(
+                expanded = isMenuOpen,
+                onDismissRequest = { isMenuOpen = false },
+                shape = RoundedCornerShape(8.dp),
+                containerColor = materialColors.grouped,
+                tonalElevation = 0.dp
+            ) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.memory_entry_edit)) },
+                    leadingIcon = {
+                        Icon(Icons.Outlined.Edit, contentDescription = null)
+                    },
+                    onClick = {
+                        isMenuOpen = false
+                        onEditClick()
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.memory_entry_delete)) },
+                    leadingIcon = {
+                        Icon(Icons.Outlined.Delete, contentDescription = null)
+                    },
+                    onClick = {
+                        isMenuOpen = false
+                        onDeleteClick()
+                    }
+                )
+            }
+        }
     }
 }
 
@@ -1355,6 +1553,13 @@ private fun memoryImportErrorString(error: MemoryImportUiError): Int = when (err
     MemoryImportUiError.MODEL_REWRITE_FAILED -> R.string.memory_import_model_failed
     MemoryImportUiError.CONFLICT -> R.string.memory_import_conflict
     MemoryImportUiError.WRITE_FAILED -> R.string.memory_import_failed
+}
+
+private fun memoryEntryMutationErrorString(error: MemoryEntryMutationUiError): Int = when (error) {
+    MemoryEntryMutationUiError.UNAVAILABLE -> R.string.memory_entry_mutation_unavailable
+    MemoryEntryMutationUiError.INVALID -> R.string.memory_entry_mutation_invalid
+    MemoryEntryMutationUiError.CONFLICT -> R.string.memory_entry_mutation_conflict
+    MemoryEntryMutationUiError.WRITE_FAILED -> R.string.memory_entry_mutation_failed
 }
 
 @Composable

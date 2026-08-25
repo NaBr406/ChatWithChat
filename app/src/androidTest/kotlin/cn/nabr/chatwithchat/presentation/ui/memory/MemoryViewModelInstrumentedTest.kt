@@ -25,12 +25,16 @@ import cn.nabr.chatwithchat.data.memory.MemoryModelPreference
 import cn.nabr.chatwithchat.data.memory.MemoryModelResolver
 import cn.nabr.chatwithchat.data.memory.MemoryMutationCommitResult
 import cn.nabr.chatwithchat.data.memory.MemoryMutationCoordinator
+import cn.nabr.chatwithchat.data.memory.MemoryMutationState
 import cn.nabr.chatwithchat.data.memory.MemoryMutationTarget
 import cn.nabr.chatwithchat.data.memory.MemoryPromptBuilder
+import cn.nabr.chatwithchat.data.memory.MemoryRecallState
+import cn.nabr.chatwithchat.data.memory.MemoryScope
 import cn.nabr.chatwithchat.data.memory.MemorySensitivity
 import cn.nabr.chatwithchat.data.memory.MemorySource
 import cn.nabr.chatwithchat.data.memory.MemoryTurnRecordingResult
 import cn.nabr.chatwithchat.data.memory.PreparedMemoryContext
+import cn.nabr.chatwithchat.data.memory.MemoryValidity
 import cn.nabr.chatwithchat.data.model.AvailableChatModel
 import cn.nabr.chatwithchat.data.model.ClientType
 import cn.nabr.chatwithchat.data.repository.MemoryRepository
@@ -145,6 +149,131 @@ class MemoryViewModelInstrumentedTest {
                 viewModel.uiState.first { state -> state.exportMarkdown == freshExport }
             }
             assertEquals(freshExport, exported.markdown)
+        } finally {
+            viewModel.viewModelScope.cancel()
+            database.close()
+            context.deleteDatabase(databaseName)
+            memoryRoot.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun editAndDeleteMemoryEntry_useReceiptsPreserveMetadataAndRepairSupersededReference() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val suffix = System.nanoTime().toString()
+        val databaseName = "memory-view-model-edit-delete-$suffix.db"
+        val memoryRoot = File(context.filesDir, "memory_view_model_edit_delete_test/$suffix")
+        context.deleteDatabase(databaseName)
+        memoryRoot.deleteRecursively()
+
+        val database = Room.databaseBuilder(context, ChatDatabaseV2::class.java, databaseName).build()
+        val fileStore = MemoryFileStore(MemoryFilePaths(memoryRoot), FIXED_CLOCK)
+        fileStore.ensureStore().getOrThrow()
+        val codec = MarkdownMemoryCodec()
+        val target = MarkdownMemoryEntry(
+            id = "memory_ui_edit_target",
+            text = "Original wording",
+            type = "stable_profile",
+            sensitivity = MemorySensitivity.PRIVATE,
+            source = MemorySource.EXPLICIT_USER_STATEMENT,
+            chatId = 42,
+            createdAt = 10L,
+            updatedAt = 20L,
+            canonicalKey = "profile.favorite_language",
+            scope = MemoryScope.PERSONAL,
+            lastObservedAt = 30L,
+            validity = MemoryValidity.CURRENT,
+            recallState = MemoryRecallState.CORE,
+            evidenceRefs = listOf("turn:42")
+        )
+        val successor = MarkdownMemoryEntry(
+            id = "memory_ui_edit_successor",
+            text = "Previous wording",
+            type = "stable_profile",
+            sensitivity = MemorySensitivity.NORMAL,
+            source = MemorySource.ASSISTANT_INFERRED,
+            createdAt = 11L,
+            updatedAt = 21L,
+            canonicalKey = "profile.favorite_language",
+            scope = MemoryScope.PERSONAL,
+            validity = MemoryValidity.OBSOLETE,
+            supersededBy = target.id,
+            recallState = MemoryRecallState.MAINTENANCE_ONLY
+        )
+        val initial = codec.renderLongTerm(listOf(target, successor))
+        fileStore.replaceLongTermMemory(initial).getOrThrow()
+
+        val repository = MemoryRepositoryImpl(
+            memoryPromptBuilder = MemoryPromptBuilder(),
+            memoryFileStore = fileStore
+        )
+        val settings = settingRepository(memoryEnabled = true)
+        val workEnqueuer = RecordingWorkEnqueuer()
+        val viewModel = MemoryViewModel(
+            memoryRepository = repository,
+            settingRepository = settings,
+            memoryModelResolver = MemoryModelResolver(settings),
+            memoryActivityLogDao = EmptyMemoryActivityLogDao,
+            memoryMutationCoordinator = MemoryMutationCoordinator(
+                recoveryDao = database.memoryRecoveryDao(),
+                memoryFileStore = fileStore,
+                maintenanceScheduler = MemoryMaintenanceScheduler(database.memoryMaintenanceJobDao(), FIXED_CLOCK),
+                workEnqueuer = workEnqueuer,
+                clock = FIXED_CLOCK
+            )
+        )
+        try {
+            withTimeout(TEST_TIMEOUT_MILLIS) {
+                viewModel.uiState.first { state -> state.markdown == initial && state.memoryEnabled }
+            }
+
+            viewModel.editMemoryEntry(target.id, "  Edited exact wording\n\n")
+            withTimeout(TEST_TIMEOUT_MILLIS) {
+                viewModel.uiState.first { state ->
+                    state.markdown != initial && state.markdown.contains("Edited exact wording")
+                }
+            }
+
+            val editedEntries = codec.parse(fileStore.readLongTermMemory().getOrThrow()).entries
+            val edited = editedEntries.single { entry -> entry.id == target.id }
+            assertEquals("Edited exact wording", edited.text)
+            assertEquals(MemorySource.USER_CONFIRMED, edited.source)
+            assertEquals(target.type, edited.type)
+            assertEquals(target.sensitivity, edited.sensitivity)
+            assertEquals(target.chatId, edited.chatId)
+            assertEquals(target.createdAt, edited.createdAt)
+            assertEquals(target.canonicalKey, edited.canonicalKey)
+            assertEquals(target.scope, edited.scope)
+            assertEquals(target.validity, edited.validity)
+            assertEquals(target.recallState, edited.recallState)
+            assertEquals(target.evidenceRefs, edited.evidenceRefs)
+            assertTrue(workEnqueuer.families.contains(MemoryMaintenanceJobFamily.INDEX))
+            val editGroups = database.memoryRecoveryDao().getMutationGroupsByStates(
+                listOf(MemoryMutationState.INDEX_PENDING, MemoryMutationState.INDEXED)
+            )
+            assertEquals(1, editGroups.size)
+            assertEquals(1, database.memoryRecoveryDao().getMutationReceipts(editGroups.single().groupId).size)
+
+            viewModel.deleteMemoryEntry(target.id)
+            withTimeout(TEST_TIMEOUT_MILLIS) {
+                viewModel.uiState.first { state ->
+                    state.markdown != initial && !state.markdown.contains(target.id)
+                }
+            }
+
+            val remainingEntries = codec.parse(fileStore.readLongTermMemory().getOrThrow()).entries
+            assertTrue(remainingEntries.none { entry -> entry.id == target.id })
+            assertEquals(null, remainingEntries.single { entry -> entry.id == successor.id }.supersededBy)
+            assertEquals(2, workEnqueuer.families.count { family -> family == MemoryMaintenanceJobFamily.INDEX })
+            val mutationGroups = database.memoryRecoveryDao().getMutationGroupsByStates(
+                listOf(
+                    MemoryMutationState.INDEX_PENDING,
+                    MemoryMutationState.INDEXED,
+                    MemoryMutationState.SUPERSEDED
+                )
+            )
+            assertEquals(2, mutationGroups.size)
+            assertTrue(mutationGroups.all { group -> group.expectedReceiptCount == 1 })
         } finally {
             viewModel.viewModelScope.cancel()
             database.close()
@@ -442,6 +571,14 @@ class MemoryViewModelInstrumentedTest {
                 indexSchedulingAttempts += 1
                 error("Simulated index scheduling failure")
             }
+        }
+    }
+
+    private class RecordingWorkEnqueuer : MemoryMaintenanceWorkEnqueuer {
+        val families = mutableListOf<String>()
+
+        override fun enqueueWork(family: String, delaySeconds: Long) {
+            families += family
         }
     }
 
