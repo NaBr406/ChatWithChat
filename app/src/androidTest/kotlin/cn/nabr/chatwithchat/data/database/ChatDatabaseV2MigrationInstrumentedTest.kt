@@ -178,8 +178,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 assertEquals(
                     "checkpoint-2",
                     roomDatabase.memoryRecoveryDao().getDistillationCheckpoint(
-                        dailySourcePath = "memory/2026-07-11.md",
-                        dailySourceHash = "daily-hash",
+                        windowId = "legacy:2026-07-11",
+                        windowSourceManifestHash = "daily-hash",
                         batchKey = "batch-0002"
                     )?.checkpointId
                 )
@@ -312,8 +312,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 assertEquals(
                     "checkpoint-15",
                     recoveryDao.getDistillationCheckpoint(
-                        dailySourcePath = "memory/2026-07-12.md",
-                        dailySourceHash = "daily-hash-15",
+                        windowId = "legacy:2026-07-12",
+                        windowSourceManifestHash = "daily-hash-15",
                         batchKey = "batch-15"
                     )?.checkpointId
                 )
@@ -787,8 +787,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 assertEquals(
                     "distillation-18",
                     roomDatabase.memoryRecoveryDao().getDistillationCheckpoint(
-                        dailySourcePath = "memory/2026-07-18.md",
-                        dailySourceHash = "daily-hash-18",
+                        windowId = "legacy:2026-07-18",
+                        windowSourceManifestHash = "daily-hash-18",
                         batchKey = "batch-18"
                     )?.checkpointId
                 )
