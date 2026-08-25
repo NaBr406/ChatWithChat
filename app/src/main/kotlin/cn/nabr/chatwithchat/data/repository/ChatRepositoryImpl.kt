@@ -1149,7 +1149,7 @@ class ChatRepositoryImpl @Inject constructor(
                 }
             val roundContinuation = openAIResponsesToolAdapter.continuationInputItems(round.events, calls, results, config)
             roundStateMachine.onToolResults(results)
-            if (roundStateMachine.current.isFinalOnly && results.hasStickerSendResult()) {
+            if (roundStateMachine.current.canDropStickerHistory) {
                 continuationItems.clear()
             }
             continuationItems += roundContinuation
@@ -1560,7 +1560,7 @@ class ChatRepositoryImpl @Inject constructor(
                 }
             )
             roundStateMachine.onToolResults(results)
-            if (roundStateMachine.current.isFinalOnly && results.hasStickerSendResult()) {
+            if (roundStateMachine.current.canDropStickerHistory) {
                 continuationMessages.clear()
             }
             continuationMessages += roundContinuation
@@ -1948,7 +1948,7 @@ class ChatRepositoryImpl @Inject constructor(
                 }
             val roundContinuation = anthropicNativeToolAdapter.continuationMessages(calls, results, config)
             roundStateMachine.onToolResults(results)
-            if (roundStateMachine.current.isFinalOnly && results.hasStickerSendResult()) {
+            if (roundStateMachine.current.canDropStickerHistory) {
                 continuationMessages.clear()
             }
             continuationMessages += roundContinuation
@@ -2313,7 +2313,7 @@ class ChatRepositoryImpl @Inject constructor(
                 }
             val roundContinuation = googleNativeToolAdapter.continuationContents(calls, results, config)
             roundStateMachine.onToolResults(results)
-            if (roundStateMachine.current.isFinalOnly && results.hasStickerSendResult()) {
+            if (roundStateMachine.current.canDropStickerHistory) {
                 continuationContents.clear()
             }
             continuationContents += roundContinuation
@@ -4385,10 +4385,6 @@ private fun nativeDroppedToolCallInstruction(
     return "上一轮你提交了 ${executedCallCount + droppedCallCount} 个工具调用，" +
         "只执行了前 $executedCallCount 个，其余 $droppedCallCount 个未执行（超出单轮上限或与已有调用重复）。" +
         "仍然需要的请在本轮重新提交。"
-}
-
-private fun Collection<ToolResult>.hasStickerSendResult(): Boolean = any { result ->
-    result.name == ToolDefinition.SendSticker.name
 }
 
 private fun ToolRoundReasoningPolicy.resolve(userMode: ReasoningMode): ReasoningMode = when (this) {

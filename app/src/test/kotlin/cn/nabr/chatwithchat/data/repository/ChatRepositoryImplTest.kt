@@ -1883,6 +1883,138 @@ class ChatRepositoryImplTest {
     }
 
     @Test
+    fun `a sticker sent mid-turn does not close the tool channel on the work still pending`() = runBlocking {
+        val pendingWorkTool = ToolDefinition.CurrentDateTime
+        var pendingWorkExecuted = false
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatToolCallFlow("s1", ToolDefinition.SearchStickers.name, "{\"query\":\"surprised\"}"),
+                chatToolCallFlow(
+                    "s2",
+                    ToolDefinition.SendSticker.name,
+                    "{\"sticker_id\":\"builtin.reactions.surprised_cat\"}"
+                ),
+                // The round that used to be impossible: the sticker is sent, but the request the user
+                // actually made has not been served yet.
+                chatToolCallFlow("d1", pendingWorkTool.name, "{}"),
+                chatCompletionFlow("最终回答")
+            )
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Off,
+                toolCallingMode = ToolCallingMode.Auto
+            ),
+            toolLoopOrchestrator = ToolLoopOrchestrator(
+                ToolExecutor(
+                    ToolRegistry(
+                        listOf(
+                            noOpToolProvider(
+                                definition = ToolDefinition.SearchStickers,
+                                content = "sticker_id=builtin.reactions.surprised_cat",
+                                metadata = mapOf("candidate_count" to "1")
+                            ),
+                            noOpToolProvider(
+                                definition = ToolDefinition.SendSticker,
+                                content = "Sticker queued for local rendering."
+                            ),
+                            noOpToolProvider(
+                                definition = pendingWorkTool,
+                                discovery = ToolDiscoveryMetadata(exposure = ToolExposure.Resident),
+                                onExecute = { pendingWorkExecuted = true }
+                            )
+                        )
+                    )
+                )
+            )
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "看看这个链接上有什么", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform().copy(
+                apiUrl = "https://api.deepseek.com/v1",
+                model = "deepseek-v4-pro"
+            )
+        ).toList()
+
+        assertEquals(4, openAIAPI.streamChatCompletionCalls)
+        assertTrue("the pending work must still be reachable after the sticker", pendingWorkExecuted)
+
+        // The round after the send withholds the sticker tools and keeps everything else, so the model has a
+        // channel for the call it still needs instead of a reason to write one out as prose.
+        val roundAfterSend = openAIAPI.chatCompletionRequests[2]
+        val offeredTools = roundAfterSend.tools.orEmpty().map { tool -> tool.function.name }
+        assertTrue(offeredTools.contains(pendingWorkTool.name))
+        assertFalse(offeredTools.contains(ToolDefinition.SearchStickers.name))
+        assertFalse(offeredTools.contains(ToolDefinition.SendSticker.name))
+        assertEquals(ChatCompletionToolChoice.Auto, roundAfterSend.toolChoice)
+
+        assertTrue(states.filterIsInstance<ApiState.Error>().isEmpty())
+        val visible = states.filterIsInstance<ApiState.Success>().joinToString(separator = "") { it.textChunk }
+        assertTrue(visible.contains("最终回答"))
+    }
+
+    @Test
+    fun `a sticker-only turn still keeps the sticker exchange out of the final request`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatToolCallFlow("s1", ToolDefinition.SearchStickers.name, "{\"query\":\"surprised\"}"),
+                chatToolCallFlow(
+                    "s2",
+                    ToolDefinition.SendSticker.name,
+                    "{\"sticker_id\":\"builtin.reactions.surprised_cat\"}"
+                ),
+                chatCompletionFlow("嗯")
+            )
+        )
+        val repository = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Off,
+                toolCallingMode = ToolCallingMode.Auto
+            ),
+            toolLoopOrchestrator = ToolLoopOrchestrator(
+                ToolExecutor(
+                    ToolRegistry(
+                        listOf(
+                            noOpToolProvider(
+                                definition = ToolDefinition.SearchStickers,
+                                content = "sticker_id=builtin.reactions.surprised_cat",
+                                metadata = mapOf("candidate_count" to "1")
+                            ),
+                            noOpToolProvider(
+                                definition = ToolDefinition.SendSticker,
+                                content = "Sticker queued for local rendering."
+                            )
+                        )
+                    )
+                )
+            )
+        )
+
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "哈哈", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform().copy(
+                apiUrl = "https://api.deepseek.com/v1",
+                model = "deepseek-v4-pro"
+            )
+        ).toList()
+
+        // Nothing but stickers ran, so the loop still falls through to the final answer after the send and the
+        // search exchange is still dropped from what that request carries.
+        assertEquals(3, openAIAPI.streamChatCompletionCalls)
+        val finalRequest = openAIAPI.chatCompletionRequests[2]
+        val carriedToolCallNames = finalRequest.messages
+            .flatMap { message -> message.toolCalls.orEmpty() }
+            .map { call -> call.function.name }
+        assertEquals(listOf(ToolDefinition.SendSticker.name), carriedToolCallNames)
+        assertTrue(states.filterIsInstance<ApiState.Error>().isEmpty())
+    }
+
+    @Test
     fun `openai native sticker flow directs search to send without an automatic retry`() = runBlocking {
         val openAIAPI = RecordingOpenAIAPI(
             responsesResponses = mutableListOf(

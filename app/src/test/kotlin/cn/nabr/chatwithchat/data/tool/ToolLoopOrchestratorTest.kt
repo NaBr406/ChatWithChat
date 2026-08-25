@@ -127,6 +127,9 @@ class ToolLoopOrchestratorTest {
         assertFalse(prompts[1].contains("search_stickers("))
         assertFalse(prompts[1].contains("web_search("))
         assertTrue(prompts[1].contains("sticker_id=builtin.reactions.wave"))
+        // web_search is never advertised here — the scope has no intent to match it against — so withholding
+        // the sticker tools after the send leaves nothing but `discover_tools`, which the round state machine
+        // does not count as pending work. The turn still goes straight to the final-answer round.
         assertTrue(prompts[2].contains("The content is the final answer shown to the user."))
         assertTrue(prompts[2].contains("Sticker queued for local rendering."))
         assertFalse(prompts[2].contains("Enabled tool signatures:"))

@@ -153,7 +153,7 @@ class ToolLoopOrchestrator(
             when (modelOutput) {
                 is JsonToolModelOutput.FinalAnswer -> {
                     return if (allResults.isNotEmpty()) {
-                        if (isFinalAnswerRound) {
+                        if (isFinalAnswerRound || roundState.acceptsDirectFinalAnswer) {
                             ToolLoopResult.CompletedWithToolResults(
                                 content = modelOutput.content,
                                 calls = allCalls,
