@@ -37,10 +37,11 @@ class ToolLoopOrchestrator(
         .filter { artifact -> artifact.instanceId.isNotBlank() }
         .distinctBy { artifact -> artifact.instanceId }
 
-    fun createExecutionSession(chatId: Int = 0): ToolLoopExecutionSession = ToolLoopExecutionSession(
+    fun createExecutionSession(chatId: Int = 0, turnKey: String? = null): ToolLoopExecutionSession = ToolLoopExecutionSession(
         config = config,
         policyFor = toolExecutor::policyFor,
-        chatId = chatId
+        chatId = chatId,
+        turnKey = turnKey
     )
 
     fun createToolScope(
@@ -60,12 +61,14 @@ class ToolLoopOrchestrator(
         adapter: ToolCallingAdapter = defaultToolCallingAdapter,
         onProgress: suspend (ApiState) -> Unit = {},
         chatId: Int = 0,
+        turnKey: String? = null,
         requestModel: suspend (toolPrompt: String) -> Result<String>
     ): ToolLoopResult = runLoop(
         scope = createFullToolScope(tools),
         adapter = adapter,
         onProgress = onProgress,
         chatId = chatId,
+        turnKey = turnKey,
         requestModel = requestModel
     )
 
@@ -74,12 +77,14 @@ class ToolLoopOrchestrator(
         adapter: ToolCallingAdapter = defaultToolCallingAdapter,
         onProgress: suspend (ApiState) -> Unit = {},
         chatId: Int = 0,
+        turnKey: String? = null,
         requestModel: suspend (toolPrompt: String) -> Result<String>
     ): ToolLoopResult = runLoopWithRoundPolicy(
         scope = scope,
         adapter = adapter,
         onProgress = onProgress,
-        chatId = chatId
+        chatId = chatId,
+        turnKey = turnKey
     ) { toolPrompt, _ ->
         requestModel(toolPrompt)
     }
@@ -93,6 +98,7 @@ class ToolLoopOrchestrator(
         adapter: ToolCallingAdapter = defaultToolCallingAdapter,
         onProgress: suspend (ApiState) -> Unit = {},
         chatId: Int = 0,
+        turnKey: String? = null,
         requestModel: suspend (
             toolPrompt: String,
             reasoningPolicy: ToolRoundReasoningPolicy
@@ -106,7 +112,7 @@ class ToolLoopOrchestrator(
         val allCalls = mutableListOf<ToolCall>()
         val allResults = mutableListOf<ToolResult>()
         var hadToolInteraction = false
-        val executionSession = createExecutionSession(chatId)
+        val executionSession = createExecutionSession(chatId, turnKey)
         val roundStateMachine = ToolRoundStateMachine(scope.definitions)
 
         var allowedRounds = maxRounds
@@ -316,7 +322,7 @@ class ToolLoopOrchestrator(
             sessionState = sessionState
         )
         if (result.metadata["error_code"] == ToolApprovalStatus.MISSING.recoverableErrorCode) {
-            when (val decision = toolApprovalBroker?.awaitApproval(call, sessionState.chatId)) {
+            when (val decision = toolApprovalBroker?.awaitApproval(call, sessionState.chatId, sessionState.turnKey)) {
                 is ToolApprovalBroker.Decision.WithContext -> {
                     result = toolExecutor.execute(
                         call = call,
@@ -514,11 +520,12 @@ internal const val TOOL_RESULT_BUDGET_EXHAUSTED = "tool_result_budget_exhausted"
 class ToolLoopExecutionSession internal constructor(
     config: ToolLoopConfig,
     policyFor: (String) -> ToolPolicy,
-    chatId: Int = 0
+    chatId: Int = 0,
+    turnKey: String? = null
 ) {
     private val toolBudget = ToolBudgetState(config, policyFor)
     private val resultPayloadBudget = ToolResultPayloadBudget(config)
-    internal val state = ToolExecutionSessionState(chatId)
+    internal val state = ToolExecutionSessionState(chatId, turnKey)
 
     internal fun select(calls: List<ToolCall>): Pair<List<ToolCall>, List<ToolResult>> {
         val selection = toolBudget.select(calls)

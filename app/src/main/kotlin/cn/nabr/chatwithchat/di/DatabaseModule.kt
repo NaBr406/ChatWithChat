@@ -17,6 +17,7 @@ import cn.nabr.chatwithchat.data.database.dao.MemoryLongTermConsolidationDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryMaintenanceJobDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryRecoveryDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryTurnBatchDao
+import cn.nabr.chatwithchat.data.database.dao.MemoryProposalDao
 import cn.nabr.chatwithchat.data.database.dao.MessageDao
 import cn.nabr.chatwithchat.data.database.dao.MessageV2Dao
 import cn.nabr.chatwithchat.data.database.dao.PlatformModelV2Dao
@@ -65,6 +66,10 @@ object DatabaseModule {
 
     @Provides
     fun provideMemoryTurnBatchDao(chatDatabaseV2: ChatDatabaseV2): MemoryTurnBatchDao = chatDatabaseV2.memoryTurnBatchDao()
+
+    @Provides
+    @Singleton
+    fun provideMemoryProposalDao(chatDatabaseV2: ChatDatabaseV2): MemoryProposalDao = chatDatabaseV2.memoryProposalDao()
 
     @Provides
     fun provideMemoryActivityLogDao(chatDatabaseV2: ChatDatabaseV2): MemoryActivityLogDao = chatDatabaseV2.memoryActivityLogDao()
@@ -126,6 +131,7 @@ object DatabaseModule {
         ChatDatabaseV2Migrations.MIGRATION_21_22,
         ChatDatabaseV2Migrations.MIGRATION_22_23,
         ChatDatabaseV2Migrations.MIGRATION_23_24,
-        ChatDatabaseV2Migrations.MIGRATION_24_25
+        ChatDatabaseV2Migrations.MIGRATION_24_25,
+        ChatDatabaseV2Migrations.MIGRATION_25_26
     ).addCallback(ChatHistoryDatabaseCallback()).build()
 }

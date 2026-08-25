@@ -70,16 +70,16 @@ class ToolApprovalBroker @Inject constructor(
      * [chatId] of zero means "no conversation scope" — grants are neither consulted nor offered, so a
      * caller that cannot identify the conversation falls back to strict per-call approval.
      */
-    suspend fun awaitApproval(call: ToolCall, chatId: Int = 0): Decision {
+    suspend fun awaitApproval(call: ToolCall, chatId: Int = 0, turnKey: String? = null): Decision {
         val scopeKey = coordinator.sessionApprovalScope(call.name)
         if (scopeKey != null && sessionGrants.isGranted(chatId, scopeKey)) {
-            return coordinator.approveFromSessionGrant(call)
+            return coordinator.approveFromSessionGrant(call, chatId = chatId, turnKey = turnKey)
                 .getOrNull()
                 ?.let(Decision::WithContext)
                 ?: Decision.Unavailable
         }
 
-        val request = coordinator.prepare(call).getOrElse { return Decision.Unavailable }
+        val request = coordinator.prepare(call, chatId = chatId, turnKey = turnKey).getOrElse { return Decision.Unavailable }
         val active = ActiveApproval(
             pending = PendingApproval(
                 requestId = UUID.randomUUID().toString(),

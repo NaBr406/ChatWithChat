@@ -30,7 +30,10 @@ class MemoryPromptBuilderTest {
         assertFalse(prompt.contains("type:"))
         assertFalse(prompt.contains("sensitivity:"))
         assertFalse(prompt.contains("source:"))
-        assertEquals(1, prompt.split("不要提及记忆存储").size - 1)
+        assertEquals(1, prompt.split("不要主动提及记忆存储").size - 1)
+        assertTrue(prompt.contains("propose_memory_change"))
+        assertTrue(prompt.contains("用户主动询问、纠正或明确要求记住"))
+        assertTrue(prompt.contains("不要主动提及记忆"))
     }
 
     @Test

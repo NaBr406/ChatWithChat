@@ -17,6 +17,40 @@ import java.io.File
 
 object ChatDatabaseV2Migrations {
 
+    val MIGRATION_25_26 = object : Migration(25, 26) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `memory_proposal` (
+                    `proposal_id` TEXT NOT NULL,
+                    `chat_id` INTEGER,
+                    `turn_key` TEXT,
+                    `intent` TEXT NOT NULL,
+                    `target_ref` TEXT,
+                    `text` TEXT NOT NULL,
+                    `normalized_text` TEXT NOT NULL,
+                    `reason` TEXT NOT NULL,
+                    `requested_evidence_strength` TEXT NOT NULL,
+                    `effective_evidence_strength` TEXT NOT NULL,
+                    `state` TEXT NOT NULL,
+                    `idempotency_key` TEXT NOT NULL,
+                    `created_at` INTEGER NOT NULL,
+                    `updated_at` INTEGER NOT NULL,
+                    `expires_at` INTEGER,
+                    `bound_turn_key` TEXT,
+                    `mutation_group_id` TEXT,
+                    `consumed_at` INTEGER,
+                    PRIMARY KEY(`proposal_id`)
+                )
+                """.trimIndent()
+            )
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_memory_proposal_idempotency_key` ON `memory_proposal` (`idempotency_key`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_proposal_chat_id_state` ON `memory_proposal` (`chat_id`, `state`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_proposal_bound_turn_key` ON `memory_proposal` (`bound_turn_key`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_proposal_expires_at` ON `memory_proposal` (`expires_at`)")
+        }
+    }
+
     val MIGRATION_1_2 = object : Migration(1, 2) {
         override fun migrate(db: SupportSQLiteDatabase) {
             db.execSQL(

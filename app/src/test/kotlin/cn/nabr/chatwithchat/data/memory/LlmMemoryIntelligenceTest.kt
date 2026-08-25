@@ -75,6 +75,9 @@ class LlmMemoryIntelligenceTest {
         assertTrue(batchPrompt.contains("application tool-calling policy"))
         assertTrue(batchPrompt.contains("single addressing bundle"))
         assertTrue(batchPrompt.contains("must not drop the other side"))
+        assertTrue(batchPrompt.contains("specific model version, price, or news item"))
+        assertTrue(batchPrompt.contains("actual event with a durable consequence"))
+        assertTrue(batchPrompt.contains("user_confirmed lowers the evidence bar"))
 
         intelligence.distillDailyMemory(dailyRequest(), platform)
         val dailyPrompt = checkNotNull(openAIAPI.lastSystemPrompt)
@@ -82,6 +85,9 @@ class LlmMemoryIntelligenceTest {
         assertTrue(dailyPrompt.contains("repeated independent evidence"))
         assertTrue(dailyPrompt.contains("current debugging"))
         assertTrue(dailyPrompt.contains("historical context stays daily", ignoreCase = true))
+        assertTrue(dailyPrompt.contains("specific version, price, or news item"))
+        assertTrue(dailyPrompt.contains("actual event with a durable consequence"))
+        assertTrue(dailyPrompt.contains("user_confirmed may lower the evidence bar"))
 
         intelligence.consolidateLongTermMemory(longTermRequest(), platform)
         val longTermPrompt = checkNotNull(openAIAPI.lastSystemPrompt)
@@ -90,6 +96,8 @@ class LlmMemoryIntelligenceTest {
         assertTrue(longTermPrompt.contains("singleton decision"))
         assertTrue(longTermPrompt.contains("do not invent a supersession target"))
         assertTrue(longTermPrompt.contains("one addressing bundle"))
+        assertTrue(longTermPrompt.contains("model version, price, or news item"))
+        assertTrue(longTermPrompt.contains("opinion or stance typed important_event"))
     }
 
     @Test

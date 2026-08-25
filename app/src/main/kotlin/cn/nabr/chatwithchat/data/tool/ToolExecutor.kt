@@ -61,7 +61,11 @@ class ToolExecutor(
                 .boundForExecution(maxResultChars)
         }
 
-        val trustedContext = executionContext ?: executionContextFactory.create(call).getOrNull()
+        val trustedContext = executionContext ?: executionContextFactory.create(
+            call,
+            chatId = sessionState.chatId,
+            turnKey = sessionState.turnKey
+        ).getOrNull()
         if (trustedContext == null) {
             audit(ToolAuditStatus.ATTEMPTED, null, auditBinding)
             audit(ToolAuditStatus.APPROVAL_INVALID, null, auditBinding)

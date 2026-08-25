@@ -84,6 +84,26 @@ class MemoryTurnBatchSchedulerTest {
     }
 
     @Test
+    fun `explicit request enqueues a partial batch immediately`() = runBlocking {
+        val fixture = fixture()
+        MemoryTurnBatchCoordinator(fixture.turnDao).recordCompletedTurn(
+            input(CHAT_ONE, 1)
+        )
+
+        val job = fixture.scheduler.enqueueBatchForChat(
+            chatId = CHAT_ONE,
+            triggerReason = MemoryTurnBatchTriggerReason.EXPLICIT_REQUEST,
+            requireFullBatch = false
+        )
+
+        assertTrue(job != null)
+        val payload = Json.decodeFromString<MemoryTurnBatchJobPayload>(checkNotNull(job).payloadJson)
+        assertEquals(MemoryTurnBatchTriggerReason.EXPLICIT_REQUEST, payload.triggerReason)
+        assertEquals(1, payload.turns.size)
+        assertEquals(0, fixture.turnDao.countUnclaimedTurns(CHAT_ONE))
+    }
+
+    @Test
     fun `ten recovered turns become two sequential batches`() = runBlocking {
         val fixture = fixture()
         val coordinator = MemoryTurnBatchCoordinator(fixture.turnDao)

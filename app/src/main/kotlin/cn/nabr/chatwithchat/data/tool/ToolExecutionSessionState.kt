@@ -8,7 +8,10 @@ package cn.nabr.chatwithchat.data.tool
  * separate parameter through every loop signature. Zero means "no conversation scope", which makes
  * grants neither consulted nor offered.
  */
-class ToolExecutionSessionState internal constructor(val chatId: Int = 0) {
+class ToolExecutionSessionState internal constructor(
+    val chatId: Int = 0,
+    val turnKey: String? = null
+) {
     private val valuesByKey = mutableMapOf<String, Set<String>>()
 
     fun replaceValues(key: String, values: Collection<String>) {

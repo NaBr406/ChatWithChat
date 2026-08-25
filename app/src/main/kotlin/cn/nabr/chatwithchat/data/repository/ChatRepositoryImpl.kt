@@ -589,6 +589,7 @@ class ChatRepositoryImpl @Inject constructor(
             onProgress = { progress -> emit(progress) },
             scope = toolScope,
             chatId = userMessages.approvalChatId(),
+            turnKey = userMessages.memoryTurnKey(),
             requestModel = { toolPrompt, reasoningPolicy ->
                 collectProviderText(
                     states = completeChatByProvider(
@@ -990,7 +991,10 @@ class ChatRepositoryImpl @Inject constructor(
         val allResults = mutableListOf<ToolResult>()
         val toolUsageRecords = mutableListOf<TokenUsageRecord>()
         var hasToolInteraction = false
-        val toolExecutionSession = toolLoopOrchestrator.createExecutionSession(userMessages.approvalChatId())
+        val toolExecutionSession = toolLoopOrchestrator.createExecutionSession(
+            chatId = userMessages.approvalChatId(),
+            turnKey = userMessages.memoryTurnKey()
+        )
         val roundStateMachine = ToolRoundStateMachine(toolScope.definitions)
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)
 
@@ -1422,7 +1426,10 @@ class ChatRepositoryImpl @Inject constructor(
         val toolUsageRecords = mutableListOf<TokenUsageRecord>()
         searchDecisionExecution?.usage?.let { usage -> toolUsageRecords += usage }
         var hasToolInteraction = false
-        val toolExecutionSession = toolLoopOrchestrator.createExecutionSession(userMessages.approvalChatId())
+        val toolExecutionSession = toolLoopOrchestrator.createExecutionSession(
+            chatId = userMessages.approvalChatId(),
+            turnKey = userMessages.memoryTurnKey()
+        )
         val roundStateMachine = ToolRoundStateMachine(toolScope.definitions)
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)
 
@@ -1854,7 +1861,10 @@ class ChatRepositoryImpl @Inject constructor(
         val toolUsageRecords = mutableListOf<TokenUsageRecord>()
         searchDecisionExecution?.usage?.let { usage -> toolUsageRecords += usage }
         var hasToolInteraction = false
-        val toolExecutionSession = toolLoopOrchestrator.createExecutionSession(userMessages.approvalChatId())
+        val toolExecutionSession = toolLoopOrchestrator.createExecutionSession(
+            chatId = userMessages.approvalChatId(),
+            turnKey = userMessages.memoryTurnKey()
+        )
         val roundStateMachine = ToolRoundStateMachine(toolScope.definitions)
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)
 
@@ -2219,7 +2229,10 @@ class ChatRepositoryImpl @Inject constructor(
         val toolUsageRecords = mutableListOf<TokenUsageRecord>()
         searchDecisionExecution?.usage?.let { usage -> toolUsageRecords += usage }
         var hasToolInteraction = false
-        val toolExecutionSession = toolLoopOrchestrator.createExecutionSession(userMessages.approvalChatId())
+        val toolExecutionSession = toolLoopOrchestrator.createExecutionSession(
+            chatId = userMessages.approvalChatId(),
+            turnKey = userMessages.memoryTurnKey()
+        )
         val roundStateMachine = ToolRoundStateMachine(toolScope.definitions)
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)
 
@@ -4710,3 +4723,7 @@ private fun chatCompletionStreamOptionsFor(platform: PlatformV2): ChatCompletion
  * grant made in one conversation authorize calls in another.
  */
 private fun List<MessageV2>.approvalChatId(): Int = lastOrNull()?.chatId?.takeIf { id -> id > 0 } ?: 0
+
+private fun List<MessageV2>.memoryTurnKey(): String? = lastOrNull()
+    ?.takeIf { message -> message.id > 0 && message.chatId > 0 }
+    ?.let { message -> "chat:${message.chatId}:user:${message.id}" }

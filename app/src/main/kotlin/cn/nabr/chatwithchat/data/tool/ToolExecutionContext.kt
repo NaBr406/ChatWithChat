@@ -8,7 +8,9 @@ value class ToolIdempotencyKey internal constructor(val value: String)
 class ToolExecutionContext internal constructor(
     val approval: ToolCallApproval,
     val idempotencyKey: ToolIdempotencyKey,
-    internal val operationHash: String
+    internal val operationHash: String,
+    val chatId: Int = 0,
+    val turnKey: String? = null
 ) {
     fun matchesOperation(call: ToolCall): Boolean = call.approvalBinding()
         .getOrNull()
@@ -20,7 +22,9 @@ class ToolExecutionContextFactory(
 ) {
     fun create(
         call: ToolCall,
-        approval: ToolCallApproval = ToolCallApproval.Missing
+        approval: ToolCallApproval = ToolCallApproval.Missing,
+        chatId: Int = 0,
+        turnKey: String? = null
     ): Result<ToolExecutionContext> = call.approvalBinding().mapCatching { binding ->
         val nonce = nonceGenerator().trim()
         require(nonce.isNotBlank()) { "tool_idempotency_nonce_required" }
@@ -29,7 +33,9 @@ class ToolExecutionContextFactory(
             idempotencyKey = ToolIdempotencyKey(
                 sha256Domain(IDEMPOTENCY_KEY_DOMAIN, listOf(binding.operationHash, nonce))
             ),
-            operationHash = binding.operationHash
+            operationHash = binding.operationHash,
+            chatId = chatId,
+            turnKey = turnKey
         )
     }
 
@@ -44,7 +50,9 @@ class ToolExecutionContextFactory(
         ToolExecutionContext(
             approval = approval,
             idempotencyKey = previousContext.idempotencyKey,
-            operationHash = binding.operationHash
+            operationHash = binding.operationHash,
+            chatId = previousContext.chatId,
+            turnKey = previousContext.turnKey
         )
     }
 

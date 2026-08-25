@@ -81,6 +81,7 @@ object MemoryTurnBatchTriggerReason {
     const val IDLE = "idle"
     const val CONTEXT_COMPACTION = "context_compaction"
     const val MANUAL_RETRY = "manual_retry"
+    const val EXPLICIT_REQUEST = "explicit_request"
     const val LEGACY_APPEND_DAILY_NOTE = "legacy_append_daily_note"
     const val LEGACY_COMPACTION_FLUSH = "legacy_compaction_flush"
 }

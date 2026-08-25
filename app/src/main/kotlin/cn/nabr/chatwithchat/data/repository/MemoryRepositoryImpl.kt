@@ -29,6 +29,8 @@ import cn.nabr.chatwithchat.data.memory.MemoryRetriever
 import cn.nabr.chatwithchat.data.memory.MemoryTurnBatchCoordinator
 import cn.nabr.chatwithchat.data.memory.MemoryTurnBatchScheduler
 import cn.nabr.chatwithchat.data.memory.MemoryTurnRecordingResult
+import cn.nabr.chatwithchat.data.memory.MemoryProposalStore
+import cn.nabr.chatwithchat.data.database.entity.MemoryProposal
 import cn.nabr.chatwithchat.data.memory.ModelVisibleMemoryFact
 import cn.nabr.chatwithchat.data.memory.PreparedMemoryContext
 import cn.nabr.chatwithchat.data.memory.TurnRecallSnapshot
@@ -49,6 +51,7 @@ class MemoryRepositoryImpl(
     private val memoryFileStore: MemoryFileStore? = null,
     private val memoryTurnBatchCoordinator: MemoryTurnBatchCoordinator? = null,
     private val memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null,
+    private val memoryProposalStore: MemoryProposalStore? = null,
     private val memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler? = null,
     private val memoryLongTermConsolidationScheduler: MemoryLongTermConsolidationScheduler? = null,
     private val promptTraceStore: PromptTraceStore? = null,
@@ -108,6 +111,18 @@ class MemoryRepositoryImpl(
     override suspend fun recordCompletedTurn(input: MemoryCompletedTurnInput): MemoryTurnRecordingResult =
         memoryTurnBatchCoordinator?.recordCompletedTurn(input)
             ?: MemoryTurnRecordingResult.skipped("turn_batch_storage_unavailable")
+
+    override suspend fun bindApprovedMemoryProposals(turnKey: String, now: Long): List<MemoryProposal> =
+        memoryProposalStore?.bindApprovedToTurn(turnKey, now).orEmpty().also { proposals ->
+            if (proposals.isNotEmpty()) {
+                val chatId = proposals.firstNotNullOfOrNull { it.chatId } ?: return@also
+                memoryTurnBatchScheduler?.enqueueBatchForChat(
+                    chatId = chatId,
+                    triggerReason = cn.nabr.chatwithchat.data.memory.MemoryTurnBatchTriggerReason.EXPLICIT_REQUEST,
+                    requireFullBatch = false
+                )
+            }
+        }
 
     override suspend fun prepareMemoryContext(
         chatRoom: ChatRoomV2,

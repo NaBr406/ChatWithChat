@@ -29,7 +29,7 @@ class ToolApprovalCoordinator @Inject constructor(
     private val approvalAuthority: ToolApprovalAuthority,
     private val executionContextFactory: ToolExecutionContextFactory
 ) {
-    fun prepare(call: ToolCall): Result<ToolApprovalRequest> = runCatching {
+    fun prepare(call: ToolCall, chatId: Int = 0, turnKey: String? = null): Result<ToolApprovalRequest> = runCatching {
         val entry = toolRegistry.catalogEntryFor(call.name)
             ?: throw IllegalArgumentException("unknown_tool:${call.name}")
         require(entry.securityPolicy.approvalPolicy == ToolApprovalPolicy.REQUIRE_EACH_CALL) {
@@ -47,13 +47,15 @@ class ToolApprovalCoordinator @Inject constructor(
         ).getOrThrow()
         ToolApprovalRequest.create(
             preview = preview,
-            pendingExecutionContext = executionContextFactory.create(call).getOrThrow()
+            pendingExecutionContext = executionContextFactory.create(call, chatId = chatId, turnKey = turnKey).getOrThrow()
         )
     }
 
     fun approve(
         call: ToolCall,
-        request: ToolApprovalRequest
+        request: ToolApprovalRequest,
+        chatId: Int = 0,
+        turnKey: String? = null
     ): Result<ToolExecutionContext> = runCatching {
         require(request.matches(call)) { "tool_approval_request_mismatch" }
         val approval = approvalAuthority.approve(call).getOrThrow()
@@ -73,7 +75,11 @@ class ToolApprovalCoordinator @Inject constructor(
      * arguments. The grant only decides whether to ask; it is not itself a credential and cannot be
      * replayed onto another operation. A tool that does not opt into grants is refused here.
      */
-    fun approveFromSessionGrant(call: ToolCall): Result<ToolExecutionContext> = runCatching {
+    fun approveFromSessionGrant(
+        call: ToolCall,
+        chatId: Int = 0,
+        turnKey: String? = null
+    ): Result<ToolExecutionContext> = runCatching {
         val entry = toolRegistry.catalogEntryFor(call.name)
             ?: throw IllegalArgumentException("unknown_tool:${call.name}")
         require(entry.securityPolicy.approvalPolicy == ToolApprovalPolicy.REQUIRE_EACH_CALL) {
@@ -81,7 +87,7 @@ class ToolApprovalCoordinator @Inject constructor(
         }
         require(sessionApprovalScope(call.name) != null) { "tool_session_grant_unsupported" }
         val approval = approvalAuthority.approve(call).getOrThrow()
-        executionContextFactory.create(call, approval).getOrThrow()
+        executionContextFactory.create(call, approval, chatId = chatId, turnKey = turnKey).getOrThrow()
     }
 
     fun deny(

@@ -7,6 +7,9 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import cn.nabr.chatwithchat.data.sticker.StickerRepository
+import cn.nabr.chatwithchat.data.database.dao.MemoryProposalDao
+import cn.nabr.chatwithchat.data.memory.MemoryProposalStore
+import cn.nabr.chatwithchat.data.memory.RoomMemoryProposalStore
 import cn.nabr.chatwithchat.data.tool.AndroidAlarmLauncher
 import cn.nabr.chatwithchat.data.tool.AndroidDeviceLocationReader
 import cn.nabr.chatwithchat.data.tool.AndroidScheduleEventLauncher
@@ -39,6 +42,7 @@ object ToolModule {
         webSearchRepository: WebSearchRepository,
         webPageExtractor: WebPageExtractor,
         stickerRepository: StickerRepository,
+        memoryProposalStore: MemoryProposalStore,
         @ApplicationContext context: Context
     ): List<ToolProvider> = BuiltInTools(
         webSearchRepository,
@@ -46,8 +50,13 @@ object ToolModule {
         AndroidDeviceLocationReader(context),
         AndroidScheduleEventLauncher(context),
         AndroidAlarmLauncher(context),
-        stickerRepository
+        stickerRepository,
+        memoryProposalStore
     ).providers()
+
+    @Provides
+    @Singleton
+    fun provideMemoryProposalStore(dao: MemoryProposalDao): MemoryProposalStore = RoomMemoryProposalStore(dao)
 
     @Provides
     @Singleton

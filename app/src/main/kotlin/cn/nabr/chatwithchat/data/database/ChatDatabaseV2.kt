@@ -10,6 +10,7 @@ import cn.nabr.chatwithchat.data.database.dao.ContextManagementDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryActivityLogDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryLongTermConsolidationDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryMaintenanceJobDao
+import cn.nabr.chatwithchat.data.database.dao.MemoryProposalDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryRecoveryDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryTurnBatchDao
 import cn.nabr.chatwithchat.data.database.dao.McpDao
@@ -42,6 +43,7 @@ import cn.nabr.chatwithchat.data.database.entity.MemoryMaintenanceJob
 import cn.nabr.chatwithchat.data.database.entity.MemoryMutationGroup
 import cn.nabr.chatwithchat.data.database.entity.MemoryMutationReceipt
 import cn.nabr.chatwithchat.data.database.entity.MemoryPendingTurn
+import cn.nabr.chatwithchat.data.database.entity.MemoryProposal
 import cn.nabr.chatwithchat.data.database.entity.McpServerEntity
 import cn.nabr.chatwithchat.data.database.entity.McpToolEntity
 import cn.nabr.chatwithchat.data.database.entity.MessageSourceMetadataListConverter
@@ -73,6 +75,7 @@ import cn.nabr.chatwithchat.data.database.entity.TokenUsageRecordConverter
         MemoryLongTermConsolidationCheckpoint::class,
         MemoryChatCheckpoint::class,
         MemoryPendingTurn::class,
+        MemoryProposal::class,
         MemoryActivityLog::class,
         StickerPackEntity::class,
         StickerAssetEntity::class,
@@ -92,7 +95,7 @@ import cn.nabr.chatwithchat.data.database.entity.TokenUsageRecordConverter
         McpServerEntity::class,
         McpToolEntity::class
     ],
-    version = 25,
+    version = 26,
     exportSchema = true
 )
 @TypeConverters(
@@ -113,6 +116,7 @@ abstract class ChatDatabaseV2 : RoomDatabase() {
     abstract fun memoryMaintenanceJobDao(): MemoryMaintenanceJobDao
     abstract fun memoryRecoveryDao(): MemoryRecoveryDao
     abstract fun memoryTurnBatchDao(): MemoryTurnBatchDao
+    abstract fun memoryProposalDao(): MemoryProposalDao
     abstract fun memoryActivityLogDao(): MemoryActivityLogDao
     abstract fun memoryLongTermConsolidationDao(): MemoryLongTermConsolidationDao
     abstract fun stickerCatalogDao(): StickerCatalogDao

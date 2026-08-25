@@ -342,6 +342,10 @@ class ChatTurnCoordinator @Inject constructor(
                 recalledMemoryAliases = turn.recalledMemoryAliases
             )
         )
+        memoryRepository.bindApprovedMemoryProposals(
+            turnKey = "chat:${savedChatRoom.id}:user:${userMessage.id}",
+            now = System.currentTimeMillis()
+        )
     }
 
     /**

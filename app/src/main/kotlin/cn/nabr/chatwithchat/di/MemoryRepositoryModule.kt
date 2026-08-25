@@ -44,6 +44,7 @@ import cn.nabr.chatwithchat.data.memory.MemoryPromptBuilder
 import cn.nabr.chatwithchat.data.memory.MemoryRetriever
 import cn.nabr.chatwithchat.data.memory.MemoryTurnBatchCoordinator
 import cn.nabr.chatwithchat.data.memory.MemoryTurnBatchScheduler
+import cn.nabr.chatwithchat.data.memory.MemoryProposalStore
 import cn.nabr.chatwithchat.data.memory.MemoryVectorIndexBootstrapService
 import cn.nabr.chatwithchat.data.memory.MemoryVectorIndexRecoveryService
 import cn.nabr.chatwithchat.data.memory.MemoryVectorRecallRepairTrigger
@@ -486,6 +487,7 @@ object MemoryRepositoryModule {
         memoryTurnBatchDao: MemoryTurnBatchDao,
         memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
         memoryTurnBatchScheduler: MemoryTurnBatchScheduler,
+        memoryProposalStore: MemoryProposalStore,
         settingRepository: SettingRepository,
         memoryModelResolver: MemoryModelResolver,
         memoryIntelligence: MemoryIntelligence,
@@ -498,6 +500,7 @@ object MemoryRepositoryModule {
         turnBatchDao = memoryTurnBatchDao,
         maintenanceScheduler = memoryMaintenanceScheduler,
         turnBatchScheduler = memoryTurnBatchScheduler,
+        memoryProposalStore = memoryProposalStore,
         settingRepository = settingRepository,
         modelResolver = memoryModelResolver,
         memoryIntelligence = memoryIntelligence,
@@ -525,6 +528,7 @@ object MemoryRepositoryModule {
         memoryFileStore: MemoryFileStore,
         memoryTurnBatchCoordinator: MemoryTurnBatchCoordinator,
         memoryTurnBatchScheduler: MemoryTurnBatchScheduler,
+        memoryProposalStore: MemoryProposalStore,
         memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler,
         memoryLongTermConsolidationScheduler: MemoryLongTermConsolidationScheduler,
         promptTraceStore: PromptTraceStore,
@@ -537,6 +541,7 @@ object MemoryRepositoryModule {
         memoryFileStore = memoryFileStore,
         memoryTurnBatchCoordinator = memoryTurnBatchCoordinator,
         memoryTurnBatchScheduler = memoryTurnBatchScheduler,
+        memoryProposalStore = memoryProposalStore,
         memoryDailyDistillationScheduler = memoryDailyDistillationScheduler,
         memoryLongTermConsolidationScheduler = memoryLongTermConsolidationScheduler,
         promptTraceStore = promptTraceStore,

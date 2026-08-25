@@ -224,6 +224,42 @@ data class ToolDefinition(
             )
         )
 
+        val ProposeMemoryChange = ToolDefinition(
+            name = "propose_memory_change",
+            description = "提出一条待用户确认的记忆变更建议。此工具只保存提案证据，不会直接写入记忆；用户批准后才会进入记忆批处理。",
+            parameters = Parameters(
+                properties = mapOf(
+                    "intent" to Parameter(
+                        type = "string",
+                        description = "记忆意图：remember、update 或 forget。",
+                        enumValues = listOf("remember", "update", "forget")
+                    ),
+                    "targetRef" to Parameter(
+                        type = "string",
+                        description = "当前回合注入记忆的 [Rxx] 引用；remember 时省略。",
+                        minLength = 3,
+                        maxLength = 3
+                    ),
+                    "text" to Parameter(
+                        type = "string",
+                        description = "用户明确要保存的单条事实；forget 时省略。",
+                        maxLength = 600
+                    ),
+                    "reason" to Parameter(
+                        type = "string",
+                        description = "简短说明为何提出这条变更。",
+                        maxLength = 240
+                    ),
+                    "evidenceStrength" to Parameter(
+                        type = "string",
+                        description = "证据强度；模型提供的值仅作记录，审批后才可升级。",
+                        enumValues = listOf("user_explicit", "user_confirmed", "agent_inferred")
+                    )
+                ),
+                required = listOf("intent", "reason", "evidenceStrength")
+            )
+        )
+
         val DiscoverTools = ToolDefinition(
             name = "discover_tools",
             description = "为当前尚不可用的能力查找已启用的按需工具。返回的工具会从下一次响应开始可用。",
@@ -248,7 +284,8 @@ data class ToolDefinition(
             AddSchedule,
             SetAlarm,
             SearchStickers,
-            SendSticker
+            SendSticker,
+            ProposeMemoryChange
         )
     }
 }

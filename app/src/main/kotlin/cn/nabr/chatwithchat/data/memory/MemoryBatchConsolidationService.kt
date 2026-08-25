@@ -20,6 +20,7 @@ class MemoryBatchConsolidationService(
     private val turnBatchDao: MemoryTurnBatchDao,
     private val maintenanceScheduler: MemoryMaintenanceScheduler,
     private val turnBatchScheduler: MemoryTurnBatchScheduler,
+    private val memoryProposalStore: MemoryProposalStore,
     private val settingRepository: SettingRepository,
     private val modelResolver: MemoryModelResolver,
     private val memoryIntelligence: MemoryIntelligence,
@@ -118,6 +119,19 @@ class MemoryBatchConsolidationService(
                 entryId = memory.id
             )
         }
+        val boundProposals = memoryProposalStore.getBoundForTurns(turns.map(MemoryCompletedTurnSnapshot::turnKey))
+            .mapIndexed { index, proposal ->
+                MemoryBatchProposal(
+                    ref = "P${(index + 1).toString().padStart(2, '0')}",
+                    proposalId = proposal.proposalId,
+                    intent = proposal.intent,
+                    targetRef = proposal.targetRef,
+                    text = proposal.normalizedText,
+                    reason = proposal.reason,
+                    evidenceStrength = proposal.effectiveEvidenceStrength,
+                    boundTurnKey = checkNotNull(proposal.boundTurnKey)
+                )
+            }
         val request = MemoryBatchConsolidationRequest(
             batchId = payload.batchId,
             chatId = payload.chatId,
@@ -125,7 +139,8 @@ class MemoryBatchConsolidationService(
             triggerReason = payload.triggerReason,
             turns = turns,
             existingMemories = existingMemories,
-            existingMemoryAliases = existingMemoryAliases
+            existingMemoryAliases = existingMemoryAliases,
+            proposals = boundProposals
         )
         return execute(
             job = job,
@@ -483,6 +498,11 @@ class MemoryBatchConsolidationService(
         preparedMutation?.let { mutation ->
             memoryMutationCoordinator.acknowledgeSemanticCompletion(mutation.group.groupId)
         }
+        memoryProposalStore.markConsumed(
+            proposalIds = request.proposals.map(MemoryBatchProposal::proposalId),
+            mutationGroupId = preparedMutation?.group?.groupId,
+            now = now()
+        )
         turnBatchScheduler.repairAndSchedule()
         activityLogger.finishRunSafely(
             activityRunId,
@@ -761,11 +781,42 @@ class MemoryBatchConsolidationService(
         check(operations.size <= MemoryControlledOperationPolicy.MAX_OPERATIONS)
         val existingById = request.existingMemories.associateBy { it.id }
         val idsByAlias = request.existingMemoryAliases.associate { binding -> binding.alias to binding.entryId }
+        val recalledIdsByAlias = request.turns
+            .flatMap { turn -> turn.recalledMemoryAliases }
+            .associate { binding -> binding.alias to binding.entryId }
+        val proposalsByRef = request.proposals.associateBy { it.ref }
         val turnsByKey = request.turns.associateBy { it.turnKey }
         val diagnostics = mutableListOf<MemoryOperationDiagnostic>()
 
         val validatedIndexed = operations.mapIndexedNotNull { index, operation ->
             val validatedOperation = runCatching {
+            val proposal = operation.proposalRef?.let { ref ->
+                check(ref.matches(PROPOSAL_REF_PATTERN)) { "proposal_ref_invalid" }
+                checkNotNull(proposalsByRef[ref])
+            }
+            val proposalTargetId = proposal?.targetRef?.let { ref ->
+                recalledIdsByAlias[ref] ?: idsByAlias[ref]
+            }
+            val operationWithProposal = if (proposal == null) {
+                operation
+            } else {
+                check(operation.text.isBlank()) { "proposal_text_must_be_blank" }
+                val expectedAction = when (proposal.intent) {
+                    "remember" -> MemoryBatchAction.CREATE
+                    "update" -> MemoryBatchAction.REPLACE
+                    "forget" -> MemoryBatchAction.REMOVE
+                    else -> error("proposal_intent_invalid")
+                }
+                check(operation.action == expectedAction) { "proposal_action_mismatch" }
+                check(proposal.intent == "remember" || proposalTargetId != null) { "proposal_target_unresolved" }
+                operation.copy(
+                    targetMemoryId = operation.targetMemoryId ?: proposalTargetId,
+                    text = proposal.text,
+                    source = MemorySource.USER_CONFIRMED,
+                    evidenceTurnKeys = (operation.evidenceTurnKeys + proposal.boundTurnKey).distinct()
+                )
+            }
+            val operation = operationWithProposal
             check(operation.destination in VALID_DESTINATIONS)
             check(operation.action in VALID_ACTIONS)
             check(operation.type in MemoryControlledOperationPolicy.validTypes)
@@ -1367,11 +1418,13 @@ class MemoryBatchConsolidationService(
         private const val MAX_EXISTING_MEMORY_TOKEN_BUDGET = 2_400
         private const val MIN_INFERRED_LONG_TERM_EVIDENCE = 2
         private const val MIN_DISTINCT_OBSERVATION_DAYS = 2
+        private val PROPOSAL_REF_PATTERN = Regex("P\\d{2}")
         private val VALID_TRIGGER_REASONS = setOf(
             MemoryTurnBatchTriggerReason.THRESHOLD,
             MemoryTurnBatchTriggerReason.IDLE,
             MemoryTurnBatchTriggerReason.CONTEXT_COMPACTION,
-            MemoryTurnBatchTriggerReason.MANUAL_RETRY
+            MemoryTurnBatchTriggerReason.MANUAL_RETRY,
+            MemoryTurnBatchTriggerReason.EXPLICIT_REQUEST
         )
         private val VALID_DESTINATIONS = setOf(MemoryBatchDestination.DAILY, MemoryBatchDestination.LONG_TERM)
         private val ACTIVE_RECALL_STATES = setOf(MemoryRecallState.CORE, MemoryRecallState.QUERY)

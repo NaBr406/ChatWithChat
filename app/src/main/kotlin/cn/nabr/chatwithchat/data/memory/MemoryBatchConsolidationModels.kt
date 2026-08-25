@@ -10,7 +10,20 @@ data class MemoryBatchConsolidationRequest(
     val triggerReason: String,
     val turns: List<MemoryCompletedTurnSnapshot>,
     val existingMemories: List<MemoryBatchExistingMemory>,
-    val existingMemoryAliases: List<MemoryAliasBinding> = emptyList()
+    val existingMemoryAliases: List<MemoryAliasBinding> = emptyList(),
+    val proposals: List<MemoryBatchProposal> = emptyList()
+)
+
+@Serializable
+data class MemoryBatchProposal(
+    val ref: String,
+    val proposalId: String,
+    val intent: String,
+    val targetRef: String? = null,
+    val text: String = "",
+    val reason: String,
+    val evidenceStrength: String,
+    val boundTurnKey: String
 )
 
 @Serializable
@@ -43,6 +56,7 @@ data class MemoryBatchOperation(
     val action: String,
     val targetMemoryId: String? = null,
     val targetMemoryRef: String? = null,
+    val proposalRef: String? = null,
     val text: String = "",
     val type: String = "stable_profile",
     val sensitivity: String = MemorySensitivity.NORMAL,
@@ -62,7 +76,8 @@ data class MemoryBatchProviderRequest(
     val chatTitle: String,
     val triggerReason: String,
     val turns: List<MemoryBatchProviderTurn>,
-    val existingMemories: List<MemoryBatchProviderExistingMemory>
+    val existingMemories: List<MemoryBatchProviderExistingMemory>,
+    val proposals: List<MemoryBatchProviderProposalEvidence> = emptyList()
 )
 
 @kotlinx.serialization.Serializable
@@ -73,6 +88,17 @@ data class MemoryBatchProviderTurn(
     val assistantContent: String,
     val completedAt: Long,
     val recalledMemoryRefs: List<String> = emptyList()
+)
+
+@kotlinx.serialization.Serializable
+data class MemoryBatchProviderProposalEvidence(
+    val ref: String,
+    val intent: String,
+    val targetRef: String? = null,
+    val text: String = "",
+    val reason: String,
+    val evidenceStrength: String,
+    val boundTurnKey: String
 )
 
 @kotlinx.serialization.Serializable
@@ -98,6 +124,7 @@ data class MemoryBatchProviderOperation(
     val destination: String,
     val action: String,
     val targetMemoryRef: String? = null,
+    val proposalRef: String? = null,
     val text: String = "",
     val type: String = "stable_profile",
     val sensitivity: String = MemorySensitivity.NORMAL,
