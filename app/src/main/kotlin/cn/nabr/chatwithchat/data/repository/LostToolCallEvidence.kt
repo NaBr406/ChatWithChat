@@ -34,6 +34,15 @@ internal data class LostToolCallEvidence(
 ) {
     val isLostToolCall: Boolean
         get() = leakedMarkup || providerClaimedToolCalls || outputTruncated
+
+    /**
+     * A round that wanted a tool, got none, and wrote nothing a person can read.
+     *
+     * Worth reporting rather than ending on: a bare `Done` here saves an empty assistant message as a
+     * success, which is what makes the app look like it quit in the middle of answering.
+     */
+    val leavesNothingToShow: Boolean
+        get() = isLostToolCall && !hadVisibleText
 }
 
 /**

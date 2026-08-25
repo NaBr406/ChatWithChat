@@ -1117,7 +1117,7 @@ class ChatRepositoryImpl @Inject constructor(
                 // The model answered instead of calling a tool, so this round ended the exchange and
                 // any compaction item it emitted is final.
                 nativeExchange.commit()
-                if (evidence.isLostToolCall && !evidence.hadVisibleText) {
+                if (evidence.leavesNothingToShow) {
                     emit(ApiState.Error(TOOL_CALL_CHANNEL_LOST))
                 }
                 val usage = if (hasToolInteraction || searchDecisionExecution?.usage != null) {
@@ -1219,6 +1219,7 @@ class ChatRepositoryImpl @Inject constructor(
         finalRound.errorMessage?.let { message ->
             emit(ApiState.Error(message))
         }
+        emitLostToolCallIfSilent(finalRound.errorMessage, finalRound.lostToolCallEvidence)
         aggregateToolUsage(finalRound.usage, toolUsageRecords)?.let { usage ->
             emit(ApiState.UsageUpdated(usage))
         }
@@ -1521,7 +1522,7 @@ class ChatRepositoryImpl @Inject constructor(
                 // Out of retries. A leak that came with a real answer still ends the turn on that answer;
                 // a leak with nothing visible behind it would otherwise be saved as a successful empty
                 // message, which is the failure that looks like the app quit mid-sentence.
-                if (evidence.isLostToolCall && !evidence.hadVisibleText) {
+                if (evidence.leavesNothingToShow) {
                     emit(ApiState.Error(TOOL_CALL_CHANNEL_LOST))
                 }
                 val usage = if (hasToolInteraction || searchDecisionExecution?.usage != null) {
@@ -1609,6 +1610,7 @@ class ChatRepositoryImpl @Inject constructor(
         finalRound.errorMessage?.let { message ->
             emit(ApiState.Error(message))
         }
+        emitLostToolCallIfSilent(finalRound.errorMessage, finalRound.lostToolCallEvidence)
         aggregateToolUsage(finalRound.usage, toolUsageRecords)?.let { usage ->
             emit(ApiState.UsageUpdated(usage))
         }
@@ -1733,6 +1735,26 @@ class ChatRepositoryImpl @Inject constructor(
         markupFilter.flush().forEach { visible ->
             if (visible is ApiState.Success) outputText.append(visible.textChunk)
             emit(visible)
+        }
+    }
+
+    /**
+     * Reports a final-answer round that wanted a tool, got none, and wrote nothing readable.
+     *
+     * The final round is not retried the way the tool rounds are. It is sent with `tool_choice: none` on
+     * purpose, so telling the model to reissue its call through a channel this request has closed would be
+     * incoherent — and the situations that reach here are the ones where there is genuinely nothing left to
+     * offer: the round budget, the call budget, or the room to carry another result is gone. What was missing
+     * is only that the turn ended in silence, saved as a success.
+     *
+     * Skipped when the round already failed, so one round never reports two errors.
+     */
+    private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.emitLostToolCallIfSilent(
+        errorMessage: String?,
+        evidence: LostToolCallEvidence
+    ) {
+        if (errorMessage == null && evidence.leavesNothingToShow) {
+            emit(ApiState.Error(TOOL_CALL_CHANNEL_LOST))
         }
     }
 
@@ -1916,7 +1938,7 @@ class ChatRepositoryImpl @Inject constructor(
                 // Out of retries. A leak that came with a real answer still ends the turn on that answer;
                 // a leak with nothing visible behind it would otherwise be saved as a successful empty
                 // message, which is the failure that looks like the app quit mid-sentence.
-                if (evidence.isLostToolCall && !evidence.hadVisibleText) {
+                if (evidence.leavesNothingToShow) {
                     emit(ApiState.Error(TOOL_CALL_CHANNEL_LOST))
                 }
                 val usage = if (hasToolInteraction || searchDecisionExecution?.usage != null) {
@@ -1997,6 +2019,7 @@ class ChatRepositoryImpl @Inject constructor(
         finalRound.errorMessage?.let { message ->
             emit(ApiState.Error(message))
         }
+        emitLostToolCallIfSilent(finalRound.errorMessage, finalRound.lostToolCallEvidence)
         aggregateToolUsage(finalRound.usage, toolUsageRecords)?.let { usage ->
             emit(ApiState.UsageUpdated(usage))
         }
@@ -2281,7 +2304,7 @@ class ChatRepositoryImpl @Inject constructor(
                 // Out of retries. A leak that came with a real answer still ends the turn on that answer;
                 // a leak with nothing visible behind it would otherwise be saved as a successful empty
                 // message, which is the failure that looks like the app quit mid-sentence.
-                if (evidence.isLostToolCall && !evidence.hadVisibleText) {
+                if (evidence.leavesNothingToShow) {
                     emit(ApiState.Error(TOOL_CALL_CHANNEL_LOST))
                 }
                 val usage = if (hasToolInteraction || searchDecisionExecution?.usage != null) {
@@ -2363,6 +2386,7 @@ class ChatRepositoryImpl @Inject constructor(
         finalRound.errorMessage?.let { message ->
             emit(ApiState.Error(message))
         }
+        emitLostToolCallIfSilent(finalRound.errorMessage, finalRound.lostToolCallEvidence)
         aggregateToolUsage(finalRound.usage, toolUsageRecords)?.let { usage ->
             emit(ApiState.UsageUpdated(usage))
         }
