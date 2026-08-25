@@ -235,6 +235,37 @@ class LlmMemoryIntelligenceTest {
     }
 
     @Test
+    fun `batch provider payload exposes maintenance aliases but no local memory identifiers`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(chatChunks = chatChunks(EMPTY_PROPOSAL_JSON))
+        val intelligence = intelligence(openAIAPI = openAIAPI)
+        val localId = "mem_local_only_123"
+
+        intelligence.consolidateMemoryBatch(
+            batchRequest().copy(
+                existingMemories = listOf(
+                    MemoryBatchExistingMemory(
+                        id = localId,
+                        sourcePath = "memory/MEMORY.md",
+                        text = "The user prefers concise answers.",
+                        type = "communication_style",
+                        sensitivity = MemorySensitivity.NORMAL,
+                        source = MemorySource.EXPLICIT_USER_STATEMENT,
+                        updatedAt = 10L
+                    )
+                ),
+                existingMemoryAliases = listOf(MemoryAliasBinding("M01", localId))
+            ),
+            resolvedPlatform = platform(ClientType.OPENROUTER, "model")
+        )
+
+        val providerRequest = checkNotNull(openAIAPI.lastChatRequest).toString()
+        assertTrue(providerRequest.contains("M01"))
+        assertTrue(providerRequest.contains("The user prefers concise answers."))
+        assertTrue(!providerRequest.contains(localId))
+        assertTrue(!providerRequest.contains("MEMORY.md"))
+    }
+
+    @Test
     fun `resolved anthropic platform executes the same batch contract`() = runBlocking {
         val anthropicAPI = RecordingAnthropicAPI(
             chunks = flowOf(

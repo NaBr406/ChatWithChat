@@ -33,7 +33,7 @@ class MemoryPromptBuilder(
             .mapTo(mutableSetOf()) { fact -> normalizeExactMemoryText(fact.text) }
         candidates
             .asSequence()
-            .map { fact -> ModelVisibleMemoryFact(fact.text.trim()) }
+            .map { fact -> ModelVisibleMemoryFact(fact.text.trim(), fact.alias) }
             .filterNot { fact -> normalizeExactMemoryText(fact.text) in acceptedExactTexts }
             .distinctBy { fact -> normalizeExactMemoryText(fact.text) }
             .forEach { fact -> selected += fact }
@@ -55,7 +55,10 @@ class MemoryPromptBuilder(
     }
 
     private fun renderFactLines(facts: List<ModelVisibleMemoryFact>): String =
-        facts.joinToString(separator = "\n") { fact -> "- ${fact.text}" }
+        facts.joinToString(separator = "\n") { fact ->
+            val prefix = fact.alias?.let { alias -> "[$alias] " }.orEmpty()
+            "- $prefix${fact.text}"
+        }
 
     private fun String.estimatedTokens(): Int = TokenUsageEstimator.estimateText(
         text = this,

@@ -2,6 +2,9 @@ package cn.nabr.chatwithchat.data.memory
 
 import cn.nabr.chatwithchat.data.model.ClientType
 import cn.nabr.chatwithchat.data.token.TokenUsageEstimator
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -28,6 +31,34 @@ class MemoryPromptBuilderTest {
         assertFalse(prompt.contains("sensitivity:"))
         assertFalse(prompt.contains("source:"))
         assertEquals(1, prompt.split("不要提及记忆存储").size - 1)
+    }
+
+    @Test
+    fun `prompt renders bounded recall aliases without exposing entry ids`() {
+        val rendered = MemoryPromptBuilder().build(
+            coreFacts = listOf(ModelVisibleMemoryFact("Call the user Alex.", alias = "R01")),
+            queryFacts = listOf(ModelVisibleMemoryFact("The current project is ChatWithChat.", alias = "R02"))
+        )
+
+        assertTrue(rendered.prompt.orEmpty().contains("- [R01] Call the user Alex."))
+        assertTrue(rendered.prompt.orEmpty().contains("- [R02] The current project is ChatWithChat."))
+        assertFalse(rendered.prompt.orEmpty().contains("entry_id"))
+    }
+
+    @Test
+    fun `memory alias binding round trips and rejects wrong namespace`() {
+        val json = Json.encodeToString(MemoryAliasBinding("R01", "mem_local_only"))
+        assertEquals(
+            MemoryAliasBinding("R01", "mem_local_only"),
+            Json.decodeFromString<MemoryAliasBinding>(json)
+        )
+
+        assertThrows(IllegalArgumentException::class.java) {
+            MemoryAliasBinding("X01", "mem_local_only")
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            MemoryAliasBinding("R99", "")
+        }
     }
 
     @Test

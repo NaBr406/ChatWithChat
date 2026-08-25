@@ -103,7 +103,7 @@ class LlmMemoryIntelligence @Inject constructor(
         val response = requestJson(
             operation = OPERATION_CONSOLIDATE_BATCH,
             systemPrompt = BATCH_CONSOLIDATION_PROMPT,
-            userJson = strictJson.encodeToString(request),
+            userJson = strictJson.encodeToString(request.toProviderRequest()),
             resolvedPlatform = platform
         )
         if (response.content == null) {
@@ -126,7 +126,7 @@ class LlmMemoryIntelligence @Inject constructor(
             data = platform.toMemoryActivityData(inputCount = request.turns.size)
         )
         return try {
-            strictJson.decodeFromString<MemoryBatchConsolidationProposal>(extractJsonObject(checkNotNull(response.content)))
+            decodeBatchProposal(checkNotNull(response.content), request)
         } catch (e: SerializationException) {
             runCatching { Log.w(TAG, "Memory consolidate_batch returned invalid JSON", e) }
             finishInvalidGeneration(activityRunId, platform, request.turns.size)
@@ -622,6 +622,23 @@ class LlmMemoryIntelligence @Inject constructor(
         return trimmed.substring(start, end + 1)
     }
 
+    private fun decodeBatchProposal(
+        content: String,
+        request: MemoryBatchConsolidationRequest
+    ): MemoryBatchConsolidationProposal {
+        val json = extractJsonObject(content)
+        return runCatching {
+            strictJson.decodeFromString<MemoryBatchProviderProposal>(json)
+                .toInternalProposal(request)
+        }.getOrElse { providerError ->
+            // Keep already persisted/queued legacy jobs readable without weakening
+            // the provider-facing DTO or accepting unknown fields in new responses.
+            runCatching {
+                strictJson.decodeFromString<MemoryBatchConsolidationProposal>(json)
+            }.getOrElse { throw providerError }
+        }
+    }
+
     private fun PlatformV2.requiresToken(): Boolean = compatibleType != ClientType.OLLAMA
 
     private fun PlatformV2.memoryTimeoutSeconds(operation: String): Int {
@@ -712,17 +729,17 @@ class LlmMemoryIntelligence @Inject constructor(
 Consolidate one immutable batch of completed chat turns into controlled personal-memory operations.
 Default to ignore; no durable memory is better than a weak memory.
 Return only strict JSON matching this schema:
-{"operations":[{"destination":"daily|long_term","action":"create|replace|remove|ignore","targetMemoryId":"an id from existingMemories or null","text":"complete semantic memory text, or empty for remove/ignore","type":"stable_profile|communication_style|project_context|interest|important_event|important_person|emotional_pattern|boundary|life_context|recurring_theme|light_productivity_preference","sensitivity":"normal|private|sensitive","source":"explicit_user_statement|assistant_inferred|user_confirmed","evidenceTurnKeys":["a turnKey from turns"],"canonicalKey":"identity.preferred_address","scope":"general","evidenceAt":0,"recallState":"core|query","reason":"short reason"}]}
+{"operations":[{"destination":"daily|long_term","action":"create|replace|remove|ignore","targetMemoryRef":"an [M01] ref from existingMemories or null","text":"complete semantic memory text, or empty for remove/ignore","type":"stable_profile|communication_style|project_context|interest|important_event|important_person|emotional_pattern|boundary|life_context|recurring_theme|light_productivity_preference","sensitivity":"normal|private|sensitive","source":"explicit_user_statement|assistant_inferred|user_confirmed","evidenceTurnKeys":["a turnKey from turns"],"canonicalKey":"identity.preferred_address","scope":"general","evidenceAt":0,"recallState":"core|query","reason":"short reason"}]}
 The user's messages are the source of truth. Assistant content is only context for resolving references and must not become a user fact unless the user confirmed it.
 Before create or replace, require all applicable gates: likely future utility in multiple conversations, durability for weeks or months (or an explicit request to remember indefinitely), one concise atomic fact, adequate user evidence, and no active duplicate.
-Evidence must be an explicit user statement, repeated independent user evidence, or a correction to an existing fact with reliable evidence. One isolated assistant inference must not create a durable profile fact; it may update an existing fact only when the evidence is strong and the user has not contradicted it.
+Evidence must be an explicit user statement, repeated independent user evidence, or a correction to an existing fact with reliable evidence. One isolated assistant inference must not create a durable profile fact; it may update an existing fact only when the evidence is strong and the user has not contradicted it. When a user explicitly contradicts a recalled memory ref such as [R01], prefer replace or remove of the matching [M01] existing memory over creating a neighbouring duplicate; that correction has an explicit-user evidence bar.
 Do not create long-term memory for current task progress, temporary plans, open bugs, test results, thresholds, scores, model dimensions, index generations, recall diagnostics, one-off opinions, speculative conclusions, news, prices, product versions, one-time topics, unconfirmed assistant summaries, raw conversation summaries, implementation logs, project snapshots that belong in chat history, uncertain or time-sensitive profile claims, or application tool-calling policy.
 Route a transient observation to daily only when it may provide evidence for a later durable fact; otherwise ignore it. Daily is not permission to promote a weak observation automatically.
-For progress or corrections, replace the complete matching existing memory by its supplied id instead of creating a neighboring duplicate.
+For progress or corrections, replace the complete matching existing memory by its supplied [M01] ref instead of creating a neighboring duplicate. [Rxx] refs are turn evidence only; use the corresponding [Mxx] ref for a mutation target.
 Every create or replace must provide one stable canonicalKey and scope. Reuse an existing identity when it describes the same single-valued fact. Use evidenceAt exactly equal to the maximum completedAt among cited turns. Use core only for a confirmed identity, addressing preference, durable response language/style, or hard boundary that should apply to nearly every conversation; otherwise use query. Project facts use project:<slug> and stay query.
 Use identity.preferred_address with scope general as the single addressing bundle for both the user's preferred form of address and any name the user assigned to the assistant. identity.assistant_name, identity.nickname, and identity.legacy_address are legacy aliases that may be migrated to identity.preferred_address. When either side exists, preserve both sides in one concise complete sentence; a replace must rewrite the complete bundle and must not drop the other side.
 canonicalKey must be a lowercase ASCII dotted key. scope must be general, work, personal, project:<slug>, or chat:<numeric-id>. For remove or ignore, canonicalKey, scope, evidenceAt, and recallState must all be null.
-Use replace or remove only with an id present in existingMemories. Never invent ids, paths, destinations, actions, or evidence keys.
+Use replace or remove only with a ref present in existingMemories. Never invent refs, ids, paths, destinations, actions, or evidence keys.
 Keep one atomic normalized sentence per entry, explain in reason which value gate justified each write, and do not duplicate one fact into both daily and long-term destinations.
 Use ignore or an empty operations list when nothing durable should be written.
 """
@@ -773,6 +790,70 @@ For addressing memories, use identity.preferred_address with scope general as on
     private fun logWarning(message: String) {
         runCatching { Log.w(TAG, message) }
     }
+}
+
+private fun MemoryBatchConsolidationRequest.toProviderRequest(): MemoryBatchProviderRequest {
+    val aliasesById = existingMemoryAliases.associate { binding -> binding.entryId to binding.alias }
+    val providerMemories = existingMemories.mapIndexed { index, memory ->
+        MemoryBatchProviderExistingMemory(
+            ref = aliasesById[memory.id] ?: "M${(index + 1).toString().padStart(2, '0')}",
+            text = memory.text,
+            type = memory.type,
+            sensitivity = memory.sensitivity,
+            source = memory.source,
+            updatedAt = memory.updatedAt,
+            createdAt = memory.createdAt,
+            validity = memory.validity,
+            recallState = memory.recallState
+        )
+    }
+    return MemoryBatchProviderRequest(
+        batchId = batchId,
+        chatId = chatId,
+        chatTitle = chatTitle,
+        triggerReason = triggerReason,
+        turns = turns.map { turn ->
+            MemoryBatchProviderTurn(
+                turnKey = turn.turnKey,
+                chatTitle = turn.chatTitle,
+                userContent = turn.userContent,
+                assistantContent = turn.assistantContent,
+                completedAt = turn.completedAt,
+                recalledMemoryRefs = turn.recalledMemoryRefs
+            )
+        },
+        existingMemories = providerMemories
+    )
+}
+
+private fun MemoryBatchProviderProposal.toInternalProposal(
+    request: MemoryBatchConsolidationRequest
+): MemoryBatchConsolidationProposal {
+    val allowedRefs = request.existingMemoryAliases.mapTo(mutableSetOf(), MemoryAliasBinding::alias)
+    return MemoryBatchConsolidationProposal(
+        operations = operations.map { operation ->
+            val ref = operation.targetMemoryRef
+            if (ref != null) requireMemoryAlias(ref)
+            if (ref != null && ref !in allowedRefs) {
+                // The deterministic validator rejects stale or invented refs before mutation.
+            }
+            MemoryBatchOperation(
+                destination = operation.destination,
+                action = operation.action,
+                targetMemoryRef = ref,
+                text = operation.text,
+                type = operation.type,
+                sensitivity = operation.sensitivity,
+                source = operation.source,
+                evidenceTurnKeys = operation.evidenceTurnKeys,
+                canonicalKey = operation.canonicalKey,
+                scope = operation.scope,
+                evidenceAt = operation.evidenceAt,
+                recallState = operation.recallState,
+                reason = operation.reason
+            )
+        }
+    )
 }
 
 internal data class MemoryModelCallResponse(

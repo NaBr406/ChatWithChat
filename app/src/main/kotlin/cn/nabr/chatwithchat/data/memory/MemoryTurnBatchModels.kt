@@ -10,7 +10,9 @@ data class MemoryCompletedTurnInput(
     val assistantMessages: List<MessageV2>,
     val preferredPlatformUid: String?,
     val stablePlatformOrder: List<String>,
-    val completedAt: Long
+    val completedAt: Long,
+    val recalledMemoryRefs: List<String> = emptyList(),
+    val recalledMemoryAliases: List<MemoryAliasBinding> = emptyList()
 )
 
 @Serializable
@@ -23,7 +25,9 @@ data class MemoryCompletedTurnSnapshot(
     val userAttachments: List<MemoryAttachmentSnapshot>,
     val assistantPlatformUid: String,
     val assistantContent: String,
-    val completedAt: Long
+    val completedAt: Long,
+    val recalledMemoryRefs: List<String> = emptyList(),
+    val recalledMemoryAliases: List<MemoryAliasBinding> = emptyList()
 )
 
 @Serializable

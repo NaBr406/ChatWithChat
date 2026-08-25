@@ -1026,6 +1026,67 @@ class MemoryBatchConsolidationServiceTest {
     }
 
     @Test
+    fun `maintenance alias resolves to frozen memory target`() = runBlocking {
+        val existing = longTermEntry(
+            id = "mem_alias_target",
+            text = "The user previously preferred concise answers."
+        )
+        val fixture = fixture(
+            proposal = MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        action = MemoryBatchAction.REPLACE,
+                        targetMemoryRef = "M01",
+                        text = "The user now prefers detailed answers."
+                    )
+                )
+            ),
+            retrievalResults = listOf(retrievalResult(existing))
+        )
+        fixture.fileStore.replaceLongTermMemory(
+            MarkdownMemoryCodec().renderLongTerm(listOf(existing))
+        ).getOrThrow()
+        val job = fixture.createFiveTurnBatch()
+
+        val result = fixture.service.process(job)
+        val entries = MarkdownMemoryCodec().parse(fixture.fileStore.readLongTermMemory().getOrThrow()).entries
+
+        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertTrue(entries.any { entry -> entry.text == "The user now prefers detailed answers." })
+        assertFalse(entries.any { entry -> entry.id == existing.id && entry.text == existing.text })
+    }
+
+    @Test
+    fun `invented maintenance alias is rejected before mutation`() = runBlocking {
+        val existing = longTermEntry("mem_alias_target", "The user previously preferred concise answers.")
+        val fixture = fixture(
+            proposal = MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        action = MemoryBatchAction.REPLACE,
+                        targetMemoryRef = "R01",
+                        text = "The user now prefers detailed answers."
+                    )
+                )
+            ),
+            retrievalResults = listOf(retrievalResult(existing))
+        )
+        fixture.fileStore.replaceLongTermMemory(
+            MarkdownMemoryCodec().renderLongTerm(listOf(existing))
+        ).getOrThrow()
+        val before = fixture.fileStore.readLongTermMemory().getOrThrow()
+        val job = fixture.createFiveTurnBatch()
+
+        val result = fixture.service.process(job)
+
+        assertEquals(MemoryBatchProcessResult.STATUS_RETRYABLE, result.status)
+        assertEquals(before, fixture.fileStore.readLongTermMemory().getOrThrow())
+        assertEquals(0, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
+    }
+
+    @Test
     fun `canonical contract rejects model supplied evidence time`() = runBlocking {
         val fixture = fixture(
             MemoryBatchConsolidationProposal(
@@ -1881,6 +1942,7 @@ class MemoryBatchConsolidationServiceTest {
         destination: String,
         action: String = MemoryBatchAction.CREATE,
         targetMemoryId: String? = null,
+        targetMemoryRef: String? = null,
         text: String,
         type: String = "project_context",
         source: String = MemorySource.EXPLICIT_USER_STATEMENT,
@@ -1897,6 +1959,7 @@ class MemoryBatchConsolidationServiceTest {
         destination = destination,
         action = action,
         targetMemoryId = targetMemoryId,
+        targetMemoryRef = targetMemoryRef,
         text = text,
         type = type,
         sensitivity = MemorySensitivity.NORMAL,

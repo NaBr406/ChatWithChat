@@ -112,13 +112,20 @@ class MemoryBatchConsolidationService(
         } else {
             emptyList()
         }
+        val existingMemoryAliases = existingMemories.mapIndexed { index, memory ->
+            MemoryAliasBinding(
+                alias = "M${(index + 1).toString().padStart(2, '0')}",
+                entryId = memory.id
+            )
+        }
         val request = MemoryBatchConsolidationRequest(
             batchId = payload.batchId,
             chatId = payload.chatId,
             chatTitle = turns.firstNotNullOfOrNull { turn -> turn.chatTitle.takeIf(String::isNotBlank) }.orEmpty(),
             triggerReason = payload.triggerReason,
             turns = turns,
-            existingMemories = existingMemories
+            existingMemories = existingMemories,
+            existingMemoryAliases = existingMemoryAliases
         )
         return execute(
             job = job,
@@ -150,11 +157,15 @@ class MemoryBatchConsolidationService(
             inputCount = requestWithoutMemories.turns.size
         )
         val existingMutation = memoryMutationCoordinator.findBySemanticJobId(job.jobId)
+        val existingMemories = if (existingMutation == null) {
+            retrieveExistingMemories(requestWithoutMemories.turns)
+        } else {
+            emptyList()
+        }
         val request = requestWithoutMemories.copy(
-            existingMemories = if (existingMutation == null) {
-                retrieveExistingMemories(requestWithoutMemories.turns)
-            } else {
-                emptyList()
+            existingMemories = existingMemories,
+            existingMemoryAliases = existingMemories.mapIndexed { index, memory ->
+                MemoryAliasBinding("M${(index + 1).toString().padStart(2, '0')}", memory.id)
             }
         )
         return execute(
@@ -675,7 +686,32 @@ class MemoryBatchConsolidationService(
                 }
             }
             .toMap()
-        return results
+        val recalledIds = turns
+            .flatMap { turn -> turn.recalledMemoryAliases }
+            .associate { binding -> binding.entryId to binding.alias }
+        val recalledEntries = recalledIds.keys.mapNotNull { entryId ->
+            entriesBySourceAndId.entries.firstOrNull { (_, entry) -> entry.id == entryId }?.let { (sourceAndId, entry) ->
+                val sourcePath = sourceAndId.first
+                MemoryBatchExistingMemory(
+                    id = entry.id,
+                    sourcePath = sourcePath,
+                    text = entry.text,
+                    type = entry.type,
+                    sensitivity = entry.sensitivity,
+                    source = entry.source,
+                    updatedAt = entry.updatedAt,
+                    createdAt = entry.createdAt,
+                    canonicalKey = entry.canonicalKey,
+                    scope = entry.scope,
+                    lastObservedAt = entry.lastObservedAt,
+                    validity = entry.validity,
+                    supersededBy = entry.supersededBy,
+                    recallState = entry.recallState,
+                    evidenceRefs = entry.evidenceRefs
+                )
+            }
+        }
+        val retrieved = results
             .filter { result ->
                 !result.entryId.isNullOrBlank() &&
                     !result.type.isNullOrBlank() &&
@@ -705,7 +741,16 @@ class MemoryBatchConsolidationService(
                     evidenceRefs = entry?.evidenceRefs.orEmpty()
                 )
             }
-            .sortedByDescending { it.updatedAt }
+            .toList()
+        return (recalledEntries + retrieved)
+            .distinctBy(MemoryBatchExistingMemory::id)
+            .sortedWith(
+                compareBy<MemoryBatchExistingMemory> { memory ->
+                    if (memory.validity == MemoryValidity.CURRENT) 0 else 1
+                }
+                    .thenByDescending(MemoryBatchExistingMemory::updatedAt)
+                    .thenBy(MemoryBatchExistingMemory::id)
+            )
             .take(MAX_EXISTING_MEMORIES)
     }
 
@@ -715,6 +760,7 @@ class MemoryBatchConsolidationService(
     ): MemoryBatchOperationValidationResult {
         check(operations.size <= MemoryControlledOperationPolicy.MAX_OPERATIONS)
         val existingById = request.existingMemories.associateBy { it.id }
+        val idsByAlias = request.existingMemoryAliases.associate { binding -> binding.alias to binding.entryId }
         val turnsByKey = request.turns.associateBy { it.turnKey }
         val diagnostics = mutableListOf<MemoryOperationDiagnostic>()
 
@@ -733,6 +779,7 @@ class MemoryBatchConsolidationService(
             when (operation.action) {
                 MemoryBatchAction.IGNORE -> {
                     check(operation.targetMemoryId.isNullOrBlank())
+                    check(operation.targetMemoryRef.isNullOrBlank())
                     check(operation.text.isBlank())
                     check(operation.canonicalKey == null)
                     check(operation.scope == null)
@@ -742,6 +789,7 @@ class MemoryBatchConsolidationService(
                 }
                 MemoryBatchAction.CREATE -> {
                     check(operation.targetMemoryId.isNullOrBlank())
+                    check(operation.targetMemoryRef.isNullOrBlank())
                     validateWriteText(operation.text)
                     check(operation.evidenceTurnKeys.isNotEmpty())
                     check(
@@ -752,15 +800,22 @@ class MemoryBatchConsolidationService(
                     validatedCanonicalWrite(operation, null, turnsByKey)
                 }
                 MemoryBatchAction.REPLACE -> {
-                    val targetId = checkNotNull(operation.targetMemoryId?.takeIf { it.isNotBlank() })
+                    val targetId = operation.targetMemoryId?.takeIf { it.isNotBlank() }
+                        ?: operation.targetMemoryRef?.let { ref -> idsByAlias[ref] }
+                    checkNotNull(targetId)
                     val existing = checkNotNull(existingById[targetId])
                     check(operation.destination == destinationFor(existing.sourcePath))
                     validateWriteText(operation.text)
                     check(operation.evidenceTurnKeys.isNotEmpty())
-                    validatedCanonicalWrite(operation, existing, turnsByKey).copy(targetMemoryId = targetId)
+                    validatedCanonicalWrite(operation, existing, turnsByKey).copy(
+                        targetMemoryId = targetId,
+                        targetMemoryRef = null
+                    )
                 }
                 MemoryBatchAction.REMOVE -> {
-                    val targetId = checkNotNull(operation.targetMemoryId?.takeIf { it.isNotBlank() })
+                    val targetId = operation.targetMemoryId?.takeIf { it.isNotBlank() }
+                        ?: operation.targetMemoryRef?.let { ref -> idsByAlias[ref] }
+                    checkNotNull(targetId)
                     val existing = checkNotNull(existingById[targetId])
                     check(operation.destination == destinationFor(existing.sourcePath))
                     check(operation.text.isBlank())
@@ -771,6 +826,7 @@ class MemoryBatchConsolidationService(
                     check(operation.recallState == null)
                     operation.copy(
                         targetMemoryId = targetId,
+                        targetMemoryRef = null,
                         evidenceTurnKeys = operation.evidenceTurnKeys.sorted(),
                         reason = operation.reason.trim()
                     )

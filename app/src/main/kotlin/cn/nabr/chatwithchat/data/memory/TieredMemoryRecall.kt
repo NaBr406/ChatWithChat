@@ -1,14 +1,32 @@
 package cn.nabr.chatwithchat.data.memory
 
 data class ModelVisibleMemoryFact(
-    val text: String
+    val text: String,
+    val alias: String? = null
 ) {
     init {
         require(text.isNotBlank()) { "Memory fact text must not be blank" }
         require(!text.containsInternalMemoryMetadata()) {
             "Memory fact text must not contain internal metadata"
         }
+        alias?.let(::requireMemoryAlias)
     }
+}
+
+@kotlinx.serialization.Serializable
+data class MemoryAliasBinding(
+    val alias: String,
+    val entryId: String
+) {
+    init {
+        requireMemoryAlias(alias)
+        require(entryId.isNotBlank()) { "Memory alias entry id must not be blank" }
+    }
+}
+
+internal fun requireMemoryAlias(alias: String) {
+    require(alias.matches(Regex("[RM][0-9]{2}"))) { "Invalid memory alias" }
+    require(!alias.containsInternalMemoryMetadata()) { "Memory alias must not contain internal metadata" }
 }
 
 internal fun String.toModelVisibleMemoryFactOrNull(): ModelVisibleMemoryFact? =
@@ -41,7 +59,9 @@ data class TurnRecallSnapshot(
     val errorMessage: String? = null,
     val diagnostics: List<MemoryProjectionDiagnostic> = emptyList(),
     val prompt: String? = null,
-    val estimatedTokens: Int = 0
+    val estimatedTokens: Int = 0,
+    val recalledMemoryRefs: List<String> = emptyList(),
+    val recalledMemoryAliases: List<MemoryAliasBinding> = emptyList()
 )
 
 internal fun MemoryCorpusSnapshot.selectCoreResults(includePrivate: Boolean): List<MemoryRetrievalResult> {

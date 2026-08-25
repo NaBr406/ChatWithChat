@@ -7,6 +7,7 @@ import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.database.entity.effectiveContent
 import cn.nabr.chatwithchat.data.memory.MemoryCompletedTurnInput
+import cn.nabr.chatwithchat.data.memory.MemoryAliasBinding
 import cn.nabr.chatwithchat.data.model.ChatPlatformConfig
 import cn.nabr.chatwithchat.data.repository.ChatRepository
 import cn.nabr.chatwithchat.data.repository.MemoryRepository
@@ -106,6 +107,10 @@ class ChatTurnCoordinator @Inject constructor(
          * because the switch flipped while it streamed.
          */
         internal var memoryEnabled = false
+
+        /** Frozen recall projection used for the provider request and later memory evidence. */
+        internal var recalledMemoryRefs: List<String> = emptyList()
+        internal var recalledMemoryAliases: List<MemoryAliasBinding> = emptyList()
 
         /** Written after a save assigns an id to a chat that did not have one. */
         internal var resolvedChatId: Int = request.chatRoom.value.id
@@ -332,7 +337,9 @@ class ChatTurnCoordinator @Inject constructor(
                 assistantMessages = persistedMessages.assistantMessages.lastOrNull().orEmpty(),
                 preferredPlatformUid = turn.request.preferredMemoryPlatform?.uid,
                 stablePlatformOrder = savedChatRoom.enabledPlatform,
-                completedAt = System.currentTimeMillis() / 1000
+                completedAt = System.currentTimeMillis() / 1000,
+                recalledMemoryRefs = turn.recalledMemoryRefs,
+                recalledMemoryAliases = turn.recalledMemoryAliases
             )
         )
     }

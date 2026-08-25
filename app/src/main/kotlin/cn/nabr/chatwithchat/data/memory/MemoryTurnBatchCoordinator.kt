@@ -127,7 +127,11 @@ class MemoryTurnBatchCoordinator(
             },
             assistantPlatformUid = assistantPlatformUid,
             assistantContent = stripAssistantErrorNote(assistant.effectiveContent()).trim().take(MAX_MESSAGE_CHARS),
-            completedAt = completedAt
+            completedAt = completedAt,
+            recalledMemoryRefs = recalledMemoryRefs.distinct().take(MAX_RECALLED_MEMORY_REFS),
+            recalledMemoryAliases = recalledMemoryAliases
+                .distinctBy(MemoryAliasBinding::alias)
+                .take(MAX_RECALLED_MEMORY_REFS)
         )
     }
 
@@ -142,5 +146,6 @@ class MemoryTurnBatchCoordinator(
         private const val MAX_MESSAGE_CHARS = 12_000
         private const val MAX_ATTACHMENT_NAME_CHARS = 240
         private const val MAX_MIME_TYPE_CHARS = 120
+        private const val MAX_RECALLED_MEMORY_REFS = 24
     }
 }

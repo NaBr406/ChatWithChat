@@ -12,6 +12,7 @@ import cn.nabr.chatwithchat.data.history.HistoryRecallSnapshot
 import cn.nabr.chatwithchat.data.history.HistoryRetrievalRequest
 import cn.nabr.chatwithchat.data.memory.MemoryActivityLogger
 import cn.nabr.chatwithchat.data.memory.MemoryActivityStatus
+import cn.nabr.chatwithchat.data.memory.MemoryAliasBinding
 import cn.nabr.chatwithchat.data.memory.MemoryCompletedTurnInput
 import cn.nabr.chatwithchat.data.memory.MemoryCorpus
 import cn.nabr.chatwithchat.data.memory.MemoryDailyDistillationScheduler
@@ -190,13 +191,22 @@ class MemoryRepositoryImpl(
             .filterNot { memory -> memory.deduplicationKey() in coreKeys }
             .filter { memory -> memory.text.toModelVisibleMemoryFactOrNull() != null }
             .take(MAX_QUERY_MEMORIES)
+        val aliasedCoreFacts = coreResults.withAliases()
+        val aliasedQueryFacts = queryResults.withAliases(startOrdinal = aliasedCoreFacts.count { it.alias != null })
         val renderedPrompt = memoryPromptBuilder.build(
-            coreFacts = coreResults.mapNotNull { memory -> memory.text.toModelVisibleMemoryFactOrNull() },
-            queryFacts = queryResults.mapNotNull { memory -> memory.text.toModelVisibleMemoryFactOrNull() }
+            coreFacts = aliasedCoreFacts,
+            queryFacts = aliasedQueryFacts
         )
         val selectedCoreResults = coreResults.selectedBy(renderedPrompt.coreFacts)
         val selectedQueryResults = queryResults.selectedBy(renderedPrompt.queryFacts)
         val retrievedMemories = selectedCoreResults + selectedQueryResults
+        val selectedFacts = renderedPrompt.coreFacts + renderedPrompt.queryFacts
+        val recalledMemoryAliases = retrievedMemories.mapNotNull { memory ->
+            val entryId = memory.entryId ?: return@mapNotNull null
+            selectedFacts.firstOrNull { fact ->
+                normalizeExactMemoryText(fact.text) == normalizeExactMemoryText(memory.text) && fact.alias != null
+            }?.alias?.let { alias -> MemoryAliasBinding(alias = alias, entryId = entryId) }
+        }.distinctBy(MemoryAliasBinding::alias)
         val turnSnapshot = TurnRecallSnapshot(
             canonicalRevision = retrievalReport.canonicalRevision,
             canonicalSourceHash = retrievalReport.canonicalSourceHash,
@@ -207,7 +217,9 @@ class MemoryRepositoryImpl(
             errorMessage = retrievalReport.errorMessage,
             diagnostics = retrievalReport.diagnostics,
             prompt = renderedPrompt.prompt,
-            estimatedTokens = renderedPrompt.estimatedTokens
+            estimatedTokens = renderedPrompt.estimatedTokens,
+            recalledMemoryRefs = recalledMemoryAliases.map(MemoryAliasBinding::alias),
+            recalledMemoryAliases = recalledMemoryAliases
         )
         recordMemoryRecall(
             key = recallKey,
@@ -303,6 +315,20 @@ class MemoryRepositoryImpl(
             val normalized = normalizeExactMemoryText(fact.text)
             val index = remaining.indexOfFirst { result -> normalizeExactMemoryText(result.text) == normalized }
             if (index < 0) null else remaining.removeAt(index)
+        }
+    }
+
+    private fun List<MemoryRetrievalResult>.withAliases(
+        startOrdinal: Int = 0
+    ): List<ModelVisibleMemoryFact> {
+        var ordinal = startOrdinal
+        return mapNotNull { memory ->
+            val fact = memory.text.toModelVisibleMemoryFactOrNull() ?: return@mapNotNull null
+            val alias = memory.entryId?.takeIf(String::isNotBlank)?.let {
+                ordinal += 1
+                "R${ordinal.toString().padStart(2, '0')}"
+            }
+            ModelVisibleMemoryFact(fact.text, alias)
         }
     }
 

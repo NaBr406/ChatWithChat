@@ -1113,6 +1113,8 @@ class ChatViewModel @Inject constructor(
         ) { turn ->
             val memoryContext = prepareMemoryContextForTurn(groupedMessages, memoryPlatform)
             turn.memoryEnabled = refreshMemoryEnabled()
+            turn.recalledMemoryRefs = memoryContext.snapshot.recalledMemoryRefs
+            turn.recalledMemoryAliases = memoryContext.snapshot.recalledMemoryAliases
 
             val latestGroupedMessages = turn.messages.value
             chatRepository.completeChat(

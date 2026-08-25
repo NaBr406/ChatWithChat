@@ -9,7 +9,8 @@ data class MemoryBatchConsolidationRequest(
     val chatTitle: String,
     val triggerReason: String,
     val turns: List<MemoryCompletedTurnSnapshot>,
-    val existingMemories: List<MemoryBatchExistingMemory>
+    val existingMemories: List<MemoryBatchExistingMemory>,
+    val existingMemoryAliases: List<MemoryAliasBinding> = emptyList()
 )
 
 @Serializable
@@ -41,6 +42,62 @@ data class MemoryBatchOperation(
     val destination: String,
     val action: String,
     val targetMemoryId: String? = null,
+    val targetMemoryRef: String? = null,
+    val text: String = "",
+    val type: String = "stable_profile",
+    val sensitivity: String = MemorySensitivity.NORMAL,
+    val source: String = MemorySource.ASSISTANT_INFERRED,
+    val evidenceTurnKeys: List<String> = emptyList(),
+    val canonicalKey: String? = null,
+    val scope: String? = null,
+    val evidenceAt: Long? = null,
+    val recallState: String? = null,
+    val reason: String = ""
+)
+
+@kotlinx.serialization.Serializable
+data class MemoryBatchProviderRequest(
+    val batchId: String,
+    val chatId: Int,
+    val chatTitle: String,
+    val triggerReason: String,
+    val turns: List<MemoryBatchProviderTurn>,
+    val existingMemories: List<MemoryBatchProviderExistingMemory>
+)
+
+@kotlinx.serialization.Serializable
+data class MemoryBatchProviderTurn(
+    val turnKey: String,
+    val chatTitle: String,
+    val userContent: String,
+    val assistantContent: String,
+    val completedAt: Long,
+    val recalledMemoryRefs: List<String> = emptyList()
+)
+
+@kotlinx.serialization.Serializable
+data class MemoryBatchProviderExistingMemory(
+    val ref: String,
+    val text: String,
+    val type: String,
+    val sensitivity: String,
+    val source: String,
+    val updatedAt: Long,
+    val createdAt: Long = 0L,
+    val validity: String = MemoryValidity.CURRENT,
+    val recallState: String = MemoryRecallState.QUERY
+)
+
+@kotlinx.serialization.Serializable
+data class MemoryBatchProviderProposal(
+    val operations: List<MemoryBatchProviderOperation> = emptyList()
+)
+
+@kotlinx.serialization.Serializable
+data class MemoryBatchProviderOperation(
+    val destination: String,
+    val action: String,
+    val targetMemoryRef: String? = null,
     val text: String = "",
     val type: String = "stable_profile",
     val sensitivity: String = MemorySensitivity.NORMAL,
