@@ -569,6 +569,100 @@ object ChatDatabaseV2Migrations {
         }
     }
 
+    val MIGRATION_24_25 = object : Migration(24, 25) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `memory_distillation_checkpoint_new` (
+                    `checkpoint_id` TEXT NOT NULL,
+                    `window_id` TEXT NOT NULL,
+                    `window_start_date` TEXT NOT NULL,
+                    `window_end_date` TEXT NOT NULL,
+                    `window_source_manifest_json` TEXT NOT NULL,
+                    `window_source_manifest_hash` TEXT NOT NULL,
+                    `batch_key` TEXT NOT NULL,
+                    `semantic_job_id` TEXT NOT NULL,
+                    `target_source_path` TEXT NOT NULL,
+                    `target_base_hash` TEXT NOT NULL,
+                    `target_source_hash` TEXT NOT NULL,
+                    `mutation_group_id` TEXT,
+                    `status` TEXT NOT NULL,
+                    `created_at` INTEGER NOT NULL,
+                    `updated_at` INTEGER NOT NULL,
+                    `processed_at` INTEGER,
+                    `row_version` INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY(`checkpoint_id`)
+                )
+                """.trimIndent()
+            )
+            db.execSQL(
+                """
+                INSERT INTO `memory_distillation_checkpoint_new` (
+                    `checkpoint_id`, `window_id`, `window_start_date`, `window_end_date`,
+                    `window_source_manifest_json`, `window_source_manifest_hash`, `batch_key`,
+                    `semantic_job_id`, `target_source_path`, `target_base_hash`, `target_source_hash`,
+                    `mutation_group_id`, `status`, `created_at`, `updated_at`, `processed_at`, `row_version`
+                )
+                SELECT
+                    `checkpoint_id`,
+                    'legacy:' || `daily_date`,
+                    `daily_date`,
+                    `daily_date`,
+                    '[{"sourcePath":"' || `daily_source_path` || '","sourceDate":"' || `daily_date` || '","sourceHash":"' || `daily_source_hash` || '"}]',
+                    `daily_source_hash`,
+                    `batch_key`,
+                    `semantic_job_id`,
+                    `target_source_path`,
+                    `target_base_hash`,
+                    `target_source_hash`,
+                    `mutation_group_id`,
+                    `status`,
+                    `created_at`,
+                    `updated_at`,
+                    `processed_at`,
+                    `row_version`
+                FROM `memory_distillation_checkpoint`
+                """.trimIndent()
+            )
+            db.execSQL("DROP TABLE `memory_distillation_checkpoint`")
+            db.execSQL("ALTER TABLE `memory_distillation_checkpoint_new` RENAME TO `memory_distillation_checkpoint`")
+            db.execSQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS `index_memory_distillation_checkpoint_window_batch` " +
+                    "ON `memory_distillation_checkpoint` (`window_id`, `window_source_manifest_hash`, `batch_key`)"
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_distillation_checkpoint_window_end_date` ON `memory_distillation_checkpoint` (`window_end_date`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_distillation_checkpoint_semantic_job_id` ON `memory_distillation_checkpoint` (`semantic_job_id`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_distillation_checkpoint_mutation_group_id` ON `memory_distillation_checkpoint` (`mutation_group_id`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_distillation_checkpoint_status` ON `memory_distillation_checkpoint` (`status`)")
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `memory_daily_evidence` (
+                    `evidence_key` TEXT NOT NULL,
+                    `content_hash` TEXT NOT NULL,
+                    `source_path` TEXT NOT NULL,
+                    `source_date` TEXT NOT NULL,
+                    `decision` TEXT NOT NULL,
+                    `last_window_id` TEXT,
+                    `last_checkpoint_id` TEXT,
+                    `pending_decision` TEXT,
+                    `mutation_group_id` TEXT,
+                    `target_entry_id` TEXT,
+                    `created_at` INTEGER NOT NULL,
+                    `updated_at` INTEGER NOT NULL,
+                    `decided_at` INTEGER,
+                    PRIMARY KEY(`evidence_key`, `content_hash`)
+                )
+                """.trimIndent()
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_daily_evidence_decision` ON `memory_daily_evidence` (`decision`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_daily_evidence_last_window_id` ON `memory_daily_evidence` (`last_window_id`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_daily_evidence_last_checkpoint_id` ON `memory_daily_evidence` (`last_checkpoint_id`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_daily_evidence_mutation_group_id` ON `memory_daily_evidence` (`mutation_group_id`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_daily_evidence_target_entry_id` ON `memory_daily_evidence` (`target_entry_id`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_daily_evidence_source_date` ON `memory_daily_evidence` (`source_date`)")
+        }
+    }
+
     internal fun createContextManagementTables(db: SupportSQLiteDatabase) {
         // Column order, types, defaults and index names below must match what Room generates for
         // ContextCheckpointSegment / ContextRangeState / ContextNativeCompactionState, or

@@ -31,7 +31,7 @@ class MemoryDailyDistillationSchedulerTest {
         }
         val payload = STRICT_JSON.decodeFromString<MemoryDailyDistillationPlanJobPayload>(plan.payloadJson)
         assertEquals(result.scheduledJobId, plan.jobId)
-        assertEquals("memory/2026-07-11.md", payload.dailySourcePath)
+        assertEquals("daily_2026-06-28_2026-07-11", payload.windowId)
         assertTrue(payload.batchKey!!.startsWith("batch_0000_"))
         assertEquals(listOf(EnqueuedMemoryWork(MemoryMaintenanceJobFamily.REPAIR, 0)), fixture.workEnqueuer.works)
         assertEquals(1, fixture.jobDao.jobs.count { job -> job.nextRunAt != null })
@@ -130,7 +130,7 @@ class MemoryDailyDistillationSchedulerTest {
             listOf(MemoryDistillationCheckpointStatus.PENDING, MemoryDistillationCheckpointStatus.COMPLETED)
         )
         assertEquals(2, checkpoints.size)
-        assertEquals(2, checkpoints.map { checkpoint -> checkpoint.dailySourceHash }.distinct().size)
+        assertEquals(2, checkpoints.map { checkpoint -> checkpoint.windowSourceManifestHash }.distinct().size)
     }
 
     @Test
@@ -251,8 +251,8 @@ class MemoryDailyDistillationSchedulerTest {
                     checkpointId = checkpoint.checkpointId,
                     expectedStatus = checkpoint.status,
                     expectedRowVersion = checkpoint.rowVersion,
-                    expectedDailySourcePath = checkpoint.dailySourcePath,
-                    expectedDailySourceHash = checkpoint.dailySourceHash,
+                    expectedWindowId = checkpoint.windowId,
+                    expectedWindowSourceManifestHash = checkpoint.windowSourceManifestHash,
                     expectedBatchKey = checkpoint.batchKey,
                     expectedSemanticJobId = checkpoint.semanticJobId,
                     expectedTargetSourcePath = checkpoint.targetSourcePath,

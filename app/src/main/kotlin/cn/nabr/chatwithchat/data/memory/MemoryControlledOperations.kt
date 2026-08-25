@@ -48,7 +48,10 @@ class MemoryDailyDistillationOperationController(
         input: MemoryDailyDistillationFrozenInput,
         operations: List<MemoryDailyDistillationOperation>
     ): MemoryDailyDistillationValidationResult {
-        require(input.dailySourcePath.startsWith("${MemoryFilePaths.DAILY_MEMORY_DIRECTORY_NAME}/"))
+        require(input.windowSourceManifest.isNotEmpty())
+        require(input.windowSourceManifest.all { source ->
+            source.sourcePath.startsWith("${MemoryFilePaths.DAILY_MEMORY_DIRECTORY_NAME}/")
+        })
         require(input.dailyEvidence.isNotEmpty())
         require(input.dailyEvidence.map { evidence -> evidence.evidenceKey }.distinct().size == input.dailyEvidence.size)
         require(input.existingMemories.map { memory -> memory.id }.distinct().size == input.existingMemories.size)
@@ -95,7 +98,7 @@ class MemoryDailyDistillationOperationController(
                     require(
                         operation.action != MemoryDailyDistillationAction.CREATE ||
                             derivedSource(evidence) != MemorySource.ASSISTANT_INFERRED ||
-                            operation.evidenceKeys.size >= MIN_INFERRED_LONG_TERM_EVIDENCE
+                            hasAccumulatedCrossDayEvidence(evidence)
                     ) { "assistant_inferred_long_term_create_requires_repeated_evidence" }
                     val canonicalKey = requireNotNull(operation.canonicalKey)
                     val scope = requireNotNull(operation.scope)
@@ -256,6 +259,17 @@ class MemoryDailyDistillationOperationController(
         .map { item -> item.source }
         .maxBy(::sourceRank)
 
+    private fun hasAccumulatedCrossDayEvidence(
+        evidence: List<MemoryDailyDistillationEvidence>
+    ): Boolean = evidence
+        .flatMap(MemoryDailyDistillationEvidence::evidenceRefs)
+        .distinct()
+        .size >= MIN_INFERRED_LONG_TERM_EVIDENCE &&
+        evidence
+            .flatMap(MemoryDailyDistillationEvidence::observationDates)
+            .distinct()
+            .size >= MIN_DISTINCT_OBSERVATION_DAYS
+
     private fun sensitivityRank(value: String): Int = when (value) {
         MemorySensitivity.NORMAL -> 0
         MemorySensitivity.PRIVATE -> 1
@@ -277,6 +291,7 @@ class MemoryDailyDistillationOperationController(
             MemoryDailyDistillationAction.IGNORE
         )
         const val MIN_INFERRED_LONG_TERM_EVIDENCE = 2
+        const val MIN_DISTINCT_OBSERVATION_DAYS = 2
         val ACTIVE_RECALL_STATES = setOf(MemoryRecallState.CORE, MemoryRecallState.QUERY)
         val WHITESPACE_REGEX = Regex("\\s+")
     }

@@ -9,11 +9,11 @@ import androidx.room.PrimaryKey
     tableName = "memory_distillation_checkpoint",
     indices = [
         Index(
-            name = "index_memory_distillation_checkpoint_source_batch",
-            value = ["daily_source_path", "daily_source_hash", "batch_key"],
+            name = "index_memory_distillation_checkpoint_window_batch",
+            value = ["window_id", "window_source_manifest_hash", "batch_key"],
             unique = true
         ),
-        Index(value = ["daily_date"]),
+        Index(value = ["window_end_date"]),
         Index(value = ["semantic_job_id"]),
         Index(value = ["mutation_group_id"]),
         Index(value = ["status"])
@@ -24,17 +24,23 @@ data class MemoryDistillationCheckpoint(
     @ColumnInfo(name = "checkpoint_id")
     val checkpointId: String,
 
-    @ColumnInfo(name = "daily_source_path")
-    val dailySourcePath: String,
+    @ColumnInfo(name = "window_id")
+    val windowId: String,
 
-    @ColumnInfo(name = "daily_source_hash")
-    val dailySourceHash: String,
+    @ColumnInfo(name = "window_start_date")
+    val windowStartDate: String,
+
+    @ColumnInfo(name = "window_end_date")
+    val windowEndDate: String,
+
+    @ColumnInfo(name = "window_source_manifest_json")
+    val windowSourceManifestJson: String,
+
+    @ColumnInfo(name = "window_source_manifest_hash")
+    val windowSourceManifestHash: String,
 
     @ColumnInfo(name = "batch_key")
     val batchKey: String,
-
-    @ColumnInfo(name = "daily_date")
-    val dailyDate: String,
 
     @ColumnInfo(name = "semantic_job_id")
     val semanticJobId: String,

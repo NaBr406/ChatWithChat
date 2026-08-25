@@ -35,6 +35,7 @@ import cn.nabr.chatwithchat.data.database.entity.ContextRangeState
 import cn.nabr.chatwithchat.data.database.entity.MemoryActivityLog
 import cn.nabr.chatwithchat.data.database.entity.MemoryChatCheckpoint
 import cn.nabr.chatwithchat.data.database.entity.MemoryCorpusState
+import cn.nabr.chatwithchat.data.database.entity.MemoryDailyEvidence
 import cn.nabr.chatwithchat.data.database.entity.MemoryDistillationCheckpoint
 import cn.nabr.chatwithchat.data.database.entity.MemoryLongTermConsolidationCheckpoint
 import cn.nabr.chatwithchat.data.database.entity.MemoryMaintenanceJob
@@ -67,6 +68,7 @@ import cn.nabr.chatwithchat.data.database.entity.TokenUsageRecordConverter
         MemoryMutationGroup::class,
         MemoryMutationReceipt::class,
         MemoryCorpusState::class,
+        MemoryDailyEvidence::class,
         MemoryDistillationCheckpoint::class,
         MemoryLongTermConsolidationCheckpoint::class,
         MemoryChatCheckpoint::class,
@@ -90,7 +92,7 @@ import cn.nabr.chatwithchat.data.database.entity.TokenUsageRecordConverter
         McpServerEntity::class,
         McpToolEntity::class
     ],
-    version = 24,
+    version = 25,
     exportSchema = true
 )
 @TypeConverters(

@@ -1,6 +1,8 @@
 package cn.nabr.chatwithchat.data.memory
 
 import cn.nabr.chatwithchat.data.database.dao.MemoryRecoveryDao
+import cn.nabr.chatwithchat.data.database.entity.MemoryDailyEvidence
+import cn.nabr.chatwithchat.data.database.entity.MemoryDailyEvidenceDecision
 import cn.nabr.chatwithchat.data.database.entity.MemoryDistillationCheckpoint
 import cn.nabr.chatwithchat.data.database.entity.MemoryMaintenanceJob
 import cn.nabr.chatwithchat.data.repository.SettingRepository
@@ -180,52 +182,62 @@ class MemoryDailyDistillationScheduler(
         val targetBaseHash = longTerm.bytes.sha256Hex()
         val existingMemories = boundedExistingMemories(longTermMarkdown)
         val today = LocalDate.now(clock)
-        var completedBatchCount = 0
-
-        corpus.files
+        val windowStart = today.minusDays(DAILY_WINDOW_DAYS.toLong())
+        val windowEnd = today.minusDays(1)
+        val dailyFiles = corpus.files
             .asSequence()
             .mapNotNull(::dailyFileOrNull)
-            .filter { daily -> daily.date < today }
+            .filter { daily -> daily.date in windowStart..windowEnd }
             .sortedWith(compareBy<DailyFile> { daily -> daily.date }.thenBy { daily -> daily.sourcePath })
-            .forEach { daily ->
-                val parsed = markdownMemoryCodec.parse(daily.markdown)
-                val evidence = parsed.entries.map { entry -> entry.toEvidence(daily.sourcePath) }
-                if (evidence.isEmpty()) {
-                    if (parsed.skippedEntries.isEmpty() && daily.markdown.isHeaderOnly()) {
-                        completedBatchCount += ensureEmptyCheckpoint(daily, targetBaseHash)
-                    }
-                    return@forEach
-                }
-                val batches = splitEvidence(evidence)
-                batches.forEachIndexed { batchIndex, batchEvidence ->
-                    val batchKey = batchKey(batchIndex, batchEvidence)
-                    val checkpoint = recoveryDao.getDistillationCheckpoint(
-                        dailySourcePath = daily.sourcePath,
-                        dailySourceHash = daily.sourceHash,
-                        batchKey = batchKey
-                    )
-                    if (checkpoint?.status == MemoryDistillationCheckpointStatus.COMPLETED) {
-                        completedBatchCount += 1
-                        return@forEachIndexed
-                    }
-                    val batchId = batchId(daily, batchKey)
-                    return PlannedBatch(
-                        input = MemoryDailyDistillationFrozenInput(
-                            batchId = batchId,
-                            batchKey = batchKey,
-                            dailySourcePath = daily.sourcePath,
-                            dailySourceHash = daily.sourceHash,
-                            dailyDate = daily.date.format(DateTimeFormatter.ISO_LOCAL_DATE),
-                            dailyEvidence = batchEvidence,
-                            existingMemories = existingMemories,
-                            targetBaseHash = targetBaseHash,
-                            createdAt = now()
-                        ),
-                        checkpoint = checkpoint,
-                        completedBatchCount = completedBatchCount
-                    )
-                }
+            .toList()
+        if (dailyFiles.isEmpty()) return null
+
+        val windowId = "daily_${windowStart}_${windowEnd}"
+        val manifest = dailyFiles.map { daily ->
+            MemoryDailyDistillationSourceManifest(
+                sourcePath = daily.sourcePath,
+                sourceDate = daily.date.format(DateTimeFormatter.ISO_LOCAL_DATE),
+                sourceHash = daily.sourceHash
+            )
+        }
+        val manifestHash = json.encodeToString(manifest).sha256Utf8()
+        val evidence = dailyFiles.flatMap { daily ->
+            markdownMemoryCodec.parse(daily.markdown).entries.map { entry ->
+                MemoryDailyEvidenceIdentity.fromEntry(entry, daily.sourcePath, daily.date, clock)
             }
+        }.filter { item ->
+            val ledger = recoveryDao.getDailyEvidence(item.evidenceKey, item.contentHash)
+            ledger?.decision != MemoryDailyEvidenceDecision.PROMOTED && !(
+                ledger?.decision == MemoryDailyEvidenceDecision.IGNORED && ledger.lastWindowId == windowId
+                )
+        }
+        var completedBatchCount = 0
+        splitEvidence(evidence).forEachIndexed { batchIndex, batchEvidence ->
+            val batchKey = batchKey(batchIndex, batchEvidence)
+            val checkpoint = recoveryDao.getDistillationCheckpoint(
+                windowId = windowId,
+                windowSourceManifestHash = manifestHash,
+                batchKey = batchKey
+            )
+            if (checkpoint?.status == MemoryDistillationCheckpointStatus.COMPLETED) {
+                completedBatchCount += 1
+                return@forEachIndexed
+            }
+            val input = MemoryDailyDistillationFrozenInput(
+                batchId = batchId(windowId, manifestHash, batchKey),
+                batchKey = batchKey,
+                windowId = windowId,
+                windowStartDate = windowStart.format(DateTimeFormatter.ISO_LOCAL_DATE),
+                windowEndDate = windowEnd.format(DateTimeFormatter.ISO_LOCAL_DATE),
+                windowSourceManifest = manifest,
+                windowSourceManifestHash = manifestHash,
+                dailyEvidence = batchEvidence,
+                existingMemories = existingMemories,
+                targetBaseHash = targetBaseHash,
+                createdAt = now()
+            )
+            return PlannedBatch(input, checkpoint, completedBatchCount)
+        }
         return null
     }
 
@@ -238,8 +250,8 @@ class MemoryDailyDistillationScheduler(
                 MemoryDailyDistillationPlanJobPayload(
                     kind = MemoryDailyDistillationPlanKind.BATCH,
                     localDate = LocalDate.now(clock).format(DateTimeFormatter.ISO_LOCAL_DATE),
-                    dailySourcePath = input.dailySourcePath,
-                    dailySourceHash = input.dailySourceHash,
+                    windowId = input.windowId,
+                    windowSourceManifestHash = input.windowSourceManifestHash,
                     batchKey = input.batchKey,
                     targetBaseHash = input.targetBaseHash
                 )
@@ -267,10 +279,12 @@ class MemoryDailyDistillationScheduler(
         val checkpointId = checkpointId(input)
         val checkpoint = MemoryDistillationCheckpoint(
             checkpointId = checkpointId,
-            dailySourcePath = input.dailySourcePath,
-            dailySourceHash = input.dailySourceHash,
+            windowId = input.windowId,
+            windowStartDate = input.windowStartDate,
+            windowEndDate = input.windowEndDate,
+            windowSourceManifestJson = json.encodeToString(input.windowSourceManifest),
+            windowSourceManifestHash = input.windowSourceManifestHash,
             batchKey = input.batchKey,
-            dailyDate = input.dailyDate,
             semanticJobId = semanticJobId(checkpointId, input.targetBaseHash),
             targetSourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
             targetBaseHash = input.targetBaseHash,
@@ -281,14 +295,17 @@ class MemoryDailyDistillationScheduler(
             updatedAt = input.createdAt,
             processedAt = null
         )
-        val inserted = recoveryDao.insertDistillationCheckpointIgnore(checkpoint)
+        val inserted = recoveryDao.insertDistillationCheckpointWithEvidence(
+            checkpoint,
+            input.dailyEvidence.map { evidence -> evidence.toLedger(now = input.createdAt) }
+        )
         return if (inserted != -1L) {
             checkpoint
         } else {
             checkNotNull(
                 recoveryDao.getDistillationCheckpoint(
-                    input.dailySourcePath,
-                    input.dailySourceHash,
+                    input.windowId,
+                    input.windowSourceManifestHash,
                     input.batchKey
                 )
             )
@@ -343,8 +360,8 @@ class MemoryDailyDistillationScheduler(
             checkpointId = checkpoint.checkpointId,
             expectedStatus = checkpoint.status,
             expectedRowVersion = checkpoint.rowVersion,
-            expectedDailySourcePath = checkpoint.dailySourcePath,
-            expectedDailySourceHash = checkpoint.dailySourceHash,
+            expectedWindowId = checkpoint.windowId,
+            expectedWindowSourceManifestHash = checkpoint.windowSourceManifestHash,
             expectedBatchKey = checkpoint.batchKey,
             expectedSemanticJobId = checkpoint.semanticJobId,
             expectedTargetSourcePath = checkpoint.targetSourcePath,
@@ -360,8 +377,8 @@ class MemoryDailyDistillationScheduler(
         check(changed == 1) { "Distillation checkpoint changed before it could be marked stale" }
         return checkNotNull(
             recoveryDao.getDistillationCheckpoint(
-                checkpoint.dailySourcePath,
-                checkpoint.dailySourceHash,
+                checkpoint.windowId,
+                checkpoint.windowSourceManifestHash,
                 checkpoint.batchKey
             )
         )
@@ -372,8 +389,8 @@ class MemoryDailyDistillationScheduler(
         input: MemoryDailyDistillationFrozenInput
     ): MemoryDistillationCheckpoint {
         val checkpoint = recoveryDao.getDistillationCheckpoint(
-            original.dailySourcePath,
-            original.dailySourceHash,
+            original.windowId,
+            original.windowSourceManifestHash,
             original.batchKey
         ) ?: error("Distillation checkpoint disappeared before replanning")
         check(checkpoint.status in MemoryDistillationCheckpointStatus.REPLANNABLE)
@@ -382,8 +399,8 @@ class MemoryDailyDistillationScheduler(
             checkpointId = checkpoint.checkpointId,
             expectedStatus = checkpoint.status,
             expectedRowVersion = checkpoint.rowVersion,
-            expectedDailySourcePath = checkpoint.dailySourcePath,
-            expectedDailySourceHash = checkpoint.dailySourceHash,
+            expectedWindowId = checkpoint.windowId,
+            expectedWindowSourceManifestHash = checkpoint.windowSourceManifestHash,
             expectedBatchKey = checkpoint.batchKey,
             expectedSemanticJobId = checkpoint.semanticJobId,
             expectedTargetSourcePath = checkpoint.targetSourcePath,
@@ -397,39 +414,13 @@ class MemoryDailyDistillationScheduler(
         check(changed == 1) { "Distillation checkpoint changed before it could be replanned" }
         return checkNotNull(
             recoveryDao.getDistillationCheckpoint(
-                checkpoint.dailySourcePath,
-                checkpoint.dailySourceHash,
+                checkpoint.windowId,
+                checkpoint.windowSourceManifestHash,
                 checkpoint.batchKey
             )
         )
     }
 
-    private suspend fun ensureEmptyCheckpoint(daily: DailyFile, targetBaseHash: String): Int {
-        val batchKey = EMPTY_BATCH_KEY
-        val existing = recoveryDao.getDistillationCheckpoint(daily.sourcePath, daily.sourceHash, batchKey)
-        if (existing != null) return if (existing.status == MemoryDistillationCheckpointStatus.COMPLETED) 1 else 0
-        val checkpointId = "distill_${"${daily.sourcePath}|${daily.sourceHash}|$batchKey".sha256Utf8().take(ID_HASH_LENGTH)}"
-        val now = now()
-        val inserted = recoveryDao.insertDistillationCheckpointIgnore(
-            MemoryDistillationCheckpoint(
-                checkpointId = checkpointId,
-                dailySourcePath = daily.sourcePath,
-                dailySourceHash = daily.sourceHash,
-                batchKey = batchKey,
-                dailyDate = daily.date.format(DateTimeFormatter.ISO_LOCAL_DATE),
-                semanticJobId = "local_noop_$checkpointId",
-                targetSourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
-                targetBaseHash = targetBaseHash,
-                targetSourceHash = targetBaseHash,
-                mutationGroupId = null,
-                status = MemoryDistillationCheckpointStatus.COMPLETED,
-                createdAt = now,
-                updatedAt = now,
-                processedAt = now
-            )
-        )
-        return if (inserted != -1L) 1 else 0
-    }
 
     private suspend fun ensureNextDailyWake(): Long {
         val nextDate = LocalDate.now(clock).plusDays(1)
@@ -481,8 +472,8 @@ class MemoryDailyDistillationScheduler(
             check(payload.kind in setOf(MemoryDailyDistillationPlanKind.BATCH, MemoryDailyDistillationPlanKind.DAILY_WAKE))
             LocalDate.parse(payload.localDate, DateTimeFormatter.ISO_LOCAL_DATE)
             if (payload.kind == MemoryDailyDistillationPlanKind.BATCH) {
-                check(!payload.dailySourcePath.isNullOrBlank())
-                check(payload.dailySourceHash?.matches(SHA_256_REGEX) == true)
+                check(!payload.windowId.isNullOrBlank())
+                check(payload.windowSourceManifestHash?.matches(SHA_256_REGEX) == true)
                 check(!payload.batchKey.isNullOrBlank())
                 check(payload.targetBaseHash?.matches(SHA_256_REGEX) == true)
             }
@@ -561,46 +552,18 @@ class MemoryDailyDistillationScheduler(
         return result
     }
 
-    private fun MarkdownMemoryEntry.toEvidence(sourcePath: String): MemoryDailyDistillationEvidence {
-        val evidenceIdentity = listOf(
-            sourcePath,
-            id,
-            text,
-            type,
-            sensitivity,
-            source,
-            createdAt.toString(),
-            updatedAt.toString()
-        ).joinToString(separator = "\u0000")
-        return MemoryDailyDistillationEvidence(
-            evidenceKey = "daily_${evidenceIdentity.sha256Utf8().take(ID_HASH_LENGTH)}",
-            entryId = id,
-            text = text,
-            type = type,
-            sensitivity = sensitivity,
-            source = source,
-            createdAt = createdAt,
-            updatedAt = updatedAt
-        )
-    }
-
-    private fun String.isHeaderOnly(): Boolean = lineSequence()
-        .map(String::trim)
-        .filter(String::isNotBlank)
-        .all { line -> line.startsWith("# ") }
-
     private fun batchKey(
         batchIndex: Int,
         evidence: List<MemoryDailyDistillationEvidence>
     ): String = "batch_${batchIndex.toString().padStart(4, '0')}_${
-        evidence.joinToString("|") { item -> item.evidenceKey }.sha256Utf8().take(BATCH_HASH_LENGTH)
+        evidence.joinToString("|") { item -> "${item.evidenceKey}:${item.contentHash}" }.sha256Utf8().take(BATCH_HASH_LENGTH)
     }"
 
-    private fun batchId(daily: DailyFile, batchKey: String): String =
-        "daily_${"${daily.sourcePath}|${daily.sourceHash}|$batchKey".sha256Utf8().take(ID_HASH_LENGTH)}"
+    private fun batchId(windowId: String, manifestHash: String, batchKey: String): String =
+        "daily_${"$windowId|$manifestHash|$batchKey".sha256Utf8().take(ID_HASH_LENGTH)}"
 
     private fun checkpointId(input: MemoryDailyDistillationFrozenInput): String =
-        "distill_${"${input.dailySourcePath}|${input.dailySourceHash}|${input.batchKey}".sha256Utf8().take(ID_HASH_LENGTH)}"
+        "distill_${"${input.windowId}|${input.windowSourceManifestHash}|${input.batchKey}".sha256Utf8().take(ID_HASH_LENGTH)}"
 
     private fun semanticJobId(checkpointId: String, targetBaseHash: String): String =
         "distill_job_${"$checkpointId|$targetBaseHash".sha256Utf8().take(ID_HASH_LENGTH)}"
@@ -608,10 +571,26 @@ class MemoryDailyDistillationScheduler(
     private fun MemoryDailyDistillationFrozenInput.withCreatedAt(createdAt: Long) = copy(createdAt = createdAt)
 
     private fun PlannedBatch.matches(payload: MemoryDailyDistillationPlanJobPayload): Boolean =
-        input.dailySourcePath == payload.dailySourcePath &&
-            input.dailySourceHash == payload.dailySourceHash &&
+        input.windowId == payload.windowId &&
+            input.windowSourceManifestHash == payload.windowSourceManifestHash &&
             input.batchKey == payload.batchKey &&
             input.targetBaseHash == payload.targetBaseHash
+
+    private fun MemoryDailyDistillationEvidence.toLedger(now: Long): MemoryDailyEvidence = MemoryDailyEvidence(
+        evidenceKey = evidenceKey,
+        contentHash = contentHash,
+        sourcePath = sourcePath,
+        sourceDate = sourceDate,
+        decision = MemoryDailyEvidenceDecision.PENDING,
+        lastWindowId = null,
+        lastCheckpointId = null,
+        pendingDecision = null,
+        mutationGroupId = null,
+        targetEntryId = null,
+        createdAt = now,
+        updatedAt = now,
+        decidedAt = null
+    )
 
     private fun now(): Long = clock.instant().epochSecond
 
@@ -635,7 +614,7 @@ class MemoryDailyDistillationScheduler(
         const val MAX_EVIDENCE_CHARS_PER_BATCH = 12_000
         const val MAX_EXISTING_MEMORIES = 100
         const val MAX_EXISTING_MEMORY_CHARS = 32_000
-        const val EMPTY_BATCH_KEY = "empty"
+        const val DAILY_WINDOW_DAYS = 14
         val ACTIVITY_RUN_STATUSES = setOf(
             MemoryMaintenanceJobStatus.PENDING,
             MemoryMaintenanceJobStatus.FAILED_RETRYABLE,

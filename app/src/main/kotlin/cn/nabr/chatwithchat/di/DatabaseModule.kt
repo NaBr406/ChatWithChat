@@ -125,6 +125,7 @@ object DatabaseModule {
         ChatDatabaseV2Migrations.MIGRATION_20_21,
         ChatDatabaseV2Migrations.MIGRATION_21_22,
         ChatDatabaseV2Migrations.MIGRATION_22_23,
-        ChatDatabaseV2Migrations.MIGRATION_23_24
+        ChatDatabaseV2Migrations.MIGRATION_23_24,
+        ChatDatabaseV2Migrations.MIGRATION_24_25
     ).addCallback(ChatHistoryDatabaseCallback()).build()
 }

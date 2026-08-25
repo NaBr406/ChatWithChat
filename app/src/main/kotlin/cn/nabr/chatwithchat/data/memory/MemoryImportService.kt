@@ -170,10 +170,27 @@ class MemoryImportService @Inject constructor(
         }
         val mutationAt = System.currentTimeMillis() / 1_000L
         val evidenceRef = "import:${importedText.sha256Utf8().take(IMPORT_EVIDENCE_HASH_LENGTH)}"
+        val currentExactTexts = parsed.entries
+            .asSequence()
+            .filter { entry -> entry.validity == MemoryValidity.CURRENT }
+            .map { entry -> normalizeExactMemoryText(entry.text) }
+            .toSet()
         val candidates = operations.mapNotNull { operation ->
             when (operation.action) {
                 MemoryImportAction.IGNORE -> null
-                MemoryImportAction.CREATE,
+                MemoryImportAction.CREATE -> {
+                    // The bounded provider view can omit an existing entry. Never let that
+                    // turn an exact text match into a parallel canonical identity.
+                    if (normalizeExactMemoryText(operation.text) in currentExactTexts) {
+                        null
+                    } else {
+                        operation.toCanonicalCandidate(
+                            evidenceAt = mutationAt,
+                            evidenceRef = evidenceRef,
+                            modelVisibleMemoryIds = modelVisibleMemoryIds
+                        )
+                    }
+                }
                 MemoryImportAction.REPLACE -> operation.toCanonicalCandidate(
                     evidenceAt = mutationAt,
                     evidenceRef = evidenceRef,
@@ -185,7 +202,7 @@ class MemoryImportService @Inject constructor(
         if (candidates.isEmpty()) {
             return MemoryImportOutcome.Imported(
                 importedCount = 0,
-                skippedCount = operations.count { operation -> operation.action == MemoryImportAction.IGNORE },
+                skippedCount = operations.size,
                 rewrittenByModel = true
             )
         }
@@ -201,7 +218,7 @@ class MemoryImportService @Inject constructor(
         if (merge.markdown == baseMarkdown || merge.changedEntryCount == 0) {
             return MemoryImportOutcome.Imported(
                 importedCount = 0,
-                skippedCount = candidates.size,
+                skippedCount = operations.size,
                 rewrittenByModel = true
             )
         }
@@ -213,7 +230,7 @@ class MemoryImportService @Inject constructor(
         )
         return MemoryImportOutcome.Imported(
             importedCount = merge.acceptedCandidateCount,
-            skippedCount = (candidates.size - merge.acceptedCandidateCount).coerceAtLeast(0),
+            skippedCount = (operations.size - merge.acceptedCandidateCount).coerceAtLeast(0),
             rewrittenByModel = true
         )
     }

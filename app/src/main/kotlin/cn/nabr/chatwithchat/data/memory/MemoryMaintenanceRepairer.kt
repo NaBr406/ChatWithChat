@@ -11,6 +11,7 @@ class MemoryMaintenanceRepairer @Inject constructor(
     private val memoryVectorIndexRecoveryService: MemoryVectorIndexRecoveryService? = null,
     private val memoryTurnBatchScheduler: MemoryTurnBatchScheduler? = null,
     private val memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler? = null,
+    private val memoryDailyEvidenceRetentionService: MemoryDailyEvidenceRetentionService? = null,
     private val memoryLongTermConsolidationScheduler: MemoryLongTermConsolidationScheduler? = null,
     private val activityLogger: MemoryActivityLogger = MemoryActivityLogger.None
 ) {
@@ -58,6 +59,14 @@ class MemoryMaintenanceRepairer @Inject constructor(
         if (
             memoryDailyDistillationScheduler != null &&
             !runSchedulingStep("repair_daily_planning_failed") { memoryDailyDistillationScheduler.ensurePlanningJobs() }
+        ) {
+            schedulingSucceeded = false
+        }
+        if (
+            memoryDailyEvidenceRetentionService != null &&
+            !runSchedulingStep("repair_daily_evidence_retention_failed") {
+                memoryDailyEvidenceRetentionService.retain()
+            }
         ) {
             schedulingSucceeded = false
         }

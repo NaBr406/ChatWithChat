@@ -6,6 +6,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
 import cn.nabr.chatwithchat.data.database.entity.MemoryCorpusState
+import cn.nabr.chatwithchat.data.database.entity.MemoryDailyEvidence
 import cn.nabr.chatwithchat.data.database.entity.MemoryDistillationCheckpoint
 import cn.nabr.chatwithchat.data.database.entity.MemoryMutationGroup
 import cn.nabr.chatwithchat.data.database.entity.MemoryMutationReceipt
@@ -529,18 +530,149 @@ interface MemoryRecoveryDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertDistillationCheckpointIgnore(checkpoint: MemoryDistillationCheckpoint): Long
 
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertDailyEvidenceIgnore(evidence: MemoryDailyEvidence): Long
+
+    @Query(
+        """
+        SELECT * FROM memory_daily_evidence
+        WHERE evidence_key = :evidenceKey AND content_hash = :contentHash
+        LIMIT 1
+        """
+    )
+    suspend fun getDailyEvidence(evidenceKey: String, contentHash: String): MemoryDailyEvidence?
+
+    @Query(
+        """
+        SELECT EXISTS(
+            SELECT 1 FROM memory_daily_evidence
+            WHERE evidence_key = :evidenceKey
+                AND content_hash != :contentHash
+                AND updated_at >= :updatedAt
+        )
+        """
+    )
+    suspend fun hasNewerDailyEvidenceVersion(
+        evidenceKey: String,
+        contentHash: String,
+        updatedAt: Long
+    ): Boolean
+
+    @Query(
+        """
+        UPDATE memory_daily_evidence
+        SET last_window_id = :windowId,
+            last_checkpoint_id = :checkpointId,
+            updated_at = :updatedAt
+        WHERE evidence_key = :evidenceKey
+            AND content_hash = :contentHash
+            AND decision != :promotedDecision
+        """
+    )
+    suspend fun recordDailyEvidenceSelection(
+        evidenceKey: String,
+        contentHash: String,
+        windowId: String,
+        checkpointId: String,
+        promotedDecision: String,
+        updatedAt: Long
+    ): Int
+
+    @Query(
+        """
+        UPDATE memory_daily_evidence
+        SET pending_decision = :pendingDecision,
+            target_entry_id = :targetEntryId,
+            updated_at = :updatedAt
+        WHERE evidence_key = :evidenceKey
+            AND content_hash = :contentHash
+            AND last_checkpoint_id = :checkpointId
+            AND decision = :pendingState
+        """
+    )
+    suspend fun recordPendingDailyEvidenceDecision(
+        evidenceKey: String,
+        contentHash: String,
+        checkpointId: String,
+        pendingDecision: String,
+        targetEntryId: String?,
+        pendingState: String,
+        updatedAt: Long
+    ): Int
+
+    @Query(
+        """
+        UPDATE memory_daily_evidence
+        SET decision = pending_decision,
+            pending_decision = NULL,
+            mutation_group_id = :mutationGroupId,
+            updated_at = :decidedAt,
+            decided_at = :decidedAt
+        WHERE last_checkpoint_id = :checkpointId
+            AND decision = :pendingState
+            AND pending_decision IN (:finalDecisions)
+        """
+    )
+    suspend fun finalizeDailyEvidenceDecisions(
+        checkpointId: String,
+        mutationGroupId: String?,
+        pendingState: String,
+        finalDecisions: List<String>,
+        decidedAt: Long
+    ): Int
+
+    @Transaction
+    suspend fun insertDistillationCheckpointWithEvidence(
+        checkpoint: MemoryDistillationCheckpoint,
+        evidence: List<MemoryDailyEvidence>
+    ): Long {
+        val inserted = insertDistillationCheckpointIgnore(checkpoint)
+        if (inserted == -1L) return inserted
+        evidence.forEach { item ->
+            insertDailyEvidenceIgnore(item)
+            recordDailyEvidenceSelection(
+                evidenceKey = item.evidenceKey,
+                contentHash = item.contentHash,
+                windowId = checkpoint.windowId,
+                checkpointId = checkpoint.checkpointId,
+                promotedDecision = "promoted",
+                updatedAt = checkpoint.createdAt
+            )
+        }
+        return inserted
+    }
+
+    @Transaction
+    suspend fun recordPendingDailyEvidenceDecisions(
+        checkpointId: String,
+        decisions: List<MemoryDailyEvidenceDecisionUpdate>,
+        updatedAt: Long
+    ) {
+        decisions.forEach { decision ->
+            recordPendingDailyEvidenceDecision(
+                evidenceKey = decision.evidenceKey,
+                contentHash = decision.contentHash,
+                checkpointId = checkpointId,
+                pendingDecision = decision.decision,
+                targetEntryId = decision.targetEntryId,
+                pendingState = "pending",
+                updatedAt = updatedAt
+            )
+        }
+    }
+
     @Query(
         """
         SELECT * FROM memory_distillation_checkpoint
-        WHERE daily_source_path = :dailySourcePath
-            AND daily_source_hash = :dailySourceHash
+        WHERE window_id = :windowId
+            AND window_source_manifest_hash = :windowSourceManifestHash
             AND batch_key = :batchKey
         LIMIT 1
         """
     )
     suspend fun getDistillationCheckpoint(
-        dailySourcePath: String,
-        dailySourceHash: String,
+        windowId: String,
+        windowSourceManifestHash: String,
         batchKey: String
     ): MemoryDistillationCheckpoint?
 
@@ -548,7 +680,7 @@ interface MemoryRecoveryDao {
         """
         SELECT * FROM memory_distillation_checkpoint
         WHERE semantic_job_id = :semanticJobId
-        ORDER BY daily_date ASC, daily_source_path ASC, batch_key ASC, checkpoint_id ASC
+        ORDER BY window_end_date ASC, window_id ASC, batch_key ASC, checkpoint_id ASC
         LIMIT 1
         """
     )
@@ -558,7 +690,7 @@ interface MemoryRecoveryDao {
         """
         SELECT * FROM memory_distillation_checkpoint
         WHERE status IN (:statuses)
-        ORDER BY daily_date ASC, daily_source_path ASC
+        ORDER BY window_end_date ASC, window_id ASC
         """
     )
     suspend fun getDistillationCheckpointsByStatuses(statuses: List<String>): List<MemoryDistillationCheckpoint>
@@ -575,8 +707,8 @@ interface MemoryRecoveryDao {
         WHERE checkpoint_id = :checkpointId
             AND status = :expectedStatus
             AND row_version = :expectedRowVersion
-            AND daily_source_path = :expectedDailySourcePath
-            AND daily_source_hash = :expectedDailySourceHash
+            AND window_id = :expectedWindowId
+            AND window_source_manifest_hash = :expectedWindowSourceManifestHash
             AND batch_key = :expectedBatchKey
             AND semantic_job_id = :expectedSemanticJobId
             AND target_source_path = :expectedTargetSourcePath
@@ -591,8 +723,8 @@ interface MemoryRecoveryDao {
         checkpointId: String,
         expectedStatus: String,
         expectedRowVersion: Long,
-        expectedDailySourcePath: String,
-        expectedDailySourceHash: String,
+        expectedWindowId: String,
+        expectedWindowSourceManifestHash: String,
         expectedBatchKey: String,
         expectedSemanticJobId: String,
         expectedTargetSourcePath: String,
@@ -620,8 +752,8 @@ interface MemoryRecoveryDao {
         WHERE checkpoint_id = :checkpointId
             AND status = :expectedStatus
             AND row_version = :expectedRowVersion
-            AND daily_source_path = :expectedDailySourcePath
-            AND daily_source_hash = :expectedDailySourceHash
+            AND window_id = :expectedWindowId
+            AND window_source_manifest_hash = :expectedWindowSourceManifestHash
             AND batch_key = :expectedBatchKey
             AND semantic_job_id = :expectedSemanticJobId
             AND target_source_path = :expectedTargetSourcePath
@@ -636,8 +768,8 @@ interface MemoryRecoveryDao {
         checkpointId: String,
         expectedStatus: String,
         expectedRowVersion: Long,
-        expectedDailySourcePath: String,
-        expectedDailySourceHash: String,
+        expectedWindowId: String,
+        expectedWindowSourceManifestHash: String,
         expectedBatchKey: String,
         expectedSemanticJobId: String,
         expectedTargetSourcePath: String,

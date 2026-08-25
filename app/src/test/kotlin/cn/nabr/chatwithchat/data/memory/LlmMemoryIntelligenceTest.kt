@@ -539,12 +539,23 @@ class LlmMemoryIntelligenceTest {
     private fun dailyRequest() = MemoryDailyDistillationFrozenInput(
         batchId = "daily-batch",
         batchKey = "batch-0000",
-        dailySourcePath = "memory/2026-07-11.md",
-        dailySourceHash = "d".repeat(64),
-        dailyDate = "2026-07-11",
+        windowId = "daily_2026-06-28_2026-07-11",
+        windowStartDate = "2026-06-28",
+        windowEndDate = "2026-07-11",
+        windowSourceManifest = listOf(
+            MemoryDailyDistillationSourceManifest(
+                sourcePath = "memory/2026-07-11.md",
+                sourceDate = "2026-07-11",
+                sourceHash = "d".repeat(64)
+            )
+        ),
+        windowSourceManifestHash = "d".repeat(64),
         dailyEvidence = listOf(
             MemoryDailyDistillationEvidence(
                 evidenceKey = "evidence-1",
+                contentHash = "e".repeat(64),
+                sourcePath = "memory/2026-07-11.md",
+                sourceDate = "2026-07-11",
                 entryId = "daily-1",
                 text = "The user explicitly prefers concise answers.",
                 type = "communication_style",

@@ -6,9 +6,11 @@ import kotlinx.serialization.Serializable
 data class MemoryDailyDistillationFrozenInput(
     val batchId: String,
     val batchKey: String,
-    val dailySourcePath: String,
-    val dailySourceHash: String,
-    val dailyDate: String,
+    val windowId: String,
+    val windowStartDate: String,
+    val windowEndDate: String,
+    val windowSourceManifest: List<MemoryDailyDistillationSourceManifest>,
+    val windowSourceManifestHash: String,
     val dailyEvidence: List<MemoryDailyDistillationEvidence>,
     val existingMemories: List<MemoryBatchExistingMemory>,
     val targetBaseHash: String,
@@ -16,7 +18,59 @@ data class MemoryDailyDistillationFrozenInput(
 )
 
 @Serializable
+data class MemoryDailyDistillationSourceManifest(
+    val sourcePath: String,
+    val sourceDate: String,
+    val sourceHash: String
+)
+
+@Serializable
 data class MemoryDailyDistillationEvidence(
+    val evidenceKey: String,
+    val contentHash: String,
+    val sourcePath: String,
+    val sourceDate: String,
+    val entryId: String,
+    val text: String,
+    val type: String,
+    val sensitivity: String,
+    val source: String,
+    val createdAt: Long,
+    val updatedAt: Long,
+    val lastObservedAt: Long = updatedAt,
+    val evidenceRefs: List<String> = emptyList(),
+    val observationDates: List<String> = emptyList()
+)
+
+@Serializable
+data class MemoryDailyDistillationJobPayload(
+    val checkpointId: String,
+    val input: MemoryDailyDistillationFrozenInput,
+    val inputHash: String
+)
+
+@Serializable
+internal data class LegacyMemoryDailyDistillationJobPayload(
+    val checkpointId: String,
+    val input: LegacyMemoryDailyDistillationFrozenInput,
+    val inputHash: String
+)
+
+@Serializable
+internal data class LegacyMemoryDailyDistillationFrozenInput(
+    val batchId: String,
+    val batchKey: String,
+    val dailySourcePath: String,
+    val dailySourceHash: String,
+    val dailyDate: String,
+    val dailyEvidence: List<LegacyMemoryDailyDistillationEvidence>,
+    val existingMemories: List<MemoryBatchExistingMemory>,
+    val targetBaseHash: String,
+    val createdAt: Long
+)
+
+@Serializable
+internal data class LegacyMemoryDailyDistillationEvidence(
     val evidenceKey: String,
     val entryId: String,
     val text: String,
@@ -28,18 +82,11 @@ data class MemoryDailyDistillationEvidence(
 )
 
 @Serializable
-data class MemoryDailyDistillationJobPayload(
-    val checkpointId: String,
-    val input: MemoryDailyDistillationFrozenInput,
-    val inputHash: String
-)
-
-@Serializable
 data class MemoryDailyDistillationPlanJobPayload(
     val kind: String,
     val localDate: String,
-    val dailySourcePath: String? = null,
-    val dailySourceHash: String? = null,
+    val windowId: String? = null,
+    val windowSourceManifestHash: String? = null,
     val batchKey: String? = null,
     val targetBaseHash: String? = null
 )

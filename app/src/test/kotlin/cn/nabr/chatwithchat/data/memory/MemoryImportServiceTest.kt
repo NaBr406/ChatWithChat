@@ -136,6 +136,45 @@ class MemoryImportServiceTest {
     }
 
     @Test
+    fun `external import skips an exact hidden match with a dotted-prefix key`() = runBlocking {
+        val existingText = "The user prefers concise answers."
+        val fixture = Fixture(
+            intelligence = FakeMemoryIntelligence(
+                importProposal = MemoryImportProposal(
+                    operations = listOf(
+                        MemoryImportOperation(
+                            action = MemoryImportAction.CREATE,
+                            text = existingText,
+                            type = "communication_style",
+                            canonicalKey = "communication.response_style.detail",
+                            scope = MemoryScope.GENERAL,
+                            recallState = MemoryRecallState.QUERY
+                        )
+                    )
+                )
+            )
+        )
+        val codec = MarkdownMemoryCodec()
+        val entries = (1..64).map { index ->
+            entry("mem_${index.toString().padStart(3, '0')}", "Existing fact $index.")
+        } + entry("mem_hidden", existingText).copy(
+            canonicalKey = "communication.response_style",
+            scope = MemoryScope.GENERAL
+        )
+        fixture.fileStore.replaceLongTermMemory(codec.renderLongTerm(entries)).getOrThrow()
+
+        val result = fixture.service.importExternalMemory("Remember the concise response preference.")
+        val parsed = codec.parse(fixture.fileStore.readLongTermMemory().getOrThrow())
+
+        assertEquals(
+            MemoryImportOutcome.Imported(importedCount = 0, skippedCount = 1, rewrittenByModel = true),
+            result
+        )
+        assertEquals(1, parsed.entries.count { entry -> normalizeExactMemoryText(entry.text) == normalizeExactMemoryText(existingText) })
+        assertEquals("communication.response_style", parsed.entries.single { entry -> entry.text == existingText }.canonicalKey)
+    }
+
+    @Test
     fun `app memory import rejects ordinary markdown`() = runBlocking {
         val fixture = Fixture()
 

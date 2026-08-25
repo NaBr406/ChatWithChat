@@ -1,7 +1,9 @@
 package cn.nabr.chatwithchat.data.memory
 
 import cn.nabr.chatwithchat.BuildConfig
+import cn.nabr.chatwithchat.data.database.dao.MemoryDailyEvidenceDecisionUpdate
 import cn.nabr.chatwithchat.data.database.dao.MemoryRecoveryDao
+import cn.nabr.chatwithchat.data.database.entity.MemoryDailyEvidenceDecision
 import cn.nabr.chatwithchat.data.database.entity.MemoryDistillationCheckpoint
 import cn.nabr.chatwithchat.data.database.entity.MemoryMaintenanceJob
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
@@ -12,6 +14,7 @@ import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 
@@ -71,6 +74,13 @@ class MemoryDailyDistillationService(
             check(mutation.group.groupId == checkpoint.mutationGroupId) {
                 "Completed daily distillation checkpoint has a mismatched mutation"
             }
+            recoveryDao.finalizeDailyEvidenceDecisions(
+                checkpointId = checkpoint.checkpointId,
+                mutationGroupId = mutation.group.groupId,
+                pendingState = MemoryDailyEvidenceDecision.PENDING,
+                finalDecisions = MemoryDailyEvidenceDecision.FINAL.toList(),
+                decidedAt = now()
+            )
             memoryMutationCoordinator.acknowledgeSemanticCompletion(mutation.group.groupId)
             dailyDistillationScheduler.ensurePlanningJobs()
             activityLogger.finishRunSafely(
@@ -266,6 +276,11 @@ class MemoryDailyDistillationService(
             }
             operationCount = validation.operations.size
             operationDiagnostics = validation.diagnostics
+            recoveryDao.recordPendingDailyEvidenceDecisions(
+                checkpointId = checkpoint.checkpointId,
+                decisions = dailyEvidenceDecisionUpdates(payload.input, validation.operations),
+                updatedAt = now()
+            )
             mutation = runCatching {
                 runningJob = maintenanceScheduler.renewClaimedLease(runningJob)
                 memoryMutationCoordinator.prepare(
@@ -355,6 +370,13 @@ class MemoryDailyDistillationService(
 
         val committed = commitResult as MemoryMutationCommitResult.CanonicalCommitted
         if (BuildConfig.DEBUG) commitObserver.afterCanonicalFileCommit(committed.mutation)
+        recoveryDao.finalizeDailyEvidenceDecisions(
+            checkpointId = checkpoint.checkpointId,
+            mutationGroupId = committed.mutation.group.groupId,
+            pendingState = MemoryDailyEvidenceDecision.PENDING,
+            finalDecisions = MemoryDailyEvidenceDecision.FINAL.toList(),
+            decidedAt = now()
+        )
         checkpoint = completeCheckpoint(checkpoint, committed.mutation)
         if (BuildConfig.DEBUG) commitObserver.afterCheckpointCompletion(checkpoint)
         maintenanceScheduler.markSucceeded(runningJob)
@@ -399,6 +421,13 @@ class MemoryDailyDistillationService(
         } else if (checkpoint.status != MemoryDistillationCheckpointStatus.COMPLETED) {
             completeCheckpoint(checkpoint, mutation)
         }
+        recoveryDao.finalizeDailyEvidenceDecisions(
+            checkpointId = checkpoint.checkpointId,
+            mutationGroupId = mutation.group.groupId,
+            pendingState = MemoryDailyEvidenceDecision.PENDING,
+            finalDecisions = MemoryDailyEvidenceDecision.FINAL.toList(),
+            decidedAt = now()
+        )
         dailyDistillationScheduler.ensurePlanningJobs()
         return true
     }
@@ -407,14 +436,26 @@ class MemoryDailyDistillationService(
         check(job.type == MemoryMaintenanceJobType.DISTILL_DAILY_NOTES)
         check(job.family == MemoryMaintenanceJobFamily.SEMANTIC)
         val rawInput = checkNotNull(json.parseToJsonElement(job.payloadJson).jsonObject["input"])
-        json.decodeFromString<MemoryDailyDistillationJobPayload>(job.payloadJson).also { payload ->
+        val payload = if (rawInput.jsonObject.containsKey("windowId")) {
+            json.decodeFromString<MemoryDailyDistillationJobPayload>(job.payloadJson)
+        } else {
+            val legacy = json.decodeFromString<LegacyMemoryDailyDistillationJobPayload>(job.payloadJson)
+            legacy.toWindowPayload()
+        }
+        payload.also {
             check(payload.checkpointId.isNotBlank())
             check(payload.input.batchId.isNotBlank())
             check(payload.input.batchKey.isNotBlank())
-            check(payload.input.dailySourcePath.matches(DAILY_SOURCE_REGEX))
-            check(payload.input.dailySourceHash.matches(SHA_256_REGEX))
+            check(payload.input.windowId.isNotBlank())
+            check(LocalDate.parse(payload.input.windowStartDate, DateTimeFormatter.ISO_LOCAL_DATE) <= LocalDate.parse(payload.input.windowEndDate, DateTimeFormatter.ISO_LOCAL_DATE))
+            check(payload.input.windowSourceManifest.isNotEmpty())
+            check(payload.input.windowSourceManifest.all { source ->
+                source.sourcePath.matches(DAILY_SOURCE_REGEX) &&
+                    source.sourceHash.matches(SHA_256_REGEX) &&
+                    LocalDate.parse(source.sourceDate, DateTimeFormatter.ISO_LOCAL_DATE) < LocalDate.now(clock)
+            })
+            check(payload.input.windowSourceManifestHash.matches(SHA_256_REGEX))
             check(payload.input.targetBaseHash.matches(SHA_256_REGEX))
-            check(LocalDate.parse(payload.input.dailyDate, DateTimeFormatter.ISO_LOCAL_DATE) < LocalDate.now(clock))
             check(payload.input.dailyEvidence.isNotEmpty())
             check(payload.input.dailyEvidence.map { evidence -> evidence.evidenceKey }.distinct().size == payload.input.dailyEvidence.size)
             check(payload.inputHash == rawInput.toString().sha256Utf8())
@@ -436,10 +477,9 @@ class MemoryDailyDistillationService(
         val checkpoint = recoveryDao.getDistillationCheckpointBySemanticJobId(job.jobId) ?: return null
         return checkpoint.takeIf { current ->
             current.checkpointId == payload.checkpointId &&
-                current.dailySourcePath == payload.input.dailySourcePath &&
-                current.dailySourceHash == payload.input.dailySourceHash &&
+                current.windowId == payload.input.windowId &&
+                current.windowSourceManifestHash == payload.input.windowSourceManifestHash &&
                 current.batchKey == payload.input.batchKey &&
-                current.dailyDate == payload.input.dailyDate &&
                 current.targetSourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME &&
                 current.targetBaseHash == payload.input.targetBaseHash &&
                 current.status in (
@@ -451,11 +491,104 @@ class MemoryDailyDistillationService(
     }
 
     private fun validateFrozenSources(input: MemoryDailyDistillationFrozenInput): String? {
-        val dailyHash = memoryFileStore.currentMemoryFileHash(input.dailySourcePath).getOrNull()
-        if (dailyHash != input.dailySourceHash) return MemoryDistillationCheckpointStatus.STALE_SOURCE
+        if (!input.windowId.startsWith(LEGACY_WINDOW_PREFIX)) {
+            val manifestHash = json.encodeToString(input.windowSourceManifest).sha256Utf8()
+            if (manifestHash != input.windowSourceManifestHash) return MemoryDistillationCheckpointStatus.STALE_SOURCE
+        }
+        if (input.windowSourceManifest.any { source ->
+                memoryFileStore.currentMemoryFileHash(source.sourcePath).getOrNull() != source.sourceHash
+            }
+        ) return MemoryDistillationCheckpointStatus.STALE_SOURCE
         val targetHash = memoryFileStore.currentMemoryFileHash(MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME).getOrNull()
         if (targetHash != input.targetBaseHash) return MemoryDistillationCheckpointStatus.STALE_TARGET_BASE
         return null
+    }
+
+    private fun dailyEvidenceDecisionUpdates(
+        input: MemoryDailyDistillationFrozenInput,
+        operations: List<MemoryDailyDistillationOperation>
+    ): List<MemoryDailyEvidenceDecisionUpdate> {
+        val evidenceByKey = input.dailyEvidence.associateBy(MemoryDailyDistillationEvidence::evidenceKey)
+        return operations
+            .filter { operation -> operation.action in setOf(
+                MemoryDailyDistillationAction.CREATE,
+                MemoryDailyDistillationAction.REPLACE,
+                MemoryDailyDistillationAction.IGNORE
+            ) }
+            .flatMap { operation -> operation.evidenceKeys.map { key -> key to operation } }
+            .groupBy({ (key, _) -> key }, { (_, operation) -> operation })
+            .map { (key, evidenceOperations) ->
+                val evidence = checkNotNull(evidenceByKey[key])
+                val promote = evidenceOperations.firstOrNull { operation ->
+                    operation.action in setOf(
+                        MemoryDailyDistillationAction.CREATE,
+                        MemoryDailyDistillationAction.REPLACE
+                    )
+                }
+                MemoryDailyEvidenceDecisionUpdate(
+                    evidenceKey = evidence.evidenceKey,
+                    contentHash = evidence.contentHash,
+                    decision = if (promote == null) {
+                        MemoryDailyEvidenceDecision.IGNORED
+                    } else {
+                        MemoryDailyEvidenceDecision.PROMOTED
+                    },
+                    targetEntryId = promote?.targetMemoryId
+                )
+            }
+    }
+
+    private fun LegacyMemoryDailyDistillationJobPayload.toWindowPayload(): MemoryDailyDistillationJobPayload {
+        val legacyInput = input
+        val manifest = listOf(
+            MemoryDailyDistillationSourceManifest(
+                sourcePath = legacyInput.dailySourcePath,
+                sourceDate = legacyInput.dailyDate,
+                sourceHash = legacyInput.dailySourceHash
+            )
+        )
+        return MemoryDailyDistillationJobPayload(
+            checkpointId = checkpointId,
+            input = MemoryDailyDistillationFrozenInput(
+                batchId = legacyInput.batchId,
+                batchKey = legacyInput.batchKey,
+                windowId = "$LEGACY_WINDOW_PREFIX${legacyInput.dailyDate}",
+                windowStartDate = legacyInput.dailyDate,
+                windowEndDate = legacyInput.dailyDate,
+                windowSourceManifest = manifest,
+                windowSourceManifestHash = legacyInput.dailySourceHash,
+                dailyEvidence = legacyInput.dailyEvidence.map { evidence ->
+                    MemoryDailyDistillationEvidence(
+                        evidenceKey = evidence.evidenceKey,
+                        contentHash = listOf(
+                            evidence.evidenceKey,
+                            evidence.text,
+                            evidence.type,
+                            evidence.sensitivity,
+                            evidence.source,
+                            evidence.createdAt,
+                            evidence.updatedAt
+                        ).joinToString("\u0000").sha256Utf8(),
+                        sourcePath = legacyInput.dailySourcePath,
+                        sourceDate = legacyInput.dailyDate,
+                        entryId = evidence.entryId,
+                        text = evidence.text,
+                        type = evidence.type,
+                        sensitivity = evidence.sensitivity,
+                        source = evidence.source,
+                        createdAt = evidence.createdAt,
+                        updatedAt = evidence.updatedAt,
+                        lastObservedAt = evidence.updatedAt,
+                        evidenceRefs = emptyList(),
+                        observationDates = listOf(legacyInput.dailyDate)
+                    )
+                },
+                existingMemories = legacyInput.existingMemories,
+                targetBaseHash = legacyInput.targetBaseHash,
+                createdAt = legacyInput.createdAt
+            ),
+            inputHash = inputHash
+        )
     }
 
     private suspend fun alignCheckpointWithMutation(
@@ -511,8 +644,8 @@ class MemoryDailyDistillationService(
             checkpointId = checkpoint.checkpointId,
             expectedStatus = checkpoint.status,
             expectedRowVersion = checkpoint.rowVersion,
-            expectedDailySourcePath = checkpoint.dailySourcePath,
-            expectedDailySourceHash = checkpoint.dailySourceHash,
+            expectedWindowId = checkpoint.windowId,
+            expectedWindowSourceManifestHash = checkpoint.windowSourceManifestHash,
             expectedBatchKey = checkpoint.batchKey,
             expectedSemanticJobId = checkpoint.semanticJobId,
             expectedTargetSourcePath = checkpoint.targetSourcePath,
@@ -610,6 +743,7 @@ class MemoryDailyDistillationService(
     private companion object {
         val SHA_256_REGEX = Regex("[0-9a-f]{64}")
         val DAILY_SOURCE_REGEX = Regex("memory/\\d{4}-\\d{2}-\\d{2}\\.md")
+        const val LEGACY_WINDOW_PREFIX = "legacy:"
     }
 }
 

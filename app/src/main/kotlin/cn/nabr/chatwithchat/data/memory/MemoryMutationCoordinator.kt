@@ -97,11 +97,36 @@ class MemoryMutationCoordinator(
         }
         val projectionAwareTargets = targets.map { target -> target.withProjectionAwareFingerprint() }
         return localMutationPrepareMutex.withLock {
-            prepareLocalMutationLocked(operationKey, projectionAwareTargets)
+            prepareNonSemanticMutationLocked(operationKey, projectionAwareTargets)
         }
     }
 
-    private suspend fun prepareLocalMutationLocked(
+    /**
+     * Repair owns daily-file lifecycle work. It deliberately has a separate entry point from
+     * [prepareLocalMutation], whose long-term-only constraint protects user-facing edits.
+     */
+    suspend fun prepareRepairMutation(
+        operationKey: String,
+        targets: List<MemoryMutationTarget>
+    ): MemoryPreparedMutation {
+        require(operationKey.isNotBlank()) { "Repair mutation operation key must not be blank" }
+        require(targets.isNotEmpty()) { "A repair mutation must have at least one target" }
+        require(targets.map(MemoryMutationTarget::sourcePath).distinct().size == targets.size) {
+            "A repair mutation cannot target one source path twice"
+        }
+        require(targets.all { target -> target.targetIndexFingerprint == null }) {
+            "A repair mutation cannot request vector index synchronization"
+        }
+        require(targets.all { target ->
+            target.sourcePath != MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME ||
+                target.baseContent == target.targetContent
+        }) { "A repair mutation may only use MEMORY.md as an unchanged CAS guard" }
+        return localMutationPrepareMutex.withLock {
+            prepareNonSemanticMutationLocked(operationKey, targets)
+        }
+    }
+
+    private suspend fun prepareNonSemanticMutationLocked(
         operationKey: String,
         targets: List<MemoryMutationTarget>
     ): MemoryPreparedMutation {

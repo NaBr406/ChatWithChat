@@ -14,14 +14,14 @@ class MemoryDistillationCheckpointDaoTest {
         val dao = InMemoryMemoryRecoveryDao()
         val later = checkpoint(
             checkpointId = "checkpoint-later",
-            dailySourcePath = "memory/2026-07-12.md",
-            dailyDate = "2026-07-12",
+            windowId = "daily_2026-06-29_2026-07-12",
+            windowEndDate = "2026-07-12",
             batchKey = "batch-2"
         )
         val earlier = checkpoint(
             checkpointId = "checkpoint-earlier",
-            dailySourcePath = "memory/2026-07-11.md",
-            dailyDate = "2026-07-11",
+            windowId = "daily_2026-06-28_2026-07-11",
+            windowEndDate = "2026-07-11",
             batchKey = "batch-1"
         )
 
@@ -50,7 +50,7 @@ class MemoryDistillationCheckpointDaoTest {
             )
         )
         val prepared = checkNotNull(
-            dao.getDistillationCheckpoint(initial.dailySourcePath, initial.dailySourceHash, initial.batchKey)
+            dao.getDistillationCheckpoint(initial.windowId, initial.windowSourceManifestHash, initial.batchKey)
         )
         assertEquals(MemoryDistillationCheckpointStatus.PREPARED, prepared.status)
         assertEquals("prepared-target-hash", prepared.targetSourceHash)
@@ -94,8 +94,8 @@ class MemoryDistillationCheckpointDaoTest {
         val mismatches = listOf<(MemoryDistillationCheckpoint) -> MemoryDistillationCheckpoint>(
             { checkpoint -> checkpoint.copy(status = "stale-status") },
             { checkpoint -> checkpoint.copy(rowVersion = checkpoint.rowVersion + 1) },
-            { checkpoint -> checkpoint.copy(dailySourcePath = "memory/other.md") },
-            { checkpoint -> checkpoint.copy(dailySourceHash = "other-daily-hash") },
+            { checkpoint -> checkpoint.copy(windowId = "daily_other") },
+            { checkpoint -> checkpoint.copy(windowSourceManifestHash = "other-manifest-hash") },
             { checkpoint -> checkpoint.copy(batchKey = "other-batch") },
             { checkpoint -> checkpoint.copy(semanticJobId = "other-job") },
             { checkpoint -> checkpoint.copy(targetSourcePath = "OTHER.md") },
@@ -122,7 +122,7 @@ class MemoryDistillationCheckpointDaoTest {
             )
             assertEquals(
                 initial,
-                dao.getDistillationCheckpoint(initial.dailySourcePath, initial.dailySourceHash, initial.batchKey)
+                dao.getDistillationCheckpoint(initial.windowId, initial.windowSourceManifestHash, initial.batchKey)
             )
         }
     }
@@ -170,8 +170,8 @@ class MemoryDistillationCheckpointDaoTest {
         checkpointId = expected.checkpointId,
         expectedStatus = expected.status,
         expectedRowVersion = expected.rowVersion,
-        expectedDailySourcePath = expected.dailySourcePath,
-        expectedDailySourceHash = expected.dailySourceHash,
+        expectedWindowId = expected.windowId,
+        expectedWindowSourceManifestHash = expected.windowSourceManifestHash,
         expectedBatchKey = expected.batchKey,
         expectedSemanticJobId = expected.semanticJobId,
         expectedTargetSourcePath = expected.targetSourcePath,
@@ -187,15 +187,17 @@ class MemoryDistillationCheckpointDaoTest {
 
     private fun checkpoint(
         checkpointId: String = CHECKPOINT_ID,
-        dailySourcePath: String = DAILY_SOURCE_PATH,
-        dailyDate: String = DAILY_DATE,
+        windowId: String = WINDOW_ID,
+        windowEndDate: String = WINDOW_END_DATE,
         batchKey: String = BATCH_KEY
     ): MemoryDistillationCheckpoint = MemoryDistillationCheckpoint(
         checkpointId = checkpointId,
-        dailySourcePath = dailySourcePath,
-        dailySourceHash = DAILY_SOURCE_HASH,
+        windowId = windowId,
+        windowStartDate = WINDOW_START_DATE,
+        windowEndDate = windowEndDate,
+        windowSourceManifestJson = WINDOW_SOURCE_MANIFEST_JSON,
+        windowSourceManifestHash = WINDOW_SOURCE_MANIFEST_HASH,
         batchKey = batchKey,
-        dailyDate = dailyDate,
         semanticJobId = SEMANTIC_JOB_ID,
         targetSourcePath = TARGET_SOURCE_PATH,
         targetBaseHash = TARGET_BASE_HASH,
@@ -209,9 +211,11 @@ class MemoryDistillationCheckpointDaoTest {
 
     private companion object {
         const val CHECKPOINT_ID = "checkpoint-1"
-        const val DAILY_SOURCE_PATH = "memory/2026-07-11.md"
-        const val DAILY_SOURCE_HASH = "daily-hash"
-        const val DAILY_DATE = "2026-07-11"
+        const val WINDOW_ID = "daily_2026-06-28_2026-07-11"
+        const val WINDOW_START_DATE = "2026-06-28"
+        const val WINDOW_END_DATE = "2026-07-11"
+        const val WINDOW_SOURCE_MANIFEST_JSON = "[]"
+        const val WINDOW_SOURCE_MANIFEST_HASH = "manifest-hash"
         const val BATCH_KEY = "batch-1"
         const val SEMANTIC_JOB_ID = "semantic-job-1"
         const val TARGET_SOURCE_PATH = "MEMORY.md"

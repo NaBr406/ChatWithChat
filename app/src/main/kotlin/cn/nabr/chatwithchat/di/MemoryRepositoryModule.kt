@@ -16,6 +16,7 @@ import cn.nabr.chatwithchat.data.memory.MemoryBatchConsolidationService
 import cn.nabr.chatwithchat.data.memory.MemoryChunker
 import cn.nabr.chatwithchat.data.memory.MemoryCorpusSnapshotter
 import cn.nabr.chatwithchat.data.memory.MemoryDailyDistillationOperationController
+import cn.nabr.chatwithchat.data.memory.MemoryDailyEvidenceRetentionService
 import cn.nabr.chatwithchat.data.memory.MemoryDailyDistillationRecoveryFinalizer
 import cn.nabr.chatwithchat.data.memory.MemoryDailyDistillationScheduler
 import cn.nabr.chatwithchat.data.memory.MemoryDailyDistillationService
@@ -385,6 +386,20 @@ object MemoryRepositoryModule {
         markdownMemoryCodec: MarkdownMemoryCodec
     ): MemoryDailyDistillationOperationController =
         MemoryDailyDistillationOperationController(markdownMemoryCodec)
+
+    @Provides
+    @Singleton
+    fun provideMemoryDailyEvidenceRetentionService(
+        memoryFileStore: MemoryFileStore,
+        markdownMemoryCodec: MarkdownMemoryCodec,
+        memoryRecoveryDao: MemoryRecoveryDao,
+        memoryMutationCoordinator: MemoryMutationCoordinator
+    ): MemoryDailyEvidenceRetentionService = MemoryDailyEvidenceRetentionService(
+        memoryFileStore = memoryFileStore,
+        markdownMemoryCodec = markdownMemoryCodec,
+        recoveryDao = memoryRecoveryDao,
+        memoryMutationCoordinator = memoryMutationCoordinator
+    )
 
     @Provides
     @Singleton

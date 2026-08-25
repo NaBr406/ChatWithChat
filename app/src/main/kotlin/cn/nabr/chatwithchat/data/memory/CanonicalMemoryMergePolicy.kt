@@ -853,44 +853,26 @@ internal class CanonicalMemoryMergePolicy(
         candidateTexts: List<String>,
         preferredText: String
     ): String {
-        val normalizedExisting = existingTexts
-            .map(::normalizeExactMemoryText)
-            .distinct()
-        val normalizedCandidates = candidateTexts
-            .map(::normalizeExactMemoryText)
-            .distinct()
-
-        if (normalizedExisting.isEmpty() && normalizedCandidates.isEmpty()) return preferredText
-        val candidateCoveringExisting = candidateTexts
+        val clauses = (existingTexts + candidateTexts)
+            .flatMap { text ->
+                text.split(";")
+                    .map(String::trim)
+                    .filter(String::isNotBlank)
+            }
             .distinctBy(::normalizeExactMemoryText)
             .sortedWith(compareByDescending<String>(String::length).thenBy(::normalizeExactMemoryText))
-            .firstOrNull { candidate ->
-                val normalizedCandidate = normalizeExactMemoryText(candidate)
-                normalizedExisting.all { existing ->
-                    existing == normalizedCandidate || normalizedCandidate.contains(existing)
-                } && normalizedCandidates.all { known ->
-                    known == normalizedCandidate || normalizedCandidate.contains(known)
-                }
-            }
-        if (candidateCoveringExisting != null) return candidateCoveringExisting.trim()
+        if (clauses.isEmpty()) return preferredText
 
-        val existingContainingAllCandidates = existingTexts
-            .distinctBy(::normalizeExactMemoryText)
-            .sortedWith(compareByDescending<String>(String::length).thenBy(::normalizeExactMemoryText))
-            .firstOrNull { existing ->
-                val normalizedExistingText = normalizeExactMemoryText(existing)
-                normalizedExisting.all { known ->
-                    known == normalizedExistingText || normalizedExistingText.contains(known)
-                } && normalizedCandidates.all { candidate ->
-                    candidate == normalizedExistingText || normalizedExistingText.contains(candidate)
+        // A newer clause may subsume one or more historical fragments. Keep only the
+        // maximal wording for each overlap so the bundle converges on a normal update.
+        return clauses
+            .fold(mutableListOf<String>()) { retained, clause ->
+                val normalizedClause = normalizeExactMemoryText(clause)
+                if (retained.none { existing -> normalizeExactMemoryText(existing).contains(normalizedClause) }) {
+                    retained += clause
                 }
+                retained
             }
-        if (existingContainingAllCandidates != null) return existingContainingAllCandidates.trim()
-
-        return (existingTexts + candidateTexts)
-            .map(String::trim)
-            .filter(String::isNotBlank)
-            .distinctBy(::normalizeExactMemoryText)
             .sortedBy(::normalizeExactMemoryText)
             .joinToString(separator = " ; ")
             .ifBlank { preferredText }

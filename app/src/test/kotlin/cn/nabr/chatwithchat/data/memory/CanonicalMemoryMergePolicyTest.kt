@@ -654,6 +654,67 @@ class CanonicalMemoryMergePolicyTest {
     }
 
     @Test
+    fun `addressing update collapses contained clauses without losing other facts`() {
+        val existing = canonicalEntry(
+            id = "addressing",
+            text = "Address the user as Captain. ; The assistant name is Small C. ; Avoid using the sweat-smile emoji.",
+            canonicalKey = MemoryCanonicalIdentityPolicy.PREFERRED_ADDRESS_KEY,
+            source = MemorySource.EXPLICIT_USER_STATEMENT
+        )
+        val restatement = "Address the user as Captain. ; The assistant name is Small C."
+
+        val result = policy.merge(
+            baseMarkdown = codec.renderLongTerm(listOf(existing)),
+            candidates = listOf(
+                candidate(
+                    text = restatement,
+                    canonicalKey = MemoryCanonicalIdentityPolicy.PREFERRED_ADDRESS_KEY,
+                    targetMemoryId = existing.id,
+                    evidenceAt = 40
+                )
+            ),
+            mutationAt = 50
+        )
+
+        val active = currentEntries(result.markdown).single()
+        assertEquals(3, active.text.split(" ; ").size)
+        assertEquals(1, active.text.split(" ; ").count { clause -> clause == "Address the user as Captain." })
+        assertEquals(1, active.text.split(" ; ").count { clause -> clause == "The assistant name is Small C." })
+        assertTrue(active.text.contains("Avoid using the sweat-smile emoji."))
+    }
+
+    @Test
+    fun `addressing update collapses redundant historical bundle clauses`() {
+        val existing = canonicalEntry(
+            id = "addressing",
+            text = "Address the user as Captain. ; The assistant name is Small C. ; " +
+                "Address the user as Captain. The assistant name is Small C. ; " +
+                "Avoid using the sweat-smile emoji.",
+            canonicalKey = MemoryCanonicalIdentityPolicy.PREFERRED_ADDRESS_KEY,
+            source = MemorySource.EXPLICIT_USER_STATEMENT
+        )
+
+        val result = policy.merge(
+            baseMarkdown = codec.renderLongTerm(listOf(existing)),
+            candidates = listOf(
+                candidate(
+                    text = "Use concise confirmation when applying the addressing preference.",
+                    canonicalKey = MemoryCanonicalIdentityPolicy.PREFERRED_ADDRESS_KEY,
+                    targetMemoryId = existing.id,
+                    evidenceAt = 40
+                )
+            ),
+            mutationAt = 50
+        )
+
+        val clauses = currentEntries(result.markdown).single().text.split(" ; ")
+        assertEquals(3, clauses.size)
+        assertTrue(clauses.contains("Address the user as Captain. The assistant name is Small C."))
+        assertTrue(clauses.contains("Avoid using the sweat-smile emoji."))
+        assertTrue(clauses.contains("Use concise confirmation when applying the addressing preference."))
+    }
+
+    @Test
     fun `obsolete history from an old address merge restores the full bundle`() {
         val preferred = canonicalEntry(
             id = "preferred",

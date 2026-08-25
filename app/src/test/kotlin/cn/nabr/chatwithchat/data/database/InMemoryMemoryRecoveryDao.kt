@@ -2,6 +2,7 @@ package cn.nabr.chatwithchat.data.database
 
 import cn.nabr.chatwithchat.data.database.dao.MemoryRecoveryDao
 import cn.nabr.chatwithchat.data.database.entity.MemoryCorpusState
+import cn.nabr.chatwithchat.data.database.entity.MemoryDailyEvidence
 import cn.nabr.chatwithchat.data.database.entity.MemoryDistillationCheckpoint
 import cn.nabr.chatwithchat.data.database.entity.MemoryMutationGroup
 import cn.nabr.chatwithchat.data.database.entity.MemoryMutationReceipt
@@ -12,6 +13,7 @@ internal class InMemoryMemoryRecoveryDao(
     private val mutationGroups = linkedMapOf<String, MemoryMutationGroup>()
     private val mutationReceipts = linkedMapOf<String, MemoryMutationReceipt>()
     private val corpusStates = linkedMapOf<String, MemoryCorpusState>()
+    private val dailyEvidence = linkedMapOf<Pair<String, String>, MemoryDailyEvidence>()
     private val distillationCheckpoints = linkedMapOf<String, MemoryDistillationCheckpoint>()
 
     override suspend fun insertMutationGroup(group: MemoryMutationGroup) {
@@ -309,10 +311,98 @@ internal class InMemoryMemoryRecoveryDao(
         return 1
     }
 
+    override suspend fun insertDailyEvidenceIgnore(evidence: MemoryDailyEvidence): Long {
+        val key = evidence.evidenceKey to evidence.contentHash
+        if (key in dailyEvidence) return -1L
+        dailyEvidence[key] = evidence
+        return dailyEvidence.size.toLong()
+    }
+
+    override suspend fun getDailyEvidence(
+        evidenceKey: String,
+        contentHash: String
+    ): MemoryDailyEvidence? = dailyEvidence[evidenceKey to contentHash]
+
+    override suspend fun hasNewerDailyEvidenceVersion(
+        evidenceKey: String,
+        contentHash: String,
+        updatedAt: Long
+    ): Boolean = dailyEvidence.values.any { evidence ->
+        evidence.evidenceKey == evidenceKey &&
+            evidence.contentHash != contentHash &&
+            evidence.updatedAt >= updatedAt
+    }
+
+    override suspend fun recordDailyEvidenceSelection(
+        evidenceKey: String,
+        contentHash: String,
+        windowId: String,
+        checkpointId: String,
+        promotedDecision: String,
+        updatedAt: Long
+    ): Int {
+        val key = evidenceKey to contentHash
+        val current = dailyEvidence[key] ?: return 0
+        if (current.decision == promotedDecision) return 0
+        dailyEvidence[key] = current.copy(
+            lastWindowId = windowId,
+            lastCheckpointId = checkpointId,
+            updatedAt = updatedAt
+        )
+        return 1
+    }
+
+    override suspend fun recordPendingDailyEvidenceDecision(
+        evidenceKey: String,
+        contentHash: String,
+        checkpointId: String,
+        pendingDecision: String,
+        targetEntryId: String?,
+        pendingState: String,
+        updatedAt: Long
+    ): Int {
+        val key = evidenceKey to contentHash
+        val current = dailyEvidence[key] ?: return 0
+        if (current.lastCheckpointId != checkpointId || current.decision != pendingState) return 0
+        dailyEvidence[key] = current.copy(
+            pendingDecision = pendingDecision,
+            targetEntryId = targetEntryId,
+            updatedAt = updatedAt
+        )
+        return 1
+    }
+
+    override suspend fun finalizeDailyEvidenceDecisions(
+        checkpointId: String,
+        mutationGroupId: String?,
+        pendingState: String,
+        finalDecisions: List<String>,
+        decidedAt: Long
+    ): Int {
+        val matchingKeys = dailyEvidence
+            .filterValues { evidence ->
+                evidence.lastCheckpointId == checkpointId &&
+                    evidence.decision == pendingState &&
+                    evidence.pendingDecision in finalDecisions
+            }
+            .keys
+        matchingKeys.forEach { key ->
+            val current = checkNotNull(dailyEvidence[key])
+            dailyEvidence[key] = current.copy(
+                decision = checkNotNull(current.pendingDecision),
+                pendingDecision = null,
+                mutationGroupId = mutationGroupId,
+                updatedAt = decidedAt,
+                decidedAt = decidedAt
+            )
+        }
+        return matchingKeys.size
+    }
+
     override suspend fun insertDistillationCheckpointIgnore(checkpoint: MemoryDistillationCheckpoint): Long {
         val duplicate = distillationCheckpoints.values.any { existing ->
-            existing.dailySourcePath == checkpoint.dailySourcePath &&
-                existing.dailySourceHash == checkpoint.dailySourceHash &&
+            existing.windowId == checkpoint.windowId &&
+                existing.windowSourceManifestHash == checkpoint.windowSourceManifestHash &&
                 existing.batchKey == checkpoint.batchKey
         }
         if (checkpoint.checkpointId in distillationCheckpoints || duplicate) return -1L
@@ -321,12 +411,12 @@ internal class InMemoryMemoryRecoveryDao(
     }
 
     override suspend fun getDistillationCheckpoint(
-        dailySourcePath: String,
-        dailySourceHash: String,
+        windowId: String,
+        windowSourceManifestHash: String,
         batchKey: String
     ): MemoryDistillationCheckpoint? = distillationCheckpoints.values.firstOrNull { checkpoint ->
-        checkpoint.dailySourcePath == dailySourcePath &&
-            checkpoint.dailySourceHash == dailySourceHash &&
+        checkpoint.windowId == windowId &&
+            checkpoint.windowSourceManifestHash == windowSourceManifestHash &&
             checkpoint.batchKey == batchKey
     }
 
@@ -336,8 +426,8 @@ internal class InMemoryMemoryRecoveryDao(
         .asSequence()
         .filter { checkpoint -> checkpoint.semanticJobId == semanticJobId }
         .sortedWith(
-            compareBy<MemoryDistillationCheckpoint> { checkpoint -> checkpoint.dailyDate }
-                .thenBy { checkpoint -> checkpoint.dailySourcePath }
+            compareBy<MemoryDistillationCheckpoint> { checkpoint -> checkpoint.windowEndDate }
+                .thenBy { checkpoint -> checkpoint.windowId }
                 .thenBy { checkpoint -> checkpoint.batchKey }
                 .thenBy { checkpoint -> checkpoint.checkpointId }
         )
@@ -348,16 +438,16 @@ internal class InMemoryMemoryRecoveryDao(
     ): List<MemoryDistillationCheckpoint> = distillationCheckpoints.values
         .filter { checkpoint -> checkpoint.status in statuses }
         .sortedWith(
-            compareBy<MemoryDistillationCheckpoint> { it.dailyDate }
-                .thenBy { it.dailySourcePath }
+            compareBy<MemoryDistillationCheckpoint> { it.windowEndDate }
+                .thenBy { it.windowId }
         )
 
     override suspend fun transitionDistillationCheckpointCas(
         checkpointId: String,
         expectedStatus: String,
         expectedRowVersion: Long,
-        expectedDailySourcePath: String,
-        expectedDailySourceHash: String,
+        expectedWindowId: String,
+        expectedWindowSourceManifestHash: String,
         expectedBatchKey: String,
         expectedSemanticJobId: String,
         expectedTargetSourcePath: String,
@@ -373,8 +463,8 @@ internal class InMemoryMemoryRecoveryDao(
         val current = distillationCheckpoints[checkpointId] ?: return 0
         val matches = current.status == expectedStatus &&
             current.rowVersion == expectedRowVersion &&
-            current.dailySourcePath == expectedDailySourcePath &&
-            current.dailySourceHash == expectedDailySourceHash &&
+            current.windowId == expectedWindowId &&
+            current.windowSourceManifestHash == expectedWindowSourceManifestHash &&
             current.batchKey == expectedBatchKey &&
             current.semanticJobId == expectedSemanticJobId &&
             current.targetSourcePath == expectedTargetSourcePath &&
@@ -399,8 +489,8 @@ internal class InMemoryMemoryRecoveryDao(
         checkpointId: String,
         expectedStatus: String,
         expectedRowVersion: Long,
-        expectedDailySourcePath: String,
-        expectedDailySourceHash: String,
+        expectedWindowId: String,
+        expectedWindowSourceManifestHash: String,
         expectedBatchKey: String,
         expectedSemanticJobId: String,
         expectedTargetSourcePath: String,
@@ -414,8 +504,8 @@ internal class InMemoryMemoryRecoveryDao(
         val current = distillationCheckpoints[checkpointId] ?: return 0
         val matches = current.status == expectedStatus &&
             current.rowVersion == expectedRowVersion &&
-            current.dailySourcePath == expectedDailySourcePath &&
-            current.dailySourceHash == expectedDailySourceHash &&
+            current.windowId == expectedWindowId &&
+            current.windowSourceManifestHash == expectedWindowSourceManifestHash &&
             current.batchKey == expectedBatchKey &&
             current.semanticJobId == expectedSemanticJobId &&
             current.targetSourcePath == expectedTargetSourcePath &&

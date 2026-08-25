@@ -10,6 +10,7 @@ import cn.nabr.chatwithchat.data.repository.SettingRepository
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.time.Clock
+import java.time.Instant
 import java.time.LocalDate
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.decodeFromString
@@ -746,7 +747,7 @@ class MemoryBatchConsolidationService(
                     check(
                         operation.destination != MemoryBatchDestination.LONG_TERM ||
                             operation.source != MemorySource.ASSISTANT_INFERRED ||
-                            operation.evidenceTurnKeys.size >= MIN_INFERRED_LONG_TERM_EVIDENCE
+                            hasCrossDayEvidence(operation.evidenceTurnKeys, turnsByKey)
                     ) { "assistant_inferred_long_term_create_requires_repeated_evidence" }
                     validatedCanonicalWrite(operation, null, turnsByKey)
                 }
@@ -871,6 +872,19 @@ class MemoryBatchConsolidationService(
         )
     }
 
+    private fun hasCrossDayEvidence(
+        evidenceTurnKeys: List<String>,
+        turnsByKey: Map<String, MemoryCompletedTurnSnapshot>
+    ): Boolean = evidenceTurnKeys.size >= MIN_INFERRED_LONG_TERM_EVIDENCE &&
+        evidenceTurnKeys
+            .map { turnKey ->
+                Instant.ofEpochSecond(turnsByKey.getValue(turnKey).completedAt)
+                    .atZone(clock.zone)
+                    .toLocalDate()
+            }
+            .distinct()
+            .size >= MIN_DISTINCT_OBSERVATION_DAYS
+
     private fun validateWriteText(text: String) {
         val normalized = text.trim()
         check(normalized.isNotBlank())
@@ -890,10 +904,53 @@ class MemoryBatchConsolidationService(
         }
         val todayPath = memoryFileStore.relativePath(snapshot.todayMemoryFile).getOrThrow()
         val existingById = existingMemories.associateBy { it.id }
+        val dailyEntriesByIdentity = filesByPath
+            .filterKeys { sourcePath -> sourcePath.startsWith("${MemoryFilePaths.DAILY_MEMORY_DIRECTORY_NAME}/") }
+            .flatMap { (sourcePath, file) ->
+                markdownMemoryCodec.parse(memoryFileStore.readMemoryFile(file).getOrThrow()).entries
+                    .asSequence()
+                    .filter { entry -> entry.validity != MemoryValidity.OBSOLETE }
+                    .mapNotNull { entry ->
+                        entry.canonicalKey?.let { canonicalKey ->
+                            DailyMemoryLocation(
+                                identity = MemoryCanonicalIdentityPolicy.normalizeCanonicalKey(canonicalKey, entry.scope) +
+                                    "\u0000${entry.scope}",
+                                sourcePath = sourcePath,
+                                entry = entry
+                            )
+                        }
+                    }
+                    .toList()
+            }
+            .groupBy(DailyMemoryLocation::identity)
+            .mapValues { (_, locations) ->
+                locations.maxWith(
+                    compareBy<DailyMemoryLocation> { location -> location.entry.lastObservedAt }
+                        .thenBy(DailyMemoryLocation::sourcePath)
+                        .thenBy { location -> location.entry.id }
+                )
+            }
+        val dailyObservationLocations = operations.withIndex()
+            .filter { indexedOperation ->
+                indexedOperation.value.action == MemoryBatchAction.CREATE &&
+                    indexedOperation.value.destination == MemoryBatchDestination.DAILY
+            }
+            .mapNotNull { indexedOperation ->
+                val operation = indexedOperation.value
+                val identity = requireNotNull(operation.canonicalKey) + "\u0000${requireNotNull(operation.scope)}"
+                dailyEntriesByIdentity[identity]?.let { location -> indexedOperation.index to location }
+            }
+            .toMap()
         val requiredPaths = buildSet {
-            operations.forEach { operation ->
+            operations.withIndex().forEach { indexedOperation ->
+                val operation = indexedOperation.value
                 when (operation.action) {
-                    MemoryBatchAction.CREATE -> add(pathForDestination(operation.destination, todayPath))
+                    MemoryBatchAction.CREATE -> add(
+                        dailyObservationLocations[indexedOperation.index]?.sourcePath ?: pathForDestination(
+                            operation.destination,
+                            todayPath
+                        )
+                    )
                     MemoryBatchAction.REPLACE,
                     MemoryBatchAction.REMOVE -> operation.targetMemoryId?.let { targetId ->
                         existingById[targetId]?.sourcePath?.let(::add)
@@ -914,7 +971,10 @@ class MemoryBatchConsolidationService(
 
         val indexedOperationsByPath = operations
             .withIndex()
-            .filter { indexedOperation -> indexedOperation.value.action != MemoryBatchAction.IGNORE }
+            .filter { indexedOperation ->
+                indexedOperation.value.action != MemoryBatchAction.IGNORE &&
+                    indexedOperation.index !in dailyObservationLocations
+            }
             .groupBy { indexedOperation ->
                 val operation = indexedOperation.value
                 when (operation.action) {
@@ -1025,6 +1085,32 @@ class MemoryBatchConsolidationService(
                 dailyWriteCount += 1
             }
         }
+
+        dailyObservationLocations
+            .toList()
+            .groupBy { (_, location) -> location.sourcePath }
+            .forEach { (sourcePath, observations) ->
+                val updates = observations
+                    .groupBy { (_, location) -> location.entry.id }
+                    .map { (entryId, matching) ->
+                        MarkdownMemoryObservationUpdate(
+                            entryId = entryId,
+                            lastObservedAt = matching.maxOf { (operationIndex, _) ->
+                                requireNotNull(operations[operationIndex].evidenceAt)
+                            },
+                            evidenceRefs = matching
+                                .flatMap { (operationIndex, _) -> operations[operationIndex].evidenceTurnKeys }
+                                .distinct()
+                                .sorted()
+                        )
+                    }
+                val result = markdownMemoryCodec.updateObservations(
+                    markdown = checkNotNull(editedMarkdown[sourcePath]),
+                    updates = updates
+                )
+                editedMarkdown[sourcePath] = result.markdown
+                dailyWriteCount += result.updatedCount
+            }
 
         editedMarkdown.forEach { (sourcePath, markdown) ->
             validateNoNewExactTextDuplicates(
@@ -1224,6 +1310,7 @@ class MemoryBatchConsolidationService(
         private const val MAX_EXISTING_CANDIDATES = 200
         private const val MAX_EXISTING_MEMORY_TOKEN_BUDGET = 2_400
         private const val MIN_INFERRED_LONG_TERM_EVIDENCE = 2
+        private const val MIN_DISTINCT_OBSERVATION_DAYS = 2
         private val VALID_TRIGGER_REASONS = setOf(
             MemoryTurnBatchTriggerReason.THRESHOLD,
             MemoryTurnBatchTriggerReason.IDLE,
@@ -1254,6 +1341,12 @@ private data class RenderedMemoryBatch(
     val targets: List<MemoryMutationTarget>,
     val dailyWriteCount: Int,
     val longTermWriteCount: Int
+)
+
+private data class DailyMemoryLocation(
+    val identity: String,
+    val sourcePath: String,
+    val entry: MarkdownMemoryEntry
 )
 
 private data class MemoryBatchOperationValidationResult(

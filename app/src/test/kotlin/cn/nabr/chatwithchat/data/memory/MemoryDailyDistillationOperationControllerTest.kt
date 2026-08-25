@@ -39,6 +39,47 @@ class MemoryDailyDistillationOperationControllerTest {
     }
 
     @Test
+    fun `inferred promotion requires observations spanning distinct days`() {
+        val fixture = fixture()
+        val first = fixture.input.dailyEvidence.single().copy(
+            evidenceKey = "evidence-1",
+            source = MemorySource.ASSISTANT_INFERRED,
+            evidenceRefs = listOf("turn:one"),
+            observationDates = listOf("2026-07-11")
+        )
+        val sameDay = first.copy(
+            evidenceKey = "evidence-2",
+            contentHash = "f".repeat(64),
+            evidenceRefs = listOf("turn:two"),
+            observationDates = listOf("2026-07-11")
+        )
+        val crossDay = sameDay.copy(observationDates = listOf("2026-07-12"))
+        val operation = operation(
+            action = MemoryDailyDistillationAction.CREATE,
+            text = "The user enjoys a topic.",
+            source = MemorySource.ASSISTANT_INFERRED,
+            evidenceKeys = listOf(first.evidenceKey, sameDay.evidenceKey)
+        )
+
+        val sameDayValidation = controller.validateWithDiagnostics(
+            fixture.input.copy(dailyEvidence = listOf(first, sameDay)),
+            listOf(operation)
+        )
+        assertTrue(sameDayValidation.operations.isEmpty())
+        assertEquals(
+            "assistant_inferred_long_term_create_requires_repeated_evidence",
+            sameDayValidation.diagnostics.single().code
+        )
+
+        val crossDayValidation = controller.validateWithDiagnostics(
+            fixture.input.copy(dailyEvidence = listOf(first, crossDay)),
+            listOf(operation)
+        )
+        assertEquals(1, crossDayValidation.operations.size)
+        assertTrue(crossDayValidation.diagnostics.isEmpty())
+    }
+
+    @Test
     fun `create derives conservative metadata and renders one long term target`() {
         val fixture = fixture()
         val operations = controller.validate(
@@ -516,12 +557,23 @@ class MemoryDailyDistillationOperationControllerTest {
         val input = MemoryDailyDistillationFrozenInput(
             batchId = "daily-batch",
             batchKey = "batch-0000",
-            dailySourcePath = "memory/2026-07-11.md",
-            dailySourceHash = "d".repeat(64),
-            dailyDate = "2026-07-11",
+            windowId = "daily_2026-06-28_2026-07-11",
+            windowStartDate = "2026-06-28",
+            windowEndDate = "2026-07-11",
+            windowSourceManifest = listOf(
+                MemoryDailyDistillationSourceManifest(
+                    sourcePath = "memory/2026-07-11.md",
+                    sourceDate = "2026-07-11",
+                    sourceHash = "d".repeat(64)
+                )
+            ),
+            windowSourceManifestHash = "d".repeat(64),
             dailyEvidence = listOf(
                 MemoryDailyDistillationEvidence(
                     evidenceKey = "evidence-1",
+                    contentHash = "e".repeat(64),
+                    sourcePath = "memory/2026-07-11.md",
+                    sourceDate = "2026-07-11",
                     entryId = "daily-1",
                     text = "The user explicitly asked for concise answers.",
                     type = "communication_style",
