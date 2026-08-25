@@ -403,6 +403,26 @@ class ChatDatabaseV2MigrationsTest {
         assertTrue(migrationSql.contains("room_fts_content_sync_chat_history_projection_fts_BEFORE_DELETE"))
     }
 
+    @Test
+    fun `migration 23 to 24 adds durable semantic requeue and quarantine fields`() {
+        val executedSql = mutableListOf<String>()
+        val db = recordingDatabase(executedSql)
+
+        ChatDatabaseV2Migrations.MIGRATION_23_24.migrate(db)
+
+        assertEquals(
+            listOf(
+                "ALTER TABLE `memory_maintenance_job` ADD COLUMN `requeue_cycle` INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE `memory_maintenance_job` ADD COLUMN `requeue_idempotency_key` TEXT",
+                "ALTER TABLE `memory_maintenance_job` ADD COLUMN `quarantine_reason` TEXT",
+                "ALTER TABLE `memory_maintenance_job` ADD COLUMN `recovery_disposition` TEXT"
+            ),
+            executedSql.take(4)
+        )
+        assertTrue(executedSql.any { it.contains("index_memory_maintenance_job_requeue_idempotency_key") })
+        assertTrue(executedSql.any { it.contains("index_memory_maintenance_job_recovery_disposition") })
+    }
+
     private fun recordingDatabase(executedSql: MutableList<String>): SupportSQLiteDatabase = Proxy.newProxyInstance(
         SupportSQLiteDatabase::class.java.classLoader,
         arrayOf(SupportSQLiteDatabase::class.java),

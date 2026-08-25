@@ -59,6 +59,15 @@ interface MemoryTurnBatchDao {
 
     @Query(
         """
+        SELECT * FROM memory_pending_turn
+        WHERE turn_key IN (:turnKeys)
+        ORDER BY completed_at ASC, user_message_id ASC
+        """
+    )
+    suspend fun getPendingTurnsByKeys(turnKeys: List<String>): List<MemoryPendingTurn>
+
+    @Query(
+        """
         SELECT DISTINCT claimed_job_id FROM memory_pending_turn
         WHERE claimed_job_id IS NOT NULL
         ORDER BY claimed_job_id ASC
@@ -99,6 +108,29 @@ interface MemoryTurnBatchDao {
         """
     )
     suspend fun claimTurns(turnKeys: List<String>, jobId: String, updatedAt: Long): Int
+
+    @Query(
+        """
+        UPDATE memory_pending_turn
+        SET claimed_job_id = :jobId, updated_at = :updatedAt
+        WHERE turn_key IN (:turnKeys)
+            AND claimed_job_id IS NULL
+            AND (
+                SELECT COUNT(*) FROM memory_pending_turn
+                WHERE turn_key IN (:turnKeys)
+            ) = :expectedCount
+            AND (
+                SELECT COUNT(*) FROM memory_pending_turn
+                WHERE turn_key IN (:turnKeys) AND claimed_job_id IS NULL
+            ) = :expectedCount
+        """
+    )
+    suspend fun claimFrozenTurnsOnlyIfAllUnclaimed(
+        turnKeys: List<String>,
+        jobId: String,
+        expectedCount: Int,
+        updatedAt: Long
+    ): Int
 
     @Query(
         """
@@ -183,6 +215,41 @@ interface MemoryTurnBatchDao {
         return getTurnsClaimedByJob(jobId)
     }
 
+    /**
+     * Restores a requeued batch's immutable input without taking any newer turns. A partial
+     * restore is never allowed: a missing or already-owned key leaves this job unclaimed.
+     */
+    @Transaction
+    suspend fun claimFrozenTurnsForRequeue(
+        turnKeys: List<String>,
+        jobId: String,
+        updatedAt: Long
+    ): MemoryFrozenTurnClaimResult {
+        val distinctTurnKeys = turnKeys.distinct()
+        require(distinctTurnKeys.isNotEmpty()) { "A frozen memory batch must contain turns" }
+        require(distinctTurnKeys.size == turnKeys.size) { "A frozen memory batch cannot repeat a turn" }
+
+        val existingTurns = getPendingTurnsByKeys(distinctTurnKeys)
+        if (existingTurns.isEmpty()) return MemoryFrozenTurnClaimResult.ALREADY_COMPLETED
+        if (
+            existingTurns.size != distinctTurnKeys.size ||
+            existingTurns.any { turn -> turn.claimedJobId != null }
+        ) {
+            return MemoryFrozenTurnClaimResult.CONFLICTED
+        }
+        val claimed = claimFrozenTurnsOnlyIfAllUnclaimed(
+            turnKeys = distinctTurnKeys,
+            jobId = jobId,
+            expectedCount = distinctTurnKeys.size,
+            updatedAt = updatedAt
+        )
+        return if (claimed == distinctTurnKeys.size) {
+            MemoryFrozenTurnClaimResult.CLAIMED
+        } else {
+            MemoryFrozenTurnClaimResult.CONFLICTED
+        }
+    }
+
     @Transaction
     suspend fun completeClaimedBatch(jobId: String, updatedAt: Long): Boolean {
         val claimedTurns = getTurnsClaimedByJob(jobId)
@@ -212,4 +279,10 @@ interface MemoryTurnBatchDao {
         advanceAllCheckpointsToObserved(updatedAt)
         return deletedCount
     }
+}
+
+enum class MemoryFrozenTurnClaimResult {
+    CLAIMED,
+    ALREADY_COMPLETED,
+    CONFLICTED
 }

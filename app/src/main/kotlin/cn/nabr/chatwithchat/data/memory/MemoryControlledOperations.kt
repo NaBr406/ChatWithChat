@@ -42,7 +42,12 @@ class MemoryDailyDistillationOperationController(
     fun validate(
         input: MemoryDailyDistillationFrozenInput,
         operations: List<MemoryDailyDistillationOperation>
-    ): List<MemoryDailyDistillationOperation> {
+    ): List<MemoryDailyDistillationOperation> = validateWithDiagnostics(input, operations).operations
+
+    fun validateWithDiagnostics(
+        input: MemoryDailyDistillationFrozenInput,
+        operations: List<MemoryDailyDistillationOperation>
+    ): MemoryDailyDistillationValidationResult {
         require(input.dailySourcePath.startsWith("${MemoryFilePaths.DAILY_MEMORY_DIRECTORY_NAME}/"))
         require(input.dailyEvidence.isNotEmpty())
         require(input.dailyEvidence.map { evidence -> evidence.evidenceKey }.distinct().size == input.dailyEvidence.size)
@@ -53,9 +58,9 @@ class MemoryDailyDistillationOperationController(
         val evidenceByKey = input.dailyEvidence.associateBy(MemoryDailyDistillationEvidence::evidenceKey)
         require(input.dailyEvidence.all { evidence -> evidence.createdAt >= 0L && evidence.updatedAt >= 0L })
         val existingById = input.existingMemories.associateBy(MemoryBatchExistingMemory::id)
-        val targetedIds = mutableSetOf<String>()
-
-        return operations.map { operation ->
+        val diagnostics = mutableListOf<MemoryOperationDiagnostic>()
+        val validated = operations.mapIndexedNotNull { index, operation ->
+            val validatedOperation = runCatching {
             require(operation.action in VALID_ACTIONS)
             require(operation.type in MemoryControlledOperationPolicy.validTypes)
             require(operation.sensitivity in MemoryControlledOperationPolicy.validSensitivities)
@@ -81,7 +86,6 @@ class MemoryDailyDistillationOperationController(
                     val normalizedText = normalizeWriteText(operation.text)
                     val target = if (operation.action == MemoryDailyDistillationAction.REPLACE) {
                         val targetId = requireNotNull(operation.targetMemoryId?.takeIf(String::isNotBlank))
-                        require(targetedIds.add(targetId))
                         requireNotNull(existingById[targetId])
                     } else {
                         require(operation.targetMemoryId.isNullOrBlank())
@@ -132,7 +136,32 @@ class MemoryDailyDistillationOperationController(
                 }
                 else -> error("Unsupported daily distillation action")
             }
+            }.getOrElse { throwable ->
+                diagnostics += MemoryOperationDiagnostic(index, throwable.safeValidationCode())
+                return@mapIndexedNotNull null
+            }
+            IndexedValue(index, validatedOperation)
         }
+        val targetedIds = mutableSetOf<String>()
+        val retained = validated.mapNotNull { indexed ->
+            val operation = indexed.value
+            if (
+                operation.action != MemoryDailyDistillationAction.REPLACE ||
+                targetedIds.add(checkNotNull(operation.targetMemoryId))
+            ) {
+                indexed
+            } else {
+                diagnostics += MemoryOperationDiagnostic(
+                    indexed.index,
+                    "duplicate_target_memory"
+                )
+                null
+            }
+        }
+        return MemoryDailyDistillationValidationResult(
+            operations = retained.map { it.value },
+            diagnostics = diagnostics.sortedBy(MemoryOperationDiagnostic::index)
+        )
     }
 
     fun render(
@@ -257,4 +286,9 @@ data class RenderedMemoryDailyDistillation(
     val targets: List<MemoryMutationTarget>,
     val writeCount: Int,
     val targetSourceHash: String
+)
+
+data class MemoryDailyDistillationValidationResult(
+    val operations: List<MemoryDailyDistillationOperation>,
+    val diagnostics: List<MemoryOperationDiagnostic>
 )

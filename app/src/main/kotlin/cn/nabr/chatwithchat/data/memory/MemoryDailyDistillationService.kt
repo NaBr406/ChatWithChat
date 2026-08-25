@@ -105,6 +105,7 @@ class MemoryDailyDistillationService(
         var mutation = memoryMutationCoordinator.findBySemanticJobId(job.jobId)
         val resumedMutation = mutation != null
         var operationCount = 0
+        var operationDiagnostics = emptyList<MemoryOperationDiagnostic>()
         var activityPlatform: PlatformV2? = null
         if (mutation == null) {
             val sourceState = validateFrozenSources(payload.input)
@@ -184,8 +185,8 @@ class MemoryDailyDistillationService(
                     operationCount = proposal.operations.size
                 )
             )
-            val validatedOperations = runCatching {
-                operationController.validate(payload.input, proposal.operations)
+            val validation = runCatching {
+                operationController.validateWithDiagnostics(payload.input, proposal.operations)
             }.getOrElse { throwable ->
                 activityLogger.finishRunSafely(
                     activityRunId,
@@ -199,12 +200,26 @@ class MemoryDailyDistillationService(
                 )
                 return retryable(runningJob, "invalid_daily_distillation_operations:${throwable.message}")
             }
+            if (proposal.operations.isNotEmpty() && validation.operations.isEmpty()) {
+                activityLogger.finishRunSafely(
+                    activityRunId,
+                    MemoryActivityStatus.FAILED,
+                    resolvedPlatform.toMemoryActivityData(
+                        inputCount = inputCount,
+                        operationCount = proposal.operations.size,
+                        errorCode = "all_daily_operations_invalid",
+                        errorDetail = validation.diagnostics.toActivityDetail()
+                    ),
+                    expectedPhase = MemoryActivityPhase.ORGANIZATION
+                )
+                return retryable(runningJob, "all_daily_operations_invalid")
+            }
             val baseMarkdown = memoryFileStore.readLongTermMemory().getOrThrow()
             val rendered = runCatching {
                 operationController.render(
                     input = payload.input,
                     baseMarkdown = baseMarkdown,
-                    validatedOperations = validatedOperations,
+                    validatedOperations = validation.operations,
                     renderedAt = payload.input.createdAt
                 )
             }.getOrElse { throwable ->
@@ -249,7 +264,8 @@ class MemoryDailyDistillationService(
                 )
                 return retryable(runningJob, "daily_distillation_render_failed:${throwable.message}")
             }
-            operationCount = proposal.operations.size
+            operationCount = validation.operations.size
+            operationDiagnostics = validation.diagnostics
             mutation = runCatching {
                 runningJob = maintenanceScheduler.renewClaimedLease(runningJob)
                 memoryMutationCoordinator.prepare(
@@ -351,7 +367,11 @@ class MemoryDailyDistillationService(
             } else {
                 MemoryActivityStatus.SUCCEEDED
             },
-            activityPlatform.activityData(inputCount = inputCount, operationCount = operationCount),
+            activityPlatform.activityData(
+                inputCount = inputCount,
+                operationCount = operationCount,
+                errorDetail = operationDiagnostics.toActivityDetail()
+            ),
             expectedPhase = MemoryActivityPhase.ORGANIZATION
         )
         return MemoryDailyDistillationProcessResult(
@@ -571,15 +591,18 @@ class MemoryDailyDistillationService(
     private fun PlatformV2?.activityData(
         inputCount: Int? = null,
         operationCount: Int? = null,
-        errorCode: String? = null
+        errorCode: String? = null,
+        errorDetail: String? = null
     ): MemoryActivityRunData = this?.toMemoryActivityData(
         inputCount = inputCount,
         operationCount = operationCount,
-        errorCode = errorCode
+        errorCode = errorCode,
+        errorDetail = errorDetail
     ) ?: MemoryActivityRunData(
         inputCount = inputCount,
         operationCount = operationCount,
-        errorCode = errorCode
+        errorCode = errorCode,
+        errorDetail = errorDetail
     )
 
     private fun now(): Long = clock.instant().epochSecond

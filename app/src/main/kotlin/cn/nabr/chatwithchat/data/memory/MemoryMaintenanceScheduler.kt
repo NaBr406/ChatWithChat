@@ -41,7 +41,11 @@ class MemoryMaintenanceScheduler(
             leaseOwner = null,
             leaseExpiresAt = null,
             retryCycle = 0,
-            blockedReason = null
+            blockedReason = null,
+            requeueCycle = 0,
+            requeueIdempotencyKey = null,
+            quarantineReason = null,
+            recoveryDisposition = null
         )
         val inserted = jobDao.insertIgnore(job)
         if (inserted != -1L) return job
@@ -183,7 +187,7 @@ class MemoryMaintenanceScheduler(
 
     internal suspend fun needsRecoveredConflictFinalization(jobId: String, reason: String): Boolean {
         val job = jobDao.getById(jobId) ?: return false
-        return !job.isFinalizedRecoveredConflict(reason)
+        return !job.isFinalizedRecoveredConflict(reason) && !job.hasResolvedSemanticFailureDisposition()
     }
 
     suspend fun nextRepairWakeAt(now: Long = now()): Long? = listOfNotNull(
@@ -352,6 +356,13 @@ class MemoryMaintenanceScheduler(
             leaseOwner == null &&
             leaseExpiresAt == null
 
+    private fun MemoryMaintenanceJob.hasResolvedSemanticFailureDisposition(): Boolean =
+        isSemanticTurnBatch() &&
+            recoveryDisposition in setOf(
+                MemoryMaintenanceJobRecoveryDisposition.REQUEUE_SCHEDULED,
+                MemoryMaintenanceJobRecoveryDisposition.QUARANTINED
+            )
+
     private fun MemoryMaintenanceJob.hasActiveLease(now: Long): Boolean =
         !leaseOwner.isNullOrBlank() && leaseExpiresAt?.let { expiresAt -> expiresAt > now } == true
 
@@ -403,6 +414,9 @@ class MemoryMaintenanceScheduler(
     ): MemoryMaintenanceJob {
         val policy = retryPolicy(job.family)
         if (job.attempts >= policy.maxAutomaticAttempts) {
+            if (job.isSemanticTurnBatch()) {
+                return requeueSemanticBatch(job, error)
+            }
             return transitionClaimed(
                 job = job,
                 status = policy.exhaustedStatus,
@@ -423,13 +437,131 @@ class MemoryMaintenanceScheduler(
     suspend fun markFailedTerminal(
         job: MemoryMaintenanceJob,
         error: String
-    ): MemoryMaintenanceJob = transition(
+    ): MemoryMaintenanceJob = if (job.isSemanticTurnBatch()) {
+        requeueSemanticBatch(job, error)
+    } else transition(
         job = job,
         status = MemoryMaintenanceJobStatus.FAILED_TERMINAL,
         lastError = error,
         blockedReason = error,
         nextRunAt = null
     )
+
+    private suspend fun requeueSemanticBatch(
+        job: MemoryMaintenanceJob,
+        error: String
+    ): MemoryMaintenanceJob {
+        val current = getLatestClaimedJob(job.jobId, checkNotNull(job.leaseOwner))
+            ?: throw MemoryMaintenanceLeaseLostException(job.jobId)
+        val now = now()
+        val nextCycle = current.requeueCycle + 1
+        if (nextCycle > MAX_SEMANTIC_REQUEUE_CYCLES) {
+            jobDao.releaseAndQuarantineClaimedSemanticJob(
+                job = current,
+                lastError = error.take(MAX_ERROR_LENGTH),
+                quarantineReason = error.take(MAX_ERROR_LENGTH),
+                updatedAt = now
+            )
+        } else {
+            val idempotencyKey = "${current.idempotencyKey}:requeue:$nextCycle"
+            val nextJob = current.copy(
+                jobId = "${current.jobId}:requeue:$nextCycle",
+                status = MemoryMaintenanceJobStatus.PENDING,
+                idempotencyKey = idempotencyKey,
+                attempts = 0,
+                lastError = null,
+                startedAt = null,
+                updatedAt = now,
+                nextRunAt = now + SEMANTIC_REQUEUE_DELAY_SECONDS,
+                rowVersion = 0,
+                leaseOwner = null,
+                leaseExpiresAt = null,
+                retryCycle = 0,
+                blockedReason = null,
+                requeueCycle = nextCycle,
+                requeueIdempotencyKey = idempotencyKey,
+                quarantineReason = null,
+                recoveryDisposition = null
+            )
+            jobDao.releaseAndRequeueClaimedSemanticJob(current, nextJob, error.take(MAX_ERROR_LENGTH), now)
+        }
+        val updated = checkNotNull(jobDao.getById(current.jobId))
+        emitStatusChanged(current, updated, now)
+        return updated
+    }
+
+    private suspend fun requeueExpiredSemanticBatch(
+        job: MemoryMaintenanceJob,
+        error: String,
+        now: Long
+    ) {
+        val nextCycle = job.requeueCycle + 1
+        if (nextCycle > MAX_SEMANTIC_REQUEUE_CYCLES) {
+            jobDao.releaseAndQuarantineExpiredSemanticJob(
+                job = job,
+                lastError = error.take(MAX_ERROR_LENGTH),
+                quarantineReason = error.take(MAX_ERROR_LENGTH),
+                updatedAt = now
+            )
+        } else {
+            val nextJob = requeueJob(job, nextCycle, now)
+            jobDao.releaseAndRequeueExpiredSemanticJob(
+                job = job,
+                nextJob = nextJob,
+                lastError = error.take(MAX_ERROR_LENGTH),
+                updatedAt = now
+            )
+        }
+        jobDao.getById(job.jobId)?.let { updated -> emitStatusChanged(job, updated, now) }
+    }
+
+    private fun requeueJob(
+        job: MemoryMaintenanceJob,
+        nextCycle: Int,
+        now: Long
+    ): MemoryMaintenanceJob {
+        val idempotencyKey = "${job.idempotencyKey}:requeue:$nextCycle"
+        return job.copy(
+            jobId = "${job.jobId}:requeue:$nextCycle",
+            status = MemoryMaintenanceJobStatus.PENDING,
+            idempotencyKey = idempotencyKey,
+            attempts = 0,
+            lastError = null,
+            startedAt = null,
+            updatedAt = now,
+            nextRunAt = now + SEMANTIC_REQUEUE_DELAY_SECONDS,
+            rowVersion = 0,
+            leaseOwner = null,
+            leaseExpiresAt = null,
+            retryCycle = 0,
+            blockedReason = null,
+            requeueCycle = nextCycle,
+            requeueIdempotencyKey = idempotencyKey,
+            quarantineReason = null,
+            recoveryDisposition = null
+        )
+    }
+
+    /**
+     * Old releases could leave a terminal semantic batch holding turn claims indefinitely. They
+     * are made visible, manually retryable quarantines during startup repair, never auto-retried.
+     */
+    suspend fun recoverLegacyTerminalSemanticBatches(limit: Int = DEFAULT_VISIBLE_LIMIT): Int {
+        val now = now()
+        return jobDao.getLegacyTerminalSemanticBatchJobs(limit).count { job ->
+            val recovered = runCatching {
+                jobDao.recoverLegacyTerminalSemanticBatch(job, now)
+            }.isSuccess
+            if (recovered) {
+                jobDao.getById(job.jobId)?.let { updated -> emitStatusChanged(job, updated, now) }
+            }
+            recovered
+        }
+    }
+
+    private fun MemoryMaintenanceJob.isSemanticTurnBatch(): Boolean =
+        family == MemoryMaintenanceJobFamily.SEMANTIC &&
+            type == MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH
 
     suspend fun markBlockedDependency(
         job: MemoryMaintenanceJob,
@@ -461,6 +593,11 @@ class MemoryMaintenanceScheduler(
         jobDao.getExpiredLeases(now = now, limit = limit).forEach { job ->
             val policy = retryPolicy(job.family)
             val exhausted = job.attempts >= policy.maxAutomaticAttempts
+            if (exhausted && job.isSemanticTurnBatch()) {
+                requeueExpiredSemanticBatch(job, "job_lease_expired", now)
+                resetCount += 1
+                return@forEach
+            }
             val status = if (exhausted) policy.exhaustedStatus else MemoryMaintenanceJobStatus.FAILED_RETRYABLE
             val reason = "job_lease_expired"
             val changed = jobDao.reclaimExpiredLease(
@@ -495,6 +632,10 @@ class MemoryMaintenanceScheduler(
         val policy = retryPolicy(job.family)
         val exhausted = job.attempts >= policy.maxAutomaticAttempts
         val reason = "job_lease_expired"
+        if (exhausted && job.isSemanticTurnBatch()) {
+            requeueExpiredSemanticBatch(job, reason, now)
+            return jobDao.getById(job.jobId)
+        }
         val changed = jobDao.reclaimExpiredLease(
             jobId = job.jobId,
             expectedLeaseOwner = job.leaseOwner,
@@ -719,6 +860,8 @@ class MemoryMaintenanceScheduler(
         private const val DEFAULT_EXPIRED_LEASE_LIMIT = 100
         private const val DEFAULT_VISIBLE_LIMIT = 200
         private const val SEMANTIC_LEASE_SECONDS = 30 * 60L
+        private const val SEMANTIC_REQUEUE_DELAY_SECONDS = 120L
+        private const val MAX_SEMANTIC_REQUEUE_CYCLES = 2
         private const val LOCAL_LEASE_SECONDS = 15 * 60L
         private val GENERATION_AWARE_TYPES = setOf(
             MemoryMaintenanceJobType.SYNC_VECTOR_INDEX,
@@ -826,4 +969,9 @@ object MemoryMaintenanceJobStatus {
     const val WAITING_REPAIR = "waiting_repair"
     const val BLOCKED_DEPENDENCY = "blocked_dependency"
     const val DISMISSED = "dismissed"
+}
+
+object MemoryMaintenanceJobRecoveryDisposition {
+    const val REQUEUE_SCHEDULED = "requeue_scheduled"
+    const val QUARANTINED = "quarantined"
 }

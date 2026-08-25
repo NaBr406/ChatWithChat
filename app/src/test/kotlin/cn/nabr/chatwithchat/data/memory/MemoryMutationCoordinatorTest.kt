@@ -852,9 +852,10 @@ class MemoryMutationCoordinatorTest {
         val secondRecovery = recoveryService.recoverIncomplete()
         val afterSecondRecovery = checkNotNull(fixture.jobDao.getById(sourceJob.jobId))
 
-        assertEquals(MemoryMaintenanceJobStatus.FAILED_TERMINAL, terminal.status)
+        assertEquals(MemoryMaintenanceJobStatus.WAITING_REPAIR, terminal.status)
         assertEquals(conflict.reason, terminal.lastError)
-        assertEquals(conflict.reason, terminal.blockedReason)
+        assertEquals(null, terminal.blockedReason)
+        assertEquals(MemoryMaintenanceJobRecoveryDisposition.REQUEUE_SCHEDULED, terminal.recoveryDisposition)
         assertEquals(null, terminal.startedAt)
         assertEquals(claimed.rowVersion + 1, terminal.rowVersion)
         assertEquals(0, firstRecovery.recoveredSemanticCount)

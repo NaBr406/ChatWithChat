@@ -552,6 +552,23 @@ object ChatDatabaseV2Migrations {
         }
     }
 
+    val MIGRATION_23_24 = object : Migration(23, 24) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE `memory_maintenance_job` ADD COLUMN `requeue_cycle` INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE `memory_maintenance_job` ADD COLUMN `requeue_idempotency_key` TEXT")
+            db.execSQL("ALTER TABLE `memory_maintenance_job` ADD COLUMN `quarantine_reason` TEXT")
+            db.execSQL("ALTER TABLE `memory_maintenance_job` ADD COLUMN `recovery_disposition` TEXT")
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_memory_maintenance_job_requeue_idempotency_key` " +
+                    "ON `memory_maintenance_job` (`requeue_idempotency_key`)"
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_memory_maintenance_job_recovery_disposition` " +
+                    "ON `memory_maintenance_job` (`recovery_disposition`)"
+            )
+        }
+    }
+
     internal fun createContextManagementTables(db: SupportSQLiteDatabase) {
         // Column order, types, defaults and index names below must match what Room generates for
         // ContextCheckpointSegment / ContextRangeState / ContextNativeCompactionState, or

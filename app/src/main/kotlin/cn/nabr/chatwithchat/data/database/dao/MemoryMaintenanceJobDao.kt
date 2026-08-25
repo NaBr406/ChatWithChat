@@ -6,6 +6,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
 import cn.nabr.chatwithchat.data.database.entity.MemoryMaintenanceJob
+import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceJobRecoveryDisposition
 
 @Dao
 interface MemoryMaintenanceJobDao {
@@ -85,6 +86,18 @@ interface MemoryMaintenanceJobDao {
         failureReasons: List<String>,
         limit: Int
     ): List<MemoryMaintenanceJob>
+
+    @Query(
+        """
+        SELECT * FROM memory_maintenance_job
+        WHERE family = 'semantic'
+            AND type = 'consolidate_turn_batch'
+            AND status = 'failed_terminal'
+        ORDER BY updated_at ASC, job_id ASC
+        LIMIT :limit
+        """
+    )
+    suspend fun getLegacyTerminalSemanticBatchJobs(limit: Int): List<MemoryMaintenanceJob>
 
     @Query(
         """
@@ -283,6 +296,240 @@ interface MemoryMaintenanceJobDao {
         updatedAt: Long,
         nextRunAt: Long?
     ): Int
+
+    @Query(
+        """
+        UPDATE memory_pending_turn
+        SET claimed_job_id = NULL, updated_at = :updatedAt
+        WHERE claimed_job_id = :jobId
+        """
+    )
+    suspend fun releaseClaimedTurnsForJob(jobId: String, updatedAt: Long): Int
+
+    @Query(
+        """
+        UPDATE memory_maintenance_job
+        SET status = 'waiting_repair',
+            last_error = :lastError,
+            blocked_reason = :blockedReason,
+            quarantine_reason = :quarantineReason,
+            recovery_disposition = :recoveryDisposition,
+            requeue_cycle = :requeueCycle,
+            requeue_idempotency_key = :requeueIdempotencyKey,
+            started_at = NULL,
+            updated_at = :updatedAt,
+            next_run_at = NULL,
+            lease_owner = NULL,
+            lease_expires_at = NULL,
+            row_version = row_version + 1
+        WHERE job_id = :jobId
+            AND status = 'running'
+            AND lease_owner = :leaseOwner
+            AND row_version = :expectedRowVersion
+            AND lease_expires_at > :updatedAt
+        """
+    )
+    suspend fun quarantineClaimedSemanticJob(
+        jobId: String,
+        leaseOwner: String,
+        expectedRowVersion: Long,
+        lastError: String?,
+        blockedReason: String?,
+        quarantineReason: String?,
+        recoveryDisposition: String,
+        requeueCycle: Int,
+        requeueIdempotencyKey: String?,
+        updatedAt: Long
+    ): Int
+
+    @Query(
+        """
+        UPDATE memory_maintenance_job
+        SET status = 'waiting_repair',
+            last_error = :lastError,
+            blocked_reason = :blockedReason,
+            quarantine_reason = :quarantineReason,
+            recovery_disposition = :recoveryDisposition,
+            started_at = NULL,
+            updated_at = :updatedAt,
+            next_run_at = NULL,
+            lease_owner = NULL,
+            lease_expires_at = NULL,
+            row_version = row_version + 1
+        WHERE job_id = :jobId
+            AND family = 'semantic'
+            AND type = 'consolidate_turn_batch'
+            AND status = 'failed_terminal'
+            AND row_version = :expectedRowVersion
+        """
+    )
+    suspend fun quarantineLegacyTerminalSemanticJob(
+        jobId: String,
+        expectedRowVersion: Long,
+        lastError: String?,
+        blockedReason: String?,
+        quarantineReason: String,
+        recoveryDisposition: String,
+        updatedAt: Long
+    ): Int
+
+    @Query(
+        """
+        UPDATE memory_maintenance_job
+        SET status = 'waiting_repair',
+            last_error = :lastError,
+            blocked_reason = :blockedReason,
+            quarantine_reason = :quarantineReason,
+            recovery_disposition = :recoveryDisposition,
+            requeue_cycle = :requeueCycle,
+            requeue_idempotency_key = :requeueIdempotencyKey,
+            started_at = NULL,
+            updated_at = :updatedAt,
+            next_run_at = NULL,
+            lease_owner = NULL,
+            lease_expires_at = NULL,
+            row_version = row_version + 1
+        WHERE job_id = :jobId
+            AND status = 'running'
+            AND row_version = :expectedRowVersion
+            AND (
+                lease_expires_at IS NULL
+                OR lease_expires_at <= :updatedAt
+                OR lease_owner IS NULL
+                OR TRIM(lease_owner) = ''
+            )
+        """
+    )
+    suspend fun quarantineExpiredSemanticJob(
+        jobId: String,
+        expectedRowVersion: Long,
+        lastError: String?,
+        blockedReason: String?,
+        quarantineReason: String?,
+        recoveryDisposition: String,
+        requeueCycle: Int,
+        requeueIdempotencyKey: String?,
+        updatedAt: Long
+    ): Int
+
+    @Transaction
+    suspend fun releaseAndRequeueClaimedSemanticJob(
+        job: MemoryMaintenanceJob,
+        nextJob: MemoryMaintenanceJob,
+        lastError: String?,
+        updatedAt: Long
+    ): Boolean {
+        if (getByIdempotencyKey(nextJob.idempotencyKey) == null) {
+            insertIgnore(nextJob)
+        }
+        releaseClaimedTurnsForJob(job.jobId, updatedAt)
+        val transitioned = quarantineClaimedSemanticJob(
+            jobId = job.jobId,
+            leaseOwner = checkNotNull(job.leaseOwner),
+            expectedRowVersion = job.rowVersion,
+            lastError = lastError,
+            blockedReason = null,
+            quarantineReason = null,
+            recoveryDisposition = MemoryMaintenanceJobRecoveryDisposition.REQUEUE_SCHEDULED,
+            requeueCycle = nextJob.requeueCycle,
+            requeueIdempotencyKey = nextJob.idempotencyKey,
+            updatedAt = updatedAt
+        )
+        check(transitioned == 1) { "Semantic maintenance job changed before requeue" }
+        return true
+    }
+
+    @Transaction
+    suspend fun releaseAndQuarantineClaimedSemanticJob(
+        job: MemoryMaintenanceJob,
+        lastError: String?,
+        quarantineReason: String,
+        updatedAt: Long
+    ): Boolean {
+        releaseClaimedTurnsForJob(job.jobId, updatedAt)
+        val transitioned = quarantineClaimedSemanticJob(
+            jobId = job.jobId,
+            leaseOwner = checkNotNull(job.leaseOwner),
+            expectedRowVersion = job.rowVersion,
+            lastError = lastError,
+            blockedReason = lastError,
+            quarantineReason = quarantineReason,
+            recoveryDisposition = MemoryMaintenanceJobRecoveryDisposition.QUARANTINED,
+            requeueCycle = job.requeueCycle,
+            requeueIdempotencyKey = job.requeueIdempotencyKey,
+            updatedAt = updatedAt
+        )
+        check(transitioned == 1) { "Semantic maintenance job changed before quarantine" }
+        return true
+    }
+
+    @Transaction
+    suspend fun recoverLegacyTerminalSemanticBatch(
+        job: MemoryMaintenanceJob,
+        updatedAt: Long
+    ): Boolean {
+        releaseClaimedTurnsForJob(job.jobId, updatedAt)
+        val transitioned = quarantineLegacyTerminalSemanticJob(
+            jobId = job.jobId,
+            expectedRowVersion = job.rowVersion,
+            lastError = job.lastError ?: "legacy_terminal_batch",
+            blockedReason = job.blockedReason ?: "legacy_terminal_batch",
+            quarantineReason = "legacy_terminal_batch",
+            recoveryDisposition = MemoryMaintenanceJobRecoveryDisposition.QUARANTINED,
+            updatedAt = updatedAt
+        )
+        check(transitioned == 1) { "Legacy semantic maintenance job changed before recovery" }
+        return true
+    }
+
+    @Transaction
+    suspend fun releaseAndRequeueExpiredSemanticJob(
+        job: MemoryMaintenanceJob,
+        nextJob: MemoryMaintenanceJob,
+        lastError: String?,
+        updatedAt: Long
+    ): Boolean {
+        if (getByIdempotencyKey(nextJob.idempotencyKey) == null) {
+            insertIgnore(nextJob)
+        }
+        releaseClaimedTurnsForJob(job.jobId, updatedAt)
+        val transitioned = quarantineExpiredSemanticJob(
+            jobId = job.jobId,
+            expectedRowVersion = job.rowVersion,
+            lastError = lastError,
+            blockedReason = null,
+            quarantineReason = null,
+            recoveryDisposition = MemoryMaintenanceJobRecoveryDisposition.REQUEUE_SCHEDULED,
+            requeueCycle = nextJob.requeueCycle,
+            requeueIdempotencyKey = nextJob.idempotencyKey,
+            updatedAt = updatedAt
+        )
+        check(transitioned == 1) { "Expired semantic maintenance job changed before requeue" }
+        return true
+    }
+
+    @Transaction
+    suspend fun releaseAndQuarantineExpiredSemanticJob(
+        job: MemoryMaintenanceJob,
+        lastError: String?,
+        quarantineReason: String,
+        updatedAt: Long
+    ): Boolean {
+        releaseClaimedTurnsForJob(job.jobId, updatedAt)
+        val transitioned = quarantineExpiredSemanticJob(
+            jobId = job.jobId,
+            expectedRowVersion = job.rowVersion,
+            lastError = lastError,
+            blockedReason = lastError,
+            quarantineReason = quarantineReason,
+            recoveryDisposition = MemoryMaintenanceJobRecoveryDisposition.QUARANTINED,
+            requeueCycle = job.requeueCycle,
+            requeueIdempotencyKey = job.requeueIdempotencyKey,
+            updatedAt = updatedAt
+        )
+        check(transitioned == 1) { "Expired semantic maintenance job changed before quarantine" }
+        return true
+    }
 
     @Query(
         """

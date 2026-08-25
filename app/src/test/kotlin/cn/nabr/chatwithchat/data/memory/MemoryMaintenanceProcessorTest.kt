@@ -178,23 +178,27 @@ class MemoryMaintenanceProcessorTest {
     }
 
     @Test
-    fun `batch consolidation becomes terminal after three automatic attempts`() = runBlocking {
-        val jobDao = InMemoryMaintenanceJobDao(listOf(job(MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH)))
+    fun `batch consolidation requeues after three automatic attempts`() = runBlocking {
+        val initialJob = job(MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH)
+        val jobDao = InMemoryMaintenanceJobDao(listOf(initialJob))
         val processor = createProcessor(jobDao = jobDao)
 
         repeat(3) {
             processor.processRunnableJobs(MemoryMaintenanceJobFamily.SEMANTIC)
-            val currentJob = jobDao.jobs.single()
+            val currentJob = jobDao.getById(initialJob.jobId)!!
             if (currentJob.status == MemoryMaintenanceJobStatus.FAILED_RETRYABLE) {
                 jobDao.forceUpdate(currentJob.copy(nextRunAt = 1_000L))
             }
         }
 
-        val terminalJob = jobDao.jobs.single()
-        assertEquals(3, terminalJob.attempts)
-        assertEquals(MemoryMaintenanceJobStatus.FAILED_TERMINAL, terminalJob.status)
-        assertEquals("batch_consolidation_pending", terminalJob.lastError)
-        assertEquals(0, processor.processRunnableJobs(MemoryMaintenanceJobFamily.SEMANTIC).processedCount)
+        val sourceJob = jobDao.getById(initialJob.jobId)!!
+        val requeuedJob = jobDao.jobs.single { it.jobId != initialJob.jobId }
+        assertEquals(3, sourceJob.attempts)
+        assertEquals(MemoryMaintenanceJobStatus.WAITING_REPAIR, sourceJob.status)
+        assertEquals("batch_consolidation_pending", sourceJob.lastError)
+        assertEquals(MemoryMaintenanceJobRecoveryDisposition.REQUEUE_SCHEDULED, sourceJob.recoveryDisposition)
+        assertEquals(MemoryMaintenanceJobStatus.PENDING, requeuedJob.status)
+        assertEquals(1, requeuedJob.requeueCycle)
     }
 
     @Test

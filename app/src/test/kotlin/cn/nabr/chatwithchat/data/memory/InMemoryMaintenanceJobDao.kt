@@ -57,6 +57,15 @@ internal class InMemoryMaintenanceJobDao(
         .sortedWith(compareBy<MemoryMaintenanceJob> { it.updatedAt }.thenBy { it.jobId })
         .take(limit)
 
+    override suspend fun getLegacyTerminalSemanticBatchJobs(limit: Int): List<MemoryMaintenanceJob> = jobs
+        .filter { job ->
+            job.family == MemoryMaintenanceJobFamily.SEMANTIC &&
+                job.type == MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH &&
+                job.status == MemoryMaintenanceJobStatus.FAILED_TERMINAL
+        }
+        .sortedWith(compareBy<MemoryMaintenanceJob> { it.updatedAt }.thenBy { it.jobId })
+        .take(limit)
+
     override suspend fun hasRunnableJob(family: String, now: Long): Boolean =
         (
             family != MemoryMaintenanceJobFamily.SEMANTIC ||
@@ -195,6 +204,119 @@ internal class InMemoryMaintenanceJobDao(
             startedAt = null,
             updatedAt = updatedAt,
             nextRunAt = nextRunAt,
+            rowVersion = jobs[index].rowVersion + 1,
+            leaseOwner = null,
+            leaseExpiresAt = null
+        )
+        return 1
+    }
+
+    override suspend fun releaseClaimedTurnsForJob(jobId: String, updatedAt: Long): Int = 0
+
+    override suspend fun quarantineClaimedSemanticJob(
+        jobId: String,
+        leaseOwner: String,
+        expectedRowVersion: Long,
+        lastError: String?,
+        blockedReason: String?,
+        quarantineReason: String?,
+        recoveryDisposition: String,
+        requeueCycle: Int,
+        requeueIdempotencyKey: String?,
+        updatedAt: Long
+    ): Int {
+        val index = jobs.indexOfFirst { job ->
+            job.jobId == jobId &&
+                job.status == MemoryMaintenanceJobStatus.RUNNING &&
+                job.leaseOwner == leaseOwner &&
+                job.rowVersion == expectedRowVersion &&
+                (job.leaseExpiresAt ?: Long.MIN_VALUE) > updatedAt
+        }
+        if (index == -1) return 0
+        jobs[index] = jobs[index].copy(
+            status = MemoryMaintenanceJobStatus.WAITING_REPAIR,
+            lastError = lastError,
+            blockedReason = blockedReason,
+            quarantineReason = quarantineReason,
+            recoveryDisposition = recoveryDisposition,
+            requeueCycle = requeueCycle,
+            requeueIdempotencyKey = requeueIdempotencyKey,
+            startedAt = null,
+            updatedAt = updatedAt,
+            nextRunAt = null,
+            rowVersion = jobs[index].rowVersion + 1,
+            leaseOwner = null,
+            leaseExpiresAt = null
+        )
+        return 1
+    }
+
+    override suspend fun quarantineLegacyTerminalSemanticJob(
+        jobId: String,
+        expectedRowVersion: Long,
+        lastError: String?,
+        blockedReason: String?,
+        quarantineReason: String,
+        recoveryDisposition: String,
+        updatedAt: Long
+    ): Int {
+        val index = jobs.indexOfFirst { job ->
+            job.jobId == jobId &&
+                job.family == MemoryMaintenanceJobFamily.SEMANTIC &&
+                job.type == MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH &&
+                job.status == MemoryMaintenanceJobStatus.FAILED_TERMINAL &&
+                job.rowVersion == expectedRowVersion
+        }
+        if (index == -1) return 0
+        jobs[index] = jobs[index].copy(
+            status = MemoryMaintenanceJobStatus.WAITING_REPAIR,
+            lastError = lastError,
+            blockedReason = blockedReason,
+            quarantineReason = quarantineReason,
+            recoveryDisposition = recoveryDisposition,
+            startedAt = null,
+            updatedAt = updatedAt,
+            nextRunAt = null,
+            rowVersion = jobs[index].rowVersion + 1,
+            leaseOwner = null,
+            leaseExpiresAt = null
+        )
+        return 1
+    }
+
+    override suspend fun quarantineExpiredSemanticJob(
+        jobId: String,
+        expectedRowVersion: Long,
+        lastError: String?,
+        blockedReason: String?,
+        quarantineReason: String?,
+        recoveryDisposition: String,
+        requeueCycle: Int,
+        requeueIdempotencyKey: String?,
+        updatedAt: Long
+    ): Int {
+        val index = jobs.indexOfFirst { job ->
+            job.jobId == jobId &&
+                job.status == MemoryMaintenanceJobStatus.RUNNING &&
+                job.rowVersion == expectedRowVersion &&
+                (
+                    job.leaseExpiresAt == null ||
+                        job.leaseExpiresAt <= updatedAt ||
+                        job.leaseOwner.isNullOrBlank()
+                    )
+        }
+        if (index == -1) return 0
+        jobs[index] = jobs[index].copy(
+            status = MemoryMaintenanceJobStatus.WAITING_REPAIR,
+            lastError = lastError,
+            blockedReason = blockedReason,
+            quarantineReason = quarantineReason,
+            recoveryDisposition = recoveryDisposition,
+            requeueCycle = requeueCycle,
+            requeueIdempotencyKey = requeueIdempotencyKey,
+            startedAt = null,
+            updatedAt = updatedAt,
+            nextRunAt = null,
             rowVersion = jobs[index].rowVersion + 1,
             leaseOwner = null,
             leaseExpiresAt = null

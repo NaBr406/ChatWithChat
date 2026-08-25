@@ -64,6 +64,7 @@ class MemoryTurnBatchScheduler(
             return onMemoryEnabledChanged(false)
         }
 
+        val recoveredTerminalBatchCount = maintenanceScheduler.recoverLegacyTerminalSemanticBatches()
         var repairedClaimCount = 0
         turnBatchDao.getClaimedJobIds().forEach { jobId ->
             if (maintenanceJobDao.getById(jobId) == null) {
@@ -96,6 +97,7 @@ class MemoryTurnBatchScheduler(
         val idleBatchCount = promoteDueIdleBatches()
         scheduleNextWake()
         return MemoryTurnBatchRepairResult(
+            recoveredTerminalBatchCount = recoveredTerminalBatchCount,
             repairedClaimCount = repairedClaimCount,
             thresholdBatchCount = thresholdBatchCount,
             idleBatchCount = idleBatchCount
@@ -248,6 +250,7 @@ class MemoryTurnBatchScheduler(
 }
 
 data class MemoryTurnBatchRepairResult(
+    val recoveredTerminalBatchCount: Int = 0,
     val repairedClaimCount: Int = 0,
     val thresholdBatchCount: Int = 0,
     val idleBatchCount: Int = 0,

@@ -1,6 +1,7 @@
 package cn.nabr.chatwithchat.data.memory
 
 import android.util.Log
+import cn.nabr.chatwithchat.data.database.dao.MemoryFrozenTurnClaimResult
 import cn.nabr.chatwithchat.data.database.dao.MemoryTurnBatchDao
 import cn.nabr.chatwithchat.data.database.entity.MemoryMaintenanceJob
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
@@ -66,6 +67,33 @@ class MemoryBatchConsolidationService(
                 expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
             )
             return terminal(job, "invalid_batch_turns")
+        }
+        when (ensureFrozenTurnClaim(job, payload)) {
+            MemoryFrozenTurnClaimResult.CLAIMED -> Unit
+            MemoryFrozenTurnClaimResult.ALREADY_COMPLETED -> {
+                activityLogger.finishRunSafely(
+                    activityRunId,
+                    MemoryActivityStatus.NO_OP,
+                    MemoryActivityRunData(inputCount = payload.turns.size, errorCode = "frozen_batch_already_complete"),
+                    expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
+                )
+                maintenanceScheduler.markSucceeded(job)
+                turnBatchScheduler.repairAndSchedule()
+                return MemoryBatchProcessResult(
+                    status = MemoryBatchProcessResult.STATUS_SUCCEEDED,
+                    jobId = job.jobId,
+                    reason = "frozen_batch_already_complete"
+                )
+            }
+            MemoryFrozenTurnClaimResult.CONFLICTED -> {
+                activityLogger.finishRunSafely(
+                    activityRunId,
+                    MemoryActivityStatus.FAILED,
+                    MemoryActivityRunData(inputCount = payload.turns.size, errorCode = "frozen_batch_claim_conflict"),
+                    expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
+                )
+                return terminal(job, "frozen_batch_claim_conflict")
+            }
         }
         val existingMutation = memoryMutationCoordinator.findBySemanticJobId(job.jobId)
         val batchAlreadyComplete = existingMutation == null && isClaimedBatchComplete(job.jobId, payload)
@@ -169,6 +197,7 @@ class MemoryBatchConsolidationService(
         var operationCount = 0
         var dailyWriteCount = 0
         var longTermWriteCount = 0
+        var operationDiagnostics = emptyList<MemoryOperationDiagnostic>()
         var activityPlatform: PlatformV2? = null
         val preparedMutation: MemoryPreparedMutation?
 
@@ -233,7 +262,7 @@ class MemoryBatchConsolidationService(
                     operationCount = proposal.operations.size
                 )
             )
-            val validatedOperations = runCatching { validateOperations(request, proposal.operations) }
+            val validation = runCatching { validateOperations(request, proposal.operations) }
                 .getOrElse { throwable ->
                     activityLogger.finishRunSafely(
                         activityRunId,
@@ -253,12 +282,32 @@ class MemoryBatchConsolidationService(
                         proposal.operations.size
                     )
                 }
+            if (proposal.operations.isNotEmpty() && validation.operations.isEmpty()) {
+                activityLogger.finishRunSafely(
+                    activityRunId,
+                    MemoryActivityStatus.FAILED,
+                    resolvedPlatform.toMemoryActivityData(
+                        inputCount = request.turns.size,
+                        operationCount = proposal.operations.size,
+                        errorCode = "all_consolidation_operations_invalid",
+                        errorDetail = validation.diagnostics.toActivityDetail()
+                    ),
+                    expectedPhase = MemoryActivityPhase.ORGANIZATION
+                )
+                return retryable(
+                    runningJob,
+                    request,
+                    "all_consolidation_operations_invalid",
+                    startedAt,
+                    proposal.operations.size
+                )
+            }
             val renderedBatch = runCatching {
                 renderOperations(
                     batchId = request.batchId,
                     chatId = request.chatId,
                     existingMemories = request.existingMemories,
-                    operations = validatedOperations
+                    operations = validation.operations
                 )
             }.getOrElse { throwable ->
                 rethrowCommitInterruption(throwable)
@@ -280,7 +329,8 @@ class MemoryBatchConsolidationService(
                     proposal.operations.size
                 )
             }
-            operationCount = proposal.operations.size
+            operationCount = validation.operations.size
+            operationDiagnostics = validation.diagnostics
             dailyWriteCount = renderedBatch.dailyWriteCount
             longTermWriteCount = renderedBatch.longTermWriteCount
             preparedMutation = runCatching {
@@ -431,7 +481,8 @@ class MemoryBatchConsolidationService(
             },
             activityPlatform.activityData(
                 inputCount = request.turns.size,
-                operationCount = operationCount
+                operationCount = operationCount,
+                errorDetail = operationDiagnostics.toActivityDetail()
             ),
             expectedPhase = MemoryActivityPhase.ORGANIZATION
         )
@@ -509,6 +560,18 @@ class MemoryBatchConsolidationService(
     }.getOrElse { throwable ->
         runCatching { Log.w(TAG, "Memory batch ${job.jobId} has invalid claimed turns: ${throwable.message}") }
         false
+    }
+
+    private suspend fun ensureFrozenTurnClaim(
+        job: MemoryMaintenanceJob,
+        payload: MemoryTurnBatchJobPayload
+    ): MemoryFrozenTurnClaimResult {
+        if (validateClaimedTurns(job, payload)) return MemoryFrozenTurnClaimResult.CLAIMED
+        return turnBatchDao.claimFrozenTurnsForRequeue(
+            turnKeys = payload.turns.map { turn -> turn.turnKey },
+            jobId = job.jobId,
+            updatedAt = now()
+        )
     }
 
     private suspend fun isClaimedBatchComplete(
@@ -648,14 +711,14 @@ class MemoryBatchConsolidationService(
     private fun validateOperations(
         request: MemoryBatchConsolidationRequest,
         operations: List<MemoryBatchOperation>
-    ): List<MemoryBatchOperation> {
+    ): MemoryBatchOperationValidationResult {
         check(operations.size <= MemoryControlledOperationPolicy.MAX_OPERATIONS)
         val existingById = request.existingMemories.associateBy { it.id }
         val turnsByKey = request.turns.associateBy { it.turnKey }
-        val targetedIds = mutableSetOf<String>()
-        val normalizedWriteTextsByTarget = mutableMapOf<String, MutableSet<String>>()
+        val diagnostics = mutableListOf<MemoryOperationDiagnostic>()
 
-        val validated = operations.map { operation ->
+        val validatedIndexed = operations.mapIndexedNotNull { index, operation ->
+            val validatedOperation = runCatching {
             check(operation.destination in VALID_DESTINATIONS)
             check(operation.action in VALID_ACTIONS)
             check(operation.type in MemoryControlledOperationPolicy.validTypes)
@@ -679,13 +742,6 @@ class MemoryBatchConsolidationService(
                 MemoryBatchAction.CREATE -> {
                     check(operation.targetMemoryId.isNullOrBlank())
                     validateWriteText(operation.text)
-                    if (operation.destination == MemoryBatchDestination.DAILY) {
-                        registerExactWrite(
-                            normalizedWriteTextsByTarget = normalizedWriteTextsByTarget,
-                            sourcePath = proposalPathForDestination(operation.destination),
-                            text = operation.text
-                        )
-                    }
                     check(operation.evidenceTurnKeys.isNotEmpty())
                     check(
                         operation.destination != MemoryBatchDestination.LONG_TERM ||
@@ -697,23 +753,14 @@ class MemoryBatchConsolidationService(
                 MemoryBatchAction.REPLACE -> {
                     val targetId = checkNotNull(operation.targetMemoryId?.takeIf { it.isNotBlank() })
                     val existing = checkNotNull(existingById[targetId])
-                    check(targetedIds.add(targetId))
                     check(operation.destination == destinationFor(existing.sourcePath))
                     validateWriteText(operation.text)
-                    if (existing.sourcePath != MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME) {
-                        registerExactWrite(
-                            normalizedWriteTextsByTarget = normalizedWriteTextsByTarget,
-                            sourcePath = existing.sourcePath,
-                            text = operation.text
-                        )
-                    }
                     check(operation.evidenceTurnKeys.isNotEmpty())
                     validatedCanonicalWrite(operation, existing, turnsByKey).copy(targetMemoryId = targetId)
                 }
                 MemoryBatchAction.REMOVE -> {
                     val targetId = checkNotNull(operation.targetMemoryId?.takeIf { it.isNotBlank() })
                     val existing = checkNotNull(existingById[targetId])
-                    check(targetedIds.add(targetId))
                     check(operation.destination == destinationFor(existing.sourcePath))
                     check(operation.text.isBlank())
                     check(operation.evidenceTurnKeys.isNotEmpty())
@@ -729,19 +776,56 @@ class MemoryBatchConsolidationService(
                 }
                 else -> error("Unsupported memory batch action")
             }
+            }.getOrElse { throwable ->
+                diagnostics += MemoryOperationDiagnostic(index, throwable.safeValidationCode())
+                return@mapIndexedNotNull null
+            }
+            IndexedValue(index, validatedOperation)
+        }
+        val destinationByText = mutableMapOf<String, String>()
+        val writeKeys = mutableSetOf<String>()
+        val retained = validatedIndexed.mapNotNull { indexed ->
+            val operation = indexed.value
+            if (operation.action !in setOf(MemoryBatchAction.CREATE, MemoryBatchAction.REPLACE)) {
+                return@mapNotNull indexed
+            }
+            val normalizedText = normalizeExactMemoryText(operation.text)
+            val previousDestination = destinationByText[normalizedText]
+            if (previousDestination != null && previousDestination != operation.destination) {
+                diagnostics += MemoryOperationDiagnostic(indexed.index, "cross_destination_exact_memory_text")
+                return@mapNotNull null
+            }
+            val writeKey = "${operation.destination}|$normalizedText"
+            if (!writeKeys.add(writeKey)) {
+                diagnostics += MemoryOperationDiagnostic(indexed.index, "duplicate_exact_memory_text")
+                return@mapNotNull null
+            }
+            destinationByText[normalizedText] = operation.destination
+            indexed
         }
 
-        validated
-            .filter { operation -> operation.action in setOf(MemoryBatchAction.CREATE, MemoryBatchAction.REPLACE) }
-            .groupBy { operation -> normalizeExactMemoryText(operation.text) }
-            .values
-            .forEach { sameTextOperations ->
-                check(sameTextOperations.map { operation -> operation.destination }.distinct().size == 1) {
-                    "cross_destination_exact_memory_text"
-                }
+        val targetedIds = mutableSetOf<String>()
+        val operationsWithDistinctTargets = retained.mapNotNull { indexed ->
+            val operation = indexed.value
+            val targetId = operation.targetMemoryId
+            if (
+                operation.action !in setOf(MemoryBatchAction.REPLACE, MemoryBatchAction.REMOVE) ||
+                targetedIds.add(checkNotNull(targetId))
+            ) {
+                indexed
+            } else {
+                diagnostics += MemoryOperationDiagnostic(
+                    indexed.index,
+                    "duplicate_target_memory"
+                )
+                null
             }
+        }
 
-        return validated
+        return MemoryBatchOperationValidationResult(
+            operationsWithDistinctTargets.map { it.value },
+            diagnostics.sortedBy(MemoryOperationDiagnostic::index)
+        )
     }
 
     private fun validatedCanonicalWrite(
@@ -785,18 +869,6 @@ class MemoryBatchConsolidationService(
             recallState = recallState,
             reason = operation.reason.trim()
         )
-    }
-
-    private fun registerExactWrite(
-        normalizedWriteTextsByTarget: MutableMap<String, MutableSet<String>>,
-        sourcePath: String,
-        text: String
-    ) {
-        check(
-            normalizedWriteTextsByTarget
-                .getOrPut(sourcePath) { mutableSetOf() }
-                .add(normalizeExactMemoryText(text))
-        ) { "duplicate_exact_memory_text" }
     }
 
     private fun validateWriteText(text: String) {
@@ -1064,15 +1136,18 @@ class MemoryBatchConsolidationService(
     private fun PlatformV2?.activityData(
         inputCount: Int? = null,
         operationCount: Int? = null,
-        errorCode: String? = null
+        errorCode: String? = null,
+        errorDetail: String? = null
     ): MemoryActivityRunData = this?.toMemoryActivityData(
         inputCount = inputCount,
         operationCount = operationCount,
-        errorCode = errorCode
+        errorCode = errorCode,
+        errorDetail = errorDetail
     ) ?: MemoryActivityRunData(
         inputCount = inputCount,
         operationCount = operationCount,
-        errorCode = errorCode
+        errorCode = errorCode,
+        errorDetail = errorDetail
     )
 
     private suspend fun retryable(
@@ -1180,3 +1255,30 @@ private data class RenderedMemoryBatch(
     val dailyWriteCount: Int,
     val longTermWriteCount: Int
 )
+
+private data class MemoryBatchOperationValidationResult(
+    val operations: List<MemoryBatchOperation>,
+    val diagnostics: List<MemoryOperationDiagnostic>
+)
+
+data class MemoryOperationDiagnostic(
+    val index: Int,
+    val code: String
+) {
+    init {
+        require(index >= 0)
+        require(SAFE_OPERATION_DIAGNOSTIC_CODE.matches(code))
+    }
+}
+
+internal fun Throwable.safeValidationCode(): String = message
+    ?.takeIf { SAFE_OPERATION_DIAGNOSTIC_CODE.matches(it) }
+    ?: "invalid_operation"
+
+internal fun List<MemoryOperationDiagnostic>.toActivityDetail(): String? =
+    take(MAX_OPERATION_DIAGNOSTICS).takeIf(List<MemoryOperationDiagnostic>::isNotEmpty)?.joinToString(",") { diagnostic ->
+        "${diagnostic.index}:${diagnostic.code}"
+    }
+
+private const val MAX_OPERATION_DIAGNOSTICS = 16
+private val SAFE_OPERATION_DIAGNOSTIC_CODE = Regex("[a-z0-9][a-z0-9._:-]{0,99}")

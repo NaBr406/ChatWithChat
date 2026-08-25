@@ -1,5 +1,6 @@
 package cn.nabr.chatwithchat.data.database
 
+import cn.nabr.chatwithchat.data.database.dao.MemoryFrozenTurnClaimResult
 import cn.nabr.chatwithchat.data.database.dao.MemoryTurnBatchDao
 import cn.nabr.chatwithchat.data.database.entity.MemoryChatCheckpoint
 import cn.nabr.chatwithchat.data.database.entity.MemoryPendingTurn
@@ -72,6 +73,40 @@ class MemoryTurnBatchDaoTest {
         assertNull(dao.getCheckpoint(99))
     }
 
+    @Test
+    fun `frozen requeue only claims its exact unclaimed turn set`() = runBlocking {
+        val dao = InMemoryMemoryTurnBatchDao()
+        dao.upsertPendingTurn(turn(1, 1))
+        dao.upsertPendingTurn(turn(1, 2))
+        dao.upsertPendingTurn(turn(1, 3))
+
+        assertEquals(
+            MemoryFrozenTurnClaimResult.CLAIMED,
+            dao.claimFrozenTurnsForRequeue(listOf("1:1", "1:2"), "requeue-job", updatedAt = 100L)
+        )
+        assertEquals(listOf(1, 2), dao.getTurnsClaimedByJob("requeue-job").map { it.userMessageId })
+        assertEquals(listOf(3), dao.getOldestUnclaimedTurns(1, 5).map { it.userMessageId })
+
+        dao.releaseClaim("requeue-job", updatedAt = 101L)
+        dao.claimTurns(listOf("1:2"), "other-job", updatedAt = 102L)
+        assertEquals(
+            MemoryFrozenTurnClaimResult.CONFLICTED,
+            dao.claimFrozenTurnsForRequeue(listOf("1:1", "1:2"), "requeue-job", updatedAt = 103L)
+        )
+        assertTrue(dao.getTurnsClaimedByJob("requeue-job").isEmpty())
+        assertEquals(listOf(1, 3), dao.getOldestUnclaimedTurns(1, 5).map { it.userMessageId })
+    }
+
+    @Test
+    fun `frozen requeue treats an absent turn set as already complete`() = runBlocking {
+        val dao = InMemoryMemoryTurnBatchDao()
+
+        assertEquals(
+            MemoryFrozenTurnClaimResult.ALREADY_COMPLETED,
+            dao.claimFrozenTurnsForRequeue(listOf("1:1"), "requeue-job", updatedAt = 100L)
+        )
+    }
+
     private fun checkpoint(
         chatId: Int,
         pendingSince: Long? = null,
@@ -129,6 +164,9 @@ internal class InMemoryMemoryTurnBatchDao : MemoryTurnBatchDao {
     override suspend fun getTurnsClaimedByJob(jobId: String): List<MemoryPendingTurn> = sortedTurns()
         .filter { it.claimedJobId == jobId }
 
+    override suspend fun getPendingTurnsByKeys(turnKeys: List<String>): List<MemoryPendingTurn> = sortedTurns()
+        .filter { it.turnKey in turnKeys }
+
     override suspend fun getClaimedJobIds(): List<String> = turns.values.mapNotNull { it.claimedJobId }.distinct().sorted()
 
     override suspend fun getChatIdsWithUnclaimedTurns(): List<Int> = turns.values
@@ -155,6 +193,22 @@ internal class InMemoryMemoryTurnBatchDao : MemoryTurnBatchDao {
             }
         }
         return claimed
+    }
+
+    override suspend fun claimFrozenTurnsOnlyIfAllUnclaimed(
+        turnKeys: List<String>,
+        jobId: String,
+        expectedCount: Int,
+        updatedAt: Long
+    ): Int {
+        val selectedTurns = turnKeys.mapNotNull(turns::get)
+        if (
+            selectedTurns.size != expectedCount ||
+            selectedTurns.any { turn -> turn.claimedJobId != null }
+        ) {
+            return 0
+        }
+        return claimTurns(turnKeys, jobId, updatedAt)
     }
 
     override suspend fun releaseClaim(jobId: String, updatedAt: Long): Int {

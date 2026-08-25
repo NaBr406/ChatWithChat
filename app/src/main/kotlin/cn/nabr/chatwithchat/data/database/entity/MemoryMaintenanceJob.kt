@@ -80,5 +80,17 @@ data class MemoryMaintenanceJob(
     val resolvedModelId: String? = null,
 
     @ColumnInfo(name = "resolved_at")
-    val resolvedAt: Long? = null
+    val resolvedAt: Long? = null,
+
+    @ColumnInfo(name = "requeue_cycle", defaultValue = "0")
+    val requeueCycle: Int = 0,
+
+    @ColumnInfo(name = "requeue_idempotency_key")
+    val requeueIdempotencyKey: String? = null,
+
+    @ColumnInfo(name = "quarantine_reason")
+    val quarantineReason: String? = null,
+
+    @ColumnInfo(name = "recovery_disposition")
+    val recoveryDisposition: String? = null
 )

@@ -90,7 +90,7 @@ import cn.nabr.chatwithchat.data.database.entity.TokenUsageRecordConverter
         McpServerEntity::class,
         McpToolEntity::class
     ],
-    version = 23,
+    version = 24,
     exportSchema = true
 )
 @TypeConverters(

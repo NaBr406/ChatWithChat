@@ -289,9 +289,15 @@ class MemoryMaintenanceSchedulerTest {
         val resetCount = createScheduler(dao).resetExpiredRunningJobs(now = 100)
 
         assertEquals(2, resetCount)
-        assertEquals(MemoryMaintenanceJobStatus.FAILED_TERMINAL, dao.getById("semantic-exhausted")?.status)
+        val semanticSource = checkNotNull(dao.getById("semantic-exhausted"))
+        val semanticRequeue = checkNotNull(dao.getById("semantic-exhausted:requeue:1"))
+        assertEquals(MemoryMaintenanceJobStatus.WAITING_REPAIR, semanticSource.status)
+        assertEquals(MemoryMaintenanceJobRecoveryDisposition.REQUEUE_SCHEDULED, semanticSource.recoveryDisposition)
+        assertEquals("key:semantic-exhausted:requeue:1", semanticSource.requeueIdempotencyKey)
+        assertEquals(MemoryMaintenanceJobStatus.PENDING, semanticRequeue.status)
+        assertEquals(220L, semanticRequeue.nextRunAt)
         assertEquals(MemoryMaintenanceJobStatus.WAITING_REPAIR, dao.getById("index-exhausted")?.status)
-        assertNull(dao.getById("semantic-exhausted")?.nextRunAt)
+        assertNull(semanticSource.nextRunAt)
         assertNull(dao.getById("index-exhausted")?.nextRunAt)
     }
 
@@ -529,7 +535,7 @@ class MemoryMaintenanceSchedulerTest {
     }
 
     @Test
-    fun `semantic exhausts at three attempts while local work waits after five`() = runBlocking {
+    fun `semantic exhaustion schedules a bounded frozen requeue while local work waits after five`() = runBlocking {
         val semanticDao = InMemoryMaintenanceJobDao(
             listOf(job("semantic", MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH))
         )
@@ -543,8 +549,16 @@ class MemoryMaintenanceSchedulerTest {
                 semanticDao.forceUpdate(failed.copy(nextRunAt = 100))
             }
         }
-        assertEquals(MemoryMaintenanceJobStatus.FAILED_TERMINAL, semanticDao.jobs.single().status)
-        assertEquals(3, semanticDao.jobs.single().attempts)
+        val exhaustedSource = semanticDao.getById("semantic")!!
+        val requeue = semanticDao.getById("semantic:requeue:1")!!
+        assertEquals(MemoryMaintenanceJobStatus.WAITING_REPAIR, exhaustedSource.status)
+        assertEquals(MemoryMaintenanceJobRecoveryDisposition.REQUEUE_SCHEDULED, exhaustedSource.recoveryDisposition)
+        assertEquals("key:semantic:requeue:1", exhaustedSource.requeueIdempotencyKey)
+        assertEquals(1, exhaustedSource.requeueCycle)
+        assertEquals(MemoryMaintenanceJobStatus.PENDING, requeue.status)
+        assertEquals(1, requeue.requeueCycle)
+        assertEquals(exhaustedSource.payloadJson, requeue.payloadJson)
+        assertEquals(220L, requeue.nextRunAt)
 
         val indexDao = InMemoryMaintenanceJobDao(
             listOf(job("index", MemoryMaintenanceJobType.REBUILD_MEMORY_INDEX))
@@ -561,6 +575,27 @@ class MemoryMaintenanceSchedulerTest {
         }
         assertEquals(MemoryMaintenanceJobStatus.WAITING_REPAIR, indexDao.jobs.single().status)
         assertEquals(5, indexDao.jobs.single().attempts)
+    }
+
+    @Test
+    fun `legacy terminal semantic batch becomes manually retryable quarantine`() = runBlocking {
+        val legacy = job(
+            jobId = "legacy-semantic",
+            type = MemoryMaintenanceJobType.CONSOLIDATE_TURN_BATCH,
+            status = MemoryMaintenanceJobStatus.FAILED_TERMINAL,
+            attempts = 3
+        ).copy(lastError = "invalid_batch_payload", blockedReason = "invalid_batch_payload")
+        val dao = InMemoryMaintenanceJobDao(listOf(legacy))
+        val scheduler = createScheduler(dao)
+
+        assertEquals(1, scheduler.recoverLegacyTerminalSemanticBatches())
+
+        val recovered = dao.getById(legacy.jobId)!!
+        assertEquals(MemoryMaintenanceJobStatus.WAITING_REPAIR, recovered.status)
+        assertEquals("legacy_terminal_batch", recovered.quarantineReason)
+        assertEquals(MemoryMaintenanceJobRecoveryDisposition.QUARANTINED, recovered.recoveryDisposition)
+        assertEquals(0, scheduler.recoverLegacyTerminalSemanticBatches())
+        assertEquals(MemoryMaintenanceJobStatus.PENDING, scheduler.retryManually(legacy.jobId)?.status)
     }
 
     @Test

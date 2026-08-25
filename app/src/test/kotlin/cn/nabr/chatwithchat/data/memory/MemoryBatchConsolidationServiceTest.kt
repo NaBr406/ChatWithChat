@@ -78,7 +78,7 @@ class MemoryBatchConsolidationServiceTest {
                     "\"evidenceTurnKeys\":[\"chat:7:user:1\"],\"reason\":\"baseline\"}]}",
                 expectedStatus = MemoryActivityStatus.FAILED,
                 expectedPhase = MemoryActivityPhase.ORGANIZATION,
-                expectedErrorCode = "invalid_consolidation_operations",
+                expectedErrorCode = "all_consolidation_operations_invalid",
                 expectedOperationCount = 1
             )
         )
@@ -291,7 +291,7 @@ class MemoryBatchConsolidationServiceTest {
     }
 
     @Test
-    fun `same batch exact duplicate creates fail closed without advancing checkpoint`() = runBlocking {
+    fun `same batch duplicate create commits the first valid operation`() = runBlocking {
         val fixture = fixture(
             MemoryBatchConsolidationProposal(
                 operations = listOf(
@@ -306,23 +306,20 @@ class MemoryBatchConsolidationServiceTest {
                 )
             )
         )
-        val beforeLongTerm = fixture.fileStore.readLongTermMemory().getOrThrow()
-        val beforeDaily = fixture.fileStore.readDailyMemory().getOrThrow()
         val job = fixture.createFiveTurnBatch()
 
         val result = fixture.service.process(job)
 
-        assertEquals(MemoryBatchProcessResult.STATUS_RETRYABLE, result.status)
-        assertEquals(0, result.dailyWriteCount + result.longTermWriteCount)
-        assertEquals(beforeLongTerm, fixture.fileStore.readLongTermMemory().getOrThrow())
-        assertEquals(beforeDaily, fixture.fileStore.readDailyMemory().getOrThrow())
-        assertEquals(0, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
-        assertEquals(5, fixture.turnDao.getTurnsClaimedByJob(job.jobId).size)
-        assertEquals(null, fixture.recoveryDao.getMutationGroupBySemanticJobId(job.jobId))
+        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(1, result.operationCount)
+        assertEquals(1, result.longTermWriteCount)
+        assertTrue(fixture.fileStore.readLongTermMemory().getOrThrow().contains("The user prefers CAFÉ answers."))
+        assertEquals(5, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
+        assertTrue(fixture.turnDao.getTurnsClaimedByJob(job.jobId).isEmpty())
     }
 
     @Test
-    fun `create and replace with exact text in one target fail before rendering`() = runBlocking {
+    fun `duplicate replace is dropped while a valid create commits`() = runBlocking {
         val existingEntry = longTermEntry(
             id = "mem_mixed_target",
             text = "The user originally preferred concise answers."
@@ -348,19 +345,18 @@ class MemoryBatchConsolidationServiceTest {
         fixture.fileStore.replaceLongTermMemory(
             MarkdownMemoryCodec().renderLongTerm(listOf(existingEntry))
         ).getOrThrow()
-        val before = fixture.fileStore.readLongTermMemory().getOrThrow()
         val job = fixture.createFiveTurnBatch()
 
         val result = fixture.service.process(job)
 
-        assertEquals(MemoryBatchProcessResult.STATUS_RETRYABLE, result.status)
-        assertEquals(before, fixture.fileStore.readLongTermMemory().getOrThrow())
-        assertEquals(0, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
-        assertEquals(null, fixture.recoveryDao.getMutationGroupBySemanticJobId(job.jobId))
+        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(1, result.operationCount)
+        assertTrue(fixture.fileStore.readLongTermMemory().getOrThrow().contains(duplicateText))
+        assertEquals(5, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
     }
 
     @Test
-    fun `multiple replacements with exact text in one target fail before rendering`() = runBlocking {
+    fun `duplicate replacement text keeps the first valid replacement`() = runBlocking {
         val firstEntry = longTermEntry("mem_first_target", "The first project is active.")
         val secondEntry = longTermEntry("mem_second_target", "The second project is active.")
         val fixture = fixture(
@@ -385,15 +381,61 @@ class MemoryBatchConsolidationServiceTest {
         fixture.fileStore.replaceLongTermMemory(
             MarkdownMemoryCodec().renderLongTerm(listOf(firstEntry, secondEntry))
         ).getOrThrow()
-        val before = fixture.fileStore.readLongTermMemory().getOrThrow()
         val job = fixture.createFiveTurnBatch()
 
         val result = fixture.service.process(job)
 
-        assertEquals(MemoryBatchProcessResult.STATUS_RETRYABLE, result.status)
-        assertEquals(before, fixture.fileStore.readLongTermMemory().getOrThrow())
-        assertEquals(0, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
-        assertEquals(null, fixture.recoveryDao.getMutationGroupBySemanticJobId(job.jobId))
+        val entries = MarkdownMemoryCodec().parse(fixture.fileStore.readLongTermMemory().getOrThrow()).entries
+
+        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(1, result.operationCount)
+        assertTrue(entries.any { entry -> entry.text == "Both projects share the same status." })
+        assertTrue(entries.any { entry -> entry.id == secondEntry.id && entry.text == secondEntry.text })
+        assertEquals(5, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
+    }
+
+    @Test
+    fun `discarded replacement does not reserve its target from a later valid replacement`() = runBlocking {
+        val target = longTermEntry("mem_target", "The user previously preferred short answers.")
+        val duplicateText = "The user wants detailed answers."
+        val replacementText = "The user now prefers thorough technical answers."
+        val fixture = fixture(
+            proposal = MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        text = duplicateText
+                    ),
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        action = MemoryBatchAction.REPLACE,
+                        targetMemoryId = target.id,
+                        text = duplicateText
+                    ),
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        action = MemoryBatchAction.REPLACE,
+                        targetMemoryId = target.id,
+                        text = replacementText
+                    )
+                )
+            ),
+            retrievalResults = listOf(retrievalResult(target))
+        )
+        fixture.fileStore.replaceLongTermMemory(
+            MarkdownMemoryCodec().renderLongTerm(listOf(target))
+        ).getOrThrow()
+        val job = fixture.createFiveTurnBatch()
+
+        val result = fixture.service.process(job)
+        val entries = MarkdownMemoryCodec().parse(fixture.fileStore.readLongTermMemory().getOrThrow()).entries
+
+        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(2, result.operationCount)
+        assertTrue(entries.any { entry -> entry.text == duplicateText })
+        assertTrue(entries.any { entry -> entry.text == replacementText })
+        assertFalse(entries.any { entry -> entry.id == target.id && entry.text == target.text })
+        assertEquals(5, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
     }
 
     @Test
@@ -438,7 +480,7 @@ class MemoryBatchConsolidationServiceTest {
     }
 
     @Test
-    fun `same proposal exact text writes across destinations fail closed`() = runBlocking {
+    fun `cross destination duplicate commits the first valid operation`() = runBlocking {
         val fixture = fixture(
             MemoryBatchConsolidationProposal(
                 operations = listOf(
@@ -453,18 +495,17 @@ class MemoryBatchConsolidationServiceTest {
                 )
             )
         )
-        val beforeDaily = fixture.fileStore.readDailyMemory().getOrThrow()
         val beforeLongTerm = fixture.fileStore.readLongTermMemory().getOrThrow()
         val job = fixture.createFiveTurnBatch()
 
         val result = fixture.service.process(job)
 
-        assertEquals(MemoryBatchProcessResult.STATUS_RETRYABLE, result.status)
-        assertEquals(0, result.dailyWriteCount + result.longTermWriteCount)
-        assertEquals(beforeDaily, fixture.fileStore.readDailyMemory().getOrThrow())
+        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(1, result.operationCount)
+        assertEquals(1, result.dailyWriteCount)
+        assertTrue(fixture.fileStore.readDailyMemory().getOrThrow().contains("The user is tracking a cross-target fact."))
         assertEquals(beforeLongTerm, fixture.fileStore.readLongTermMemory().getOrThrow())
-        assertEquals(0, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
-        assertEquals(null, fixture.recoveryDao.getMutationGroupBySemanticJobId(job.jobId))
+        assertEquals(5, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
     }
 
     @Test
@@ -1003,7 +1044,7 @@ class MemoryBatchConsolidationServiceTest {
         val result = fixture.service.process(job)
 
         assertEquals(MemoryBatchProcessResult.STATUS_RETRYABLE, result.status)
-        assertTrue(result.reason.orEmpty().startsWith("invalid_consolidation_operations:"))
+        assertEquals("all_consolidation_operations_invalid", result.reason)
         assertEquals(before, fixture.fileStore.readLongTermMemory().getOrThrow())
         assertEquals(0, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
         assertEquals(5, fixture.turnDao.getTurnsClaimedByJob(job.jobId).size)
@@ -1336,8 +1377,15 @@ class MemoryBatchConsolidationServiceTest {
         assertEquals(MemoryBatchProcessResult.STATUS_TERMINAL, result.status)
         assertEquals(MEMORY_MUTATION_UNRECOVERABLE_STAGING_MISSING, result.reason)
         assertEquals(1, fixture.intelligence.consolidateCalls)
-        assertEquals(MemoryMaintenanceJobStatus.FAILED_TERMINAL, fixture.jobDao.getById(job.jobId)?.status)
-        assertEquals(MEMORY_MUTATION_UNRECOVERABLE_STAGING_MISSING, fixture.jobDao.getById(job.jobId)?.lastError)
+        val sourceJob = checkNotNull(fixture.jobDao.getById(job.jobId))
+        val requeuedJob = fixture.jobDao.jobs.single { candidate -> candidate.jobId != job.jobId }
+        assertEquals(MemoryMaintenanceJobStatus.WAITING_REPAIR, sourceJob.status)
+        assertEquals(MEMORY_MUTATION_UNRECOVERABLE_STAGING_MISSING, sourceJob.lastError)
+        assertEquals(MemoryMaintenanceJobRecoveryDisposition.REQUEUE_SCHEDULED, sourceJob.recoveryDisposition)
+        assertTrue(fixture.turnDao.getTurnsClaimedByJob(job.jobId).isEmpty())
+        assertEquals(MemoryMaintenanceJobStatus.PENDING, requeuedJob.status)
+        assertEquals(1, requeuedJob.requeueCycle)
+        assertEquals("${job.idempotencyKey}:requeue:1", requeuedJob.idempotencyKey)
         assertEquals(MemoryMutationState.CONFLICT, fixture.recoveryDao.getMutationGroup(mutation.group.groupId)?.state)
         assertFalse(fixture.fileStore.readLongTermMemory().getOrThrow().contains("Missing staged targets"))
     }

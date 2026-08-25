@@ -1,7 +1,6 @@
 package cn.nabr.chatwithchat.data.memory
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -21,18 +20,22 @@ class MemoryDailyDistillationOperationControllerTest {
             }
         )
 
-        assertThrows(IllegalArgumentException::class.java) {
-            controller.validate(
-                input,
-                listOf(
-                    operation(
-                        action = MemoryDailyDistillationAction.CREATE,
-                        text = "The user enjoys a topic.",
-                        source = MemorySource.ASSISTANT_INFERRED
-                    )
+        val validation = controller.validateWithDiagnostics(
+            input,
+            listOf(
+                operation(
+                    action = MemoryDailyDistillationAction.CREATE,
+                    text = "The user enjoys a topic.",
+                    source = MemorySource.ASSISTANT_INFERRED
                 )
             )
-        }
+        )
+
+        assertTrue(validation.operations.isEmpty())
+        assertEquals(
+            "assistant_inferred_long_term_create_requires_repeated_evidence",
+            validation.diagnostics.single().code
+        )
     }
 
     @Test
@@ -142,14 +145,12 @@ class MemoryDailyDistillationOperationControllerTest {
         val existing = memoryEntry("mem_existing", "Existing stable preference.")
         val fixture = fixture(existing = listOf(existing))
 
-        assertTrue(
-            runCatching {
-                controller.validate(
-                    fixture.input,
-                    listOf(operation(MemoryDailyDistillationAction.CREATE, text = "New fact.", evidenceKeys = listOf("missing")))
-                )
-            }.isFailure
+        val invalidValidation = controller.validateWithDiagnostics(
+            fixture.input,
+            listOf(operation(MemoryDailyDistillationAction.CREATE, text = "New fact.", evidenceKeys = listOf("missing")))
         )
+        assertTrue(invalidValidation.operations.isEmpty())
+        assertEquals("invalid_operation", invalidValidation.diagnostics.single().code)
         val operations = controller.validate(
             fixture.input,
             listOf(operation(MemoryDailyDistillationAction.CREATE, text = existing.text))
@@ -207,7 +208,9 @@ class MemoryDailyDistillationOperationControllerTest {
         )
 
         invalidOperations.forEach { operation ->
-            assertTrue(runCatching { controller.validate(fixture.input, listOf(operation)) }.isFailure)
+            val validation = controller.validateWithDiagnostics(fixture.input, listOf(operation))
+            assertTrue(validation.operations.isEmpty())
+            assertEquals("invalid_operation", validation.diagnostics.single().code)
         }
     }
 
