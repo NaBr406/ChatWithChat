@@ -226,7 +226,7 @@ data class ToolDefinition(
 
         val ProposeMemoryChange = ToolDefinition(
             name = "propose_memory_change",
-            description = "提出一条待用户确认的记忆变更建议。此工具只保存提案证据，不会直接写入记忆；用户批准后才会进入记忆批处理。",
+            description = "提交一条记忆变更提案。此工具只保存提案证据，不会直接写入记忆；提案会在回合完成后进入记忆批处理。",
             parameters = Parameters(
                 properties = mapOf(
                     "intent" to Parameter(
@@ -252,8 +252,8 @@ data class ToolDefinition(
                     ),
                     "evidenceStrength" to Parameter(
                         type = "string",
-                        description = "证据强度；模型提供的值仅作记录，审批后才可升级。",
-                        enumValues = listOf("user_explicit", "user_confirmed", "agent_inferred")
+                        description = "证据强度；user_explicit 表示用户明确表达，agent_inferred 表示模型推断。",
+                        enumValues = listOf("user_explicit", "agent_inferred")
                     )
                 ),
                 required = listOf("intent", "reason", "evidenceStrength")

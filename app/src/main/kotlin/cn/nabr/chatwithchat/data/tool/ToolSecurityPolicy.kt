@@ -3,6 +3,11 @@ package cn.nabr.chatwithchat.data.tool
 enum class ToolEffect {
     READ_ONLY_PUBLIC,
     READ_ONLY_PRIVATE,
+    /**
+     * A reversible, app-owned buffer mutation. It cannot write user-visible memory or an external
+     * resource, so it does not require an approval grant.
+     */
+    INTERNAL_STATE,
     LOCAL_WRITE,
     EXTERNAL_WRITE,
     IRREVERSIBLE;
@@ -10,7 +15,8 @@ enum class ToolEffect {
     val isWriteCapable: Boolean
         get() = when (this) {
             READ_ONLY_PUBLIC,
-            READ_ONLY_PRIVATE -> false
+            READ_ONLY_PRIVATE,
+            INTERNAL_STATE -> false
             LOCAL_WRITE,
             EXTERNAL_WRITE,
             IRREVERSIBLE -> true

@@ -129,6 +129,14 @@ class ToolApprovalAuthorityTest {
                 approvalPolicy = ToolApprovalPolicy.NOT_REQUIRED
             ).approvalPolicy
         )
+
+        assertEquals(
+            ToolApprovalPolicy.NOT_REQUIRED,
+            ToolSecurityPolicy(
+                effect = ToolEffect.INTERNAL_STATE,
+                approvalPolicy = ToolApprovalPolicy.NOT_REQUIRED
+            ).approvalPolicy
+        )
     }
 
     private fun call(

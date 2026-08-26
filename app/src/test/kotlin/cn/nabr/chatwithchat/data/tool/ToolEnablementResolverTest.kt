@@ -79,6 +79,25 @@ class ToolEnablementResolverTest {
     }
 
     @Test
+    fun `system managed default tool ignores persisted overrides`() {
+        val entry = catalogEntry(
+            name = "memory_proposal",
+            defaultEnabled = true,
+            isSensitive = false,
+            userVisible = false,
+            userOverrideAllowed = false,
+            securityPolicy = ToolSecurityPolicy(ToolEffect.INTERNAL_STATE, ToolApprovalPolicy.NOT_REQUIRED)
+        )
+
+        assertTrue(
+            resolver.isEnabled(
+                entry,
+                ToolEnablementOverrides(disabledToolNames = setOf("memory_proposal"))
+            )
+        )
+    }
+
+    @Test
     fun `unknown persisted names are ignored by resolution`() {
         val entry = catalogEntry("known", defaultEnabled = true, isSensitive = false)
         val overrides = ToolEnablementOverrides(
@@ -127,6 +146,8 @@ class ToolEnablementResolverTest {
         name: String,
         defaultEnabled: Boolean,
         isSensitive: Boolean,
+        userVisible: Boolean = true,
+        userOverrideAllowed: Boolean = true,
         permissionRequirements: List<ToolPermissionRequirement> = emptyList(),
         securityPolicy: ToolSecurityPolicy = if (isSensitive) {
             ToolSecurityPolicy.ReadOnlyPrivate
@@ -136,6 +157,8 @@ class ToolEnablementResolverTest {
     ): ToolCatalogEntry = ToolCatalogEntry(
         definition = ToolDefinition(name, "description", ToolDefinition.Parameters()),
         settings = ToolSettingsMetadata(
+            userVisible = userVisible,
+            userOverrideAllowed = userOverrideAllowed,
             defaultEnabled = defaultEnabled,
             isSensitive = isSensitive
         ),

@@ -17,39 +17,37 @@ class ProposeMemoryChangeToolProvider(
     override val definition: ToolDefinition = ToolDefinition.ProposeMemoryChange
 
     override val settingsMetadata = ToolSettingsMetadata(
+        userVisible = false,
+        userOverrideAllowed = false,
         defaultEnabled = true,
-        isSensitive = true,
-        presentationKey = "propose_memory_change"
+        isSensitive = false
     )
 
     override val securityPolicy = ToolSecurityPolicy(
-        effect = ToolEffect.LOCAL_WRITE,
-        approvalPolicy = ToolApprovalPolicy.REQUIRE_EACH_CALL
+        effect = ToolEffect.INTERNAL_STATE,
+        approvalPolicy = ToolApprovalPolicy.NOT_REQUIRED
     )
 
     override val policy = ToolPolicy(maxResultChars = 1_200)
 
-    override fun approvalArgumentSummary(call: ToolCall): String {
-        val proposal = parse(call).getOrNull()
-        return when {
-            proposal == null -> "记忆提案（参数无效）"
-            proposal.text.isNotBlank() -> "保存记忆：${proposal.text}"
-            proposal.targetRef != null -> "删除记忆：${proposal.targetRef}"
-            else -> "记忆提案"
-        }.take(MAX_APPROVAL_SUMMARY_CHARS)
-    }
-
     override suspend fun execute(call: ToolCall, config: ToolLoopConfig): ToolResult =
-        call.errorResult("memory_proposal_approval_required", "memory_proposal_approval_required")
+        executeProposal(call, chatId = null, turnKey = null)
 
     override suspend fun execute(
         call: ToolCall,
         config: ToolLoopConfig,
         executionContext: ToolExecutionContext
+    ): ToolResult = executeProposal(
+        call = call,
+        chatId = executionContext.chatId.takeIf { it > 0 },
+        turnKey = executionContext.turnKey
+    )
+
+    private suspend fun executeProposal(
+        call: ToolCall,
+        chatId: Int?,
+        turnKey: String?
     ): ToolResult {
-        if (executionContext.approval !is ToolCallApproval.Approved) {
-            return call.errorResult("memory_proposal_approval_required", "memory_proposal_approval_required")
-        }
         val proposal = parse(call).getOrElse { error ->
             return call.errorResult(
                 "memory_proposal_invalid:${error.message ?: "invalid_arguments"}",
@@ -64,8 +62,8 @@ class ProposeMemoryChangeToolProvider(
         val stored = proposalStore.createOrGet(
             MemoryProposalInput(
                 proposalId = "proposal_${idempotencyKey.take(24)}",
-                chatId = executionContext.chatId.takeIf { it > 0 },
-                turnKey = executionContext.turnKey,
+                chatId = chatId,
+                turnKey = turnKey,
                 intent = proposal.intent,
                 targetRef = proposal.targetRef,
                 text = proposal.text,
@@ -152,11 +150,9 @@ class ProposeMemoryChangeToolProvider(
         const val MAX_TEXT_CHARS = 600
         const val MAX_REASON_CHARS = 240
         const val MAX_TARGET_REF_CHARS = 3
-        const val MAX_APPROVAL_SUMMARY_CHARS = 700
         val VALID_INTENTS = setOf(INTENT_REMEMBER, INTENT_UPDATE, INTENT_FORGET)
         val VALID_EVIDENCE_STRENGTHS = setOf(
             MemoryEvidenceStrength.USER_EXPLICIT,
-            MemoryEvidenceStrength.USER_CONFIRMED,
             MemoryEvidenceStrength.AGENT_INFERRED
         )
         val REF_PATTERN = Regex("R\\d{2}")

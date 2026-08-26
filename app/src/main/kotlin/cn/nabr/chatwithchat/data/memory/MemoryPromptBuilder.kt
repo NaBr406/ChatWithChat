@@ -71,6 +71,6 @@ class MemoryPromptBuilder(
     private companion object {
         const val GLOBAL_USAGE_GUIDANCE =
             "将这些事实作为不言明的上下文；只在有助于当前回答时使用，不要主动提及记忆存储，也不要在非必要时透露私密信息。" +
-                "如果用户主动询问、纠正或明确要求记住某件事，可以如实说明并调用 propose_memory_change 提交待确认提案；不要在用户未提出时主动谈论记忆。"
+                "如果用户主动询问、纠正或明确要求记住某件事，可以如实说明并调用 propose_memory_change 提交记忆提案；不要在用户未提出时主动谈论记忆。"
     }
 }

@@ -55,7 +55,6 @@ data class MemoryProposal(
 )
 
 object MemoryProposalState {
-    const val AWAITING_APPROVAL = "awaiting_approval"
     const val APPROVED_PENDING_BIND = "approved_pending_bind"
     const val BOUND_TO_TURN = "bound_to_turn"
     const val CONSUMED = "consumed"

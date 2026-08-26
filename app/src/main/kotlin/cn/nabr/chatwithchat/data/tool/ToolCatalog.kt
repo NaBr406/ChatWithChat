@@ -2,6 +2,7 @@ package cn.nabr.chatwithchat.data.tool
 
 data class ToolSettingsMetadata(
     val userVisible: Boolean = true,
+    val userOverrideAllowed: Boolean = true,
     val category: ToolCategory = ToolCategory.Other,
     val defaultEnabled: Boolean = false,
     val isSensitive: Boolean = true,

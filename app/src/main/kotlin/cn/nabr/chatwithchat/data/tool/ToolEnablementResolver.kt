@@ -59,6 +59,8 @@ class ToolEnablementResolver @Inject constructor() {
         return when {
             entry.settings.enablementGroup == ToolEnablementGroup.AutomaticStickerReplies &&
                 !automaticStickerRepliesEnabled -> false
+            !entry.settings.userOverrideAllowed ->
+                entry.settings.defaultEnabled && entry.isSafeForDefaultEnablement()
             toolName in overrides.disabledToolNames -> false
             toolName in overrides.enabledToolNames -> true
             else -> entry.settings.defaultEnabled && entry.isSafeForDefaultEnablement()
@@ -74,6 +76,7 @@ private fun ToolCatalogEntry.isSafeForDefaultEnablement(): Boolean =
             ToolEffect.READ_ONLY_PUBLIC -> true
             ToolEffect.READ_ONLY_PRIVATE ->
                 settings.enablementGroup == ToolEnablementGroup.AutomaticStickerReplies
+            ToolEffect.INTERNAL_STATE -> true
             ToolEffect.LOCAL_WRITE,
             ToolEffect.EXTERNAL_WRITE,
             ToolEffect.IRREVERSIBLE -> false

@@ -812,7 +812,7 @@ class MemoryBatchConsolidationService(
                 operation.copy(
                     targetMemoryId = operation.targetMemoryId ?: proposalTargetId,
                     text = proposal.text,
-                    source = MemorySource.USER_CONFIRMED,
+                    source = proposal.evidenceStrength.toMemorySource(),
                     evidenceTurnKeys = (operation.evidenceTurnKeys + proposal.boundTurnKey).distinct()
                 )
             }
@@ -977,6 +977,12 @@ class MemoryBatchConsolidationService(
             recallState = recallState,
             reason = operation.reason.trim()
         )
+    }
+
+    private fun String.toMemorySource(): String = when (this) {
+        MemoryEvidenceStrength.USER_EXPLICIT -> MemorySource.EXPLICIT_USER_STATEMENT
+        MemoryEvidenceStrength.USER_CONFIRMED -> MemorySource.USER_CONFIRMED
+        else -> MemorySource.ASSISTANT_INFERRED
     }
 
     private fun hasCrossDayEvidence(
