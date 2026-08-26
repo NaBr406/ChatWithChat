@@ -1125,9 +1125,14 @@ class MemoryBatchConsolidationService(
                     .filter { indexedOperation -> indexedOperation.value.action == MemoryBatchAction.REMOVE }
                     .sortedBy(IndexedValue<MemoryBatchOperation>::index)
                     .forEach { indexedOperation ->
+                        val targetId = checkNotNull(indexedOperation.value.targetMemoryId)
+                        currentMarkdown = detachObsoleteSupersessionTargets(
+                            markdown = currentMarkdown,
+                            targetId = targetId
+                        )
                         val removal = markdownMemoryCodec.removeEntriesById(
                             markdown = currentMarkdown,
-                            entryIds = setOf(checkNotNull(indexedOperation.value.targetMemoryId))
+                            entryIds = setOf(targetId)
                         )
                         check(removal.deletedCount == 1)
                         currentMarkdown = removal.markdown
@@ -1273,6 +1278,25 @@ class MemoryBatchConsolidationService(
             dailyWriteCount = dailyWriteCount,
             longTermWriteCount = longTermWriteCount
         )
+    }
+
+    private fun detachObsoleteSupersessionTargets(
+        markdown: String,
+        targetId: String
+    ): String {
+        val dependents = parseEntriesOrThrow(markdown)
+            .entries
+            .filter { entry ->
+                entry.validity == MemoryValidity.OBSOLETE && entry.supersededBy == targetId
+            }
+        if (dependents.isEmpty()) return markdown
+
+        val replacement = markdownMemoryCodec.replaceEntriesById(
+            markdown = markdown,
+            replacements = dependents.map { entry -> entry.copy(supersededBy = null) }
+        )
+        check(replacement.replacedCount == dependents.size)
+        return replacement.markdown
     }
 
     private fun MemoryBatchOperation.toEntry(

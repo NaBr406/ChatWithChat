@@ -947,6 +947,81 @@ class MemoryBatchConsolidationServiceTest {
     }
 
     @Test
+    fun `remove current successor preserves obsolete lifecycle for canonical replacement`() = runBlocking {
+        val codec = MarkdownMemoryCodec()
+        val canonicalKey = "project.chatwithchat"
+        val scope = "project:chatwithchat"
+        val current = MarkdownMemoryEntry(
+            id = "mem_current_successor",
+            text = "ChatWithChat is the current project record.",
+            type = "project_context",
+            sensitivity = MemorySensitivity.NORMAL,
+            source = MemorySource.EXPLICIT_USER_STATEMENT,
+            createdAt = 20L,
+            updatedAt = 20L,
+            section = "Project Context",
+            canonicalKey = canonicalKey,
+            scope = scope,
+            lastObservedAt = 20L,
+            recallState = MemoryRecallState.QUERY,
+            evidenceRefs = listOf("chat:$CHAT_ID:user:1")
+        )
+        val obsolete = MarkdownMemoryEntry(
+            id = "mem_obsolete_predecessor",
+            text = "Cwc was once tracked as a separate project.",
+            type = "project_context",
+            sensitivity = MemorySensitivity.NORMAL,
+            source = MemorySource.EXPLICIT_USER_STATEMENT,
+            createdAt = 10L,
+            updatedAt = 10L,
+            section = "Project Context",
+            canonicalKey = canonicalKey,
+            scope = scope,
+            lastObservedAt = 10L,
+            validity = MemoryValidity.OBSOLETE,
+            supersededBy = current.id,
+            recallState = MemoryRecallState.MAINTENANCE_ONLY,
+            evidenceRefs = listOf("chat:$CHAT_ID:user:1")
+        )
+        val replacementText = "ChatWithChat and cwc are the same project."
+        val fixture = fixture(
+            proposal = MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        action = MemoryBatchAction.REPLACE,
+                        targetMemoryId = obsolete.id,
+                        text = replacementText,
+                        canonicalKey = canonicalKey,
+                        scope = scope
+                    ),
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        action = MemoryBatchAction.REMOVE,
+                        targetMemoryId = current.id,
+                        text = ""
+                    )
+                )
+            ),
+            retrievalResults = listOf(retrievalResult(obsolete), retrievalResult(current))
+        )
+        fixture.fileStore.replaceLongTermMemory(codec.renderLongTerm(listOf(obsolete, current))).getOrThrow()
+        val job = fixture.createFiveTurnBatch()
+
+        val result = fixture.service.process(job)
+        val parsed = codec.parse(fixture.fileStore.readLongTermMemory().getOrThrow())
+        val replacement = parsed.entries.single { entry -> entry.id == obsolete.id }
+
+        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(2, result.longTermWriteCount)
+        assertTrue(parsed.skippedEntries.isEmpty())
+        assertFalse(parsed.entries.any { entry -> entry.id == current.id })
+        assertEquals(replacementText, replacement.text)
+        assertEquals(MemoryValidity.CURRENT, replacement.validity)
+        assertTrue(replacement.supersededBy == null)
+    }
+
+    @Test
     fun `daily exact text does not block a long term create`() = runBlocking {
         val codec = MarkdownMemoryCodec()
         val dailyEntry = MarkdownMemoryEntry(
