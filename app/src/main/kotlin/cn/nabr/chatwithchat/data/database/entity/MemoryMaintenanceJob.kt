@@ -14,7 +14,9 @@ import androidx.room.PrimaryKey
         Index(value = ["next_run_at"]),
         Index(value = ["family", "status", "next_run_at", "created_at"]),
         Index(value = ["family", "status", "lease_expires_at"]),
-        Index(value = ["generation", "status"])
+        Index(value = ["generation", "status"]),
+        Index(value = ["requeue_idempotency_key"]),
+        Index(value = ["recovery_disposition"])
     ]
 )
 data class MemoryMaintenanceJob(

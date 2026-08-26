@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 26,
-    "identityHash": "22b6192406e4c44db30254cb4c16c795",
+    "identityHash": "aae9f5b715446beb63b7856148056692",
     "entities": [
       {
         "tableName": "chats_v2",
@@ -647,6 +647,24 @@
             ],
             "orders": [],
             "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_maintenance_job_generation_status` ON `${TABLE_NAME}` (`generation`, `status`)"
+          },
+          {
+            "name": "index_memory_maintenance_job_requeue_idempotency_key",
+            "unique": false,
+            "columnNames": [
+              "requeue_idempotency_key"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_maintenance_job_requeue_idempotency_key` ON `${TABLE_NAME}` (`requeue_idempotency_key`)"
+          },
+          {
+            "name": "index_memory_maintenance_job_recovery_disposition",
+            "unique": false,
+            "columnNames": [
+              "recovery_disposition"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_memory_maintenance_job_recovery_disposition` ON `${TABLE_NAME}` (`recovery_disposition`)"
           }
         ]
       },
@@ -3619,7 +3637,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '22b6192406e4c44db30254cb4c16c795')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'aae9f5b715446beb63b7856148056692')"
     ]
   }
 }
