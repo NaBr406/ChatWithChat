@@ -168,6 +168,11 @@ interface MemoryTurnBatchDao {
                 WHERE pending.chat_id = checkpoint.chat_id
                     AND pending.claimed_job_id IS NULL
             )
+            AND NOT EXISTS (
+                SELECT 1 FROM memory_pending_turn AS claimed
+                WHERE claimed.chat_id = checkpoint.chat_id
+                    AND claimed.claimed_job_id IS NOT NULL
+            )
         ORDER BY checkpoint.idle_due_at ASC, checkpoint.chat_id ASC
         LIMIT :limit
         """
@@ -182,6 +187,11 @@ interface MemoryTurnBatchDao {
                 SELECT 1 FROM memory_pending_turn AS pending
                 WHERE pending.chat_id = checkpoint.chat_id
                     AND pending.claimed_job_id IS NULL
+            )
+            AND NOT EXISTS (
+                SELECT 1 FROM memory_pending_turn AS claimed
+                WHERE claimed.chat_id = checkpoint.chat_id
+                    AND claimed.claimed_job_id IS NOT NULL
             )
         """
     )

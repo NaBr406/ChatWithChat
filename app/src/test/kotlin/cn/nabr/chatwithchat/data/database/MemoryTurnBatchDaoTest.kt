@@ -74,6 +74,21 @@ class MemoryTurnBatchDaoTest {
     }
 
     @Test
+    fun `idle query ignores unclaimed turns behind an active claimed batch`() = runBlocking {
+        val dao = InMemoryMemoryTurnBatchDao()
+        dao.upsertCheckpoint(checkpoint(chatId = 1, idleDueAt = 100L))
+        (1..6).forEach { messageId -> dao.upsertPendingTurn(turn(1, messageId)) }
+        dao.claimOldestPendingTurns(1, "job-1", 5, updatedAt = 101L)
+
+        assertTrue(dao.getDueIdleCheckpoints(now = 150L, limit = 10).isEmpty())
+        assertNull(dao.getEarliestIdleDueAt())
+
+        assertTrue(dao.completeClaimedBatch("job-1", updatedAt = 151L))
+        assertEquals(listOf(1), dao.getDueIdleCheckpoints(now = 150L, limit = 10).map { it.chatId })
+        assertEquals(100L, dao.getEarliestIdleDueAt())
+    }
+
+    @Test
     fun `frozen requeue only claims its exact unclaimed turn set`() = runBlocking {
         val dao = InMemoryMemoryTurnBatchDao()
         dao.upsertPendingTurn(turn(1, 1))
@@ -252,7 +267,8 @@ internal class InMemoryMemoryTurnBatchDao : MemoryTurnBatchDao {
         .filter { checkpoint ->
             checkpoint.idleDueAt != null &&
                 checkpoint.idleDueAt <= now &&
-                turns.values.any { it.chatId == checkpoint.chatId && it.claimedJobId == null }
+                turns.values.any { it.chatId == checkpoint.chatId && it.claimedJobId == null } &&
+                turns.values.none { it.chatId == checkpoint.chatId && it.claimedJobId != null }
         }
         .sortedWith(compareBy<MemoryChatCheckpoint> { it.idleDueAt }.thenBy { it.chatId })
         .take(limit)
@@ -260,7 +276,8 @@ internal class InMemoryMemoryTurnBatchDao : MemoryTurnBatchDao {
     override suspend fun getEarliestIdleDueAt(): Long? = checkpoints.values
         .filter { checkpoint ->
             checkpoint.idleDueAt != null &&
-                turns.values.any { it.chatId == checkpoint.chatId && it.claimedJobId == null }
+                turns.values.any { it.chatId == checkpoint.chatId && it.claimedJobId == null } &&
+                turns.values.none { it.chatId == checkpoint.chatId && it.claimedJobId != null }
         }
         .minOfOrNull { it.idleDueAt!! }
 

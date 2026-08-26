@@ -138,6 +138,30 @@ class MemoryTurnBatchSchedulerTest {
     }
 
     @Test
+    fun `claimed batch prevents an overdue idle checkpoint from requeueing repair work`() = runBlocking {
+        val fixture = fixture()
+        val coordinator = MemoryTurnBatchCoordinator(fixture.turnDao, fixture.scheduler)
+        (1..5).forEach { coordinator.recordCompletedTurn(input(CHAT_ONE, it)) }
+        val firstJob = fixture.jobDao.jobs.single()
+        coordinator.recordCompletedTurn(input(CHAT_ONE, 6))
+        val checkpoint = checkNotNull(fixture.turnDao.getCheckpoint(CHAT_ONE))
+        fixture.turnDao.upsertCheckpoint(checkpoint.copy(idleDueAt = 999L))
+
+        fixture.enqueuer.works.clear()
+        fixture.scheduler.scheduleNextWake(now = 1_000L)
+
+        assertTrue(fixture.enqueuer.works.none { it.family == MemoryMaintenanceJobFamily.REPAIR })
+
+        fixture.turnDao.completeClaimedBatch(firstJob.jobId, updatedAt = 1_001L)
+        fixture.scheduler.scheduleNextWake(now = 1_001L)
+
+        assertEquals(
+            EnqueuedMemoryWork(MemoryMaintenanceJobFamily.REPAIR, 0L),
+            fixture.enqueuer.works.last()
+        )
+    }
+
+    @Test
     fun `repair recreates a missing job for claimed turns`() = runBlocking {
         val fixture = fixture()
         val coordinator = MemoryTurnBatchCoordinator(fixture.turnDao)
