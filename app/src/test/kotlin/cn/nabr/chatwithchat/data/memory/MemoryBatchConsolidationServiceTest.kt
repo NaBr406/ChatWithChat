@@ -1225,6 +1225,34 @@ class MemoryBatchConsolidationServiceTest {
     }
 
     @Test
+    fun `stale retrieval target is excluded before model operations render`() = runBlocking {
+        val staleEntry = longTermEntry("mem_removed", "A stale vector result must not be editable.")
+        val fixture = fixture(
+            proposal = MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        action = MemoryBatchAction.REMOVE,
+                        targetMemoryId = staleEntry.id,
+                        text = ""
+                    )
+                )
+            ),
+            retrievalResults = listOf(retrievalResult(staleEntry))
+        )
+        val before = fixture.fileStore.readLongTermMemory().getOrThrow()
+        val job = fixture.createFiveTurnBatch()
+
+        val result = fixture.service.process(job)
+
+        assertEquals(MemoryBatchProcessResult.STATUS_RETRYABLE, result.status)
+        assertEquals("all_consolidation_operations_invalid", result.reason)
+        assertEquals(before, fixture.fileStore.readLongTermMemory().getOrThrow())
+        assertEquals(1, fixture.intelligence.consolidateCalls)
+        assertFalse(checkNotNull(fixture.jobDao.getById(job.jobId)?.lastError).startsWith("memory_render_failed"))
+    }
+
+    @Test
     fun `replace through obsolete id updates the current survivor and preserves history`() = runBlocking {
         val successorEntry = MarkdownMemoryEntry(
             id = "mem_project_current",

@@ -8,6 +8,7 @@ import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -26,6 +27,25 @@ class MemoryMaintenanceFailureResponseStoreTest {
             val saved = checkNotNull(paths.maintenanceFailureResponseDirectory.listFiles()).single()
             assertTrue(saved.name.startsWith("maintenance-failure-"))
             assertArrayEquals(rawResponse.toByteArray(StandardCharsets.UTF_8), saved.readBytes())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `read responses returns the exact retained model response`() {
+        val root = Files.createTempDirectory("memory-maintenance-failure-response").toFile()
+        try {
+            val paths = MemoryFilePaths(root)
+            val store = FileMemoryMaintenanceFailureResponseStore(paths, fixedClock())
+            val rawResponse = "{\n  \"operations\": [],\n  \"extra\": true\n}\n"
+
+            store.record(job(), "invalid_model_json", rawResponse)
+
+            val response = store.readResponses().single()
+            assertTrue(response.fileName.startsWith("maintenance-failure-"))
+            assertEquals(1_000_000L, response.capturedAtEpochSeconds)
+            assertEquals(rawResponse, response.rawResponseJson)
         } finally {
             root.deleteRecursively()
         }

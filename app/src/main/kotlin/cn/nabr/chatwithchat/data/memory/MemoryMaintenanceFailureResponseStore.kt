@@ -12,14 +12,24 @@ import java.util.UUID
 interface MemoryMaintenanceFailureResponseStore {
     fun record(job: MemoryMaintenanceJob, failureReason: String, rawResponseJson: String)
 
+    fun readResponses(): List<MemoryMaintenanceFailureResponse>
+
     fun pruneExpired()
 
     data object None : MemoryMaintenanceFailureResponseStore {
         override fun record(job: MemoryMaintenanceJob, failureReason: String, rawResponseJson: String) = Unit
 
+        override fun readResponses(): List<MemoryMaintenanceFailureResponse> = emptyList()
+
         override fun pruneExpired() = Unit
     }
 }
+
+data class MemoryMaintenanceFailureResponse(
+    val fileName: String,
+    val capturedAtEpochSeconds: Long,
+    val rawResponseJson: String
+)
 
 /**
  * Keeps exact model payloads out of the canonical memory corpus while retaining failed maintenance
@@ -54,6 +64,32 @@ class FileMemoryMaintenanceFailureResponseStore(
             writeAtomically(File(directory, filename), rawResponseJson)
         }
     }
+
+    override fun readResponses(): List<MemoryMaintenanceFailureResponse> = runCatching {
+        pruneExpired()
+        paths.maintenanceFailureResponseDirectory
+            .listFiles()
+            .orEmpty()
+            .asSequence()
+            .filter { file ->
+                file.isFile &&
+                    file.name.startsWith(FILE_NAME_PREFIX) &&
+                    file.name.endsWith(RESPONSE_FILE_SUFFIX)
+            }
+            .mapNotNull { file ->
+                val capturedAt = fileTimestamp(file).takeUnless { it == Long.MAX_VALUE } ?: return@mapNotNull null
+                val rawResponseJson = runCatching {
+                    file.readText(StandardCharsets.UTF_8)
+                }.getOrNull() ?: return@mapNotNull null
+                MemoryMaintenanceFailureResponse(
+                    fileName = file.name,
+                    capturedAtEpochSeconds = capturedAt,
+                    rawResponseJson = rawResponseJson
+                )
+            }
+            .sortedByDescending(MemoryMaintenanceFailureResponse::capturedAtEpochSeconds)
+            .toList()
+    }.getOrDefault(emptyList())
 
     override fun pruneExpired() {
         runCatching {

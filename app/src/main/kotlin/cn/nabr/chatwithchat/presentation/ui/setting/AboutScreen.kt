@@ -41,7 +41,7 @@ import kotlinx.coroutines.launch
 fun AboutScreen(
     onNavigationClick: () -> Unit,
     onNavigationToLicense: () -> Unit,
-    onNavigateToPromptTrace: () -> Unit
+    onNavigateToDeveloperDebug: () -> Unit
 ) {
     val scrollState = rememberScrollState()
     val context = LocalContext.current
@@ -80,7 +80,7 @@ fun AboutScreen(
                     onItemClick = {
                         if (isPromptTraceUnlockTap(versionTapCount)) {
                             versionTapCount = 0
-                            onNavigateToPromptTrace()
+                            onNavigateToDeveloperDebug()
                         } else {
                             versionTapCount += 1
                             scope.launch {

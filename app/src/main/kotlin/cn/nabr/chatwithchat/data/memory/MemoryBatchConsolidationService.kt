@@ -757,29 +757,30 @@ class MemoryBatchConsolidationService(
                 !result.entryId.isNullOrBlank() &&
                     !result.type.isNullOrBlank() &&
                     !result.sensitivity.isNullOrBlank() &&
-                    !result.source.isNullOrBlank()
+                    !result.source.isNullOrBlank() &&
+                    entriesBySourceAndId.containsKey(result.sourcePath to result.entryId)
             }
             .groupBy { it.entryId!! }
             .filterValues { sameIdResults -> sameIdResults.map { it.sourcePath }.distinct().size == 1 }
             .map { (entryId, sameIdResults) ->
                 val result = sameIdResults.maxBy { it.fusedScore }
-                val entry = entriesBySourceAndId[result.sourcePath to entryId]
+                val entry = checkNotNull(entriesBySourceAndId[result.sourcePath to entryId])
                 MemoryBatchExistingMemory(
                     id = entryId,
                     sourcePath = result.sourcePath,
-                    text = entry?.text ?: result.text,
-                    type = entry?.type ?: result.type!!,
-                    sensitivity = entry?.sensitivity ?: result.sensitivity!!,
-                    source = entry?.source ?: result.source!!,
-                    updatedAt = entry?.updatedAt ?: result.updatedAt,
-                    createdAt = entry?.createdAt ?: 0L,
-                    canonicalKey = entry?.canonicalKey,
-                    scope = entry?.scope ?: MemoryScope.GENERAL,
-                    lastObservedAt = entry?.lastObservedAt ?: result.updatedAt,
-                    validity = entry?.validity ?: MemoryValidity.CURRENT,
-                    supersededBy = entry?.supersededBy,
-                    recallState = entry?.recallState ?: MemoryRecallState.QUERY,
-                    evidenceRefs = entry?.evidenceRefs.orEmpty()
+                    text = entry.text,
+                    type = entry.type,
+                    sensitivity = entry.sensitivity,
+                    source = entry.source,
+                    updatedAt = entry.updatedAt,
+                    createdAt = entry.createdAt,
+                    canonicalKey = entry.canonicalKey,
+                    scope = entry.scope,
+                    lastObservedAt = entry.lastObservedAt,
+                    validity = entry.validity,
+                    supersededBy = entry.supersededBy,
+                    recallState = entry.recallState,
+                    evidenceRefs = entry.evidenceRefs
                 )
             }
             .toList()
