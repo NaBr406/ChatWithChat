@@ -86,13 +86,27 @@ class LlmMemoryIntelligence @Inject constructor(
     override suspend fun consolidateMemoryBatch(
         request: MemoryBatchConsolidationRequest,
         resolvedPlatform: PlatformV2
-    ): MemoryBatchConsolidationProposal? = consolidateMemoryBatch(request, resolvedPlatform, activityRunId = "")
+    ): MemoryBatchConsolidationProposal? = consolidateMemoryBatchWithRawResponse(
+        request,
+        resolvedPlatform,
+        activityRunId = ""
+    ).proposal
 
     override suspend fun consolidateMemoryBatch(
         request: MemoryBatchConsolidationRequest,
         resolvedPlatform: PlatformV2,
         activityRunId: String
-    ): MemoryBatchConsolidationProposal? {
+    ): MemoryBatchConsolidationProposal? = consolidateMemoryBatchWithRawResponse(
+        request,
+        resolvedPlatform,
+        activityRunId
+    ).proposal
+
+    override suspend fun consolidateMemoryBatchWithRawResponse(
+        request: MemoryBatchConsolidationRequest,
+        resolvedPlatform: PlatformV2,
+        activityRunId: String
+    ): MemoryModelProposalResponse<MemoryBatchConsolidationProposal> {
         val platform = resolvedPlatform
         activityLogger.advanceRunSafely(
             activityRunId = activityRunId,
@@ -117,7 +131,7 @@ class LlmMemoryIntelligence @Inject constructor(
                     errorDetail = response.errorDetail
                 )
             )
-            return null
+            return MemoryModelProposalResponse(proposal = null)
         }
         activityLogger.advanceRunSafely(
             activityRunId = activityRunId,
@@ -126,28 +140,45 @@ class LlmMemoryIntelligence @Inject constructor(
             data = platform.toMemoryActivityData(inputCount = request.turns.size)
         )
         return try {
-            decodeBatchProposal(checkNotNull(response.content), request)
+            MemoryModelProposalResponse(
+                proposal = decodeBatchProposal(checkNotNull(response.content), request),
+                rawResponseJson = response.content
+            )
         } catch (e: SerializationException) {
             runCatching { Log.w(TAG, "Memory consolidate_batch returned invalid JSON", e) }
             finishInvalidGeneration(activityRunId, platform, request.turns.size)
-            null
+            MemoryModelProposalResponse(proposal = null, rawResponseJson = response.content)
         } catch (e: IllegalArgumentException) {
             runCatching { Log.w(TAG, "Memory consolidate_batch returned invalid JSON", e) }
             finishInvalidGeneration(activityRunId, platform, request.turns.size)
-            null
+            MemoryModelProposalResponse(proposal = null, rawResponseJson = response.content)
         }
     }
 
     override suspend fun distillDailyMemory(
         request: MemoryDailyDistillationFrozenInput,
         resolvedPlatform: PlatformV2
-    ): MemoryDailyDistillationProposal? = distillDailyMemory(request, resolvedPlatform, activityRunId = "")
+    ): MemoryDailyDistillationProposal? = distillDailyMemoryWithRawResponse(
+        request,
+        resolvedPlatform,
+        activityRunId = ""
+    ).proposal
 
     override suspend fun distillDailyMemory(
         request: MemoryDailyDistillationFrozenInput,
         resolvedPlatform: PlatformV2,
         activityRunId: String
-    ): MemoryDailyDistillationProposal? {
+    ): MemoryDailyDistillationProposal? = distillDailyMemoryWithRawResponse(
+        request,
+        resolvedPlatform,
+        activityRunId
+    ).proposal
+
+    override suspend fun distillDailyMemoryWithRawResponse(
+        request: MemoryDailyDistillationFrozenInput,
+        resolvedPlatform: PlatformV2,
+        activityRunId: String
+    ): MemoryModelProposalResponse<MemoryDailyDistillationProposal> {
         val platform = resolvedPlatform
         activityLogger.advanceRunSafely(
             activityRunId = activityRunId,
@@ -172,7 +203,7 @@ class LlmMemoryIntelligence @Inject constructor(
                     errorDetail = response.errorDetail
                 )
             )
-            return null
+            return MemoryModelProposalResponse(proposal = null)
         }
         activityLogger.advanceRunSafely(
             activityRunId = activityRunId,
@@ -181,32 +212,45 @@ class LlmMemoryIntelligence @Inject constructor(
             data = platform.toMemoryActivityData(inputCount = request.dailyEvidence.size)
         )
         return try {
-            strictJson.decodeFromString<MemoryDailyDistillationProposal>(extractJsonObject(checkNotNull(response.content)))
+            MemoryModelProposalResponse(
+                proposal = strictJson.decodeFromString(extractJsonObject(checkNotNull(response.content))),
+                rawResponseJson = response.content
+            )
         } catch (e: SerializationException) {
             runCatching { Log.w(TAG, "Memory distill_daily returned invalid JSON", e) }
             finishInvalidGeneration(activityRunId, platform, request.dailyEvidence.size)
-            null
+            MemoryModelProposalResponse(proposal = null, rawResponseJson = response.content)
         } catch (e: IllegalArgumentException) {
             runCatching { Log.w(TAG, "Memory distill_daily returned invalid JSON", e) }
             finishInvalidGeneration(activityRunId, platform, request.dailyEvidence.size)
-            null
+            MemoryModelProposalResponse(proposal = null, rawResponseJson = response.content)
         }
     }
 
     override suspend fun consolidateLongTermMemory(
         request: MemoryLongTermConsolidationPartitionRequest,
         resolvedPlatform: PlatformV2
-    ): MemoryLongTermConsolidationProposal? = consolidateLongTermMemory(
+    ): MemoryLongTermConsolidationProposal? = consolidateLongTermMemoryWithRawResponse(
         request = request,
         resolvedPlatform = resolvedPlatform,
         activityRunId = ""
-    )
+    ).proposal
 
     override suspend fun consolidateLongTermMemory(
         request: MemoryLongTermConsolidationPartitionRequest,
         resolvedPlatform: PlatformV2,
         activityRunId: String
-    ): MemoryLongTermConsolidationProposal? {
+    ): MemoryLongTermConsolidationProposal? = consolidateLongTermMemoryWithRawResponse(
+        request,
+        resolvedPlatform,
+        activityRunId
+    ).proposal
+
+    override suspend fun consolidateLongTermMemoryWithRawResponse(
+        request: MemoryLongTermConsolidationPartitionRequest,
+        resolvedPlatform: PlatformV2,
+        activityRunId: String
+    ): MemoryModelProposalResponse<MemoryLongTermConsolidationProposal> {
         val transitionedToModelCall = activityLogger.advanceRunSafely(
             activityRunId = activityRunId,
             expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION,
@@ -237,7 +281,7 @@ class LlmMemoryIntelligence @Inject constructor(
                     errorDetail = response.errorDetail
                 )
             )
-            return null
+            return MemoryModelProposalResponse(proposal = null)
         }
         if (transitionedToModelCall) {
             activityLogger.advanceRunSafely(
@@ -248,15 +292,18 @@ class LlmMemoryIntelligence @Inject constructor(
             )
         }
         return try {
-            strictJson.decodeFromString<MemoryLongTermConsolidationProposal>(extractJsonObject(checkNotNull(response.content)))
+            MemoryModelProposalResponse(
+                proposal = strictJson.decodeFromString(extractJsonObject(checkNotNull(response.content))),
+                rawResponseJson = response.content
+            )
         } catch (e: SerializationException) {
             runCatching { Log.w(TAG, "Memory consolidate_long_term returned invalid JSON", e) }
             finishInvalidGeneration(activityRunId, resolvedPlatform, inputCount = null)
-            null
+            MemoryModelProposalResponse(proposal = null, rawResponseJson = response.content)
         } catch (e: IllegalArgumentException) {
             runCatching { Log.w(TAG, "Memory consolidate_long_term returned invalid JSON", e) }
             finishInvalidGeneration(activityRunId, resolvedPlatform, inputCount = null)
-            null
+            MemoryModelProposalResponse(proposal = null, rawResponseJson = response.content)
         }
     }
 

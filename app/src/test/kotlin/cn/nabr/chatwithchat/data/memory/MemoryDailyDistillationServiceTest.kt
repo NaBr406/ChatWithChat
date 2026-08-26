@@ -324,6 +324,28 @@ class MemoryDailyDistillationServiceTest {
     }
 
     @Test
+    fun `failed daily distillation keeps the exact raw model response for diagnosis`() = runBlocking {
+        val fixture = fixture(proposal = createProposal())
+        fixture.intelligence.distillationProposal = createProposal().copy(
+            operations = listOf(
+                createProposal().operations.single().copy(evidenceKeys = listOf("unknown-evidence"))
+            )
+        )
+        val rawResponse = "{\n  \"operations\": [\"unknown evidence\"]\n}\n"
+        fixture.intelligence.distillationRawResponseJson = rawResponse
+
+        val result = fixture.service.process(fixture.claimSemanticJob())
+
+        assertEquals(MemoryDailyDistillationProcessResult.STATUS_RETRYABLE, result.status)
+        val diagnostics = MemoryFilePaths(fixture.fileStore.ensureStore().getOrThrow().rootDirectory)
+            .maintenanceFailureResponseDirectory
+            .listFiles()
+            .orEmpty()
+        assertEquals(1, diagnostics.size)
+        assertEquals(rawResponse, diagnostics.single().readText())
+    }
+
+    @Test
     fun `startup recovery finalizes daily checkpoint without turn batch completion`() = runBlocking {
         val fixture = fixture(proposal = createProposal())
         val mutation = fixture.prepareMutation(reconcile = true)
@@ -450,10 +472,8 @@ class MemoryDailyDistillationServiceTest {
         existingLongTerm: List<MarkdownMemoryEntry> = emptyList()
     ): Fixture {
         val codec = MarkdownMemoryCodec()
-        val fileStore = MemoryFileStore(
-            MemoryFilePaths(Files.createTempDirectory("daily-distillation-service").toFile()),
-            clock
-        )
+        val filePaths = MemoryFilePaths(Files.createTempDirectory("daily-distillation-service").toFile())
+        val fileStore = MemoryFileStore(filePaths, clock)
         fileStore.ensureStore().getOrThrow()
         if (existingLongTerm.isNotEmpty()) {
             fileStore.replaceLongTermMemory(codec.renderLongTerm(existingLongTerm)).getOrThrow()
@@ -513,6 +533,7 @@ class MemoryDailyDistillationServiceTest {
             workEnqueuer = workEnqueuer,
             clock = clock
         )
+        val failureResponseStore = FileMemoryMaintenanceFailureResponseStore(filePaths, clock)
         val semanticPayload = STRICT_JSON.decodeFromString<MemoryDailyDistillationJobPayload>(
             jobDao.jobs.single { job -> job.type == MemoryMaintenanceJobType.DISTILL_DAILY_NOTES }.payloadJson
         )
@@ -535,6 +556,7 @@ class MemoryDailyDistillationServiceTest {
             operationController = controller,
             memoryMutationCoordinator = mutationCoordinator,
             dailyDistillationScheduler = dailyScheduler,
+            failureResponseStore = failureResponseStore,
             commitObserver = commitObserver,
             clock = clock
         )

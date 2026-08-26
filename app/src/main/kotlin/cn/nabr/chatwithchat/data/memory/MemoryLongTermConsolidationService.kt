@@ -23,6 +23,7 @@ class MemoryLongTermConsolidationService(
     private val operationController: MemoryLongTermConsolidationOperationController,
     private val memoryMutationCoordinator: MemoryMutationCoordinator,
     private val longTermScheduler: MemoryLongTermConsolidationScheduler,
+    private val failureResponseStore: MemoryMaintenanceFailureResponseStore = MemoryMaintenanceFailureResponseStore.None,
     private val activityLogger: MemoryActivityLogger = MemoryActivityLogger.None,
     private val commitObserver: MemoryLongTermConsolidationCommitObserver = MemoryLongTermConsolidationCommitObserver.None,
     private val clock: Clock = Clock.systemDefaultZone(),
@@ -193,6 +194,7 @@ class MemoryLongTermConsolidationService(
         var processedPartitions = 0
         var llmCalls = 0
         var activityPlatform: PlatformV2? = null
+        val rawResponseJsons = mutableListOf<String>()
 
         while (
             checkpoint.partitionCursor < checkpoint.entryCount &&
@@ -244,11 +246,13 @@ class MemoryLongTermConsolidationService(
                         checkpoint = binding.checkpoint
                         activityPlatform = binding.platform
                         llmCalls += 1
-                        val proposal = memoryIntelligence.consolidateLongTermMemory(
+                        val response = memoryIntelligence.consolidateLongTermMemoryWithRawResponse(
                             request = request,
                             resolvedPlatform = binding.platform,
                             activityRunId = activityRunId
-                        ) ?: run {
+                        )
+                        response.rawResponseJson?.let(rawResponseJsons::add)
+                        val proposal = response.proposal ?: run {
                             activityLogger.finishRunSafely(
                                 activityRunId,
                                 MemoryActivityStatus.FAILED,
@@ -262,7 +266,8 @@ class MemoryLongTermConsolidationService(
                             return retryable(
                                 currentJob,
                                 checkpoint,
-                                "long_term_consolidation_unavailable_or_invalid"
+                                "long_term_consolidation_unavailable_or_invalid",
+                                rawResponseJsons
                             )
                         }
                         nextProposal = runCatching {
@@ -286,7 +291,8 @@ class MemoryLongTermConsolidationService(
                             return retryable(
                                 currentJob,
                                 checkpoint,
-                                "invalid_long_term_consolidation_proposal:${throwable.message}"
+                                "invalid_long_term_consolidation_proposal:${throwable.message}",
+                                rawResponseJsons
                             )
                         }
                         persistProposal = true
@@ -365,7 +371,8 @@ class MemoryLongTermConsolidationService(
             return retryable(
                 currentJob,
                 checkpoint,
-                "long_term_consolidation_render_failed:${throwable.message}"
+                "long_term_consolidation_render_failed:${throwable.message}",
+                rawResponseJsons
             )
         }
         val continuationRequired =
@@ -403,7 +410,8 @@ class MemoryLongTermConsolidationService(
             job = currentJob,
             checkpoint = checkpoint,
             rendered = rendered,
-            activityRunId = activityRunId
+            activityRunId = activityRunId,
+            rawResponseJsons = rawResponseJsons
         )
     }
 
@@ -458,7 +466,8 @@ class MemoryLongTermConsolidationService(
         job: MemoryMaintenanceJob,
         checkpoint: MemoryLongTermConsolidationCheckpoint,
         rendered: RenderedMemoryLongTermConsolidation,
-        activityRunId: String
+        activityRunId: String,
+        rawResponseJsons: List<String> = emptyList()
     ): MemoryLongTermProcessResult {
         val mutation = runCatching {
             maintenanceScheduler.renewClaimedLease(job)
@@ -481,7 +490,8 @@ class MemoryLongTermConsolidationService(
             return retryable(
                 job,
                 checkpoint,
-                "long_term_consolidation_prepare_failed:${throwable.message}"
+                "long_term_consolidation_prepare_failed:${throwable.message}",
+                rawResponseJsons
             )
         }
         commitObserver.afterPrepared(mutation)
@@ -500,7 +510,8 @@ class MemoryLongTermConsolidationService(
             checkpoint = preparedCheckpoint,
             mutation = mutation,
             operationCount = rendered.operationCount,
-            activityRunId = activityRunId
+            activityRunId = activityRunId,
+            rawResponseJsons = rawResponseJsons
         )
     }
 
@@ -509,7 +520,8 @@ class MemoryLongTermConsolidationService(
         checkpoint: MemoryLongTermConsolidationCheckpoint,
         mutation: MemoryPreparedMutation,
         operationCount: Int,
-        activityRunId: String
+        activityRunId: String,
+        rawResponseJsons: List<String> = emptyList()
     ): MemoryLongTermProcessResult {
         val commitResult = runCatching {
             maintenanceScheduler.renewClaimedLease(job)
@@ -528,7 +540,8 @@ class MemoryLongTermConsolidationService(
             return retryable(
                 job,
                 checkpoint,
-                "long_term_consolidation_commit_failed:${throwable.message}"
+                "long_term_consolidation_commit_failed:${throwable.message}",
+                rawResponseJsons
             )
         }
         if (commitResult is MemoryMutationCommitResult.Conflict) {
@@ -542,6 +555,7 @@ class MemoryLongTermConsolidationService(
                 lastError = commitResult.reason,
                 completedAt = now()
             )
+            recordFailureResponses(job, commitResult.reason, rawResponseJsons)
             maintenanceScheduler.markFailedTerminal(job, commitResult.reason)
             scheduleReplan()
             activityLogger.finishRunSafely(
@@ -977,8 +991,10 @@ class MemoryLongTermConsolidationService(
     private suspend fun retryable(
         job: MemoryMaintenanceJob,
         checkpoint: MemoryLongTermConsolidationCheckpoint,
-        reason: String
+        reason: String,
+        rawResponseJsons: List<String> = emptyList()
     ): MemoryLongTermProcessResult {
+        recordFailureResponses(job, reason, rawResponseJsons)
         recordCheckpointError(checkpoint, reason)
         val updated = maintenanceScheduler.markFailedRetryable(job, reason)
         val status = if (updated.status == MemoryMaintenanceJobStatus.FAILED_RETRYABLE) {
@@ -987,6 +1003,16 @@ class MemoryLongTermConsolidationService(
             MemoryLongTermProcessResult.STATUS_TERMINAL
         }
         return MemoryLongTermProcessResult(status = status, jobId = job.jobId, reason = reason)
+    }
+
+    private fun recordFailureResponses(
+        job: MemoryMaintenanceJob,
+        reason: String,
+        rawResponseJsons: List<String>
+    ) {
+        rawResponseJsons.forEach { response ->
+            runCatching { failureResponseStore.record(job, reason, response) }
+        }
     }
 
     private suspend fun terminal(

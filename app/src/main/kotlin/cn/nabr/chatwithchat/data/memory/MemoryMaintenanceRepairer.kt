@@ -13,6 +13,7 @@ class MemoryMaintenanceRepairer @Inject constructor(
     private val memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler? = null,
     private val memoryDailyEvidenceRetentionService: MemoryDailyEvidenceRetentionService? = null,
     private val memoryLongTermConsolidationScheduler: MemoryLongTermConsolidationScheduler? = null,
+    private val failureResponseStore: MemoryMaintenanceFailureResponseStore = MemoryMaintenanceFailureResponseStore.None,
     private val activityLogger: MemoryActivityLogger = MemoryActivityLogger.None
 ) {
     suspend fun repairAndEnqueue(
@@ -21,6 +22,9 @@ class MemoryMaintenanceRepairer @Inject constructor(
         val repairStartedAt = maintenanceScheduler.currentEpochSecond()
         var schedulingSucceeded = true
         var mutationRecoveryResult: MemoryMutationRecoveryResult? = null
+        if (!runSchedulingStep("repair_failure_response_pruning_failed") { failureResponseStore.pruneExpired() }) {
+            schedulingSucceeded = false
+        }
         if (memoryMutationRecoveryService != null) {
             if (
                 !runSchedulingStep("repair_mutation_recovery_failed") {

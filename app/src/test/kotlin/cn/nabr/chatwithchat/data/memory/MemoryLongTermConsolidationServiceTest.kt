@@ -246,6 +246,8 @@ class MemoryLongTermConsolidationServiceTest {
                 )
             )
         }
+        val rawResponse = "{\n  \"decisions\": [\"invented memory id\"]\n}\n"
+        intelligence.rawResponseJson = rawResponse
         val fixture = fixture(
             entries = listOf(entry(id = "real_memory", text = "Use direct answers.")),
             intelligence = intelligence
@@ -270,6 +272,12 @@ class MemoryLongTermConsolidationServiceTest {
             MemoryMaintenanceJobStatus.FAILED_RETRYABLE,
             fixture.jobDao.getById(fixture.claimedJob.jobId)?.status
         )
+        val diagnostics = MemoryFilePaths(fixture.fileStore.ensureStore().getOrThrow().rootDirectory)
+            .maintenanceFailureResponseDirectory
+            .listFiles()
+            .orEmpty()
+        assertEquals(1, diagnostics.size)
+        assertEquals(rawResponse, diagnostics.single().readText())
     }
 
     @Test
@@ -1006,6 +1014,10 @@ class MemoryLongTermConsolidationServiceTest {
             operationController = MemoryLongTermConsolidationOperationController(codec),
             memoryMutationCoordinator = mutationCoordinator,
             longTermScheduler = longTermScheduler,
+            failureResponseStore = FileMemoryMaintenanceFailureResponseStore(
+                MemoryFilePaths(fileStore.ensureStore().getOrThrow().rootDirectory),
+                clock
+            ),
             commitObserver = observer,
             clock = clock
         )
@@ -1050,6 +1062,7 @@ private class RecordingLongTermMemoryIntelligence(
 ) : MemoryIntelligence {
     val requests = mutableListOf<MemoryLongTermConsolidationPartitionRequest>()
     val resolvedPlatforms = mutableListOf<PlatformV2>()
+    var rawResponseJson: String? = null
 
     override suspend fun consolidateMemoryBatch(
         request: MemoryBatchConsolidationRequest,
@@ -1069,6 +1082,15 @@ private class RecordingLongTermMemoryIntelligence(
         resolvedPlatforms += resolvedPlatform
         return proposal(request)
     }
+
+    override suspend fun consolidateLongTermMemoryWithRawResponse(
+        request: MemoryLongTermConsolidationPartitionRequest,
+        resolvedPlatform: PlatformV2,
+        activityRunId: String
+    ): MemoryModelProposalResponse<MemoryLongTermConsolidationProposal> = MemoryModelProposalResponse(
+        proposal = consolidateLongTermMemory(request, resolvedPlatform),
+        rawResponseJson = rawResponseJson
+    )
 }
 
 private class CrashAfterFirstPartitionObserver : MemoryLongTermConsolidationCommitObserver {

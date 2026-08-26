@@ -9,6 +9,9 @@ class FakeMemoryIntelligence(
     var importProposal: MemoryImportProposal? = null,
     var onConsolidate: suspend () -> Unit = {}
 ) : MemoryIntelligence {
+    var batchRawResponseJson: String? = null
+    var distillationRawResponseJson: String? = null
+    var longTermRawResponseJson: String? = null
     var lastBatchRequest: MemoryBatchConsolidationRequest? = null
     var lastLongTermRequest: MemoryLongTermConsolidationPartitionRequest? = null
     var lastPreferredPlatform: PlatformV2? = null
@@ -38,6 +41,15 @@ class FakeMemoryIntelligence(
         return batchProposal
     }
 
+    override suspend fun consolidateMemoryBatchWithRawResponse(
+        request: MemoryBatchConsolidationRequest,
+        resolvedPlatform: PlatformV2,
+        activityRunId: String
+    ): MemoryModelProposalResponse<MemoryBatchConsolidationProposal> = MemoryModelProposalResponse(
+        proposal = consolidateMemoryBatch(request, resolvedPlatform),
+        rawResponseJson = batchRawResponseJson
+    )
+
     override suspend fun distillDailyMemory(
         request: MemoryDailyDistillationFrozenInput,
         resolvedPlatform: PlatformV2
@@ -46,6 +58,15 @@ class FakeMemoryIntelligence(
         lastPreferredPlatform = resolvedPlatform
         return distillationProposal
     }
+
+    override suspend fun distillDailyMemoryWithRawResponse(
+        request: MemoryDailyDistillationFrozenInput,
+        resolvedPlatform: PlatformV2,
+        activityRunId: String
+    ): MemoryModelProposalResponse<MemoryDailyDistillationProposal> = MemoryModelProposalResponse(
+        proposal = distillDailyMemory(request, resolvedPlatform),
+        rawResponseJson = distillationRawResponseJson
+    )
 
     override suspend fun consolidateLongTermMemory(
         request: MemoryLongTermConsolidationPartitionRequest,
@@ -57,4 +78,13 @@ class FakeMemoryIntelligence(
         onConsolidate()
         return longTermProposal
     }
+
+    override suspend fun consolidateLongTermMemoryWithRawResponse(
+        request: MemoryLongTermConsolidationPartitionRequest,
+        resolvedPlatform: PlatformV2,
+        activityRunId: String
+    ): MemoryModelProposalResponse<MemoryLongTermConsolidationProposal> = MemoryModelProposalResponse(
+        proposal = consolidateLongTermMemory(request, resolvedPlatform),
+        rawResponseJson = longTermRawResponseJson
+    )
 }

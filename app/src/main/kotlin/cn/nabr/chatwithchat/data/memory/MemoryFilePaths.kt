@@ -20,6 +20,9 @@ data class MemoryFilePaths(
     val stagingDirectory: File
         get() = File(rootDirectory, STAGING_DIRECTORY_NAME)
 
+    val maintenanceFailureResponseDirectory: File
+        get() = File(rootDirectory, "$DIAGNOSTICS_DIRECTORY_NAME/$MAINTENANCE_FAILURE_RESPONSE_DIRECTORY_NAME")
+
     fun dailyMemoryFile(date: LocalDate): File =
         File(dailyMemoryDirectory, "${date.format(DateTimeFormatter.ISO_LOCAL_DATE)}.md")
 
@@ -106,6 +109,8 @@ data class MemoryFilePaths(
         const val DAILY_MEMORY_DIRECTORY_NAME = "memory"
         const val BACKUP_DIRECTORY_NAME = ".backups"
         const val STAGING_DIRECTORY_NAME = ".staging"
+        const val DIAGNOSTICS_DIRECTORY_NAME = ".diagnostics"
+        const val MAINTENANCE_FAILURE_RESPONSE_DIRECTORY_NAME = "maintenance-failures"
 
         private val DAILY_MEMORY_FILE_REGEX = Regex("\\d{4}-\\d{2}-\\d{2}\\.md")
         private val STAGING_ID_REGEX = Regex("[A-Za-z0-9][A-Za-z0-9_-]{0,127}")

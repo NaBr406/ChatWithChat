@@ -28,6 +28,7 @@ class MemoryDailyDistillationService(
     private val operationController: MemoryDailyDistillationOperationController,
     private val memoryMutationCoordinator: MemoryMutationCoordinator,
     private val dailyDistillationScheduler: MemoryDailyDistillationScheduler,
+    private val failureResponseStore: MemoryMaintenanceFailureResponseStore = MemoryMaintenanceFailureResponseStore.None,
     private val activityLogger: MemoryActivityLogger = MemoryActivityLogger.None,
     private val commitObserver: MemoryDailyDistillationCommitObserver = MemoryDailyDistillationCommitObserver.None,
     private val clock: Clock = Clock.systemDefaultZone(),
@@ -117,6 +118,7 @@ class MemoryDailyDistillationService(
         var operationCount = 0
         var operationDiagnostics = emptyList<MemoryOperationDiagnostic>()
         var activityPlatform: PlatformV2? = null
+        var rawResponseJson: String? = null
         if (mutation == null) {
             val sourceState = validateFrozenSources(payload.input)
             if (sourceState != null) {
@@ -172,7 +174,13 @@ class MemoryDailyDistillationService(
                 }
             }
             activityPlatform = resolvedPlatform
-            val proposal = memoryIntelligence.distillDailyMemory(payload.input, resolvedPlatform, activityRunId)
+            val response = memoryIntelligence.distillDailyMemoryWithRawResponse(
+                payload.input,
+                resolvedPlatform,
+                activityRunId
+            )
+            rawResponseJson = response.rawResponseJson
+            val proposal = response.proposal
                 ?: run {
                     activityLogger.finishRunSafely(
                         activityRunId,
@@ -183,7 +191,11 @@ class MemoryDailyDistillationService(
                         ),
                         expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
                     )
-                    return retryable(runningJob, "daily_distillation_unavailable_or_invalid")
+                    return retryable(
+                        runningJob,
+                        "daily_distillation_unavailable_or_invalid",
+                        rawResponseJson
+                    )
                 }
             runningJob = maintenanceScheduler.renewClaimedLease(runningJob)
             activityLogger.advanceRunSafely(
@@ -208,7 +220,11 @@ class MemoryDailyDistillationService(
                     ),
                     expectedPhase = MemoryActivityPhase.ORGANIZATION
                 )
-                return retryable(runningJob, "invalid_daily_distillation_operations:${throwable.message}")
+                return retryable(
+                    runningJob,
+                    "invalid_daily_distillation_operations:${throwable.message}",
+                    rawResponseJson
+                )
             }
             if (proposal.operations.isNotEmpty() && validation.operations.isEmpty()) {
                 activityLogger.finishRunSafely(
@@ -222,7 +238,7 @@ class MemoryDailyDistillationService(
                     ),
                     expectedPhase = MemoryActivityPhase.ORGANIZATION
                 )
-                return retryable(runningJob, "all_daily_operations_invalid")
+                return retryable(runningJob, "all_daily_operations_invalid", rawResponseJson)
             }
             val baseMarkdown = memoryFileStore.readLongTermMemory().getOrThrow()
             val rendered = runCatching {
@@ -272,7 +288,11 @@ class MemoryDailyDistillationService(
                     ),
                     expectedPhase = MemoryActivityPhase.ORGANIZATION
                 )
-                return retryable(runningJob, "daily_distillation_render_failed:${throwable.message}")
+                return retryable(
+                    runningJob,
+                    "daily_distillation_render_failed:${throwable.message}",
+                    rawResponseJson
+                )
             }
             operationCount = validation.operations.size
             operationDiagnostics = validation.diagnostics
@@ -300,7 +320,11 @@ class MemoryDailyDistillationService(
                     ),
                     expectedPhase = MemoryActivityPhase.ORGANIZATION
                 )
-                return retryable(runningJob, "daily_distillation_prepare_failed:${throwable.message}")
+                return retryable(
+                    runningJob,
+                    "daily_distillation_prepare_failed:${throwable.message}",
+                    rawResponseJson
+                )
             }
             if (BuildConfig.DEBUG) commitObserver.afterPrepared(mutation)
             checkpoint = transitionCheckpoint(
@@ -335,7 +359,11 @@ class MemoryDailyDistillationService(
                 ),
                 expectedPhase = MemoryActivityPhase.ORGANIZATION
             )
-            return retryable(runningJob, "daily_distillation_commit_failed:${throwable.message}")
+            return retryable(
+                runningJob,
+                "daily_distillation_commit_failed:${throwable.message}",
+                rawResponseJson
+            )
         }
         if (commitResult is MemoryMutationCommitResult.Conflict) {
             transitionCheckpoint(
@@ -345,6 +373,7 @@ class MemoryDailyDistillationService(
                 mutationGroupId = commitResult.mutation.group.groupId,
                 processedAt = now()
             )
+            recordFailureResponse(runningJob, commitResult.reason, rawResponseJson)
             maintenanceScheduler.markFailedTerminal(
                 runningJob,
                 commitResult.reason
@@ -673,8 +702,10 @@ class MemoryDailyDistillationService(
 
     private suspend fun retryable(
         job: MemoryMaintenanceJob,
-        reason: String
+        reason: String,
+        rawResponseJson: String? = null
     ): MemoryDailyDistillationProcessResult {
+        recordFailureResponse(job, reason, rawResponseJson)
         val updated = maintenanceScheduler.markFailedRetryable(job, reason)
         val status = if (updated.status == MemoryMaintenanceJobStatus.FAILED_RETRYABLE) {
             MemoryDailyDistillationProcessResult.STATUS_RETRYABLE
@@ -682,6 +713,16 @@ class MemoryDailyDistillationService(
             MemoryDailyDistillationProcessResult.STATUS_TERMINAL
         }
         return MemoryDailyDistillationProcessResult(status = status, jobId = job.jobId, reason = reason)
+    }
+
+    private fun recordFailureResponse(
+        job: MemoryMaintenanceJob,
+        reason: String,
+        rawResponseJson: String?
+    ) {
+        rawResponseJson?.let { response ->
+            runCatching { failureResponseStore.record(job, reason, response) }
+        }
     }
 
     private suspend fun terminal(

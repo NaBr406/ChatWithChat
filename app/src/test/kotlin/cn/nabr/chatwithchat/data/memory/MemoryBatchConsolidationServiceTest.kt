@@ -1026,6 +1026,34 @@ class MemoryBatchConsolidationServiceTest {
     }
 
     @Test
+    fun `failed batch keeps the exact raw model response for diagnosis`() = runBlocking {
+        val fixture = fixture(
+            MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        action = MemoryBatchAction.REPLACE,
+                        targetMemoryId = "invented-id",
+                        text = "Invalid replacement"
+                    )
+                )
+            )
+        )
+        val rawResponse = "{\n  \"operations\": [\"invalid replacement\"]\n}\n"
+        fixture.intelligence.batchRawResponseJson = rawResponse
+
+        val result = fixture.service.process(fixture.createFiveTurnBatch())
+
+        assertEquals(MemoryBatchProcessResult.STATUS_RETRYABLE, result.status)
+        val diagnostics = MemoryFilePaths(fixture.fileStore.ensureStore().getOrThrow().rootDirectory)
+            .maintenanceFailureResponseDirectory
+            .listFiles()
+            .orEmpty()
+        assertEquals(1, diagnostics.size)
+        assertEquals(rawResponse, diagnostics.single().readText())
+    }
+
+    @Test
     fun `maintenance alias resolves to frozen memory target`() = runBlocking {
         val existing = longTermEntry(
             id = "mem_alias_target",
@@ -1886,11 +1914,10 @@ class MemoryBatchConsolidationServiceTest {
             settingRepository = settingRepository,
             clock = clock
         )
-        val fileStore = MemoryFileStore(
-            MemoryFilePaths(Files.createTempDirectory("memory-batch-consolidation").toFile()),
-            clock
-        )
+        val filePaths = MemoryFilePaths(Files.createTempDirectory("memory-batch-consolidation").toFile())
+        val fileStore = MemoryFileStore(filePaths, clock)
         fileStore.ensureStore().getOrThrow()
+        val failureResponseStore = FileMemoryMaintenanceFailureResponseStore(filePaths, clock)
         val recoveryDao = InMemoryMemoryRecoveryDao()
         val mutationCoordinator = MemoryMutationCoordinator(
             recoveryDao = recoveryDao,
@@ -1933,6 +1960,7 @@ class MemoryBatchConsolidationServiceTest {
                 markdownMemoryCodec = MarkdownMemoryCodec(),
                 memoryMaintenanceCorpusReader = maintenanceCorpusReader,
                 memoryMutationCoordinator = mutationCoordinator,
+                failureResponseStore = failureResponseStore,
                 activityLogger = activityLogger,
                 commitObserver = commitObserver,
                 clock = clock

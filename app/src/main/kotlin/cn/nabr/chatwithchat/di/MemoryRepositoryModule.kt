@@ -7,6 +7,7 @@ import cn.nabr.chatwithchat.data.database.dao.MemoryMaintenanceJobDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryRecoveryDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryTurnBatchDao
 import cn.nabr.chatwithchat.data.debug.PromptTraceStore
+import cn.nabr.chatwithchat.data.memory.FileMemoryMaintenanceFailureResponseStore
 import cn.nabr.chatwithchat.data.memory.HybridMemoryRetriever
 import cn.nabr.chatwithchat.data.memory.LlmMemoryIntelligence
 import cn.nabr.chatwithchat.data.memory.MarkdownLexicalRetriever
@@ -31,6 +32,7 @@ import cn.nabr.chatwithchat.data.memory.MemoryLongTermConsolidationScheduler
 import cn.nabr.chatwithchat.data.memory.MemoryLongTermConsolidationService
 import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceCorpusReader
 import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceEventSink
+import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceFailureResponseStore
 import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceLeaseWatchdog
 import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceNotificationEventSink
 import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceNotificationPolicy
@@ -105,6 +107,12 @@ object MemoryRepositoryModule {
     @Singleton
     fun provideMemoryFileStore(memoryFilePaths: MemoryFilePaths): MemoryFileStore =
         MemoryFileStore(memoryFilePaths)
+
+    @Provides
+    @Singleton
+    fun provideMemoryMaintenanceFailureResponseStore(
+        memoryFilePaths: MemoryFilePaths
+    ): MemoryMaintenanceFailureResponseStore = FileMemoryMaintenanceFailureResponseStore(memoryFilePaths)
 
     @Provides
     @Singleton
@@ -414,6 +422,7 @@ object MemoryRepositoryModule {
         memoryDailyDistillationOperationController: MemoryDailyDistillationOperationController,
         memoryMutationCoordinator: MemoryMutationCoordinator,
         memoryDailyDistillationScheduler: MemoryDailyDistillationScheduler,
+        failureResponseStore: MemoryMaintenanceFailureResponseStore,
         memoryActivityLogger: MemoryActivityLogger
     ): MemoryDailyDistillationService = MemoryDailyDistillationService(
         recoveryDao = memoryRecoveryDao,
@@ -425,6 +434,7 @@ object MemoryRepositoryModule {
         operationController = memoryDailyDistillationOperationController,
         memoryMutationCoordinator = memoryMutationCoordinator,
         dailyDistillationScheduler = memoryDailyDistillationScheduler,
+        failureResponseStore = failureResponseStore,
         activityLogger = memoryActivityLogger
     )
 
@@ -460,6 +470,7 @@ object MemoryRepositoryModule {
         operationController: MemoryLongTermConsolidationOperationController,
         memoryMutationCoordinator: MemoryMutationCoordinator,
         memoryLongTermConsolidationScheduler: MemoryLongTermConsolidationScheduler,
+        failureResponseStore: MemoryMaintenanceFailureResponseStore,
         memoryActivityLogger: MemoryActivityLogger
     ): MemoryLongTermConsolidationService = MemoryLongTermConsolidationService(
         checkpointDao = memoryLongTermConsolidationDao,
@@ -472,6 +483,7 @@ object MemoryRepositoryModule {
         operationController = operationController,
         memoryMutationCoordinator = memoryMutationCoordinator,
         longTermScheduler = memoryLongTermConsolidationScheduler,
+        failureResponseStore = failureResponseStore,
         activityLogger = memoryActivityLogger
     )
 
@@ -495,6 +507,7 @@ object MemoryRepositoryModule {
         markdownMemoryCodec: MarkdownMemoryCodec,
         memoryMaintenanceCorpusReader: MemoryMaintenanceCorpusReader,
         memoryMutationCoordinator: MemoryMutationCoordinator,
+        failureResponseStore: MemoryMaintenanceFailureResponseStore,
         memoryActivityLogger: MemoryActivityLogger
     ): MemoryBatchConsolidationService = MemoryBatchConsolidationService(
         turnBatchDao = memoryTurnBatchDao,
@@ -508,6 +521,7 @@ object MemoryRepositoryModule {
         markdownMemoryCodec = markdownMemoryCodec,
         memoryMaintenanceCorpusReader = memoryMaintenanceCorpusReader,
         memoryMutationCoordinator = memoryMutationCoordinator,
+        failureResponseStore = failureResponseStore,
         activityLogger = memoryActivityLogger
     )
 

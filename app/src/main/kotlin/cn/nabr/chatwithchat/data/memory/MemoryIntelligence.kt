@@ -21,6 +21,14 @@ interface MemoryIntelligence {
         activityRunId: String
     ): MemoryBatchConsolidationProposal? = consolidateMemoryBatch(request, resolvedPlatform)
 
+    suspend fun consolidateMemoryBatchWithRawResponse(
+        request: MemoryBatchConsolidationRequest,
+        resolvedPlatform: PlatformV2,
+        activityRunId: String
+    ): MemoryModelProposalResponse<MemoryBatchConsolidationProposal> = MemoryModelProposalResponse(
+        proposal = consolidateMemoryBatch(request, resolvedPlatform, activityRunId)
+    )
+
     suspend fun distillDailyMemory(
         request: MemoryDailyDistillationFrozenInput,
         resolvedPlatform: PlatformV2
@@ -32,6 +40,14 @@ interface MemoryIntelligence {
         activityRunId: String
     ): MemoryDailyDistillationProposal? = distillDailyMemory(request, resolvedPlatform)
 
+    suspend fun distillDailyMemoryWithRawResponse(
+        request: MemoryDailyDistillationFrozenInput,
+        resolvedPlatform: PlatformV2,
+        activityRunId: String
+    ): MemoryModelProposalResponse<MemoryDailyDistillationProposal> = MemoryModelProposalResponse(
+        proposal = distillDailyMemory(request, resolvedPlatform, activityRunId)
+    )
+
     suspend fun consolidateLongTermMemory(
         request: MemoryLongTermConsolidationPartitionRequest,
         resolvedPlatform: PlatformV2
@@ -42,7 +58,21 @@ interface MemoryIntelligence {
         resolvedPlatform: PlatformV2,
         activityRunId: String
     ): MemoryLongTermConsolidationProposal? = consolidateLongTermMemory(request, resolvedPlatform)
+
+    suspend fun consolidateLongTermMemoryWithRawResponse(
+        request: MemoryLongTermConsolidationPartitionRequest,
+        resolvedPlatform: PlatformV2,
+        activityRunId: String
+    ): MemoryModelProposalResponse<MemoryLongTermConsolidationProposal> = MemoryModelProposalResponse(
+        proposal = consolidateLongTermMemory(request, resolvedPlatform, activityRunId)
+    )
 }
+
+/** Keeps the exact model payload available to the maintenance service if its later safety checks fail. */
+data class MemoryModelProposalResponse<T>(
+    val proposal: T?,
+    val rawResponseJson: String? = null
+)
 
 internal sealed interface ClaimedMemoryModelBinding {
     data class Resolved(

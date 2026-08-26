@@ -28,6 +28,7 @@ class MemoryBatchConsolidationService(
     private val markdownMemoryCodec: MarkdownMemoryCodec,
     private val memoryMaintenanceCorpusReader: MemoryMaintenanceCorpusReader,
     private val memoryMutationCoordinator: MemoryMutationCoordinator,
+    private val failureResponseStore: MemoryMaintenanceFailureResponseStore = MemoryMaintenanceFailureResponseStore.None,
     private val activityLogger: MemoryActivityLogger = MemoryActivityLogger.None,
     private val commitObserver: MemoryBatchCommitObserver = MemoryBatchCommitObserver.None,
     private val targetIndexFingerprint: String = MemoryVectorIndexDefaults.configuration.fingerprint(),
@@ -226,6 +227,7 @@ class MemoryBatchConsolidationService(
         var longTermWriteCount = 0
         var operationDiagnostics = emptyList<MemoryOperationDiagnostic>()
         var activityPlatform: PlatformV2? = null
+        var rawResponseJson: String? = null
         val preparedMutation: MemoryPreparedMutation?
 
         if (existingMutation != null || batchAlreadyComplete) {
@@ -266,7 +268,9 @@ class MemoryBatchConsolidationService(
                 }
             }
             activityPlatform = resolvedPlatform
-            val proposal = memoryIntelligence.consolidateMemoryBatch(request, resolvedPlatform, activityRunId)
+            val response = memoryIntelligence.consolidateMemoryBatchWithRawResponse(request, resolvedPlatform, activityRunId)
+            rawResponseJson = response.rawResponseJson
+            val proposal = response.proposal
             runningJob = maintenanceScheduler.renewClaimedLease(runningJob)
             if (proposal == null) {
                 activityLogger.finishRunSafely(
@@ -278,7 +282,14 @@ class MemoryBatchConsolidationService(
                     ),
                     expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
                 )
-                return retryable(runningJob, request, "consolidation_unavailable_or_invalid", startedAt, null)
+                return retryable(
+                    runningJob,
+                    request,
+                    "consolidation_unavailable_or_invalid",
+                    startedAt,
+                    null,
+                    rawResponseJson
+                )
             }
             activityLogger.advanceRunSafely(
                 activityRunId = activityRunId,
@@ -306,7 +317,8 @@ class MemoryBatchConsolidationService(
                         request,
                         "invalid_consolidation_operations:${throwable.message}",
                         startedAt,
-                        proposal.operations.size
+                        proposal.operations.size,
+                        rawResponseJson
                     )
                 }
             if (proposal.operations.isNotEmpty() && validation.operations.isEmpty()) {
@@ -326,7 +338,8 @@ class MemoryBatchConsolidationService(
                     request,
                     "all_consolidation_operations_invalid",
                     startedAt,
-                    proposal.operations.size
+                    proposal.operations.size,
+                    rawResponseJson
                 )
             }
             val renderedBatch = runCatching {
@@ -353,7 +366,8 @@ class MemoryBatchConsolidationService(
                     request,
                     "memory_render_failed:${throwable.message}",
                     startedAt,
-                    proposal.operations.size
+                    proposal.operations.size,
+                    rawResponseJson
                 )
             }
             operationCount = validation.operations.size
@@ -384,7 +398,8 @@ class MemoryBatchConsolidationService(
                     request,
                     "memory_prepare_failed:${throwable.message}",
                     startedAt,
-                    proposal.operations.size
+                    proposal.operations.size,
+                    rawResponseJson
                 )
             }
         }
@@ -414,7 +429,8 @@ class MemoryBatchConsolidationService(
                     request,
                     "memory_commit_failed:${throwable.message}",
                     startedAt,
-                    operationCount.takeIf { it > 0 }
+                    operationCount.takeIf { it > 0 },
+                    rawResponseJson
                 )
             }
             if (commitResult is MemoryMutationCommitResult.Conflict) {
@@ -435,7 +451,8 @@ class MemoryBatchConsolidationService(
                         request,
                         "conflicted_batch_completion_failed:${throwable.message}",
                         startedAt,
-                        operationCount.takeIf { it > 0 }
+                        operationCount.takeIf { it > 0 },
+                        rawResponseJson
                     )
                 }
                 if (!conflictBatchCompleted) {
@@ -444,10 +461,12 @@ class MemoryBatchConsolidationService(
                         request,
                         "conflicted_batch_completion_failed",
                         startedAt,
-                        operationCount.takeIf { it > 0 }
+                        operationCount.takeIf { it > 0 },
+                        rawResponseJson
                     )
                 }
                 commitObserver.afterBatchCompletion(runningJob.jobId)
+                recordFailureResponse(runningJob, commitResult.reason, rawResponseJson)
                 return terminal(runningJob, commitResult.reason)
             }
         }
@@ -470,7 +489,8 @@ class MemoryBatchConsolidationService(
                 request,
                 "claimed_batch_completion_failed:${throwable.message}",
                 startedAt,
-                operationCount.takeIf { it > 0 }
+                operationCount.takeIf { it > 0 },
+                rawResponseJson
             )
         }
         if (!batchCompleted) {
@@ -489,7 +509,8 @@ class MemoryBatchConsolidationService(
                 request,
                 "claimed_batch_completion_failed",
                 startedAt,
-                operationCount.takeIf { it > 0 }
+                operationCount.takeIf { it > 0 },
+                rawResponseJson
             )
         }
         commitObserver.afterBatchCompletion(runningJob.jobId)
@@ -1354,8 +1375,10 @@ class MemoryBatchConsolidationService(
         request: MemoryBatchConsolidationRequest,
         reason: String,
         startedAt: Long,
-        proposalCount: Int?
+        proposalCount: Int?,
+        rawResponseJson: String? = null
     ): MemoryBatchProcessResult {
+        recordFailureResponse(job, reason, rawResponseJson)
         val failedJob = maintenanceScheduler.markFailedRetryable(job, reason)
         val status = if (failedJob.status == MemoryMaintenanceJobStatus.FAILED_TERMINAL) {
             MemoryBatchProcessResult.STATUS_TERMINAL
@@ -1365,6 +1388,16 @@ class MemoryBatchConsolidationService(
         logBatch(job, request, status, proposalCount, System.currentTimeMillis() - startedAt)
         turnBatchScheduler.scheduleNextWake()
         return MemoryBatchProcessResult(status, job.jobId, reason = reason)
+    }
+
+    private fun recordFailureResponse(
+        job: MemoryMaintenanceJob,
+        reason: String,
+        rawResponseJson: String?
+    ) {
+        rawResponseJson?.let { response ->
+            runCatching { failureResponseStore.record(job, reason, response) }
+        }
     }
 
     private suspend fun terminal(
