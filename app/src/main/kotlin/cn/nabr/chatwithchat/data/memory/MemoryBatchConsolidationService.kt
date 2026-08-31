@@ -273,19 +273,30 @@ class MemoryBatchConsolidationService(
             val proposal = response.proposal
             runningJob = maintenanceScheduler.renewClaimedLease(runningJob)
             if (proposal == null) {
+                val reason = if (response.truncated) {
+                    MEMORY_RESPONSE_TRUNCATED_REASON
+                } else {
+                    "consolidation_unavailable_or_invalid"
+                }
                 activityLogger.finishRunSafely(
                     activityRunId,
                     MemoryActivityStatus.FAILED,
                     resolvedPlatform.toMemoryActivityData(
                         inputCount = request.turns.size,
-                        errorCode = "consolidation_unavailable_or_invalid"
+                        errorCode = reason
                     ),
                     expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
                 )
+                // A payload cut on the output cap reproduces byte for byte at temperature 0, so the
+                // automatic attempts would only replay the same failure.
+                if (response.truncated) {
+                    recordFailureResponse(runningJob, reason, rawResponseJson)
+                    return terminal(runningJob, reason)
+                }
                 return retryable(
                     runningJob,
                     request,
-                    "consolidation_unavailable_or_invalid",
+                    reason,
                     startedAt,
                     null,
                     rawResponseJson
@@ -578,7 +589,7 @@ class MemoryBatchConsolidationService(
         check(payload.chatId > 0)
         check(payload.turns.size in 1..MemoryTurnBatchCoordinator.MAX_BATCH_TURNS)
         check(payload.triggerReason in VALID_TRIGGER_REASONS)
-        check(payload.batchId == job.idempotencyKey)
+        check(payload.batchId == job.sourceIdempotencyKey)
         check(payload.turns.map { it.turnKey }.distinct().size == payload.turns.size)
         payload.turns.forEach { jobTurn ->
             check(sha256(jobTurn.payloadJson) == jobTurn.contentHash)
@@ -800,7 +811,7 @@ class MemoryBatchConsolidationService(
         request: MemoryBatchConsolidationRequest,
         operations: List<MemoryBatchOperation>
     ): MemoryBatchOperationValidationResult {
-        check(operations.size <= MemoryControlledOperationPolicy.MAX_OPERATIONS)
+        check(operations.size <= MemoryControlledOperationPolicy.MAX_OPERATIONS) { "too_many_operations" }
         val existingById = request.existingMemories.associateBy { it.id }
         val idsByAlias = request.existingMemoryAliases.associate { binding -> binding.alias to binding.entryId }
         val recalledIdsByAlias = request.turns
@@ -814,7 +825,7 @@ class MemoryBatchConsolidationService(
             val validatedOperation = runCatching {
             val proposal = operation.proposalRef?.let { ref ->
                 check(ref.matches(PROPOSAL_REF_PATTERN)) { "proposal_ref_invalid" }
-                checkNotNull(proposalsByRef[ref])
+                checkNotNull(proposalsByRef[ref]) { "proposal_ref_unknown" }
             }
             val proposalTargetId = proposal?.targetRef?.let { ref ->
                 recalledIdsByAlias[ref] ?: idsByAlias[ref]
@@ -839,32 +850,32 @@ class MemoryBatchConsolidationService(
                 )
             }
             val operation = operationWithProposal
-            check(operation.destination in VALID_DESTINATIONS)
-            check(operation.action in VALID_ACTIONS)
-            check(operation.type in MemoryControlledOperationPolicy.validTypes)
-            check(operation.sensitivity in MemoryControlledOperationPolicy.validSensitivities)
-            check(operation.source in MemoryControlledOperationPolicy.validSources)
-            check(operation.reason.length <= MemoryControlledOperationPolicy.MAX_REASON_CHARS)
-            check(operation.evidenceTurnKeys.size <= MemoryControlledOperationPolicy.MAX_EVIDENCE_KEYS)
-            check(operation.evidenceTurnKeys.distinct().size == operation.evidenceTurnKeys.size)
-            check(operation.evidenceTurnKeys.all(turnsByKey::containsKey))
+            check(operation.destination in VALID_DESTINATIONS) { "destination_invalid" }
+            check(operation.action in VALID_ACTIONS) { "action_invalid" }
+            check(operation.type in MemoryControlledOperationPolicy.validTypes) { "type_invalid" }
+            check(operation.sensitivity in MemoryControlledOperationPolicy.validSensitivities) { "sensitivity_invalid" }
+            check(operation.source in MemoryControlledOperationPolicy.validSources) { "source_invalid" }
+            check(operation.reason.length <= MemoryControlledOperationPolicy.MAX_REASON_CHARS) { "reason_too_long" }
+            check(operation.evidenceTurnKeys.size <= MemoryControlledOperationPolicy.MAX_EVIDENCE_KEYS) { "too_many_evidence_turns" }
+            check(operation.evidenceTurnKeys.distinct().size == operation.evidenceTurnKeys.size) { "duplicate_evidence_turn" }
+            check(operation.evidenceTurnKeys.all(turnsByKey::containsKey)) { "unknown_evidence_turn" }
 
             when (operation.action) {
                 MemoryBatchAction.IGNORE -> {
-                    check(operation.targetMemoryId.isNullOrBlank())
-                    check(operation.targetMemoryRef.isNullOrBlank())
-                    check(operation.text.isBlank())
-                    check(operation.canonicalKey == null)
-                    check(operation.scope == null)
-                    check(operation.evidenceAt == null)
-                    check(operation.recallState == null)
+                    check(operation.targetMemoryId.isNullOrBlank()) { "ignore_target_id_forbidden" }
+                    check(operation.targetMemoryRef.isNullOrBlank()) { "ignore_target_ref_forbidden" }
+                    check(operation.text.isBlank()) { "ignore_text_forbidden" }
+                    check(operation.canonicalKey == null) { "ignore_canonical_key_forbidden" }
+                    check(operation.scope == null) { "ignore_scope_forbidden" }
+                    check(operation.evidenceAt == null) { "ignore_evidence_at_forbidden" }
+                    check(operation.recallState == null) { "ignore_recall_state_forbidden" }
                     operation.copy(reason = operation.reason.trim())
                 }
                 MemoryBatchAction.CREATE -> {
-                    check(operation.targetMemoryId.isNullOrBlank())
-                    check(operation.targetMemoryRef.isNullOrBlank())
+                    check(operation.targetMemoryId.isNullOrBlank()) { "create_target_id_forbidden" }
+                    check(operation.targetMemoryRef.isNullOrBlank()) { "create_target_ref_forbidden" }
                     validateWriteText(operation.text)
-                    check(operation.evidenceTurnKeys.isNotEmpty())
+                    check(operation.evidenceTurnKeys.isNotEmpty()) { "create_requires_evidence" }
                     check(
                         operation.destination != MemoryBatchDestination.LONG_TERM ||
                             operation.source != MemorySource.ASSISTANT_INFERRED ||
@@ -875,11 +886,11 @@ class MemoryBatchConsolidationService(
                 MemoryBatchAction.REPLACE -> {
                     val targetId = operation.targetMemoryId?.takeIf { it.isNotBlank() }
                         ?: operation.targetMemoryRef?.let { ref -> idsByAlias[ref] }
-                    checkNotNull(targetId)
-                    val existing = checkNotNull(existingById[targetId])
-                    check(operation.destination == destinationFor(existing.sourcePath))
+                    checkNotNull(targetId) { "replace_target_unresolved" }
+                    val existing = checkNotNull(existingById[targetId]) { "replace_target_unknown" }
+                    check(operation.destination == destinationFor(existing.sourcePath)) { "replace_destination_mismatch" }
                     validateWriteText(operation.text)
-                    check(operation.evidenceTurnKeys.isNotEmpty())
+                    check(operation.evidenceTurnKeys.isNotEmpty()) { "replace_requires_evidence" }
                     validatedCanonicalWrite(operation, existing, turnsByKey).copy(
                         targetMemoryId = targetId,
                         targetMemoryRef = null
@@ -888,15 +899,15 @@ class MemoryBatchConsolidationService(
                 MemoryBatchAction.REMOVE -> {
                     val targetId = operation.targetMemoryId?.takeIf { it.isNotBlank() }
                         ?: operation.targetMemoryRef?.let { ref -> idsByAlias[ref] }
-                    checkNotNull(targetId)
-                    val existing = checkNotNull(existingById[targetId])
-                    check(operation.destination == destinationFor(existing.sourcePath))
-                    check(operation.text.isBlank())
-                    check(operation.evidenceTurnKeys.isNotEmpty())
-                    check(operation.canonicalKey == null)
-                    check(operation.scope == null)
-                    check(operation.evidenceAt == null)
-                    check(operation.recallState == null)
+                    checkNotNull(targetId) { "remove_target_unresolved" }
+                    val existing = checkNotNull(existingById[targetId]) { "remove_target_unknown" }
+                    check(operation.destination == destinationFor(existing.sourcePath)) { "remove_destination_mismatch" }
+                    check(operation.text.isBlank()) { "remove_text_forbidden" }
+                    check(operation.evidenceTurnKeys.isNotEmpty()) { "remove_requires_evidence" }
+                    check(operation.canonicalKey == null) { "remove_canonical_key_forbidden" }
+                    check(operation.scope == null) { "remove_scope_forbidden" }
+                    check(operation.evidenceAt == null) { "remove_evidence_at_forbidden" }
+                    check(operation.recallState == null) { "remove_recall_state_forbidden" }
                     operation.copy(
                         targetMemoryId = targetId,
                         targetMemoryRef = null,
@@ -904,7 +915,7 @@ class MemoryBatchConsolidationService(
                         reason = operation.reason.trim()
                     )
                 }
-                else -> error("Unsupported memory batch action")
+                else -> error("action_unsupported")
             }
             }.getOrElse { throwable ->
                 diagnostics += MemoryOperationDiagnostic(index, throwable.safeValidationCode())
@@ -963,22 +974,23 @@ class MemoryBatchConsolidationService(
         target: MemoryBatchExistingMemory?,
         turnsByKey: Map<String, MemoryCompletedTurnSnapshot>
     ): MemoryBatchOperation {
-        val canonicalKey = checkNotNull(operation.canonicalKey)
-        val scope = checkNotNull(operation.scope)
+        val canonicalKey = checkNotNull(operation.canonicalKey) { "canonical_key_missing" }
+        val scope = checkNotNull(operation.scope) { "scope_missing" }
         val normalizedCanonicalKey = MemoryCanonicalIdentityPolicy.normalizeCanonicalKey(canonicalKey, scope)
-        val recallState = checkNotNull(operation.recallState)
+        val recallState = checkNotNull(operation.recallState) { "recall_state_missing" }
+        // The cited turns own the evidence time. Whatever the model echoed back is discarded rather
+        // than validated: a model that miscopies one epoch second must not cost the whole batch.
         val evidenceAt = operation.evidenceTurnKeys.maxOf { key -> turnsByKey.getValue(key).completedAt }
-        check(MarkdownMemoryMetadataPolicy.isCanonicalKey(normalizedCanonicalKey))
-        check(MarkdownMemoryMetadataPolicy.isScope(scope))
-        check(operation.evidenceAt == evidenceAt)
-        check(evidenceAt >= 0L)
-        check(recallState in ACTIVE_RECALL_STATES)
+        check(MarkdownMemoryMetadataPolicy.isCanonicalKey(normalizedCanonicalKey)) { "canonical_key_invalid" }
+        check(MarkdownMemoryMetadataPolicy.isScope(scope)) { "scope_invalid" }
+        check(evidenceAt >= 0L) { "evidence_at_negative" }
+        check(recallState in ACTIVE_RECALL_STATES) { "recall_state_invalid" }
         // Obsolete ids are recoverable history. Their own metadata may describe an old merge;
         // the full canonical document contains the successor and performs final validation.
         target
             ?.takeIf { existing -> existing.validity != MemoryValidity.OBSOLETE }
             ?.let { existing ->
-                check(existing.type == operation.type)
+                check(existing.type == operation.type) { "target_type_mismatch" }
                 check(
                     existing.canonicalKey == null ||
                         MemoryCanonicalIdentityPolicy.allowsRebinding(
@@ -987,8 +999,8 @@ class MemoryBatchConsolidationService(
                             toKey = normalizedCanonicalKey,
                             toScope = scope
                         )
-                )
-                check(existing.canonicalKey == null || existing.scope == scope)
+                ) { "canonical_key_rebinding_forbidden" }
+                check(existing.canonicalKey == null || existing.scope == scope) { "target_scope_mismatch" }
             }
         return operation.copy(
             text = operation.text.trim(),
@@ -1022,9 +1034,9 @@ class MemoryBatchConsolidationService(
 
     private fun validateWriteText(text: String) {
         val normalized = text.trim()
-        check(normalized.isNotBlank())
-        check(normalized.length <= MemoryControlledOperationPolicy.MAX_MEMORY_TEXT_CHARS)
-        check(!normalized.startsWith("The user said:", ignoreCase = true))
+        check(normalized.isNotBlank()) { "text_blank" }
+        check(normalized.length <= MemoryControlledOperationPolicy.MAX_MEMORY_TEXT_CHARS) { "text_too_long" }
+        check(!normalized.startsWith("The user said:", ignoreCase = true)) { "text_is_transcript" }
     }
 
     private fun renderOperations(

@@ -12,6 +12,9 @@ class FakeMemoryIntelligence(
     var batchRawResponseJson: String? = null
     var distillationRawResponseJson: String? = null
     var longTermRawResponseJson: String? = null
+
+    /** Simulates a payload cut on the provider's output token cap. */
+    var responseTruncated = false
     var lastBatchRequest: MemoryBatchConsolidationRequest? = null
     var lastLongTermRequest: MemoryLongTermConsolidationPartitionRequest? = null
     var lastPreferredPlatform: PlatformV2? = null
@@ -47,7 +50,8 @@ class FakeMemoryIntelligence(
         activityRunId: String
     ): MemoryModelProposalResponse<MemoryBatchConsolidationProposal> = MemoryModelProposalResponse(
         proposal = consolidateMemoryBatch(request, resolvedPlatform),
-        rawResponseJson = batchRawResponseJson
+        rawResponseJson = batchRawResponseJson,
+        truncated = responseTruncated
     )
 
     override suspend fun distillDailyMemory(
@@ -65,7 +69,8 @@ class FakeMemoryIntelligence(
         activityRunId: String
     ): MemoryModelProposalResponse<MemoryDailyDistillationProposal> = MemoryModelProposalResponse(
         proposal = distillDailyMemory(request, resolvedPlatform),
-        rawResponseJson = distillationRawResponseJson
+        rawResponseJson = distillationRawResponseJson,
+        truncated = responseTruncated
     )
 
     override suspend fun consolidateLongTermMemory(
@@ -85,6 +90,7 @@ class FakeMemoryIntelligence(
         activityRunId: String
     ): MemoryModelProposalResponse<MemoryLongTermConsolidationProposal> = MemoryModelProposalResponse(
         proposal = consolidateLongTermMemory(request, resolvedPlatform),
-        rawResponseJson = longTermRawResponseJson
+        rawResponseJson = longTermRawResponseJson,
+        truncated = responseTruncated
     )
 }

@@ -68,10 +68,23 @@ interface MemoryIntelligence {
     )
 }
 
+/**
+ * Activity error code and maintenance job failure reason for a model payload that stopped on the
+ * provider's output token cap. Kept distinct from an unparseable payload: the text is cut mid-token, so it
+ * says nothing about whether the model can format JSON, and retrying is futile rather than merely unlucky.
+ */
+internal const val MEMORY_RESPONSE_TRUNCATED_REASON = "response_truncated"
+
 /** Keeps the exact model payload available to the maintenance service if its later safety checks fail. */
 data class MemoryModelProposalResponse<T>(
     val proposal: T?,
-    val rawResponseJson: String? = null
+    val rawResponseJson: String? = null,
+    /**
+     * The payload stopped on the provider's output token cap, so it is cut mid-token. Retrying is
+     * pointless: memory calls run at temperature 0 and reproduce the same cut, so the caller should fail
+     * the job terminally instead of spending its automatic attempts.
+     */
+    val truncated: Boolean = false
 )
 
 internal sealed interface ClaimedMemoryModelBinding {

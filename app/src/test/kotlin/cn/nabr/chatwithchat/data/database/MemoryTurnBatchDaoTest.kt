@@ -239,6 +239,19 @@ internal class InMemoryMemoryTurnBatchDao : MemoryTurnBatchDao {
         return released
     }
 
+    suspend fun reassignClaim(fromJobId: String, toJobId: String, updatedAt: Long): Int {
+        var reassigned = 0
+        turns.replaceAll { _, turn ->
+            if (turn.claimedJobId == fromJobId) {
+                reassigned += 1
+                turn.copy(claimedJobId = toJobId, updatedAt = updatedAt)
+            } else {
+                turn
+            }
+        }
+        return reassigned
+    }
+
     override suspend fun deleteClaimedTurns(jobId: String): Int {
         val keys = turns.filterValues { it.claimedJobId == jobId }.keys
         keys.forEach(turns::remove)

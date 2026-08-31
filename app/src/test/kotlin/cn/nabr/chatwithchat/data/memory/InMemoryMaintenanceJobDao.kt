@@ -4,7 +4,9 @@ import cn.nabr.chatwithchat.data.database.dao.MemoryMaintenanceJobDao
 import cn.nabr.chatwithchat.data.database.entity.MemoryMaintenanceJob
 
 internal class InMemoryMaintenanceJobDao(
-    initialJobs: List<MemoryMaintenanceJob> = emptyList()
+    initialJobs: List<MemoryMaintenanceJob> = emptyList(),
+    private val releaseTurnClaims: suspend (jobId: String, updatedAt: Long) -> Int = { _, _ -> 0 },
+    private val reassignTurnClaims: suspend (fromJobId: String, toJobId: String, updatedAt: Long) -> Int = { _, _, _ -> 0 }
 ) : MemoryMaintenanceJobDao {
     val jobs = initialJobs.toMutableList()
 
@@ -211,7 +213,11 @@ internal class InMemoryMaintenanceJobDao(
         return 1
     }
 
-    override suspend fun releaseClaimedTurnsForJob(jobId: String, updatedAt: Long): Int = 0
+    override suspend fun releaseClaimedTurnsForJob(jobId: String, updatedAt: Long): Int =
+        releaseTurnClaims(jobId, updatedAt)
+
+    override suspend fun reassignClaimedTurnsToJob(fromJobId: String, toJobId: String, updatedAt: Long): Int =
+        reassignTurnClaims(fromJobId, toJobId, updatedAt)
 
     override suspend fun quarantineClaimedSemanticJob(
         jobId: String,

@@ -252,9 +252,9 @@ class MemoryRecallBaselineReportTest {
                 invocations = 1,
                 candidateIds = listOf("mem_address"),
                 selectedIds = listOf("mem_address"),
-                promptChars = 73,
+                promptChars = 158,
                 legacyPackEstimateTokens = 33,
-                renderedEstimatedTokens = 54
+                renderedEstimatedTokens = 102
             ),
             BaselineRow(
                 name = "preference",
@@ -262,9 +262,9 @@ class MemoryRecallBaselineReportTest {
                 invocations = 1,
                 candidateIds = listOf("mem_language"),
                 selectedIds = listOf("mem_language"),
-                promptChars = 73,
+                promptChars = 158,
                 legacyPackEstimateTokens = 31,
-                renderedEstimatedTokens = 51
+                renderedEstimatedTokens = 99
             ),
             BaselineRow(
                 name = "project_paraphrase",
@@ -272,9 +272,9 @@ class MemoryRecallBaselineReportTest {
                 invocations = 1,
                 candidateIds = listOf("mem_project"),
                 selectedIds = listOf("mem_project"),
-                promptChars = 100,
+                promptChars = 185,
                 legacyPackEstimateTokens = 40,
-                renderedEstimatedTokens = 60
+                renderedEstimatedTokens = 108
             ),
             BaselineRow(
                 name = "chinese_rewrite",
@@ -282,9 +282,9 @@ class MemoryRecallBaselineReportTest {
                 invocations = 1,
                 candidateIds = listOf("mem_concise"),
                 selectedIds = listOf("mem_concise"),
-                promptChars = 82,
+                promptChars = 167,
                 legacyPackEstimateTokens = 41,
-                renderedEstimatedTokens = 61
+                renderedEstimatedTokens = 109
             ),
             BaselineRow(
                 name = "single_cjk_weak",
@@ -304,9 +304,9 @@ class MemoryRecallBaselineReportTest {
                 (18 downTo 1).map { index -> "target_event_$index" } +
                     (30 downTo 25).map { index -> "distractor_exhibition_$index" },
                 selectedIds = (18 downTo 11).map { index -> "target_event_$index" },
-                promptChars = 403,
+                promptChars = 530,
                 legacyPackEstimateTokens = 464,
-                renderedEstimatedTokens = 323
+                renderedEstimatedTokens = 399
             )
         )
     }

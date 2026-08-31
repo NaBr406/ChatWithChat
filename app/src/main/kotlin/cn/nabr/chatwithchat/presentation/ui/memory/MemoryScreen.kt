@@ -109,11 +109,9 @@ import cn.nabr.chatwithchat.presentation.common.settingsCanvasBackground
 import cn.nabr.chatwithchat.presentation.common.settingsDropdownMenuItemColors
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.common.settingsTextFieldColors
+import cn.nabr.chatwithchat.util.formatEpochSecondsAsDate
 import java.io.ByteArrayOutputStream
 import java.nio.charset.StandardCharsets
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
@@ -1524,7 +1522,7 @@ private fun memoryActivityDurationLabel(startedAt: Long, completedAt: Long): Str
     }
 }
 
-private fun formatLogTime(epochSeconds: Long): String = LOG_TIME_FORMATTER.format(Instant.ofEpochSecond(epochSeconds))
+private fun formatLogTime(epochSeconds: Long): String = formatEpochSecondsAsDate(epochSeconds)
 
 private fun readMemoryImportText(context: Context, uri: Uri): Result<String> = runCatching {
     val bytes = context.contentResolver.openInputStream(uri)?.use { input ->
@@ -1608,6 +1606,4 @@ private const val LOG_TAB = 1
 private const val MAX_IMPORT_FILE_BYTES = 256 * 1024
 internal const val MEMORY_ACTIVITY_ROW_TEST_TAG = "memory_activity_row"
 internal const val MEMORY_ACTIVITY_PHASE_TEST_TAG = "memory_activity_phase"
-private val LOG_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
-    .withZone(ZoneId.systemDefault())
 private val ACTIVE_RECALL_STATES = setOf(MemoryRecallState.CORE, MemoryRecallState.QUERY)

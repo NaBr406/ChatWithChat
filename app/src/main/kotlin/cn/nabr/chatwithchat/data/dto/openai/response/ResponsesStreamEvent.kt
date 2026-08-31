@@ -198,6 +198,18 @@ data class ResponseFailedEvent(
 ) : ResponsesStreamEvent()
 
 /**
+ * Emitted when generation stopped before the model finished, most commonly on the output token cap.
+ * The already streamed text is cut mid-token, so this event is the only reliable way to tell a
+ * truncated payload apart from one the model simply formatted badly.
+ */
+@Serializable
+@SerialName("response.incomplete")
+data class ResponseIncompleteEvent(
+    @SerialName("response")
+    val response: ResponseObject
+) : ResponsesStreamEvent()
+
+/**
  * Emitted when there's an error.
  */
 @Serializable
@@ -315,8 +327,17 @@ data class ResponseObject(
     @SerialName("error")
     val error: ResponseError? = null,
 
+    @SerialName("incomplete_details")
+    val incompleteDetails: IncompleteDetails? = null,
+
     @SerialName("usage")
     val usage: ProviderUsage? = null
+)
+
+@Serializable
+data class IncompleteDetails(
+    @SerialName("reason")
+    val reason: String? = null
 )
 
 @Serializable

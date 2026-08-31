@@ -182,18 +182,29 @@ class MemoryDailyDistillationService(
             rawResponseJson = response.rawResponseJson
             val proposal = response.proposal
                 ?: run {
+                    val reason = if (response.truncated) {
+                        MEMORY_RESPONSE_TRUNCATED_REASON
+                    } else {
+                        "daily_distillation_unavailable_or_invalid"
+                    }
                     activityLogger.finishRunSafely(
                         activityRunId,
                         MemoryActivityStatus.FAILED,
                         resolvedPlatform.toMemoryActivityData(
                             inputCount = inputCount,
-                            errorCode = "daily_distillation_unavailable_or_invalid"
+                            errorCode = reason
                         ),
                         expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
                     )
+                    // A payload cut on the output cap reproduces byte for byte at temperature 0, so the
+                    // automatic attempts would only replay the same failure.
+                    if (response.truncated) {
+                        recordFailureResponse(runningJob, reason, rawResponseJson)
+                        return terminal(runningJob, reason)
+                    }
                     return retryable(
                         runningJob,
-                        "daily_distillation_unavailable_or_invalid",
+                        reason,
                         rawResponseJson
                     )
                 }

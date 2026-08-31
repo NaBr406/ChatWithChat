@@ -346,6 +346,28 @@ class MemoryDailyDistillationServiceTest {
     }
 
     @Test
+    fun `daily distillation truncated on the output cap stops without spending automatic attempts`() = runBlocking {
+        val fixture = fixture(proposal = createProposal())
+        fixture.intelligence.distillationProposal = null
+        val rawResponse = """{"operations":[{"action":"create","text"""
+        fixture.intelligence.distillationRawResponseJson = rawResponse
+        fixture.intelligence.responseTruncated = true
+
+        val result = fixture.service.process(fixture.claimSemanticJob())
+
+        assertEquals(MemoryDailyDistillationProcessResult.STATUS_TERMINAL, result.status)
+        assertEquals("response_truncated", result.reason)
+        // A cut payload repeats verbatim at temperature 0, so the job must not spend a second attempt on it.
+        assertEquals(1, fixture.intelligence.distillationCalls)
+        val diagnostics = MemoryFilePaths(fixture.fileStore.ensureStore().getOrThrow().rootDirectory)
+            .maintenanceFailureResponseDirectory
+            .listFiles()
+            .orEmpty()
+        assertEquals(1, diagnostics.size)
+        assertEquals(rawResponse, diagnostics.single().readText())
+    }
+
+    @Test
     fun `startup recovery finalizes daily checkpoint without turn batch completion`() = runBlocking {
         val fixture = fixture(proposal = createProposal())
         val mutation = fixture.prepareMutation(reconcile = true)

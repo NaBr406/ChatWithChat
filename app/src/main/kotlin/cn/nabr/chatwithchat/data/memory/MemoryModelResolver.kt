@@ -63,6 +63,7 @@ class MemoryModelResolver(
     private companion object {
         val SUPPORTED_CLIENT_TYPES = setOf(
             ClientType.OPENAI,
+            ClientType.GLM,
             ClientType.ANTHROPIC,
             ClientType.GOOGLE,
             ClientType.GROQ,

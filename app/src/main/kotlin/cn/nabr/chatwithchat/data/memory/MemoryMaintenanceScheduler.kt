@@ -190,6 +190,23 @@ class MemoryMaintenanceScheduler(
         return !job.isFinalizedRecoveredConflict(reason) && !job.hasResolvedSemanticFailureDisposition()
     }
 
+    /**
+     * The last job in a semantic batch's requeue chain, which is the one currently holding its
+     * frozen turn claims. Recovery finalizes a batch through this job so a scheduled requeue does
+     * not leave the consumed turns claimed behind it.
+     */
+    internal suspend fun latestRequeuedJobId(jobId: String): String {
+        var current = jobDao.getById(jobId) ?: return jobId
+        repeat(MAX_SEMANTIC_REQUEUE_CYCLES) {
+            if (current.recoveryDisposition != MemoryMaintenanceJobRecoveryDisposition.REQUEUE_SCHEDULED) {
+                return current.jobId
+            }
+            val successorKey = current.requeueIdempotencyKey ?: return current.jobId
+            current = jobDao.getByIdempotencyKey(successorKey) ?: return current.jobId
+        }
+        return current.jobId
+    }
+
     suspend fun nextRepairWakeAt(now: Long = now()): Long? = listOfNotNull(
         nextScheduledRunAt(MemoryMaintenanceJobFamily.REPAIR, now),
         jobDao.getEarliestLeaseExpiry(now)
@@ -463,26 +480,7 @@ class MemoryMaintenanceScheduler(
                 updatedAt = now
             )
         } else {
-            val idempotencyKey = "${current.idempotencyKey}:requeue:$nextCycle"
-            val nextJob = current.copy(
-                jobId = "${current.jobId}:requeue:$nextCycle",
-                status = MemoryMaintenanceJobStatus.PENDING,
-                idempotencyKey = idempotencyKey,
-                attempts = 0,
-                lastError = null,
-                startedAt = null,
-                updatedAt = now,
-                nextRunAt = now + SEMANTIC_REQUEUE_DELAY_SECONDS,
-                rowVersion = 0,
-                leaseOwner = null,
-                leaseExpiresAt = null,
-                retryCycle = 0,
-                blockedReason = null,
-                requeueCycle = nextCycle,
-                requeueIdempotencyKey = idempotencyKey,
-                quarantineReason = null,
-                recoveryDisposition = null
-            )
+            val nextJob = requeueJob(current, nextCycle, now)
             jobDao.releaseAndRequeueClaimedSemanticJob(current, nextJob, error.take(MAX_ERROR_LENGTH), now)
         }
         val updated = checkNotNull(jobDao.getById(current.jobId))
@@ -520,9 +518,9 @@ class MemoryMaintenanceScheduler(
         nextCycle: Int,
         now: Long
     ): MemoryMaintenanceJob {
-        val idempotencyKey = "${job.idempotencyKey}:requeue:$nextCycle"
+        val idempotencyKey = requeueKey(job.idempotencyKey, nextCycle)
         return job.copy(
-            jobId = "${job.jobId}:requeue:$nextCycle",
+            jobId = requeueKey(job.jobId, nextCycle),
             status = MemoryMaintenanceJobStatus.PENDING,
             idempotencyKey = idempotencyKey,
             attempts = 0,
@@ -900,6 +898,19 @@ private data class MemoryMaintenanceRetryPolicy(
 }
 
 class MemoryMaintenanceLeaseLostException(jobId: String) : IllegalStateException("Memory maintenance lease lost for job $jobId")
+
+private const val REQUEUE_KEY_INFIX = ":requeue:"
+private val REQUEUE_KEY_SUFFIXES = Regex("""(?::requeue:\d+)+$""")
+
+private fun requeueKey(key: String, cycle: Int): String = "$key$REQUEUE_KEY_INFIX$cycle"
+
+/**
+ * The key of the batch a job descends from. An exhausted semantic batch is requeued as a new row
+ * whose job ID and idempotency key gain a `:requeue:<cycle>` suffix, while the requeued row keeps
+ * carrying the original frozen payload — and therefore the original batch identity.
+ */
+internal val MemoryMaintenanceJob.sourceIdempotencyKey: String
+    get() = idempotencyKey.replace(REQUEUE_KEY_SUFFIXES, "")
 
 enum class MemoryRecoveredJobDisposition {
     SUCCEEDED,

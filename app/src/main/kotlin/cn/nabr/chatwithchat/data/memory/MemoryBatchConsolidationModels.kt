@@ -110,6 +110,7 @@ data class MemoryBatchProviderExistingMemory(
     val source: String,
     val updatedAt: Long,
     val createdAt: Long = 0L,
+    val lastObservedAt: Long = updatedAt,
     val validity: String = MemoryValidity.CURRENT,
     val recallState: String = MemoryRecallState.QUERY
 )

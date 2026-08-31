@@ -306,6 +306,20 @@ interface MemoryMaintenanceJobDao {
     )
     suspend fun releaseClaimedTurnsForJob(jobId: String, updatedAt: Long): Int
 
+    /**
+     * Hands a frozen batch's turns to its requeued successor. Releasing them instead would let a
+     * threshold or idle enqueue re-claim the same turns under the exhausted job's identity while
+     * the successor waits for its delay to elapse.
+     */
+    @Query(
+        """
+        UPDATE memory_pending_turn
+        SET claimed_job_id = :toJobId, updated_at = :updatedAt
+        WHERE claimed_job_id = :fromJobId
+        """
+    )
+    suspend fun reassignClaimedTurnsToJob(fromJobId: String, toJobId: String, updatedAt: Long): Int
+
     @Query(
         """
         UPDATE memory_maintenance_job
@@ -422,7 +436,7 @@ interface MemoryMaintenanceJobDao {
         if (getByIdempotencyKey(nextJob.idempotencyKey) == null) {
             insertIgnore(nextJob)
         }
-        releaseClaimedTurnsForJob(job.jobId, updatedAt)
+        reassignClaimedTurnsToJob(job.jobId, nextJob.jobId, updatedAt)
         val transitioned = quarantineClaimedSemanticJob(
             jobId = job.jobId,
             leaseOwner = checkNotNull(job.leaseOwner),
@@ -492,7 +506,7 @@ interface MemoryMaintenanceJobDao {
         if (getByIdempotencyKey(nextJob.idempotencyKey) == null) {
             insertIgnore(nextJob)
         }
-        releaseClaimedTurnsForJob(job.jobId, updatedAt)
+        reassignClaimedTurnsToJob(job.jobId, nextJob.jobId, updatedAt)
         val transitioned = quarantineExpiredSemanticJob(
             jobId = job.jobId,
             expectedRowVersion = job.rowVersion,

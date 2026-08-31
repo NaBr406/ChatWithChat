@@ -107,7 +107,10 @@ class MemoryDailyDistillationOperationController(
                     val recallState = requireNotNull(operation.recallState)
                     require(MarkdownMemoryMetadataPolicy.isCanonicalKey(normalizedCanonicalKey))
                     require(MarkdownMemoryMetadataPolicy.isScope(scope))
-                    require(operation.evidenceAt == evidenceAt)
+                    // The model-facing request renders timestamps as dates, so the model leaves
+                    // this storage field empty. Keep accepting the legacy numeric echo while the
+                    // local validator remains the sole source of truth.
+                    require(operation.evidenceAt == null || operation.evidenceAt == evidenceAt)
                     require(recallState in ACTIVE_RECALL_STATES)
                     target?.let { existing ->
                         if (existing.validity != MemoryValidity.OBSOLETE) {

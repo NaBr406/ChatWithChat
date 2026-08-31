@@ -52,7 +52,10 @@ class MemoryMutationRecoveryService(
                         check(sourceJobType != MemoryMaintenanceJobType.CONSOLIDATE_LONG_TERM_MEMORY) {
                             "Recovered long-term consolidation mutation has no checkpoint finalizer"
                         }
-                        turnBatchDao.completeClaimedBatch(recovered.semanticJobId, now())
+                        turnBatchDao.completeClaimedBatch(
+                            maintenanceScheduler.latestRequeuedJobId(recovered.semanticJobId),
+                            now()
+                        )
                     }
                     val sourceJobDisposition = recovered.terminalReason?.let { terminalReason ->
                         maintenanceScheduler.markRecoveredConflict(recovered.semanticJobId, terminalReason)

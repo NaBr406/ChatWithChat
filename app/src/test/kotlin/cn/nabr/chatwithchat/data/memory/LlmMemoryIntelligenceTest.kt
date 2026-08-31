@@ -26,6 +26,9 @@ import cn.nabr.chatwithchat.data.network.GoogleAPI
 import cn.nabr.chatwithchat.data.network.OpenAIAPI
 import cn.nabr.chatwithchat.data.network.ProviderEndpoint
 import cn.nabr.chatwithchat.data.network.UploadedProviderFile
+import java.time.Clock
+import java.time.Instant
+import java.time.ZoneId
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
@@ -58,6 +61,7 @@ class LlmMemoryIntelligenceTest {
         assertEquals(MemoryImportAction.CREATE, result?.operations?.single()?.action)
         assertEquals("communication.response_style", result?.operations?.single()?.canonicalKey)
         assertTrue(checkNotNull(openAIAPI.lastSystemPrompt).contains("外部记忆资料"))
+        assertEquals(2600, openAIAPI.lastChatRequest?.maxTokens)
     }
 
     @Test
@@ -101,6 +105,90 @@ class LlmMemoryIntelligenceTest {
     }
 
     @Test
+    fun `memory model requests render timestamps as local dates`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(chatChunks = chatChunks(EMPTY_PROPOSAL_JSON))
+        val intelligence = intelligence(openAIAPI = openAIAPI, clock = FIXED_CLOCK)
+        val batchBase = batchRequest()
+        val batch = batchBase.copy(
+            turns = batchBase.turns.map { turn ->
+                turn.copy(completedAt = epoch("2026-08-29T16:00:00Z"))
+            },
+            existingMemories = listOf(
+                MemoryBatchExistingMemory(
+                    id = "memory-1",
+                    sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+                    text = "Prefers concise answers.",
+                    type = "communication_style",
+                    sensitivity = MemorySensitivity.NORMAL,
+                    source = MemorySource.EXPLICIT_USER_STATEMENT,
+                    updatedAt = epoch("2026-08-28T16:00:00Z"),
+                    createdAt = epoch("2026-08-27T16:00:00Z"),
+                    lastObservedAt = epoch("2026-08-29T16:00:00Z")
+                )
+            )
+        )
+
+        intelligence.consolidateMemoryBatch(batch, platform(ClientType.OPENROUTER, "model"))
+        val batchPayload = checkNotNull(openAIAPI.lastChatRequest)
+            .messages[1]
+            .content
+            .filterIsInstance<OpenAiTextContent>()
+            .single()
+            .text
+        assertTrue(batchPayload.contains("\"completedAt\":\"2026-08-30\""))
+        assertTrue(batchPayload.contains("\"createdAt\":\"2026-08-28\""))
+        assertTrue(batchPayload.contains("\"updatedAt\":\"2026-08-29\""))
+        assertTrue(batchPayload.contains("\"lastObservedAt\":\"2026-08-30\""))
+        assertTrue(!batchPayload.contains("\"completedAt\":178"))
+        assertTrue(checkNotNull(openAIAPI.lastSystemPrompt).contains("Current local date: 2026-08-30 (Asia/Shanghai)."))
+
+        val dailyBase = dailyRequest()
+        intelligence.distillDailyMemory(
+            dailyBase.copy(
+                createdAt = epoch("2026-08-30T00:30:00Z"),
+                dailyEvidence = dailyBase.dailyEvidence.map { evidence ->
+                    evidence.copy(
+                        createdAt = epoch("2026-08-26T16:00:00Z"),
+                        updatedAt = epoch("2026-08-29T16:00:00Z"),
+                        lastObservedAt = epoch("2026-08-29T16:00:00Z")
+                    )
+                }
+            ),
+            platform(ClientType.OPENROUTER, "model")
+        )
+        val dailyPayload = checkNotNull(openAIAPI.lastChatRequest)
+            .messages[1]
+            .content
+            .filterIsInstance<OpenAiTextContent>()
+            .single()
+            .text
+        assertTrue(dailyPayload.contains("\"createdAt\":\"2026-08-27\""))
+        assertTrue(dailyPayload.contains("\"updatedAt\":\"2026-08-30\""))
+        assertTrue(dailyPayload.contains("\"lastObservedAt\":\"2026-08-30\""))
+
+        val longTermBase = longTermRequest()
+        intelligence.consolidateLongTermMemory(
+            longTermBase.copy(
+                candidateGroups = longTermBase.candidateGroups.map { group ->
+                    group.copy(
+                        entries = group.entries.map { entry ->
+                            entry.copy(lastObservedAt = epoch("2026-08-29T16:00:00Z"))
+                        }
+                    )
+                }
+            ),
+            platform(ClientType.OPENROUTER, "model")
+        )
+        val longTermPayload = checkNotNull(openAIAPI.lastChatRequest)
+            .messages[1]
+            .content
+            .filterIsInstance<OpenAiTextContent>()
+            .single()
+            .text
+        assertTrue(longTermPayload.contains("\"lastObservedAt\":\"2026-08-30\""))
+    }
+
+    @Test
     fun `openai memory platform uses responses api for batch consolidation`() = runBlocking {
         val resolvedPlatform = platform(ClientType.OPENAI, "gpt-5", reasoning = true)
         val openAIAPI = RecordingOpenAIAPI(
@@ -125,7 +213,7 @@ class LlmMemoryIntelligenceTest {
         assertNull(openAIAPI.lastResponsesRequest?.temperature)
         assertNull(openAIAPI.lastResponsesRequest?.topP)
         assertEquals("low", openAIAPI.lastResponsesRequest?.reasoning?.effort)
-        assertEquals(1200, openAIAPI.lastResponsesRequest?.maxOutputTokens)
+        assertEquals(2400, openAIAPI.lastResponsesRequest?.maxOutputTokens)
         assertEquals(120, openAIAPI.lastResponsesTimeoutSeconds)
     }
 
@@ -142,7 +230,7 @@ class LlmMemoryIntelligenceTest {
         assertEquals(1, openAIAPI.streamChatCompletionCalls)
         assertEquals(0f, openAIAPI.lastChatRequest?.temperature)
         assertEquals(1f, openAIAPI.lastChatRequest?.topP)
-        assertEquals(1200, openAIAPI.lastChatRequest?.maxTokens)
+        assertEquals(2400, openAIAPI.lastChatRequest?.maxTokens)
         assertEquals(120, openAIAPI.lastChatTimeoutSeconds)
     }
 
@@ -158,7 +246,7 @@ class LlmMemoryIntelligenceTest {
 
         assertEquals(0f, openAIAPI.lastChatRequest?.temperature)
         assertEquals(1f, openAIAPI.lastChatRequest?.topP)
-        assertEquals(1200, openAIAPI.lastChatRequest?.maxTokens)
+        assertEquals(2400, openAIAPI.lastChatRequest?.maxTokens)
         assertNull(openAIAPI.lastChatRequest?.maxCompletionTokens)
         assertNull(openAIAPI.lastChatRequest?.reasoningEffort)
     }
@@ -178,7 +266,7 @@ class LlmMemoryIntelligenceTest {
         assertEquals("disabled", openAIAPI.lastChatRequest?.thinking?.type)
         assertNull(openAIAPI.lastChatRequest?.temperature)
         assertNull(openAIAPI.lastChatRequest?.topP)
-        assertEquals(1200, openAIAPI.lastChatRequest?.maxTokens)
+        assertEquals(2400, openAIAPI.lastChatRequest?.maxTokens)
     }
 
     @Test
@@ -293,7 +381,7 @@ class LlmMemoryIntelligenceTest {
         assertEquals(0, result?.operations?.size)
         assertEquals(1, anthropicAPI.streamCalls)
         assertEquals("claude-current", anthropicAPI.lastRequest?.model)
-        assertEquals(1200, anthropicAPI.lastRequest?.maxTokens)
+        assertEquals(2400, anthropicAPI.lastRequest?.maxTokens)
         assertEquals(120, anthropicAPI.lastTimeoutSeconds)
     }
 
@@ -316,7 +404,7 @@ class LlmMemoryIntelligenceTest {
         assertEquals(0, result?.operations?.size)
         assertEquals(1, googleAPI.streamCalls)
         assertEquals("gemini-current", googleAPI.lastModel)
-        assertEquals(1200, googleAPI.lastRequest?.generationConfig?.maxOutputTokens)
+        assertEquals(2400, googleAPI.lastRequest?.generationConfig?.maxOutputTokens)
         assertEquals(120, googleAPI.lastTimeoutSeconds)
     }
 
@@ -379,6 +467,46 @@ class LlmMemoryIntelligenceTest {
         assertEquals(MemoryActivityCategory.TURN_BATCH_CONSOLIDATION, activityRun.category)
         assertEquals(resolvedPlatform.uid, activityRun.data.platformUid)
         assertEquals(resolvedPlatform.model, activityRun.data.modelId)
+    }
+
+    @Test
+    fun `batch response cut on the output cap fails as truncated without a decode attempt`() = runBlocking {
+        val resolvedPlatform = platform(ClientType.OPENROUTER, "model")
+        val cutPayload = """{"operations":[{"destination":"long_term","action"""
+        val openAIAPI = RecordingOpenAIAPI(
+            chatChunks = flowOf(
+                ChatCompletionChunk(
+                    choices = listOf(
+                        Choice(
+                            index = 0,
+                            delta = Delta(content = cutPayload),
+                            finishReason = "length"
+                        )
+                    )
+                )
+            )
+        )
+        val activityLogger = RecordingMemoryActivityLogger()
+        val intelligence = intelligence(openAIAPI = openAIAPI, activityLogger = activityLogger)
+
+        val activityRunId = activityLogger.startSemanticAttempt()
+        val response = intelligence.consolidateMemoryBatchWithRawResponse(
+            batchRequest(),
+            resolvedPlatform,
+            activityRunId
+        )
+
+        assertNull(response.proposal)
+        assertTrue(response.truncated)
+        assertEquals(cutPayload, response.rawResponseJson)
+        val activityRun = activityLogger.run(activityRunId)
+        assertEquals(
+            listOf(MemoryActivityPhase.MODEL_RESOLUTION, MemoryActivityPhase.MODEL_CALL),
+            activityRun.phases
+        )
+        assertEquals(MemoryActivityStatus.FAILED, activityRun.status)
+        assertEquals("response_truncated", activityRun.data.errorCode)
+        assertTrue(activityRun.data.errorDetail?.contains("2400") == true)
     }
 
     @Test
@@ -449,7 +577,7 @@ class LlmMemoryIntelligenceTest {
         assertEquals(2L, result?.operations?.single()?.evidenceAt)
         assertEquals(1, openAIAPI.streamChatCompletionCalls)
         assertEquals(120, openAIAPI.lastChatTimeoutSeconds)
-        assertEquals(1200, openAIAPI.lastChatRequest?.maxTokens)
+        assertEquals(2400, openAIAPI.lastChatRequest?.maxTokens)
     }
 
     @Test
@@ -479,6 +607,7 @@ class LlmMemoryIntelligenceTest {
         assertEquals(0, result?.decisions?.size)
         assertEquals(1, openAIAPI.streamChatCompletionCalls)
         assertEquals("frozen-model", openAIAPI.lastChatRequest?.model)
+        assertEquals(2000, openAIAPI.lastChatRequest?.maxTokens)
     }
 
     @Test
@@ -540,13 +669,17 @@ class LlmMemoryIntelligenceTest {
         openAIAPI: RecordingOpenAIAPI = RecordingOpenAIAPI(),
         anthropicAPI: RecordingAnthropicAPI = RecordingAnthropicAPI(),
         googleAPI: RecordingGoogleAPI = RecordingGoogleAPI(),
-        activityLogger: MemoryActivityLogger = MemoryActivityLogger.None
+        activityLogger: MemoryActivityLogger = MemoryActivityLogger.None,
+        clock: Clock = FIXED_CLOCK
     ) = LlmMemoryIntelligence(
         openAIAPI = openAIAPI,
         anthropicAPI = anthropicAPI,
         googleAPI = googleAPI,
-        activityLogger = activityLogger
+        activityLogger = activityLogger,
+        clock = clock
     )
+
+    private fun epoch(value: String): Long = Instant.parse(value).epochSecond
 
     private fun chatChunks(content: String): Flow<ChatCompletionChunk> = flowOf(
         ChatCompletionChunk(
@@ -651,6 +784,10 @@ class LlmMemoryIntelligenceTest {
     private companion object {
         const val EMPTY_PROPOSAL_JSON = """{"operations":[]}"""
         const val EMPTY_LONG_TERM_PROPOSAL_JSON = """{"decisions":[]}"""
+        val FIXED_CLOCK: Clock = Clock.fixed(
+            Instant.parse("2026-08-30T00:30:00Z"),
+            ZoneId.of("Asia/Shanghai")
+        )
     }
 }
 

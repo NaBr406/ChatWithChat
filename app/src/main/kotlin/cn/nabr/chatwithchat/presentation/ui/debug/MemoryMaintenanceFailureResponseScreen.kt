@@ -54,9 +54,7 @@ import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceFailureResponse
 import cn.nabr.chatwithchat.presentation.common.SettingsTopAppBar
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.common.settingsTextButtonColors
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
+import cn.nabr.chatwithchat.util.formatEpochSecondsAsDate
 import kotlinx.coroutines.launch
 
 @Composable
@@ -185,7 +183,7 @@ private fun MemoryMaintenanceJobListItem(job: MemoryMaintenanceJob) {
             Text(
                 text = stringResource(
                     R.string.memory_failure_job_updated,
-                    MEMORY_FAILURE_RESPONSE_TIME_FORMATTER.format(Instant.ofEpochSecond(job.updatedAt))
+                    formatEpochSecondsAsDate(job.updatedAt)
                 ),
                 style = MaterialTheme.typography.labelMedium,
                 color = colors.secondaryLabel
@@ -221,9 +219,7 @@ private fun MemoryMaintenanceFailureResponseListItem(
             Text(
                 text = stringResource(
                     R.string.memory_failure_response_item,
-                    MEMORY_FAILURE_RESPONSE_TIME_FORMATTER.format(
-                        Instant.ofEpochSecond(response.capturedAtEpochSeconds)
-                    )
+                    formatEpochSecondsAsDate(response.capturedAtEpochSeconds)
                 ),
                 style = MaterialTheme.typography.labelMedium,
                 color = colors.secondaryLabel
@@ -295,6 +291,3 @@ private fun MemoryMaintenanceFailureResponseDetailDialog(
         }
     )
 }
-
-private val MEMORY_FAILURE_RESPONSE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
-    .withZone(ZoneId.systemDefault())

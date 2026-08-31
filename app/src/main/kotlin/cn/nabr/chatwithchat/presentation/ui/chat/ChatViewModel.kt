@@ -58,11 +58,13 @@ import cn.nabr.chatwithchat.data.tool.ToolDefinition
 import cn.nabr.chatwithchat.di.ApplicationScope
 import cn.nabr.chatwithchat.util.AttachmentPayloadCache
 import cn.nabr.chatwithchat.util.FileUtils
+import cn.nabr.chatwithchat.util.formatCurrentDate
 import cn.nabr.chatwithchat.util.getPlatformName
 import cn.nabr.chatwithchat.util.handleStates
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.Collections
+import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -1062,7 +1064,7 @@ class ChatViewModel @Inject constructor(
         val chatHistoryMarkdown = buildString {
             appendLine("# ${context.getString(R.string.chat_export_title)}: \"${chatRoom.value.title}\"")
             appendLine()
-            appendLine("**${context.getString(R.string.exported_on)}:** ${formatCurrentDateTime()}")
+            appendLine("**${context.getString(R.string.exported_on)}:** ${formatCurrentDateForExport()}")
             appendLine()
             appendLine("---")
             appendLine()
@@ -1085,7 +1087,7 @@ class ChatViewModel @Inject constructor(
         }
 
         // Save the Markdown file
-        val fileName = "export_${chatRoom.value.title}_${System.currentTimeMillis()}.md"
+        val fileName = "export_${chatRoom.value.title}_${formatCurrentDate()}_${UUID.randomUUID().toString().take(8)}.md"
         return Pair(fileName, chatHistoryMarkdown)
     }
 
@@ -1821,11 +1823,7 @@ class ChatViewModel @Inject constructor(
         isPersistingCompletion = _isPersistingCompletion.value
     )
 
-    private fun formatCurrentDateTime(): String {
-        val currentDate = java.util.Date()
-        val format = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
-        return format.format(currentDate)
-    }
+    private fun formatCurrentDateForExport(): String = formatCurrentDate()
 
     private suspend fun fetchMessages() {
         // A running turn holds newer state than the database does — it has not saved yet — so reading

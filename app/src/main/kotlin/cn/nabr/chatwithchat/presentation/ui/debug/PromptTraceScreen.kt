@@ -56,9 +56,7 @@ import cn.nabr.chatwithchat.data.memory.MemoryRetrievalMode
 import cn.nabr.chatwithchat.presentation.common.SettingsTopAppBar
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.common.settingsTextButtonColors
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
+import cn.nabr.chatwithchat.util.formatEpochMillisAsDate
 import kotlinx.coroutines.launch
 
 @Composable
@@ -182,7 +180,7 @@ private fun PromptTraceListItem(entry: PromptTraceEntry, onClick: () -> Unit) {
                 )
                 Spacer(Modifier.width(12.dp))
                 Text(
-                    text = PROMPT_TRACE_TIME_FORMATTER.format(Instant.ofEpochMilli(entry.createdAtMillis)),
+                    text = formatEpochMillisAsDate(entry.createdAtMillis),
                     style = MaterialTheme.typography.labelSmall,
                     color = colors.tertiaryLabel
                 )
@@ -390,5 +388,3 @@ private fun promptTraceStageLabel(stage: String): String = when {
 
 private const val TOOL_REQUEST_STAGE_PREFIX = "tool_request_"
 private const val PROMPT_TRACE_HASH_PREFIX_LENGTH = 12
-private val PROMPT_TRACE_TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm:ss.SSS")
-    .withZone(ZoneId.systemDefault())

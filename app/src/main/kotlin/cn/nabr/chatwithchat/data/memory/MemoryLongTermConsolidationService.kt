@@ -253,20 +253,36 @@ class MemoryLongTermConsolidationService(
                         )
                         response.rawResponseJson?.let(rawResponseJsons::add)
                         val proposal = response.proposal ?: run {
+                            val reason = if (response.truncated) {
+                                MEMORY_RESPONSE_TRUNCATED_REASON
+                            } else {
+                                "long_term_consolidation_unavailable_or_invalid"
+                            }
                             activityLogger.finishRunSafely(
                                 activityRunId,
                                 MemoryActivityStatus.FAILED,
                                 binding.platform.toMemoryActivityData(
                                     inputCount = checkpoint.entryCount,
                                     cursor = checkpoint.partitionCursor,
-                                    errorCode = "long_term_model_output_invalid"
+                                    errorCode = if (response.truncated) {
+                                        reason
+                                    } else {
+                                        "long_term_model_output_invalid"
+                                    }
                                 ),
                                 expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
                             )
+                            // A payload cut on the output cap reproduces byte for byte at temperature 0, so
+                            // the automatic attempts would only replay the same failure.
+                            if (response.truncated) {
+                                recordFailureResponses(currentJob, reason, rawResponseJsons)
+                                recordCheckpointError(checkpoint, reason)
+                                return terminal(currentJob, reason)
+                            }
                             return retryable(
                                 currentJob,
                                 checkpoint,
-                                "long_term_consolidation_unavailable_or_invalid",
+                                reason,
                                 rawResponseJsons
                             )
                         }

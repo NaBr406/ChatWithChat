@@ -1129,6 +1129,32 @@ class MemoryBatchConsolidationServiceTest {
     }
 
     @Test
+    fun `batch truncated on the output cap fails terminally instead of spending automatic attempts`() = runBlocking {
+        val fixture = fixture(proposal = null)
+        val rawResponse = """{"operations":[{"destination":"long_term","action"""
+        fixture.intelligence.batchRawResponseJson = rawResponse
+        fixture.intelligence.responseTruncated = true
+        val job = fixture.createFiveTurnBatch()
+
+        val result = fixture.service.process(job)
+
+        assertEquals(MemoryBatchProcessResult.STATUS_TERMINAL, result.status)
+        assertEquals("response_truncated", result.reason)
+        // A cut payload repeats verbatim at temperature 0, so the job must not spend a second attempt on it.
+        assertEquals(1, fixture.intelligence.consolidateCalls)
+        assertEquals(
+            MemoryMaintenanceJobStatus.WAITING_REPAIR,
+            fixture.jobDao.jobs.single { it.jobId == job.jobId }.status
+        )
+        val diagnostics = MemoryFilePaths(fixture.fileStore.ensureStore().getOrThrow().rootDirectory)
+            .maintenanceFailureResponseDirectory
+            .listFiles()
+            .orEmpty()
+        assertEquals(1, diagnostics.size)
+        assertEquals(rawResponse, diagnostics.single().readText())
+    }
+
+    @Test
     fun `maintenance alias resolves to frozen memory target`() = runBlocking {
         val existing = longTermEntry(
             id = "mem_alias_target",
@@ -1190,28 +1216,88 @@ class MemoryBatchConsolidationServiceTest {
     }
 
     @Test
-    fun `canonical contract rejects model supplied evidence time`() = runBlocking {
+    fun `canonical contract derives evidence time and ignores the model supplied value`() = runBlocking {
         val fixture = fixture(
             MemoryBatchConsolidationProposal(
                 operations = listOf(
                     operation(
                         destination = MemoryBatchDestination.LONG_TERM,
-                        text = "Evidence time must come from the cited turn.",
+                        text = "Evidence time comes from the cited turn.",
                         evidenceAt = 12L
                     )
                 )
             )
         )
-        val before = fixture.fileStore.readLongTermMemory().getOrThrow()
         val job = fixture.createFiveTurnBatch()
 
         val result = fixture.service.process(job)
+        val written = MarkdownMemoryCodec().parse(fixture.fileStore.readLongTermMemory().getOrThrow()).entries.single()
 
-        assertEquals(MemoryBatchProcessResult.STATUS_RETRYABLE, result.status)
+        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(1, result.longTermWriteCount)
+        assertEquals(11L, written.lastObservedAt)
+        assertEquals(5, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
+    }
+
+    @Test
+    fun `null evidence time still writes the derived canonical observation`() = runBlocking {
+        val fixture = fixture(
+            MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        text = "A null evidence time is supplied locally.",
+                        evidenceAt = null
+                    )
+                )
+            )
+        )
+        val job = fixture.createFiveTurnBatch()
+
+        val result = fixture.service.process(job)
+        val written = MarkdownMemoryCodec().parse(fixture.fileStore.readLongTermMemory().getOrThrow()).entries.single()
+
+        assertEquals(MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+        assertEquals(11L, written.lastObservedAt)
+    }
+
+    @Test
+    fun `exhausted batch requeue keeps its frozen payload and turn claims`() = runBlocking {
+        val clock = MutableBatchConsolidationClock(1_000L)
+        val fixture = fixture(
+            MemoryBatchConsolidationProposal(
+                operations = listOf(
+                    operation(
+                        destination = MemoryBatchDestination.LONG_TERM,
+                        text = "An unknown memory type is never written.",
+                        type = "unknown_memory_type"
+                    )
+                )
+            ),
+            clock = clock
+        )
+        val sourceJob = fixture.createFiveTurnBatch()
+
+        fixture.service.process(sourceJob)
+        repeat(2) {
+            val retryable = checkNotNull(fixture.jobDao.getById(sourceJob.jobId))
+            clock.setEpochSecond(checkNotNull(retryable.nextRunAt))
+            fixture.service.process(fixture.claim(retryable))
+        }
+
+        val requeuedJob = fixture.jobDao.jobs.single { candidate -> candidate.jobId != sourceJob.jobId }
+        assertEquals(1, requeuedJob.requeueCycle)
+        assertEquals("${sourceJob.idempotencyKey}:requeue:1", requeuedJob.idempotencyKey)
+        assertEquals(5, fixture.turnDao.getTurnsClaimedByJob(requeuedJob.jobId).size)
+        assertTrue(fixture.turnDao.getTurnsClaimedByJob(sourceJob.jobId).isEmpty())
+
+        clock.setEpochSecond(checkNotNull(requeuedJob.nextRunAt))
+        val result = fixture.service.process(fixture.claim(requeuedJob))
+
         assertEquals("all_consolidation_operations_invalid", result.reason)
-        assertEquals(before, fixture.fileStore.readLongTermMemory().getOrThrow())
+        assertEquals(4, fixture.intelligence.consolidateCalls)
+        assertEquals(5, fixture.turnDao.getTurnsClaimedByJob(requeuedJob.jobId).size)
         assertEquals(0, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
-        assertEquals(5, fixture.turnDao.getTurnsClaimedByJob(job.jobId).size)
     }
 
     @Test
@@ -1989,7 +2075,10 @@ class MemoryBatchConsolidationServiceTest {
         commitObserver: MemoryBatchCommitObserver = MemoryBatchCommitObserver.None
     ): Fixture {
         val turnDao = InMemoryMemoryTurnBatchDao()
-        val jobDao = InMemoryMaintenanceJobDao()
+        val jobDao = InMemoryMaintenanceJobDao(
+            releaseTurnClaims = turnDao::releaseClaim,
+            reassignTurnClaims = turnDao::reassignClaim
+        )
         val enqueuer: MemoryMaintenanceWorkEnqueuer = if (failIndexScheduling) {
             IndexFailingWorkEnqueuer()
         } else {
