@@ -9,9 +9,11 @@
     <string name="sample_item_title">项目 1</string>
     <string name="sample_item_description">项目描述</string>
     <string name="openai" translatable="false">OpenAI</string>
+    <string name="glm" translatable="false">GLM</string>
     <string name="anthropic" translatable="false">Anthropic</string>
     <string name="google" translatable="false">Google</string>
     <string name="openai_description">ChatGPT 的创建者。</string>
+    <string name="glm_description">智谱 GLM 模型。</string>
     <string name="anthropic_description">Claude 的诞生之地。</string>
     <string name="google_description">Gemini 背后的团队。</string>
     <string name="next">下一步</string>
@@ -22,11 +24,15 @@
     <string name="openai_api_key">OpenAI API 密钥</string>
     <string name="anthropic_api_key">Anthropic API 密钥</string>
     <string name="google_api_key">Google API 密钥</string>
+    <string name="glm_api_key">GLM API 密钥</string>
     <string name="openai_api_help" translatable="false">https://platform.openai.com/account/api-keys</string>
+    <string name="glm_api_help" translatable="false">https://bigmodel.cn/usercenter/proj-mgmt/apikeys</string>
     <string name="anthropic_api_help" translatable="false">https://console.anthropic.com/settings/keys</string>
     <string name="google_api_help" translatable="false">https://aistudio.google.com/app/apikey</string>
     <string name="select_openai_model">选择 OpenAI 聊天模型</string>
     <string name="select_openai_model_description">请选择 OpenAI 聊天模型。即使所选模型支持多模态，当前应用也仅支持文本输入，更多能力可能会在后续版本加入。</string>
+    <string name="select_glm_model">选择 GLM 聊天模型</string>
+    <string name="select_glm_model_description">请选择智谱 GLM 聊天模型。当前通过 OpenAI 兼容接口连接。</string>
     <string name="gpt_4o" translatable="false">GPT-4o</string>
     <string name="gpt_4o_mini" translatable="false">GPT-4o mini</string>
     <string name="gpt_4_turbo" translatable="false">GPT-4 Turbo</string>
@@ -256,6 +262,7 @@
     <string name="system_default">跟随系统</string>
     <string name="supported_soon">即将支持</string>
     <string name="openai_setting">OpenAI 设置</string>
+    <string name="glm_setting">GLM 设置</string>
     <string name="anthropic_setting">Anthropic 设置</string>
     <string name="google_setting">Google 设置</string>
     <string name="platform_setting_description">API 密钥、模型、系统提示词</string>
@@ -275,6 +282,7 @@
     <string name="ask_a_question">输入问题...</string>
     <string name="some_platforms_disabled">部分 API 已禁用</string>
     <string name="openai_brand_text">由 OpenAI 提供支持</string>
+    <string name="glm_brand_text">由 GLM 提供支持</string>
     <string name="anthropic_brand_text">由 Claude 提供支持</string>
     <string name="google_brand_text">由 Gemini 提供支持</string>
     <string name="token_not_set">未设置密钥</string>
@@ -496,6 +504,7 @@
     <string name="platform_name_icon">平台名称图标</string>
     <string name="api_type">API 类型</string>
     <string name="client_type_openai_desc">OpenAI 聊天补全 API</string>
+    <string name="client_type_glm_desc">智谱 GLM OpenAI 兼容 API</string>
     <string name="client_type_anthropic_desc">Anthropic 消息 API</string>
     <string name="client_type_google_desc">Google Gemini 生成式 AI API</string>
     <string name="client_type_groq_desc">Groq OpenAI 兼容 API</string>

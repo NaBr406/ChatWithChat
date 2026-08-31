@@ -41,6 +41,7 @@ class SettingRepositoryImpl @Inject constructor(
         val status = settingDataSource.getStatus(apiType)
         val apiUrl = when (apiType) {
             ApiType.OPENAI -> settingDataSource.getAPIUrl(apiType) ?: ModelConstants.OPENAI_API_URL
+            ApiType.GLM -> settingDataSource.getAPIUrl(apiType) ?: ModelConstants.GLM_API_URL
             ApiType.ANTHROPIC -> settingDataSource.getAPIUrl(apiType) ?: ModelConstants.ANTHROPIC_API_URL
             ApiType.GOOGLE -> settingDataSource.getAPIUrl(apiType) ?: ModelConstants.GOOGLE_API_URL
             ApiType.GROQ -> settingDataSource.getAPIUrl(apiType) ?: ModelConstants.GROQ_API_URL
@@ -175,6 +176,7 @@ class SettingRepositoryImpl @Inject constructor(
             val migratedPlatform = PlatformV2(
                 name = when (platform.name) {
                     ApiType.OPENAI -> "OpenAI"
+                    ApiType.GLM -> "GLM"
                     ApiType.ANTHROPIC -> "Anthropic"
                     ApiType.GOOGLE -> "Google"
                     ApiType.GROQ -> "Groq"
@@ -182,6 +184,7 @@ class SettingRepositoryImpl @Inject constructor(
                 },
                 compatibleType = when (platform.name) {
                     ApiType.OPENAI -> ClientType.OPENAI
+                    ApiType.GLM -> ClientType.GLM
                     ApiType.ANTHROPIC -> ClientType.ANTHROPIC
                     ApiType.GOOGLE -> ClientType.GOOGLE
                     ApiType.GROQ -> ClientType.GROQ

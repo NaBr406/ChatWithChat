@@ -6,6 +6,8 @@ import cn.nabr.chatwithchat.data.model.ReasoningCapability
 import cn.nabr.chatwithchat.data.model.ReasoningMode
 import cn.nabr.chatwithchat.data.model.coerceReasoningModeForModel
 import cn.nabr.chatwithchat.data.model.isExplicitReasoningEnabled
+import cn.nabr.chatwithchat.data.model.isGlmReasoningEffortModel
+import cn.nabr.chatwithchat.data.model.isGlmThinkingModel
 import cn.nabr.chatwithchat.data.model.isGptOssModel
 import cn.nabr.chatwithchat.data.model.reasoningCapabilityForModel
 import java.net.URI
@@ -57,6 +59,21 @@ internal fun mapReasoningMode(
             )
         }
 
+        ClientType.GLM -> {
+            val thinkingModel = isGlmThinkingModel(platform.model)
+            val thinkingType = when {
+                !thinkingModel -> null
+                mode == ReasoningMode.OFF -> "disabled"
+                else -> "enabled"
+            }
+            ReasoningRequestParameters(
+                mode = mode,
+                openAICompatibleReasoningEffort = glmReasoningEffort(platform.model, mode),
+                openAICompatibleThinkingType = thinkingType,
+                openAICompatibleClearThinking = false.takeIf { thinkingType == "enabled" }
+            )
+        }
+
         ClientType.OPENROUTER, ClientType.CUSTOM -> {
             val usesOfficialDeepSeekThinking = platform.usesOfficialDeepSeekApi()
             ReasoningRequestParameters(
@@ -98,6 +115,19 @@ private fun ReasoningMode.toGoogleThinkingBudget(): Int? = when (this) {
     ReasoningMode.MAX -> 16_384
     ReasoningMode.OFF -> 0
     ReasoningMode.AUTO -> null
+}
+
+private fun glmReasoningEffort(model: String, mode: ReasoningMode): String? {
+    if (!isGlmReasoningEffortModel(model) || !mode.isExplicitReasoningEnabled()) return null
+    val isGlmFiveTwo = model.contains("glm-5.2", ignoreCase = true) || model.contains("glm5.2", ignoreCase = true)
+    return when (mode) {
+        ReasoningMode.LOW -> if (isGlmFiveTwo) "high" else "low"
+        ReasoningMode.MEDIUM,
+        ReasoningMode.HIGH -> "high"
+        ReasoningMode.MAX -> "max"
+        ReasoningMode.AUTO,
+        ReasoningMode.OFF -> null
+    }
 }
 
 internal fun PlatformV2.usesOfficialDeepSeekApi(): Boolean {

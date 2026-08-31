@@ -132,6 +132,54 @@ class ReasoningParameterMapperTest {
     }
 
     @Test
+    fun `glm five three maps low to enabled thinking and low effort`() {
+        val params = mapReasoningMode(
+            platform = platform(ClientType.GLM, "glm-5.3"),
+            requestedMode = ReasoningMode.LOW
+        )
+
+        assertEquals(ReasoningMode.LOW, params.mode)
+        assertEquals("enabled", params.openAICompatibleThinkingType)
+        assertEquals("low", params.openAICompatibleReasoningEffort)
+        assertEquals(false, params.openAICompatibleClearThinking)
+    }
+
+    @Test
+    fun `glm five three coerces off to enabled auto thinking`() {
+        val params = mapReasoningMode(
+            platform = platform(ClientType.GLM, "glm-5.3"),
+            requestedMode = ReasoningMode.OFF
+        )
+
+        assertEquals(ReasoningMode.AUTO, params.mode)
+        assertEquals("enabled", params.openAICompatibleThinkingType)
+        assertNull(params.openAICompatibleReasoningEffort)
+    }
+
+    @Test
+    fun `glm five two maps off to disabled thinking`() {
+        val params = mapReasoningMode(
+            platform = platform(ClientType.GLM, "glm-5.2"),
+            requestedMode = ReasoningMode.OFF
+        )
+
+        assertEquals(ReasoningMode.OFF, params.mode)
+        assertEquals("disabled", params.openAICompatibleThinkingType)
+        assertNull(params.openAICompatibleReasoningEffort)
+    }
+
+    @Test
+    fun `glm five two maps low effort to high as required by the api`() {
+        val params = mapReasoningMode(
+            platform = platform(ClientType.GLM, "glm-5.2"),
+            requestedMode = ReasoningMode.LOW
+        )
+
+        assertEquals(ReasoningMode.LOW, params.mode)
+        assertEquals("high", params.openAICompatibleReasoningEffort)
+    }
+
+    @Test
     fun `compatible providers do not infer effort from model name`() {
         listOf(ClientType.OPENROUTER, ClientType.CUSTOM).forEach { clientType ->
             val params = mapReasoningMode(

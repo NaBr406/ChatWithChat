@@ -132,7 +132,8 @@ class ProviderSearchDecisionModelClient(
             ClientType.GROQ -> requestGroqDecision(platform, prompt)
             ClientType.OLLAMA,
             ClientType.OPENROUTER,
-            ClientType.CUSTOM -> requestOpenAICompatibleDecision(platform, prompt)
+            ClientType.CUSTOM,
+            ClientType.GLM -> requestOpenAICompatibleDecision(platform, prompt)
             ClientType.ANTHROPIC -> requestAnthropicDecision(platform, prompt)
             ClientType.GOOGLE -> requestGoogleDecision(platform, prompt)
         }

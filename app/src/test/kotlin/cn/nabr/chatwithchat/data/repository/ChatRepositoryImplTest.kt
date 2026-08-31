@@ -1528,10 +1528,18 @@ class ChatRepositoryImplTest {
         assertFalse(toolPrompt.contains(ToolDefinition.DeviceLocation.name))
     }
 
+    /**
+     * Disabling every built-in cannot switch the tool protocol off. `propose_memory_change` is
+     * `userOverrideAllowed = false`, so it stays active and keeps the catalog non-empty — the request
+     * still carries the JSON envelope contract, and only `discover_tools` is advertised because the
+     * proposal tool is not user-visible.
+     */
     @Test
-    fun `all individually disabled tools bypass tool loop`() = runBlocking {
+    fun `disabling every built-in keeps the tool protocol for the internal proposal tool`() = runBlocking {
         val openAIAPI = RecordingOpenAIAPI(
-            chatCompletionResponses = mutableListOf(chatCompletionFlow("Normal answer"))
+            chatCompletionResponses = mutableListOf(
+                chatCompletionFlow("""{"type":"final_answer","content":"Normal answer"}""")
+            )
         )
         val repository = createRepository(
             openAIAPI = openAIAPI,
@@ -1553,7 +1561,14 @@ class ChatRepositoryImplTest {
             states.withoutUsageUpdates()
         )
         assertEquals(1, openAIAPI.streamChatCompletionCalls)
-        assertFalse(openAIAPI.chatCompletionRequests.single().systemText().contains("Enabled tool signatures:"))
+        val systemText = openAIAPI.chatCompletionRequests.single().allSystemText()
+        assertTrue(systemText.contains("""{"type":"final_answer","content":"answer text"}"""))
+        assertTrue(systemText.contains("Enabled tool signatures:"))
+        assertTrue(systemText.contains(ToolDefinition.DiscoverTools.name))
+        assertFalse(systemText.contains(ToolDefinition.ProposeMemoryChange.name))
+        ToolDefinition.BuiltIns.forEach { definition ->
+            assertFalse(systemText.contains("${definition.name}("))
+        }
     }
 
     @Test

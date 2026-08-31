@@ -108,7 +108,8 @@ class ProviderContextCompactionModelClient(
 
                 ClientType.OLLAMA,
                 ClientType.OPENROUTER,
-                ClientType.CUSTOM ->
+                ClientType.CUSTOM,
+                ClientType.GLM ->
                     openAICompatible(platform, systemPrompt, userPayload, maxOutputTokens, timeoutSeconds)
 
                 ClientType.ANTHROPIC ->

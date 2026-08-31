@@ -46,6 +46,11 @@ private val platformTypes = listOf(
         descriptionResId = R.string.openai_description
     ),
     PlatformTypeInfo(
+        clientType = ClientType.GLM,
+        titleResId = R.string.glm,
+        descriptionResId = R.string.glm_description
+    ),
+    PlatformTypeInfo(
         clientType = ClientType.ANTHROPIC,
         titleResId = R.string.anthropic,
         descriptionResId = R.string.anthropic_description

@@ -175,6 +175,7 @@ class SetupViewModelV2 @Inject constructor(
 
     private fun getDefaultPlatformName(clientType: ClientType): String = when (clientType) {
         ClientType.OPENAI -> "OpenAI"
+        ClientType.GLM -> "GLM"
         ClientType.ANTHROPIC -> "Anthropic"
         ClientType.GOOGLE -> "Google"
         ClientType.GROQ -> "Groq"
@@ -185,6 +186,7 @@ class SetupViewModelV2 @Inject constructor(
 
     private fun getDefaultApiUrl(clientType: ClientType): String = when (clientType) {
         ClientType.OPENAI -> ModelConstants.OPENAI_API_URL
+        ClientType.GLM -> ModelConstants.GLM_API_URL
         ClientType.ANTHROPIC -> ModelConstants.ANTHROPIC_API_URL
         ClientType.GOOGLE -> ModelConstants.GOOGLE_API_URL
         ClientType.GROQ -> ModelConstants.GROQ_API_URL

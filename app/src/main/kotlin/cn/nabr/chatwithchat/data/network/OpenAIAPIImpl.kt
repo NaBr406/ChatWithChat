@@ -47,7 +47,7 @@ class OpenAIAPIImpl @Inject constructor(
         mimeType: String,
         endpoint: ProviderEndpoint
     ): UploadedProviderFile {
-        val url = joinApiEndpoint(endpoint.apiUrl, "v1/files")
+        val url = joinApiEndpoint(endpoint.apiUrl, endpoint.apiPath("files"))
         val responseBody = networkClient().preparePost(url) {
             endpoint.token?.let { bearerAuth(it) }
             setBody(
@@ -87,7 +87,7 @@ class OpenAIAPIImpl @Inject constructor(
     }
 
     override suspend fun isFileAvailable(fileId: String, endpoint: ProviderEndpoint): Boolean {
-        val url = joinApiEndpoint(endpoint.apiUrl, "v1/files/$fileId")
+        val url = joinApiEndpoint(endpoint.apiUrl, endpoint.apiPath("files/$fileId"))
         return try {
             networkClient().prepareGet(url) {
                 endpoint.token?.let { bearerAuth(it) }
@@ -105,7 +105,7 @@ class OpenAIAPIImpl @Inject constructor(
         endpoint: ProviderEndpoint
     ): Flow<ChatCompletionChunk> = flow {
         try {
-            val url = joinApiEndpoint(endpoint.apiUrl, "v1/chat/completions")
+            val url = joinApiEndpoint(endpoint.apiUrl, endpoint.apiPath("chat/completions"))
 
             networkClient().preparePost(url) {
                 applyPlatformStreamingTimeout(timeoutSeconds)
@@ -126,6 +126,19 @@ class OpenAIAPIImpl @Inject constructor(
                             error = ErrorDetail(
                                 message = errorMessage,
                                 type = "http_error",
+                                code = response.status.value.toString()
+                            )
+                        )
+                    )
+                    return@execute
+                }
+
+                response.htmlInsteadOfEventStreamErrorOrNull()?.let { message ->
+                    emit(
+                        ChatCompletionChunk(
+                            error = ErrorDetail(
+                                message = message,
+                                type = "invalid_response",
                                 code = response.status.value.toString()
                             )
                         )
@@ -196,6 +209,11 @@ class OpenAIAPIImpl @Inject constructor(
                     }
 
                     emit(ResponseErrorEvent(message = errorMessage, code = response.status.value.toString()))
+                    return@execute
+                }
+
+                response.htmlInsteadOfEventStreamErrorOrNull()?.let { message ->
+                    emit(ResponseErrorEvent(message = message, code = "invalid_response"))
                     return@execute
                 }
 

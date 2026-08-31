@@ -72,6 +72,15 @@ fun PlatformV2.reasoningCapabilityForModel(modelId: String = model): ReasoningCa
         else -> unknownCapability()
     }
 
+    ClientType.GLM -> when {
+        isGlmFiveThreeModel(modelId) -> effortCapability(includeMax = true)
+        isGlmForcedThinkingModel(modelId) -> forcedToggleCapability()
+        isGlmReasoningEffortModel(modelId) -> effortCapability(includeMax = true, includeOff = true)
+        isGlmThinkingModel(modelId) -> toggleCapability()
+        isKnownOrdinaryModel(modelId) -> unsupportedCapability()
+        else -> unknownCapability()
+    }
+
     ClientType.OPENROUTER, ClientType.CUSTOM, ClientType.OLLAMA -> when {
         isRecognizedReasoningFamily(modelId) -> defaultOnlyCapability()
         isKnownOrdinaryModel(modelId) -> unsupportedCapability()
@@ -106,6 +115,36 @@ fun ReasoningMode.isExplicitReasoningEnabled(): Boolean = when (this) {
 
 fun isGptOssModel(modelId: String): Boolean = modelId.contains("gpt-oss", ignoreCase = true)
 
+fun isGlmThinkingModel(modelId: String): Boolean {
+    val normalized = modelId.trim().lowercase()
+    return normalized.contains("glm-4.5") ||
+        normalized.contains("glm-4.6") ||
+        normalized.contains("glm-4.7") ||
+        normalized.contains("glm-5") ||
+        normalized.contains("glm5")
+}
+
+fun isGlmReasoningEffortModel(modelId: String): Boolean {
+    val normalized = modelId.trim().lowercase()
+    return normalized.contains("glm-5.2") ||
+        normalized.contains("glm-5.3") ||
+        normalized.contains("glm5.2") ||
+        normalized.contains("glm5.3")
+}
+
+private fun isGlmForcedThinkingModel(modelId: String): Boolean {
+    val normalized = modelId.trim().lowercase()
+    return normalized.contains("glm-4.7") ||
+        normalized.contains("glm4.7") ||
+        normalized.contains("glm-4.5v") ||
+        normalized.contains("glm4.5v")
+}
+
+private fun isGlmFiveThreeModel(modelId: String): Boolean {
+    val normalized = modelId.trim().lowercase()
+    return normalized.contains("glm-5.3") || normalized.contains("glm5.3")
+}
+
 private fun effortCapability(
     includeMax: Boolean = false,
     includeOff: Boolean = false
@@ -128,6 +167,11 @@ private fun effortCapability(
 private fun toggleCapability(): ReasoningCapabilityProfile = ReasoningCapabilityProfile(
     capability = ReasoningCapability.TOGGLE,
     supportedModes = listOf(ReasoningMode.AUTO, ReasoningMode.OFF, ReasoningMode.MEDIUM)
+)
+
+private fun forcedToggleCapability(): ReasoningCapabilityProfile = ReasoningCapabilityProfile(
+    capability = ReasoningCapability.TOGGLE,
+    supportedModes = listOf(ReasoningMode.AUTO, ReasoningMode.MEDIUM)
 )
 
 private fun defaultOnlyCapability(): ReasoningCapabilityProfile =

@@ -94,6 +94,33 @@ class ReasoningModeTest {
         )
     }
 
+    @Test
+    fun `glm five three exposes strength modes but cannot disable thinking`() {
+        val platform = platform(ClientType.GLM, "glm-5.3")
+
+        assertEquals(ReasoningCapability.EFFORT, platform.reasoningCapabilityForModel().capability)
+        assertFalse(ReasoningMode.OFF in platform.reasoningModesForModel())
+        assertTrue(ReasoningMode.MAX in platform.reasoningModesForModel())
+    }
+
+    @Test
+    fun `glm five two exposes off and strength modes`() {
+        val platform = platform(ClientType.GLM, "glm-5.2")
+
+        assertEquals(ReasoningCapability.EFFORT, platform.reasoningCapabilityForModel().capability)
+        assertTrue(ReasoningMode.OFF in platform.reasoningModesForModel())
+        assertTrue(ReasoningMode.MAX in platform.reasoningModesForModel())
+    }
+
+    @Test
+    fun `glm four seven cannot disable forced thinking`() {
+        val platform = platform(ClientType.GLM, "glm-4.7")
+
+        assertEquals(ReasoningCapability.TOGGLE, platform.reasoningCapabilityForModel().capability)
+        assertFalse(ReasoningMode.OFF in platform.reasoningModesForModel())
+        assertTrue(ReasoningMode.MEDIUM in platform.reasoningModesForModel())
+    }
+
     private fun platform(
         clientType: ClientType,
         model: String,

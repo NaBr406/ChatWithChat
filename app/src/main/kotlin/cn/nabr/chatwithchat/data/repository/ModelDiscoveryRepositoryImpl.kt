@@ -46,13 +46,18 @@ class ModelDiscoveryRepositoryImpl @Inject constructor(
         token: String?
     ): List<APIModel> = when (clientType) {
         ClientType.OPENAI, ClientType.GROQ, ClientType.OPENROUTER, ClientType.CUSTOM -> fetchOpenAICompatibleModels(apiUrl, token)
+        ClientType.GLM -> fetchOpenAICompatibleModels(apiUrl, token, pathPrefix = "")
         ClientType.OLLAMA -> fetchOllamaModels(apiUrl, token)
         ClientType.GOOGLE -> fetchGoogleModels(apiUrl, token)
         ClientType.ANTHROPIC -> fetchAnthropicModels(apiUrl, token)
     }
 
-    private suspend fun fetchOpenAICompatibleModels(apiUrl: String, token: String?): List<APIModel> {
-        val responseBody = networkClient().prepareGet(joinEndpoint(apiUrl, "v1/models")) {
+    private suspend fun fetchOpenAICompatibleModels(
+        apiUrl: String,
+        token: String?,
+        pathPrefix: String = "v1"
+    ): List<APIModel> {
+        val responseBody = networkClient().prepareGet(joinEndpoint(apiUrl, listOf(pathPrefix, "models").filter { it.isNotBlank() }.joinToString("/"))) {
             token?.takeIf { it.isNotBlank() }?.let { bearerAuth(it) }
             parameter("limit", MODEL_LIMIT)
         }.execute { response ->
@@ -150,6 +155,7 @@ class ModelDiscoveryRepositoryImpl @Inject constructor(
     private fun resolveApiUrl(clientType: ClientType, apiUrl: String): String = apiUrl.trim().ifBlank {
         when (clientType) {
             ClientType.OPENAI -> ModelConstants.OPENAI_API_URL
+            ClientType.GLM -> ModelConstants.GLM_API_URL
             ClientType.ANTHROPIC -> ModelConstants.ANTHROPIC_API_URL
             ClientType.GOOGLE -> ModelConstants.GOOGLE_API_URL
             ClientType.GROQ -> ModelConstants.GROQ_API_URL

@@ -366,6 +366,14 @@ class ChatRepositoryImpl @Inject constructor(
                     reasoningMode = reasoningMode,
                     activeToolDefinitions = activeToolDefinitions
                 )
+                ClientType.GLM -> completeChatWithOpenAIChatCompletionsNativeToolLoop(
+                    userMessages = userMessages,
+                    assistantMessages = assistantMessages,
+                    platform = platform,
+                    memoryPrompt = providerContextPrompt,
+                    reasoningMode = reasoningMode,
+                    activeToolDefinitions = activeToolDefinitions
+                )
                 ClientType.CUSTOM -> {
                     if (platform.usesOfficialDeepSeekApi()) {
                         completeChatWithOpenAIChatCompletionsNativeToolLoop(
@@ -495,7 +503,7 @@ class ChatRepositoryImpl @Inject constructor(
             )
         }
 
-        ClientType.OLLAMA, ClientType.OPENROUTER, ClientType.CUSTOM -> {
+        ClientType.GLM, ClientType.OLLAMA, ClientType.OPENROUTER, ClientType.CUSTOM -> {
             // Use Chat Completions API for OpenAI-compatible services
             completeChatWithOpenAIChatCompletions(
                 userMessages,
@@ -745,6 +753,7 @@ class ChatRepositoryImpl @Inject constructor(
         ClientType.OLLAMA,
         ClientType.OPENROUTER,
         ClientType.CUSTOM -> openAICompatibleJsonToolAdapter
+        ClientType.GLM -> openAICompatibleJsonToolAdapter
     }
 
     private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.executeSearchDecisionIfNeeded(
@@ -1403,7 +1412,10 @@ class ChatRepositoryImpl @Inject constructor(
             fun requestFor(mode: ReasoningMode): OpenAIChatCompletionsNativeToolRequest {
                 val reasoningParameters = mapReasoningMode(platform, mode)
                 val thinking = reasoningParameters.openAICompatibleThinkingType?.let { type ->
-                    ChatCompletionThinkingConfig(type)
+                    ChatCompletionThinkingConfig(
+                        type = type,
+                        clearThinking = reasoningParameters.openAICompatibleClearThinking
+                    )
                 }
                 return OpenAIChatCompletionsNativeToolRequest(
                     model = platform.model,
@@ -1411,7 +1423,8 @@ class ChatRepositoryImpl @Inject constructor(
                     temperature = platform.temperature.takeIf { thinking == null },
                     topP = platform.topP.takeIf { thinking == null },
                     reasoningEffort = reasoningParameters.openAICompatibleReasoningEffort,
-                    thinking = thinking
+                    thinking = thinking,
+                    streamOptions = chatCompletionStreamOptionsFor(platform)
                 )
             }
             NativeToolRequestTemplates(
@@ -1564,7 +1577,7 @@ class ChatRepositoryImpl @Inject constructor(
                 results = results,
                 config = config,
                 reasoningContent = round.reasoningContent.takeIf {
-                    platform.usesOfficialDeepSeekApi()
+                    platform.usesOfficialDeepSeekApi() || platform.compatibleType == ClientType.GLM
                 }
             )
             roundStateMachine.onToolResults(results)
@@ -1601,9 +1614,11 @@ class ChatRepositoryImpl @Inject constructor(
             request = prepared.user.toRequest(
                 continuationMessages = continuationMessages,
                 tools = finalToolDefinitions
-                    .takeIf { definitions -> definitions.isNotEmpty() }
+                    .takeIf { platform.compatibleType != ClientType.GLM && it.isNotEmpty() }
                     ?.let { definitions -> openAIChatCompletionsToolAdapter.toChatCompletionTools(definitions) },
-                toolChoice = ChatCompletionToolChoice.None.takeIf { finalToolDefinitions.isNotEmpty() },
+                toolChoice = ChatCompletionToolChoice.None.takeIf {
+                    platform.compatibleType != ClientType.GLM && finalToolDefinitions.isNotEmpty()
+                },
                 extraInstruction = nativeFinalToolInstruction(allResults)
             ),
             timeoutSeconds = platform.timeout,
@@ -2762,7 +2777,10 @@ class ChatRepositoryImpl @Inject constructor(
                         },
                         reasoningEffort = reasoningParameters.openAICompatibleReasoningEffort,
                         thinking = reasoningParameters.openAICompatibleThinkingType?.let { type ->
-                            ChatCompletionThinkingConfig(type)
+                            ChatCompletionThinkingConfig(
+                                type = type,
+                                clearThinking = reasoningParameters.openAICompatibleClearThinking
+                            )
                         },
                         streamOptions = chatCompletionStreamOptionsFor(platform)
                     ),
@@ -3606,6 +3624,7 @@ class ChatRepositoryImpl @Inject constructor(
             )
             when (platform.name) {
                 "OpenAI" -> apiTypeMap[ApiType.OPENAI] = platform.uid
+                "GLM" -> apiTypeMap[ApiType.GLM] = platform.uid
                 "Anthropic" -> apiTypeMap[ApiType.ANTHROPIC] = platform.uid
                 "Google" -> apiTypeMap[ApiType.GOOGLE] = platform.uid
                 "Groq" -> apiTypeMap[ApiType.GROQ] = platform.uid
@@ -4081,7 +4100,8 @@ private data class OpenAIChatCompletionsNativeToolRequest(
     val temperature: Float?,
     val topP: Float?,
     val reasoningEffort: String?,
-    val thinking: ChatCompletionThinkingConfig?
+    val thinking: ChatCompletionThinkingConfig?,
+    val streamOptions: ChatCompletionStreamOptions?
 ) {
     fun toRequest(
         continuationMessages: List<ChatMessage>,
@@ -4098,7 +4118,7 @@ private data class OpenAIChatCompletionsNativeToolRequest(
         thinking = thinking,
         tools = tools,
         toolChoice = toolChoice,
-        streamOptions = ChatCompletionStreamOptions()
+        streamOptions = streamOptions
     )
 }
 
@@ -4709,6 +4729,7 @@ private fun aggregateToolUsage(
 private fun chatCompletionStreamOptionsFor(platform: PlatformV2): ChatCompletionStreamOptions? = when (platform.compatibleType) {
     ClientType.OPENAI,
     ClientType.OPENROUTER -> ChatCompletionStreamOptions()
+    ClientType.GLM,
     ClientType.GROQ,
     ClientType.OLLAMA,
     ClientType.ANTHROPIC,

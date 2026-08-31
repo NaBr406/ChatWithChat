@@ -1,6 +1,7 @@
 package cn.nabr.chatwithchat.data.network
 
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
+import cn.nabr.chatwithchat.data.model.ClientType
 
 /**
  * Where a request goes and which key it carries, passed per call.
@@ -24,10 +25,17 @@ import cn.nabr.chatwithchat.data.database.entity.PlatformV2
  */
 data class ProviderEndpoint(
     val token: String?,
-    val apiUrl: String
+    val apiUrl: String,
+    /** Path prefix used by OpenAI-compatible endpoints, e.g. `v1` or GLM's empty prefix. */
+    val apiPathPrefix: String = "v1"
 )
 
 fun PlatformV2.providerEndpoint(): ProviderEndpoint = ProviderEndpoint(
     token = token,
-    apiUrl = apiUrl
+    apiUrl = apiUrl,
+    apiPathPrefix = "v1".takeUnless { compatibleType == ClientType.GLM }.orEmpty()
 )
+
+fun ProviderEndpoint.apiPath(path: String): String = listOf(apiPathPrefix.trim('/'), path.trim('/'))
+    .filter { it.isNotBlank() }
+    .joinToString("/")

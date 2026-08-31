@@ -187,6 +187,7 @@ fun AddPlatformScreen(
                                         // Set default API URL based on client type
                                         apiUrl = when (clientType) {
                                             ClientType.OPENAI -> ModelConstants.OPENAI_API_URL
+                                            ClientType.GLM -> ModelConstants.GLM_API_URL
                                             ClientType.ANTHROPIC -> ModelConstants.ANTHROPIC_API_URL
                                             ClientType.GOOGLE -> ModelConstants.GOOGLE_API_URL
                                             ClientType.GROQ -> ModelConstants.GROQ_API_URL
@@ -427,6 +428,7 @@ private fun SavingStatusText(text: String) {
 @Composable
 private fun getClientTypeName(clientType: ClientType): String = when (clientType) {
     ClientType.OPENAI -> "OpenAI"
+    ClientType.GLM -> "GLM"
     ClientType.ANTHROPIC -> "Anthropic"
     ClientType.GOOGLE -> "Google"
     ClientType.GROQ -> "Groq"
@@ -438,6 +440,7 @@ private fun getClientTypeName(clientType: ClientType): String = when (clientType
 @Composable
 private fun getClientTypeDescription(clientType: ClientType): String = when (clientType) {
     ClientType.OPENAI -> stringResource(R.string.client_type_openai_desc)
+    ClientType.GLM -> stringResource(R.string.client_type_glm_desc)
     ClientType.ANTHROPIC -> stringResource(R.string.client_type_anthropic_desc)
     ClientType.GOOGLE -> stringResource(R.string.client_type_google_desc)
     ClientType.GROQ -> stringResource(R.string.client_type_groq_desc)

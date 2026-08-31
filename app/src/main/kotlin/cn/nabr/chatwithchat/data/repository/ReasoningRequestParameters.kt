@@ -14,7 +14,8 @@ internal data class ReasoningRequestParameters(
     val groqReasoningFormat: String? = null,
     val groqIncludeReasoning: Boolean? = null,
     val openAICompatibleReasoningEffort: String? = null,
-    val openAICompatibleThinkingType: String? = null
+    val openAICompatibleThinkingType: String? = null,
+    val openAICompatibleClearThinking: Boolean? = null
 ) {
     val hasExplicitReasoning: Boolean = mode.isExplicitReasoningEnabled()
 }

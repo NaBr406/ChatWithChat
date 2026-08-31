@@ -21,6 +21,7 @@ class SettingDataSourceImpl @Inject constructor(
 ) : SettingDataSource {
     private val apiStatusMap = mapOf(
         ApiType.OPENAI to booleanPreferencesKey("openai_status"),
+        ApiType.GLM to booleanPreferencesKey("glm_status"),
         ApiType.ANTHROPIC to booleanPreferencesKey("anthropic_status"),
         ApiType.GOOGLE to booleanPreferencesKey("google_status"),
         ApiType.GROQ to booleanPreferencesKey("groq_status"),
@@ -28,6 +29,7 @@ class SettingDataSourceImpl @Inject constructor(
     )
     private val apiUrlMap = mapOf(
         ApiType.OPENAI to stringPreferencesKey("openai_url"),
+        ApiType.GLM to stringPreferencesKey("glm_url"),
         ApiType.ANTHROPIC to stringPreferencesKey("anthropic_url"),
         ApiType.GOOGLE to stringPreferencesKey("google_url"),
         ApiType.GROQ to stringPreferencesKey("groq_url"),
@@ -35,6 +37,7 @@ class SettingDataSourceImpl @Inject constructor(
     )
     private val apiTokenMap = mapOf(
         ApiType.OPENAI to stringPreferencesKey("openai_token"),
+        ApiType.GLM to stringPreferencesKey("glm_token"),
         ApiType.ANTHROPIC to stringPreferencesKey("anthropic_token"),
         ApiType.GOOGLE to stringPreferencesKey("google_token"),
         ApiType.GROQ to stringPreferencesKey("groq_token"),
@@ -42,6 +45,7 @@ class SettingDataSourceImpl @Inject constructor(
     )
     private val apiModelMap = mapOf(
         ApiType.OPENAI to stringPreferencesKey("openai_model"),
+        ApiType.GLM to stringPreferencesKey("glm_model"),
         ApiType.ANTHROPIC to stringPreferencesKey("anthropic_model"),
         ApiType.GOOGLE to stringPreferencesKey("google_model"),
         ApiType.GROQ to stringPreferencesKey("groq_model"),
@@ -49,6 +53,7 @@ class SettingDataSourceImpl @Inject constructor(
     )
     private val apiTemperatureMap = mapOf(
         ApiType.OPENAI to floatPreferencesKey("openai_temperature"),
+        ApiType.GLM to floatPreferencesKey("glm_temperature"),
         ApiType.ANTHROPIC to floatPreferencesKey("anthropic_temperature"),
         ApiType.GOOGLE to floatPreferencesKey("google_temperature"),
         ApiType.GROQ to floatPreferencesKey("groq_temperature"),
@@ -56,6 +61,7 @@ class SettingDataSourceImpl @Inject constructor(
     )
     private val apiTopPMap = mapOf(
         ApiType.OPENAI to floatPreferencesKey("openai_top_p"),
+        ApiType.GLM to floatPreferencesKey("glm_top_p"),
         ApiType.ANTHROPIC to floatPreferencesKey("anthropic_top_p"),
         ApiType.GOOGLE to floatPreferencesKey("google_top_p"),
         ApiType.GROQ to floatPreferencesKey("groq_top_p"),
@@ -63,6 +69,7 @@ class SettingDataSourceImpl @Inject constructor(
     )
     private val apiSystemPromptMap = mapOf(
         ApiType.OPENAI to stringPreferencesKey("openai_system_prompt"),
+        ApiType.GLM to stringPreferencesKey("glm_system_prompt"),
         ApiType.ANTHROPIC to stringPreferencesKey("anthropic_system_prompt"),
         ApiType.GOOGLE to stringPreferencesKey("google_system_prompt"),
         ApiType.GROQ to stringPreferencesKey("groq_system_prompt"),

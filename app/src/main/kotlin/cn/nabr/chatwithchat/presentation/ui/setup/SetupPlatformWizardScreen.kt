@@ -577,6 +577,7 @@ private fun SetupSavingStatusText(text: String) {
 
 private fun getApiHelpUrl(clientType: ClientType): String? = when (clientType) {
     ClientType.OPENAI -> "https://platform.openai.com/account/api-keys"
+    ClientType.GLM -> "https://bigmodel.cn/usercenter/proj-mgmt/apikeys"
     ClientType.ANTHROPIC -> "https://console.anthropic.com/settings/keys"
     ClientType.GOOGLE -> "https://aistudio.google.com/app/apikey"
     ClientType.GROQ -> "https://console.groq.com/keys"

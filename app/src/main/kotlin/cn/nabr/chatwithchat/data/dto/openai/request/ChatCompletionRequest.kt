@@ -75,5 +75,9 @@ data class ChatCompletionStreamOptions(
 @Serializable
 data class ChatCompletionThinkingConfig(
     @SerialName("type")
-    val type: String
+    val type: String,
+
+    @SerialName("clear_thinking")
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val clearThinking: Boolean? = null
 )

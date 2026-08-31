@@ -32,6 +32,17 @@ data class ProviderContextPolicy(
                 )
             }
 
+            ClientType.GLM -> {
+                ProviderContextPolicy(
+                    recentTurnWindow = 8,
+                    historicalImageTurnWindow = 0,
+                    maxInlineAttachmentBytes = INLINE_ATTACHMENT_LIMIT_BYTES,
+                    maxContextTokens = 16_000,
+                    summaryTokenBudget = 1_000,
+                    fallbackModelContextWindow = 128_000
+                )
+            }
+
             ClientType.ANTHROPIC -> {
                 ProviderContextPolicy(
                     recentTurnWindow = 10,
