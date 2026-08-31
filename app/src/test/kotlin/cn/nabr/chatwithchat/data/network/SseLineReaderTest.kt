@@ -7,6 +7,7 @@ import io.ktor.utils.io.writeFully
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.charset.StandardCharsets
 import kotlinx.coroutines.delay
@@ -55,5 +56,17 @@ class SseLineReaderTest {
         assertThrows(TooLongLineException::class.java) {
             runBlocking { channel.readSseLineOrNull() }
         }
+    }
+
+    @Test
+    fun `reports the leading content when a body never breaks a line`() {
+        val body = "<!DOCTYPE html><html><body>" + "a".repeat(MAX_SSE_LINE_CHARS * 4)
+        val channel = ByteReadChannel(body)
+
+        val failure = assertThrows(TooLongLineException::class.java) {
+            runBlocking { channel.readSseLineOrNull() }
+        }
+
+        assertTrue(failure.message.orEmpty().contains("<!DOCTYPE html>"))
     }
 }

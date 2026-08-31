@@ -64,6 +64,19 @@ class GroqAPIImpl @Inject constructor(
                     return@execute
                 }
 
+                response.htmlInsteadOfEventStreamErrorOrNull()?.let { message ->
+                    emit(
+                        GroqChatCompletionChunk(
+                            error = GroqErrorDetail(
+                                message = message,
+                                type = "invalid_response",
+                                code = response.status.value.toString()
+                            )
+                        )
+                    )
+                    return@execute
+                }
+
                 if (!request.stream) {
                     emit(NetworkClient.openAIJson.decodeFromString<GroqChatCompletionChunk>(response.body()))
                     return@execute

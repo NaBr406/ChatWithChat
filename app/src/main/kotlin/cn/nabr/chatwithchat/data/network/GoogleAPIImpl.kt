@@ -138,6 +138,19 @@ class GoogleAPIImpl @Inject constructor(
                     return@execute
                 }
 
+                response.htmlInsteadOfEventStreamErrorOrNull()?.let { message ->
+                    emit(
+                        GenerateContentResponse(
+                            error = ErrorDetail(
+                                message = message,
+                                code = response.status.value,
+                                status = "ERROR"
+                            )
+                        )
+                    )
+                    return@execute
+                }
+
                 // Success - read SSE stream
                 val channel = response.bodyAsChannel()
                 while (true) {

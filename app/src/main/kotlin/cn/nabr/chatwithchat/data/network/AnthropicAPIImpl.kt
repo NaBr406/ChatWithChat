@@ -135,6 +135,11 @@ class AnthropicAPIImpl @Inject constructor(
                     return@execute
                 }
 
+                response.htmlInsteadOfEventStreamErrorOrNull()?.let { message ->
+                    emit(ErrorResponseChunk(error = ErrorDetail(type = "invalid_response", message = message)))
+                    return@execute
+                }
+
                 val channel = response.bodyAsChannel()
                 while (true) {
                     val line = channel.readSseLineOrNull() ?: break
