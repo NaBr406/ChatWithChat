@@ -27,8 +27,10 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -198,13 +200,13 @@ class ChatTurnCoordinatorTest {
             release.await()
         }
         assertTrue(coordinator.isLive("chat:7"))
-        assertEquals(setOf(7), coordinator.runningChatIds.value)
+        assertRunningChatIds(coordinator, setOf(7))
 
         release.complete(Unit)
         turn.awaitFinished()
 
         assertFalse(coordinator.isLive("chat:7"))
-        assertEquals(emptySet<Int>(), coordinator.runningChatIds.value)
+        assertRunningChatIds(coordinator, emptySet())
     }
 
     /** A draft chat has no row in the list, so it must not show an indicator against a bogus id. */
@@ -355,6 +357,20 @@ class ChatTurnCoordinatorTest {
         coordinatorScope.cancel()
     }
 
+    /**
+     * `runningChatIds` is derived from the turn map and shared on [coordinatorScope], so its value
+     * lands one `Dispatchers.Default` dispatch after the map changes. Reading `.value` straight after
+     * `start` races that dispatch; wait for the expected set, then assert for a readable diff.
+     */
+    private suspend fun assertRunningChatIds(coordinator: ChatTurnCoordinator, expected: Set<Int>) {
+        runCatching {
+            withTimeout(RUNNING_CHAT_IDS_TIMEOUT_MILLIS) {
+                coordinator.runningChatIds.first { ids -> ids == expected }
+            }
+        }
+        assertEquals(expected, coordinator.runningChatIds.value)
+    }
+
     private fun coordinator(
         repository: ChatRepository,
         memory: MemoryRepository = RecordingMemoryRepository()
@@ -456,5 +472,9 @@ class ChatTurnCoordinatorTest {
 
         override suspend fun getLongTermMarkdown(): String = ""
         override fun observeLongTermMarkdown(): Flow<String> = emptyFlow()
+    }
+
+    private companion object {
+        const val RUNNING_CHAT_IDS_TIMEOUT_MILLIS = 5_000L
     }
 }
