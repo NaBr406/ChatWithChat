@@ -4,6 +4,7 @@ import cn.nabr.chatwithchat.data.dto.google.request.GenerateContentRequest
 import cn.nabr.chatwithchat.data.dto.google.response.ErrorDetail
 import cn.nabr.chatwithchat.data.dto.google.response.GenerateContentResponse
 import cn.nabr.chatwithchat.util.applyPlatformStreamingTimeout
+import cn.nabr.chatwithchat.util.withoutUnpairedSurrogates
 import io.ktor.client.call.body
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.request.header
@@ -117,7 +118,7 @@ class GoogleAPIImpl @Inject constructor(
                 parameter("key", endpoint.token ?: "")
                 parameter("alt", "sse")
                 contentType(ContentType.Application.Json)
-                setBody(NetworkClient.json.encodeToString(request))
+                setBody(NetworkClient.json.encodeToString(request).withoutUnpairedSurrogates())
             }.execute { response ->
                 if (!response.status.isSuccess()) {
                     val errorBody = response.body<String>()

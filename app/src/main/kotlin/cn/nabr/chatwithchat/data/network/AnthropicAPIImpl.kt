@@ -5,6 +5,7 @@ import cn.nabr.chatwithchat.data.dto.anthropic.response.ErrorDetail
 import cn.nabr.chatwithchat.data.dto.anthropic.response.ErrorResponseChunk
 import cn.nabr.chatwithchat.data.dto.anthropic.response.MessageResponseChunk
 import cn.nabr.chatwithchat.util.applyPlatformStreamingTimeout
+import cn.nabr.chatwithchat.util.withoutUnpairedSurrogates
 import io.ktor.client.call.body
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.request.accept
@@ -116,7 +117,7 @@ class AnthropicAPIImpl @Inject constructor(
             networkClient().preparePost(url) {
                 applyPlatformStreamingTimeout(timeoutSeconds)
                 contentType(ContentType.Application.Json)
-                setBody(json.encodeToString(messageRequest))
+                setBody(json.encodeToString(messageRequest).withoutUnpairedSurrogates())
                 accept(ContentType.Text.EventStream)
                 headers {
                     append(API_KEY_HEADER, endpoint.token ?: "")

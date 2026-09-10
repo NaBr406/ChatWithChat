@@ -14,6 +14,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.isSuccess
 import cn.nabr.chatwithchat.data.network.NetworkClient
 import cn.nabr.chatwithchat.data.repository.SettingRepository
+import cn.nabr.chatwithchat.util.withoutUnpairedSurrogates
 import java.net.URI
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
@@ -46,7 +47,9 @@ class WebSearchRepositoryImpl(
 
     override suspend fun search(query: String, limit: Int): Result<List<WebSearchResult>> = withContext(Dispatchers.IO) {
         val activeConfig = configProvider?.invoke() ?: config
-        val normalizedQuery = query.trim()
+        // 清洗放在唯一入口：AnySearch 会把 query 当 JSON 请求体交给 Ktor 的严格编码器，
+        // 一个落单代理项就够它抛 MalformedInputException("Input length = 1")。
+        val normalizedQuery = query.withoutUnpairedSurrogates().trim()
         if (normalizedQuery.isBlank()) return@withContext Result.success(emptyList())
 
         val boundedLimit = limit.coerceAtMost(activeConfig.maxResults).coerceAtLeast(0)

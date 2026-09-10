@@ -3,6 +3,7 @@ package cn.nabr.chatwithchat.data.attachment
 import android.content.Context
 import cn.nabr.chatwithchat.util.AttachmentPayloadCache
 import cn.nabr.chatwithchat.util.FileUtils
+import cn.nabr.chatwithchat.util.withoutUnpairedSurrogates
 import java.io.File
 import java.io.IOException
 import java.nio.ByteBuffer
@@ -107,9 +108,14 @@ object DocumentTextExtractor {
         return decodeStrictly(bytes, 0, gbkCharset)
     }
 
-    /** 归一化换行并按 [maxChars] 截断，返回值里带上是否截断。 */
+    /**
+     * 修掉落单代理项、归一化换行，再按 [maxChars] 截断，返回值里带上是否截断。
+     *
+     * 清洗放在这里而不是发送前：正文同时喂给预览页和提示词，两边看到的应当是同一份文本；
+     * 而且 PDFBox 是唯一会产出落单代理项的抽取器，堵在源头最省事。
+     */
     internal fun truncateDocumentText(text: String, maxChars: Int): DocumentText {
-        val normalized = text.replace("\r\n", "\n").replace('\r', '\n')
+        val normalized = text.withoutUnpairedSurrogates().replace("\r\n", "\n").replace('\r', '\n')
         if (normalized.length <= maxChars) {
             return DocumentText(normalized, normalized.length, truncated = false)
         }

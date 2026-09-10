@@ -12,6 +12,7 @@ import cn.nabr.chatwithchat.data.dto.openai.response.ResponsesCompactResult
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponsesStreamEvent
 import cn.nabr.chatwithchat.data.dto.openai.response.UnknownEvent
 import cn.nabr.chatwithchat.util.applyPlatformStreamingTimeout
+import cn.nabr.chatwithchat.util.withoutUnpairedSurrogates
 import io.ktor.client.call.body
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.request.accept
@@ -110,7 +111,7 @@ class OpenAIAPIImpl @Inject constructor(
             networkClient().preparePost(url) {
                 applyPlatformStreamingTimeout(timeoutSeconds)
                 contentType(ContentType.Application.Json)
-                setBody(NetworkClient.openAIJson.encodeToString(request))
+                setBody(NetworkClient.openAIJson.encodeToString(request).withoutUnpairedSurrogates())
                 accept(ContentType.Text.EventStream)
                 endpoint.token?.let { bearerAuth(it) }
             }.execute { response ->
@@ -197,7 +198,7 @@ class OpenAIAPIImpl @Inject constructor(
             networkClient().preparePost(url) {
                 applyPlatformStreamingTimeout(timeoutSeconds)
                 contentType(ContentType.Application.Json)
-                setBody(NetworkClient.openAIJson.encodeToString(request))
+                setBody(NetworkClient.openAIJson.encodeToString(request).withoutUnpairedSurrogates())
                 accept(ContentType.Text.EventStream)
                 endpoint.token?.let { bearerAuth(it) }
             }.execute { response ->
@@ -264,7 +265,7 @@ class OpenAIAPIImpl @Inject constructor(
         val responseBody = networkClient().preparePost(url) {
             applyPlatformStreamingTimeout(timeoutSeconds)
             contentType(ContentType.Application.Json)
-            setBody(NetworkClient.openAIJson.encodeToString(request))
+            setBody(NetworkClient.openAIJson.encodeToString(request).withoutUnpairedSurrogates())
             accept(ContentType.Application.Json)
             endpoint.token?.let { bearerAuth(it) }
         }.execute { response ->

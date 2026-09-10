@@ -6,6 +6,7 @@ import cn.nabr.chatwithchat.data.dto.groq.request.GroqChatCompletionRequest
 import cn.nabr.chatwithchat.data.dto.groq.response.GroqChatCompletionChunk
 import cn.nabr.chatwithchat.data.dto.groq.response.GroqErrorDetail
 import cn.nabr.chatwithchat.util.applyPlatformStreamingTimeout
+import cn.nabr.chatwithchat.util.withoutUnpairedSurrogates
 import io.ktor.client.call.body
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.request.accept
@@ -39,7 +40,7 @@ class GroqAPIImpl @Inject constructor(
             networkClient().preparePost(url) {
                 applyPlatformStreamingTimeout(timeoutSeconds)
                 contentType(ContentType.Application.Json)
-                setBody(NetworkClient.openAIJson.encodeToString(request))
+                setBody(NetworkClient.openAIJson.encodeToString(request).withoutUnpairedSurrogates())
                 accept(if (request.stream) ContentType.Text.EventStream else ContentType.Application.Json)
                 endpoint.token?.let { bearerAuth(it) }
             }.execute { response ->

@@ -361,6 +361,29 @@ class WebSearchRepositoryImplTest {
     }
 
     @Test
+    fun `anysearch survives a query carrying an unpaired surrogate`() = runBlocking {
+        withServer(
+            statusCode = 200,
+            body = """{"code": 0, "data": {"results": []}}"""
+        ) { baseUrl, requests ->
+            val repository = WebSearchRepositoryImpl(
+                httpClient = NetworkClient(CIO)(),
+                config = WebSearchConfig(
+                    backend = WebSearchBackend.AnySearch,
+                    anySearchBaseUrl = baseUrl
+                )
+            )
+
+            // 模型只要在工具参数里回一个 \ud800，Ktor 给 JSON 请求体用的严格编码器就会抛
+            // MalformedInputException("Input length = 1")，这次搜索白跑。
+            val result = repository.search("iPhone\uD800 价格", limit = 5)
+
+            assertTrue(result.isSuccess)
+            assertTrue(requests.single().body.contains("iPhone\uFFFD 价格"))
+        }
+    }
+
+    @Test
     fun `anysearch omits authorization header when api key is blank`() = runBlocking {
         withServer(
             statusCode = 200,
