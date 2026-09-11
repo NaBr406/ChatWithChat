@@ -99,7 +99,19 @@ class GoogleNativeToolAdapter {
                 )
             }
         )
-        return listOf(modelContent, userContent)
+        val visualParts = results.flatMap { result ->
+            result.visualAttachments.mapNotNull { attachment ->
+                val base64 = attachment.base64Data ?: return@mapNotNull null
+                Part.inlineData(attachment.mimeType, base64)
+            }
+        }
+        val syntheticVisualMessage = visualParts.takeIf { it.isNotEmpty() }?.let { loaded ->
+            Content(
+                role = Role.USER,
+                parts = listOf(Part.text("以下是工具读取到的图片像素。")) + loaded
+            )
+        }
+        return listOfNotNull(modelContent, userContent, syntheticVisualMessage)
     }
 
     fun toolResultToFunctionResponse(

@@ -30,6 +30,7 @@ import cn.nabr.chatwithchat.data.tool.ToolProvider
 import cn.nabr.chatwithchat.data.tool.ToolRegistry
 import cn.nabr.chatwithchat.data.websearch.WebPageExtractor
 import cn.nabr.chatwithchat.data.websearch.WebSearchRepository
+import cn.nabr.chatwithchat.data.visual.VisualAssetRepository
 import javax.inject.Singleton
 import kotlin.jvm.JvmSuppressWildcards
 
@@ -43,6 +44,7 @@ object ToolModule {
         webPageExtractor: WebPageExtractor,
         stickerRepository: StickerRepository,
         memoryProposalStore: MemoryProposalStore,
+        visualAssetRepository: VisualAssetRepository,
         @ApplicationContext context: Context
     ): List<ToolProvider> = BuiltInTools(
         webSearchRepository,
@@ -51,7 +53,8 @@ object ToolModule {
         AndroidScheduleEventLauncher(context),
         AndroidAlarmLauncher(context),
         stickerRepository,
-        memoryProposalStore
+        memoryProposalStore,
+        visualAssetRepository
     ).providers()
 
     @Provides

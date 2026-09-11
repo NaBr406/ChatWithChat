@@ -168,6 +168,13 @@ class ToolPromptBuilder(
                 result.sources.forEach { source ->
                     appendLine("Source: ${toolProtocolJson.encodeToString(source)}")
                 }
+                result.visualAttachments.forEach { attachment ->
+                    appendLine(
+                        "Visual: ref=${attachment.visualRef ?: attachment.assetId}; " +
+                            "profile=${attachment.profile.storageValue}; mime=${attachment.mimeType}; " +
+                            "size=${attachment.sizeBytes}"
+                    )
+                }
             }
         }.trim()
 
@@ -254,9 +261,24 @@ class ToolPromptBuilder(
             full = buildString {
                 appendLine("Tool result: ${toolResult.name} (${toolResult.callId}) - ${toolResult.status()}")
                 append(toolResult.content.trim().clip(config.maxToolResultChars))
+                toolResult.visualAttachments.forEach { attachment ->
+                    appendLine()
+                    append(
+                        "Visual: ref=${attachment.visualRef ?: attachment.assetId}; " +
+                            "profile=${attachment.profile.storageValue}; mime=${attachment.mimeType}"
+                    )
+                }
             },
             summary = "Tool result: ${toolResult.name} (${toolResult.callId}) - ${toolResult.status()} " +
-                toolResult.content.collapseWhitespace().clip(MAX_SCRATCHPAD_SUMMARY_CHARS)
+                buildString {
+                    append(toolResult.content.collapseWhitespace())
+                    toolResult.visualAttachments.forEach { attachment ->
+                        append(" visual=")
+                        append(attachment.visualRef ?: attachment.assetId)
+                        append(" profile=")
+                        append(attachment.profile.storageValue)
+                    }
+                }.clip(MAX_SCRATCHPAD_SUMMARY_CHARS)
         )
         else -> ScratchpadEntry(
             full = "${role.name}: ${content.trim().clip(config.maxToolResultChars)}",

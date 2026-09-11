@@ -224,6 +224,55 @@ data class ToolDefinition(
             )
         )
 
+        val ViewImage = ToolDefinition(
+            name = "view_image",
+            description = "查看当前聊天中的一张图片。先使用 list_visual_assets 找到 visual_ref，再把该引用传入。默认读取折叠后的压缩视图；只有确需原始像素时使用 detail=original。不能读取任意本地路径。",
+            parameters = Parameters(
+                properties = mapOf(
+                    "visual_ref" to Parameter(
+                        type = "string",
+                        description = "当前聊天 Catalog 中的稳定图片引用，例如 v17-2。",
+                        minLength = 3,
+                        maxLength = 64
+                    ),
+                    "detail" to Parameter(
+                        type = "string",
+                        description = "读取精度；默认 auto。compact 请求压缩视图，original 请求原图。",
+                        enumValues = listOf("auto", "compact", "original")
+                    )
+                ),
+                required = listOf("visual_ref")
+            )
+        )
+
+        val ListVisualAssets = ToolDefinition(
+            name = "list_visual_assets",
+            description = "列出当前聊天中可查看的图片索引，包含稳定 visual_ref、轮次、文件名、尺寸以及是否已折叠。该工具不返回图片像素。",
+            parameters = Parameters(
+                properties = mapOf(
+                    "query" to Parameter(
+                        type = "string",
+                        description = "可选的文件名或 visual_ref 过滤文本。",
+                        maxLength = 120
+                    ),
+                    "limit" to Parameter(
+                        type = "integer",
+                        description = "可选的最大返回数量，默认 50。",
+                        minimum = 1.0,
+                        maximum = 200.0
+                    ),
+                    "include_raw" to Parameter(
+                        type = "boolean",
+                        description = "是否包含尚未折叠的图片，默认 true。"
+                    ),
+                    "include_folded" to Parameter(
+                        type = "boolean",
+                        description = "是否包含已经折叠的图片，默认 true。"
+                    )
+                )
+            )
+        )
+
         val ProposeMemoryChange = ToolDefinition(
             name = "propose_memory_change",
             description = "提交一条记忆变更提案。此工具只保存提案证据，不会直接写入记忆；提案会在回合完成后进入记忆批处理。",
@@ -285,6 +334,8 @@ data class ToolDefinition(
             SetAlarm,
             SearchStickers,
             SendSticker,
+            ViewImage,
+            ListVisualAssets,
             ProposeMemoryChange
         )
     }

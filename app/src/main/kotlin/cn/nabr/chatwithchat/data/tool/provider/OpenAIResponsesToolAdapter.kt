@@ -2,6 +2,8 @@ package cn.nabr.chatwithchat.data.tool.provider
 
 import cn.nabr.chatwithchat.data.dto.openai.request.ResponseFunctionCallInputItem
 import cn.nabr.chatwithchat.data.dto.openai.request.ResponseFunctionCallOutputItem
+import cn.nabr.chatwithchat.data.dto.openai.request.ResponseFunctionCallOutputPartsItem
+import cn.nabr.chatwithchat.data.dto.openai.request.ResponseContentPart
 import cn.nabr.chatwithchat.data.dto.openai.request.ResponseInputItem
 import cn.nabr.chatwithchat.data.dto.openai.request.ResponsePassthroughInputItem
 import cn.nabr.chatwithchat.data.dto.openai.request.ResponseTool
@@ -87,7 +89,7 @@ class OpenAIResponsesToolAdapter {
             .map { item -> ResponsePassthroughInputItem(item.raw) }
 
         val callItems = calls.map { call -> call.toResponseFunctionCallInput(events) }
-        val outputItems = results.map { result -> result.toResponseFunctionCallOutput(config) }
+        val outputItems = results.map { result -> result.toResponseInputItem(config) }
 
         return reasoningItems + callItems + outputItems
     }
@@ -156,19 +158,44 @@ class OpenAIResponsesToolAdapter {
     }
 
     private fun ToolResult.toResponseFunctionCallOutput(config: ToolLoopConfig): ResponseFunctionCallOutputItem {
-        val projection = toNativeToolResultProjection(config.maxToolResultChars)
+        val output = toResponseFunctionCallOutputContent(config)
         return ResponseFunctionCallOutputItem(
             callId = callId,
-            output = toolProtocolJson.encodeToString(
-                OpenAIToolResultPayload(
-                    name = name,
-                    ok = !isError,
-                    content = projection.content,
-                    metadata = projection.metadata,
-                    structuredContent = projection.structuredContent,
-                    sources = projection.sources
-                )
+            output = output
+        )
+    }
+
+    private fun ToolResult.toResponseFunctionCallOutputContent(config: ToolLoopConfig): String {
+        val projection = toNativeToolResultProjection(config.maxToolResultChars)
+        return toolProtocolJson.encodeToString(
+            OpenAIToolResultPayload(
+                name = name,
+                ok = !isError,
+                content = projection.content,
+                metadata = projection.metadata,
+                structuredContent = projection.structuredContent,
+                sources = projection.sources
             )
+        )
+    }
+
+    fun toolResultToResponseInputItem(
+        result: ToolResult,
+        config: ToolLoopConfig = ToolLoopConfig.Default
+    ): ResponseInputItem = result.toResponseInputItem(config)
+
+    private fun ToolResult.toResponseInputItem(config: ToolLoopConfig): ResponseInputItem {
+        val visualParts = visualAttachments.mapNotNull { attachment ->
+            val base64 = attachment.base64Data ?: return@mapNotNull null
+            ResponseContentPart.image(
+                url = "data:${attachment.mimeType};base64,$base64",
+                detail = attachment.detail.wireValue
+            )
+        }
+        if (visualParts.isEmpty()) return toResponseFunctionCallOutput(config)
+        return ResponseFunctionCallOutputPartsItem(
+            callId = callId,
+            output = listOf(ResponseContentPart.text(toResponseFunctionCallOutputContent(config))) + visualParts
         )
     }
 

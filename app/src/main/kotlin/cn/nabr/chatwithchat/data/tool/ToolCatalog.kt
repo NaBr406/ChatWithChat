@@ -6,6 +6,12 @@ data class ToolSettingsMetadata(
     val category: ToolCategory = ToolCategory.Other,
     val defaultEnabled: Boolean = false,
     val isSensitive: Boolean = true,
+    /**
+     * Opt in to default enablement for a private read-only tool. This is deliberately narrower than
+     * "read-only": a private source can still expose user data, so only built-ins that read the
+     * current chat's own assets should set it.
+     */
+    val allowDefaultReadOnlyPrivate: Boolean = false,
     val presentationKey: String? = null,
     val iconKey: String? = null,
     val enablementGroup: ToolEnablementGroup = ToolEnablementGroup.General

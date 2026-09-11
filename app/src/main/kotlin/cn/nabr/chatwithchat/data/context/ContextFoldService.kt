@@ -8,6 +8,7 @@ import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceJobStatus
 import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceJobType
 import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceScheduler
 import cn.nabr.chatwithchat.data.memory.MemoryTurnBatchScheduler
+import cn.nabr.chatwithchat.data.visual.VisualAssetRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 
@@ -81,6 +82,7 @@ class ContextFoldService(
      * being felt only as compaction quietly never happening again.
      */
     private val degradationRegistry: ContextFoldDegradationRegistry? = null,
+    private val visualAssetRepository: VisualAssetRepository? = null,
     private val json: Json = Json { ignoreUnknownKeys = true }
 ) {
 
@@ -160,6 +162,14 @@ class ContextFoldService(
                 compactionUsage = outcome.usage
             )
         )
+        runCatching {
+            visualAssetRepository?.markMessagesFolded(
+                chatId = payload.chatRoomId,
+                messageIds = turns.flatMap { turn ->
+                    listOfNotNull(turn.userMessage.id, turn.assistantMessage?.id)
+                }
+            )
+        }
         maintenanceScheduler.markSucceeded(job)
         // A pair that folds again is no longer degraded, whatever it did before. Cleared before the
         // memory nudge so a scheduler that throws cannot leave a healthy chat marked as failing.
@@ -273,8 +283,12 @@ class ContextFoldService(
             }
         }
 
+        runCatching { visualAssetRepository?.indexMessages(messages) }
+        val visualAssets = runCatching {
+            visualAssetRepository?.listAssets(chatId = payload.chatRoomId, limit = VISUAL_ASSET_CATALOG_LIMIT)
+        }.getOrNull().orEmpty()
         return contextBuilder
-            .buildFoldableTurns(userMessages, assistantMessages, platformUid)
+            .buildFoldableTurns(userMessages, assistantMessages, platformUid, visualAssets)
             .filter { turn ->
                 turn.userMessage.id >= payload.startUserMessageId &&
                     turn.userMessage.id <= payload.endUserMessageId
@@ -302,4 +316,8 @@ class ContextFoldService(
         segmentIndex = payload?.segmentIndex ?: -1,
         outcomeCode = outcomeCode
     )
+
+    private companion object {
+        const val VISUAL_ASSET_CATALOG_LIMIT = 200
+    }
 }

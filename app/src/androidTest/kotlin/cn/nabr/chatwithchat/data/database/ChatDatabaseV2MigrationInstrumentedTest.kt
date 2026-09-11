@@ -164,7 +164,11 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 ChatDatabaseV2Migrations.MIGRATION_19_20,
                 ChatDatabaseV2Migrations.MIGRATION_20_21,
                 ChatDatabaseV2Migrations.MIGRATION_21_22,
-                ChatDatabaseV2Migrations.MIGRATION_22_23
+                ChatDatabaseV2Migrations.MIGRATION_22_23,
+                ChatDatabaseV2Migrations.MIGRATION_23_24,
+                ChatDatabaseV2Migrations.MIGRATION_24_25,
+                ChatDatabaseV2Migrations.MIGRATION_25_26,
+                ChatDatabaseV2Migrations.MIGRATION_26_27
             )
             .addCallback(ChatHistoryDatabaseCallback())
             .build()
@@ -285,7 +289,11 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 ChatDatabaseV2Migrations.MIGRATION_19_20,
                 ChatDatabaseV2Migrations.MIGRATION_20_21,
                 ChatDatabaseV2Migrations.MIGRATION_21_22,
-                ChatDatabaseV2Migrations.MIGRATION_22_23
+                ChatDatabaseV2Migrations.MIGRATION_22_23,
+                ChatDatabaseV2Migrations.MIGRATION_23_24,
+                ChatDatabaseV2Migrations.MIGRATION_24_25,
+                ChatDatabaseV2Migrations.MIGRATION_25_26,
+                ChatDatabaseV2Migrations.MIGRATION_26_27
             )
             .addCallback(ChatHistoryDatabaseCallback())
             .build()
@@ -337,7 +345,7 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                     assertEquals("dismissed", roomDatabase.memoryMaintenanceJobDao().getById(jobId)?.status)
                 }
             }
-            assertEquals(SCHEMA_23_TABLES, roomDatabase.openHelper.writableDatabase.userTableNames())
+            assertEquals(SCHEMA_27_TABLES, roomDatabase.openHelper.writableDatabase.userTableNames())
             assertLegacySemanticTablesAbsent(roomDatabase.openHelper.writableDatabase)
         } finally {
             roomDatabase.close()
@@ -479,7 +487,11 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 ChatDatabaseV2Migrations.MIGRATION_19_20,
                 ChatDatabaseV2Migrations.MIGRATION_20_21,
                 ChatDatabaseV2Migrations.MIGRATION_21_22,
-                ChatDatabaseV2Migrations.MIGRATION_22_23
+                ChatDatabaseV2Migrations.MIGRATION_22_23,
+                ChatDatabaseV2Migrations.MIGRATION_23_24,
+                ChatDatabaseV2Migrations.MIGRATION_24_25,
+                ChatDatabaseV2Migrations.MIGRATION_25_26,
+                ChatDatabaseV2Migrations.MIGRATION_26_27
             )
             .addCallback(ChatHistoryDatabaseCallback())
             .build()
@@ -758,7 +770,11 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 ChatDatabaseV2Migrations.MIGRATION_19_20,
                 ChatDatabaseV2Migrations.MIGRATION_20_21,
                 ChatDatabaseV2Migrations.MIGRATION_21_22,
-                ChatDatabaseV2Migrations.MIGRATION_22_23
+                ChatDatabaseV2Migrations.MIGRATION_22_23,
+                ChatDatabaseV2Migrations.MIGRATION_23_24,
+                ChatDatabaseV2Migrations.MIGRATION_24_25,
+                ChatDatabaseV2Migrations.MIGRATION_25_26,
+                ChatDatabaseV2Migrations.MIGRATION_26_27
             )
             .build()
         try {
@@ -907,7 +923,11 @@ class ChatDatabaseV2MigrationInstrumentedTest {
             .addMigrations(
                 ChatDatabaseV2Migrations.MIGRATION_20_21,
                 ChatDatabaseV2Migrations.MIGRATION_21_22,
-                ChatDatabaseV2Migrations.MIGRATION_22_23
+                ChatDatabaseV2Migrations.MIGRATION_22_23,
+                ChatDatabaseV2Migrations.MIGRATION_23_24,
+                ChatDatabaseV2Migrations.MIGRATION_24_25,
+                ChatDatabaseV2Migrations.MIGRATION_25_26,
+                ChatDatabaseV2Migrations.MIGRATION_26_27
             )
             .addCallback(ChatHistoryDatabaseCallback())
             .build()
@@ -1050,7 +1070,7 @@ class ChatDatabaseV2MigrationInstrumentedTest {
     }
 
     @Test
-    fun freshSchema23_opensAndReopensWithMcpAndTextSkillState() {
+    fun freshSchema27_opensAndReopensWithCurrentState() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val freshDatabase = Room.databaseBuilder(context, ChatDatabaseV2::class.java, TEST_DATABASE)
             .addCallback(ChatHistoryDatabaseCallback())
@@ -1058,9 +1078,9 @@ class ChatDatabaseV2MigrationInstrumentedTest {
         try {
             val database = freshDatabase
             val sqliteDatabase = database.openHelper.writableDatabase
-            assertEquals(SCHEMA_23_TABLES, sqliteDatabase.userTableNames())
+            assertEquals(SCHEMA_27_TABLES, sqliteDatabase.userTableNames())
             assertLegacySemanticTablesAbsent(sqliteDatabase)
-            assertEquals(23L, sqliteDatabase.singleLong("PRAGMA user_version"))
+            assertEquals(27L, sqliteDatabase.singleLong("PRAGMA user_version"))
             sqliteDatabase.query("PRAGMA foreign_key_check").use { cursor ->
                 assertEquals(0, cursor.count)
             }
@@ -1075,9 +1095,9 @@ class ChatDatabaseV2MigrationInstrumentedTest {
         try {
             val database = reopenedDatabase
             val sqliteDatabase = database.openHelper.writableDatabase
-            assertEquals(SCHEMA_23_TABLES, sqliteDatabase.userTableNames())
+            assertEquals(SCHEMA_27_TABLES, sqliteDatabase.userTableNames())
             assertLegacySemanticTablesAbsent(sqliteDatabase)
-            assertEquals(23L, sqliteDatabase.singleLong("PRAGMA user_version"))
+            assertEquals(27L, sqliteDatabase.singleLong("PRAGMA user_version"))
             assertEquals("ok", sqliteDatabase.singleString("PRAGMA integrity_check"))
             runBlocking {
                 assertTrue(database.chatRoomDao().getChatRooms().isEmpty())
@@ -1096,6 +1116,40 @@ class ChatDatabaseV2MigrationInstrumentedTest {
             }
         } finally {
             reopenedDatabase.close()
+        }
+    }
+
+    @Test
+    fun migration26To27_createsVisualAssetTables() {
+        migrationHelper.createDatabase(TEST_DATABASE, 26).close()
+
+        migrationHelper.runMigrationsAndValidate(
+            TEST_DATABASE,
+            27,
+            true,
+            ChatDatabaseV2Migrations.MIGRATION_26_27
+        ).use { database ->
+            assertEquals(
+                4L,
+                database.singleLong(
+                    """
+                    SELECT COUNT(*) FROM sqlite_master
+                    WHERE type = 'table'
+                      AND name IN (
+                          'visual_asset',
+                          'visual_asset_catalog',
+                          'message_visual_ref',
+                          'visual_asset_provider_ref'
+                      )
+                    """.trimIndent()
+                )
+            )
+            assertEquals(0L, database.singleLong("SELECT COUNT(*) FROM visual_asset"))
+            assertEquals(0L, database.singleLong("SELECT COUNT(*) FROM visual_asset_catalog"))
+            assertEquals(0L, database.singleLong("SELECT COUNT(*) FROM message_visual_ref"))
+            assertEquals(0L, database.singleLong("SELECT COUNT(*) FROM visual_asset_provider_ref"))
+            database.query("PRAGMA foreign_key_check").use { cursor -> assertEquals(0, cursor.count) }
+            assertEquals("ok", database.singleString("PRAGMA integrity_check"))
         }
     }
 
@@ -2048,6 +2102,14 @@ class ChatDatabaseV2MigrationInstrumentedTest {
         private val SCHEMA_23_MIGRATION_TABLES = SCHEMA_22_MIGRATION_TABLES + setOf(
             "mcp_servers",
             "mcp_tools"
+        )
+        private val SCHEMA_27_TABLES = SCHEMA_23_TABLES + setOf(
+            "memory_daily_evidence",
+            "memory_proposal",
+            "visual_asset",
+            "visual_asset_catalog",
+            "message_visual_ref",
+            "visual_asset_provider_ref"
         )
 
         /**

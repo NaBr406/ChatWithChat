@@ -114,6 +114,11 @@ class ToolExecutor(
                     }.boundForExecution(maxResultChars)
                 }
             }
+            if (!result.isError && result.visualAttachments.isNotEmpty() && !sessionState.supportsVisualInput) {
+                audit(ToolAuditStatus.FAILED, trustedContext, auditBinding)
+                return call.errorResult(VISUAL_ASSET_UNSUPPORTED, VISUAL_ASSET_UNSUPPORTED)
+                    .boundForExecution(maxResultChars)
+            }
             audit(
                 status = if (result.isError) ToolAuditStatus.FAILED else ToolAuditStatus.EXECUTED,
                 executionContext = trustedContext,
@@ -274,6 +279,7 @@ private const val TOOL_FAILED = "tool_failed"
 private const val TOOL_TIMEOUT = "tool_timeout"
 private const val TOOL_UNAVAILABLE = "tool_unavailable"
 private const val UNKNOWN_TOOL = "unknown_tool"
+private const val VISUAL_ASSET_UNSUPPORTED = "visual_asset_unsupported"
 private const val MAX_ARGUMENT_VIOLATIONS_IN_RESULT = 8
 private const val MAX_TOOL_NAME_CHARS = 64
 private const val MAX_AUXILIARY_RESULT_CHARS = 2_048

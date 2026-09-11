@@ -54,7 +54,7 @@ class MemorySchema17StartupRecoveryInstrumentedTest {
         var reopenedVectorStore: MemoryVectorStore? = null
         try {
             val sqliteDatabase = database.openHelper.writableDatabase
-            assertEquals(21, sqliteDatabase.version)
+            assertEquals(27, sqliteDatabase.version)
             sqliteDatabase.query(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('memory_chunk', 'memory_document')"
             ).use { cursor -> assertEquals(0, cursor.count) }

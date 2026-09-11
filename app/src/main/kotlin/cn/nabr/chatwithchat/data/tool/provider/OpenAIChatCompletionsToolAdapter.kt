@@ -1,6 +1,10 @@
 package cn.nabr.chatwithchat.data.tool.provider
 
 import cn.nabr.chatwithchat.data.dto.openai.common.Role
+import cn.nabr.chatwithchat.data.dto.openai.common.ImageContent
+import cn.nabr.chatwithchat.data.dto.openai.common.ImageUrl
+import cn.nabr.chatwithchat.data.dto.openai.common.MessageContent
+import cn.nabr.chatwithchat.data.dto.openai.common.TextContent
 import cn.nabr.chatwithchat.data.dto.openai.request.ChatCompletionFunctionTool
 import cn.nabr.chatwithchat.data.dto.openai.request.ChatCompletionMessageFunctionCall
 import cn.nabr.chatwithchat.data.dto.openai.request.ChatCompletionMessageToolCall
@@ -90,7 +94,8 @@ class OpenAIChatCompletionsToolAdapter {
             reasoningContent = reasoningContent?.trim()?.takeIf { content -> content.isNotBlank() }
         )
         val resultMessages = results.map { result -> result.toToolMessage(config) }
-        return listOf(assistantMessage) + resultMessages
+        val visualMessage = results.toSyntheticVisualMessage()
+        return listOf(assistantMessage) + resultMessages + listOfNotNull(visualMessage)
     }
 
     fun toolResultToChatMessage(
@@ -121,6 +126,29 @@ class OpenAIChatCompletionsToolAdapter {
                 )
             ),
             toolCallId = callId
+        )
+    }
+
+    private fun List<ToolResult>.toSyntheticVisualMessage(): ChatMessage? {
+        val parts = mutableListOf<MessageContent>()
+        val summaries = mutableListOf<String>()
+        flatMap { result -> result.visualAttachments.map { attachment -> result to attachment } }
+            .forEach { (result, attachment) ->
+                val base64 = attachment.base64Data ?: return@forEach
+                summaries += "${attachment.visualRef ?: result.callId} (${attachment.profile.storageValue})"
+                parts += ImageContent(
+                    imageUrl = ImageUrl(
+                        url = "data:${attachment.mimeType};base64,$base64",
+                        detail = if (attachment.detail.wireValue == "original") "high" else "auto"
+                    )
+                )
+            }
+        if (parts.isEmpty()) return null
+        return ChatMessage(
+            role = Role.USER,
+            content = listOf(
+                TextContent(text = "以下是工具读取到的图片像素：" + summaries.joinToString(separator = ", "))
+            ) + parts
         )
     }
 

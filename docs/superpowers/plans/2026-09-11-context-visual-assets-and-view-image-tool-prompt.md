@@ -7,8 +7,16 @@
 - 2026-09-11：已从 `main` 创建 `codex/context-visual-assets-view-image`。
 - Task 0：审计完成；数据库基线为 26，`ToolResult` 仍为文本，managed context 仍清空旧附件。
 - Task 1：视觉资产领域模型、Room 四表、DAO、文件存储、压缩器、Catalog、GC 和 `26 -> 27` migration 已落地。
-- 验证：`.\gradlew.bat :app:compileDebugKotlin --no-daemon` 通过，Room schema `27.json` 已生成。
-- 待办：工具结果多模态契约、`view_image`/`list_visual_assets`、provider 适配、context manifest、生命周期钩子、诊断 UI 和完整测试。
+- Task 2：折叠后在 fold maintenance job 内生成 `COMPACTED_V1`；压缩失败保留原图回退状态。
+- Task 3：`ToolResult` 增加视觉附件、独立数量/字节/token 边界，scratchpad 和 audit 不写 base64。
+- Task 4：`view_image` 与首版必需的 `list_visual_assets` 已加入默认启用工具集；不支持视觉的模型返回 `visual_asset_unsupported`。
+- Task 5：OpenAI Responses、Anthropic 原生结果携带图片，OpenAI Chat Completions、Google 和 JSON fallback 走下一轮 synthetic user image。
+- Task 6：raw turn attachments 不再被历史窗口清空；折叠 turn 生成 visual manifest；checkpoint hash 包含 visual_ref/asset_hash/profile。
+- Task 7：保存/编辑/复制/删除 chat 与启动 GC 已接入；无引用原图、压缩图和 provider ref 会回收。
+- Task 8：开发者诊断页增加只读视觉资产页，展示 catalog、文件存在性、profile、压缩错误和 provider ref 数量。
+- Task 9：新增 JVM 契约/上下文测试，并在 `emulator-5554` 跑通真实 PNG/alpha 压缩、折叠解析、GC 和 `26 -> 27` migration。
+- 验证：`:app:compileDebugKotlin`、工具/上下文单测、AndroidTest 编译、视觉资产 instrumented test 和 migration instrumented test 均通过。
+- 说明：压缩当前在 fold maintenance job 内完成，没有单独排队 `COMPRESS_FOLDED_VISUAL_ASSETS` 任务；这样 checkpoint 已落库后压缩失败不会回滚折叠结果。
 
 ## Goal
 

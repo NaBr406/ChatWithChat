@@ -49,5 +49,17 @@ object ContextTurnHasher {
         append(SEPARATOR)
         append(turn.assistantMessage?.content.orEmpty())
         append(SEPARATOR)
+        turn.visualAssets
+            .sortedWith(compareBy({ it.messageId }, { it.attachmentIndex }, { it.visualRef }))
+            .forEach { visualAsset ->
+                append(visualAsset.visualRef)
+                append(SEPARATOR)
+                append(visualAsset.assetHash)
+                append(SEPARATOR)
+                append(visualAsset.attachmentIndex)
+                append(SEPARATOR)
+                append(visualAsset.compactedProfile.orEmpty())
+                append(SEPARATOR)
+            }
     }
 }

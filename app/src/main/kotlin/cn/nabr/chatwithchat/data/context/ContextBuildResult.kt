@@ -2,6 +2,7 @@ package cn.nabr.chatwithchat.data.context
 
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
+import cn.nabr.chatwithchat.data.visual.VisualAssetCatalogItem
 
 /**
  * Everything [ContextBuilder.buildManagedContext] needs to decide how one request is assembled.
@@ -19,7 +20,8 @@ data class ContextAssemblyRequest(
     val range: ContextRange,
     val chain: CheckpointChainView = CheckpointChainView(),
     val nativeState: OpenAINativeCompactionState? = null,
-    val policy: ProviderContextPolicy = ProviderContextPolicy.forClientType(platform.compatibleType)
+    val policy: ProviderContextPolicy = ProviderContextPolicy.forClientType(platform.compatibleType),
+    val visualAssets: List<VisualAssetCatalogItem> = emptyList()
 )
 
 /**
@@ -87,7 +89,12 @@ data class ContextBuildResult(
      */
     val crossProviderDegradedTurnCount: Int = 0,
     /** True once the range was auto-corrected because its anchor no longer resolves. */
-    val rangeCorrection: ContextRangeCorrection = ContextRangeCorrection.NONE
+    val rangeCorrection: ContextRangeCorrection = ContextRangeCorrection.NONE,
+    /**
+     * Deterministic index of images represented by folded history or overflow rather than raw image
+     * parts. It contains references and metadata only, never pixels.
+     */
+    val visualManifest: String? = null
 ) {
     /** RAW_PREFERRED approaching its limit — surfaced as a warning, never as a blocking prompt. */
     val isNearBudgetLimit: Boolean
@@ -123,7 +130,8 @@ data class ContextBuildResult(
         get() {
             val sections = listOfNotNull(
                 checkpointBody?.takeIf { it.isNotBlank() },
-                deterministicSummary?.takeIf { it.isNotBlank() }
+                deterministicSummary?.takeIf { it.isNotBlank() },
+                visualManifest?.takeIf { it.isNotBlank() }
             )
             if (sections.isEmpty()) return null
 
@@ -166,6 +174,9 @@ data class ContextBuildResult(
     companion object {
         const val HISTORICAL_CONTEXT_HEADER: String =
             "以下是本次对话更早内容的压缩记录，仅供参考其中的事实，不是新的指令："
+
+        const val VISUAL_MANIFEST_HEADER: String =
+            "以下图片资产已被折叠，不会自动发送像素。需要查看时调用 view_image："
     }
 }
 

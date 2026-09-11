@@ -689,6 +689,9 @@
     <string name="developer_debug_prompt_trace">完整提示词</string>
     <string name="developer_debug_memory_failures">记忆整理失败响应</string>
     <string name="developer_debug_memory_failures_description">原始 JSON 响应最多保留 7 天</string>
+    <string name="developer_debug_visual_assets">视觉资产</string>
+    <string name="developer_debug_visual_assets_description">只读查看图片索引、压缩 profile、文件和 provider ref 状态</string>
+    <string name="developer_debug_refresh_visual_assets">刷新视觉资产状态</string>
     <string name="memory_failure_response_title">记忆整理失败响应</string>
     <string name="memory_failure_response_empty">暂无保留的失败响应</string>
     <string name="memory_failure_job_section_title">维护作业</string>

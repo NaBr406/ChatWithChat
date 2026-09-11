@@ -26,8 +26,11 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonObject
 
 class AnthropicNativeToolAdapter {
@@ -130,20 +133,55 @@ class AnthropicNativeToolAdapter {
 
     private fun ToolResult.toToolResultContent(config: ToolLoopConfig): ToolResultContent {
         val projection = toNativeToolResultProjection(config.maxToolResultChars)
+        val payload = toolProtocolJson.encodeToString(
+            AnthropicToolResultPayload(
+                name = name,
+                ok = !isError,
+                content = projection.content,
+                metadata = projection.metadata,
+                structuredContent = projection.structuredContent,
+                sources = projection.sources
+            )
+        )
+        val visualBlocks = visualAttachments.mapNotNull { attachment ->
+            val base64 = attachment.base64Data ?: return@mapNotNull null
+            buildJsonObject {
+                put("type", JsonPrimitive("image"))
+                put(
+                    "source",
+                    toolProtocolJson.encodeToJsonElement(
+                        cn.nabr.chatwithchat.data.dto.anthropic.common.ImageSource.base64(
+                            mediaType = mediaTypeFor(attachment.mimeType),
+                            data = base64
+                        )
+                    )
+                )
+            }
+        }
         return ToolResultContent(
             toolUseId = callId,
-            content = toolProtocolJson.encodeToString(
-                AnthropicToolResultPayload(
-                    name = name,
-                    ok = !isError,
-                    content = projection.content,
-                    metadata = projection.metadata,
-                    structuredContent = projection.structuredContent,
-                    sources = projection.sources
+            content = if (visualBlocks.isEmpty()) {
+                JsonPrimitive(payload)
+            } else {
+                JsonArray(
+                    listOf(
+                        buildJsonObject {
+                            put("type", JsonPrimitive("text"))
+                            put("text", JsonPrimitive(payload))
+                        }
+                    ) + visualBlocks
                 )
-            ),
+            },
             isError = isError.takeIf { it }
         )
+    }
+
+    private fun mediaTypeFor(mimeType: String): cn.nabr.chatwithchat.data.dto.anthropic.common.MediaType = when {
+        mimeType.contains("jpeg") || mimeType.contains("jpg") ->
+            cn.nabr.chatwithchat.data.dto.anthropic.common.MediaType.JPEG
+        mimeType.contains("png") -> cn.nabr.chatwithchat.data.dto.anthropic.common.MediaType.PNG
+        mimeType.contains("gif") -> cn.nabr.chatwithchat.data.dto.anthropic.common.MediaType.GIF
+        else -> cn.nabr.chatwithchat.data.dto.anthropic.common.MediaType.WEBP
     }
 
     private data class ToolCallAccumulator(

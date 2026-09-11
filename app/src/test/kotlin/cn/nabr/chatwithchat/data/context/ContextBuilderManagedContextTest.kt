@@ -3,6 +3,8 @@ package cn.nabr.chatwithchat.data.context
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.model.ClientType
+import cn.nabr.chatwithchat.data.model.ChatAttachment
+import cn.nabr.chatwithchat.data.visual.VisualAssetCatalogItem
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -487,6 +489,75 @@ class ContextBuilderManagedContextTest {
             )
             assertTrue("context for ${clientType.name} was empty", result.turns.isNotEmpty())
         }
+    }
+
+    @Test
+    fun `raw turns keep image attachments without a separate historical window`() {
+        val users = listOf(
+            userMessage(1, "older").copy(
+                attachments = listOf(
+                    ChatAttachment(
+                        localFilePath = "/tmp/older.png",
+                        preparedFilePath = "/tmp/older.png",
+                        displayName = "older.png",
+                        mimeType = "image/png",
+                        sizeBytes = 42
+                    )
+                )
+            ),
+            userMessage(2, "newer")
+        )
+        val assistants = listOf(
+            listOf(assistantMessage(1, "older answered")),
+            listOf(assistantMessage(2, "newer answered"))
+        )
+
+        val result = builder.buildManagedContext(request(users, assistants, budget = LARGE_BUDGET))
+
+        assertEquals(1, result.turns.first { it.userMessage.id == 1 }.userMessage.attachments.size)
+    }
+
+    @Test
+    fun `folded visual assets enter the manifest and checkpoint hash`() {
+        val (users, assistants) = conversation(turnCount = 2, content = { "message $it" })
+        val visual = VisualAssetCatalogItem(
+            chatId = CHAT_ID,
+            visualRef = "v1-1",
+            assetHash = "sha256-image",
+            messageId = 1,
+            attachmentIndex = 1,
+            role = "user",
+            turnOrdinal = 1,
+            displayName = "diagram.png",
+            mimeType = "image/png",
+            width = 640,
+            height = 480,
+            createdAt = 1,
+            foldedAt = 2,
+            compactedProfile = "COMPACTED_V1"
+        )
+
+        val result = builder.buildManagedContext(
+            request(
+                userMessages = users,
+                assistantMessages = assistants,
+                chain = chainThrough(1)
+            ).copy(visualAssets = listOf(visual))
+        )
+
+        assertTrue(result.visualManifest.orEmpty().contains("ref=v1-1"))
+        assertTrue(result.visualManifest.orEmpty().contains("hash=sha256:sha256-image"))
+
+        val foldableTurns = builder.buildFoldableTurns(users, assistants, PLATFORM_UID, listOf(visual))
+        val withoutVisual = foldableTurns
+            .first { it.userMessage.id == 1 }
+            .copy(visualAssets = emptyList())
+        val withVisual = foldableTurns
+            .first { it.userMessage.id == 1 }
+        assertFalse(
+            ContextTurnHasher.hashSegment(null, listOf(withoutVisual)) ==
+                ContextTurnHasher.hashSegment(null, listOf(withVisual))
+        )
     }
 
     private fun request(

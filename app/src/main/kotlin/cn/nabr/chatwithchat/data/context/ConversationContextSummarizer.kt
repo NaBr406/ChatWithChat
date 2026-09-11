@@ -37,6 +37,7 @@ internal object ConversationContextSummarizer {
             turn.assistantMessage?.let { assistantMessage ->
                 appendMessageLine(lines, "助手", assistantMessage.semanticAssistantContent(), messageBudget, tokenCounter)
             }
+            turn.visualAssetLines().forEach { line -> lines += "- $line" }
         }
 
         val summary = lines.joinToString("\n").trim()

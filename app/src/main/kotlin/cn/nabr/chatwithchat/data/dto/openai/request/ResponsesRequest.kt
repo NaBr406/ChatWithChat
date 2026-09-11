@@ -215,6 +215,27 @@ data class ResponseFunctionCallOutputItem(
     val type: String = "function_call_output"
 ) : ResponseInputItem()
 
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+data class ResponseFunctionCallOutputPartsItem(
+    @SerialName("call_id")
+    val callId: String,
+
+    @SerialName("output")
+    val output: List<ResponseContentPart>,
+
+    @SerialName("id")
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val id: String? = null,
+
+    @SerialName("status")
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val status: String? = null,
+
+    @SerialName("type")
+    val type: String = "function_call_output"
+) : ResponseInputItem()
+
 data class ResponsePassthroughInputItem(
     val raw: JsonObject
 ) : ResponseInputItem()
@@ -228,6 +249,10 @@ object ResponseInputItemSerializer : KSerializer<ResponseInputItem> {
             is ResponseInputMessage -> jsonEncoder.json.encodeToJsonElement(ResponseInputMessage.serializer(), value)
             is ResponseFunctionCallInputItem -> jsonEncoder.json.encodeToJsonElement(ResponseFunctionCallInputItem.serializer(), value)
             is ResponseFunctionCallOutputItem -> jsonEncoder.json.encodeToJsonElement(ResponseFunctionCallOutputItem.serializer(), value)
+            is ResponseFunctionCallOutputPartsItem -> jsonEncoder.json.encodeToJsonElement(
+                ResponseFunctionCallOutputPartsItem.serializer(),
+                value
+            )
             is ResponsePassthroughInputItem -> value.raw
         }
         jsonEncoder.encodeJsonElement(element)
@@ -238,7 +263,13 @@ object ResponseInputItemSerializer : KSerializer<ResponseInputItem> {
         val element = jsonDecoder.decodeJsonElement().jsonObject
         return when (element["type"]?.jsonPrimitive?.contentOrNull) {
             "function_call" -> jsonDecoder.json.decodeFromJsonElement<ResponseFunctionCallInputItem>(element)
-            "function_call_output" -> jsonDecoder.json.decodeFromJsonElement<ResponseFunctionCallOutputItem>(element)
+            "function_call_output" -> {
+                if (element["output"] is JsonArray) {
+                    jsonDecoder.json.decodeFromJsonElement<ResponseFunctionCallOutputPartsItem>(element)
+                } else {
+                    jsonDecoder.json.decodeFromJsonElement<ResponseFunctionCallOutputItem>(element)
+                }
+            }
             "message" -> jsonDecoder.json.decodeFromJsonElement<ResponseInputMessage>(element)
             else -> {
                 if (element["role"] != null && element["content"] != null) {

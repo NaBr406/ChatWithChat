@@ -17,6 +17,7 @@ import cn.nabr.chatwithchat.data.database.dao.PlatformV2Dao
 import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceScheduler
 import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceWorkEnqueuer
 import cn.nabr.chatwithchat.data.memory.MemoryTurnBatchScheduler
+import cn.nabr.chatwithchat.data.visual.VisualAssetRepository
 import cn.nabr.chatwithchat.data.network.AnthropicAPI
 import cn.nabr.chatwithchat.data.network.GoogleAPI
 import cn.nabr.chatwithchat.data.network.GroqAPI
@@ -106,7 +107,8 @@ object ContextManagementModule {
         contextWindowResolver: ContextWindowResolver,
         memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
         memoryTurnBatchScheduler: MemoryTurnBatchScheduler,
-        contextFoldDegradationRegistry: ContextFoldDegradationRegistry
+        contextFoldDegradationRegistry: ContextFoldDegradationRegistry,
+        visualAssetRepository: VisualAssetRepository
     ): ContextFoldService = ContextFoldService(
         messageDao = messageV2Dao,
         platformDao = platformV2Dao,
@@ -116,6 +118,7 @@ object ContextManagementModule {
         contextWindowResolver = contextWindowResolver,
         maintenanceScheduler = memoryMaintenanceScheduler,
         memoryTurnBatchScheduler = memoryTurnBatchScheduler,
-        degradationRegistry = contextFoldDegradationRegistry
+        degradationRegistry = contextFoldDegradationRegistry,
+        visualAssetRepository = visualAssetRepository
     )
 }

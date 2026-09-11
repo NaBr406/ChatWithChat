@@ -2,7 +2,6 @@ package cn.nabr.chatwithchat.data.visual
 
 import android.content.Context
 import android.net.Uri
-import cn.nabr.chatwithchat.util.FileUtils
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.io.FileInputStream
@@ -117,7 +116,10 @@ class VisualAssetStore @Inject constructor(
         mimeType.contains("gif") -> "gif"
         mimeType.contains("bmp") -> "bmp"
         mimeType.contains("tiff") -> "tiff"
-        else -> FileUtils.getMimeTypeFromPath("asset.$mimeType").substringAfter('/').ifBlank { "bin" }
+        else -> mimeType.substringAfter('/', "bin")
+            .substringBefore(';')
+            .filter(Char::isLetterOrDigit)
+            .ifBlank { "bin" }
     }
 
     private companion object {

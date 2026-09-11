@@ -107,6 +107,7 @@ import cn.nabr.chatwithchat.data.history.ChatHistoryIndexCoordinator
 import cn.nabr.chatwithchat.data.memory.MemoryTurnBatchScheduler
 import cn.nabr.chatwithchat.data.memory.containsInternalMemoryMetadata
 import cn.nabr.chatwithchat.data.model.ApiType
+import cn.nabr.chatwithchat.data.model.ChatAttachment
 import cn.nabr.chatwithchat.data.model.ChatPlatformConfig
 import cn.nabr.chatwithchat.data.model.ClientType
 import cn.nabr.chatwithchat.data.model.ReasoningMode
@@ -135,6 +136,7 @@ import cn.nabr.chatwithchat.data.tool.ToolLoopConfig
 import cn.nabr.chatwithchat.data.tool.ToolLoopOrchestrator
 import cn.nabr.chatwithchat.data.tool.ToolLoopResult
 import cn.nabr.chatwithchat.data.tool.ToolResult
+import cn.nabr.chatwithchat.data.tool.ToolResultVisualAttachment
 import cn.nabr.chatwithchat.data.tool.ToolRoundReasoningPolicy
 import cn.nabr.chatwithchat.data.tool.ToolRoundStateMachine
 import cn.nabr.chatwithchat.data.tool.appendToolProtocolFragment
@@ -155,6 +157,8 @@ import cn.nabr.chatwithchat.data.tool.supersedesWebSearchShortcut
 import cn.nabr.chatwithchat.data.tool.toolLimitErrorCodeOrNull
 import cn.nabr.chatwithchat.data.tool.toolProtocolJson
 import cn.nabr.chatwithchat.data.tool.toolSelectionPriorityRules
+import cn.nabr.chatwithchat.data.visual.VisualAssetGarbageCollector
+import cn.nabr.chatwithchat.data.visual.VisualAssetRepository
 import cn.nabr.chatwithchat.data.textskill.ChatRequestContext
 import cn.nabr.chatwithchat.data.textskill.TextSkillInvocationSnapshot
 import cn.nabr.chatwithchat.data.websearch.SearchDecision
@@ -167,6 +171,7 @@ import cn.nabr.chatwithchat.util.FileUtils
 import cn.nabr.chatwithchat.util.isAssistantErrorMessage
 import cn.nabr.chatwithchat.util.stripAssistantErrorNote
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.File
 import java.io.IOException
 import java.time.ZoneId
 import java.time.ZonedDateTime
@@ -239,7 +244,9 @@ class ChatRepositoryImpl @Inject constructor(
      * sends — never to a broken request.
      */
     private val openAINativeCompactionService: OpenAINativeCompactionService? = null,
-    private val textSkillDao: TextSkillDao? = null
+    private val textSkillDao: TextSkillDao? = null,
+    private val visualAssetRepository: VisualAssetRepository? = null,
+    private val visualAssetGarbageCollector: VisualAssetGarbageCollector? = null
 ) : ChatRepository {
 
     private fun isImageFile(extension: String): Boolean = extension in setOf("jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff", "svg")
@@ -591,6 +598,7 @@ class ChatRepositoryImpl @Inject constructor(
             }
         )
         val toolUsageRecords = mutableListOf<TokenUsageRecord>()
+        val pendingVisualAttachments = mutableListOf<ToolResultVisualAttachment>()
         searchDecisionExecution?.usage?.let { usage -> toolUsageRecords += usage }
         val loopResult = toolLoopOrchestrator.runLoopWithRoundPolicy(
             adapter = toolCallingAdapter,
@@ -598,22 +606,41 @@ class ChatRepositoryImpl @Inject constructor(
             scope = toolScope,
             chatId = userMessages.approvalChatId(),
             turnKey = userMessages.memoryTurnKey(),
+            supportsVisualInput = platform.supportsVisualAssetInput(),
             requestModel = { toolPrompt, reasoningPolicy ->
+                val visualMessages = syntheticVisualMessages(
+                    sourceMessages = userMessages,
+                    attachments = pendingVisualAttachments
+                )
+                val requestMessages = if (visualMessages == null) {
+                    userMessages
+                } else {
+                    userMessages + visualMessages
+                }
+                val requestAssistants = if (visualMessages == null) {
+                    assistantMessages
+                } else {
+                    assistantMessages + List(visualMessages.size) { emptyList() }
+                }
                 collectProviderText(
                     states = completeChatByProvider(
-                        userMessages = userMessages,
-                        assistantMessages = assistantMessages,
+                        userMessages = requestMessages,
+                        assistantMessages = requestAssistants,
                         platform = platform,
                         memoryPrompt = memoryPrompt,
                         reasoningMode = reasoningPolicy.resolve(reasoningMode),
                         extraPrompt = toolPrompt,
                         emitEstimatedUsageWithoutOutput = true,
-                        conversationSnapshot = frozenConversationSnapshot
+                        conversationSnapshot = frozenConversationSnapshot.takeIf { visualMessages == null }
                     ),
                     maxChars = config.maxToolProtocolResponseChars(),
                     onThinking = { thinkingChunk -> emit(ApiState.Thinking(thinkingChunk)) },
                     onUsage = { usage -> toolUsageRecords += usage }
                 )
+            },
+            onToolResults = { results ->
+                pendingVisualAttachments.clear()
+                pendingVisualAttachments += results.flatMap(ToolResult::visualAttachments)
             }
         )
 
@@ -642,15 +669,21 @@ class ChatRepositoryImpl @Inject constructor(
                 var finalAnswerUsage: TokenUsageRecord? = null
                 var hasVisibleFinalAnswer = false
                 var isDone = false
+                val visualMessages = syntheticVisualMessages(
+                    sourceMessages = userMessages,
+                    attachments = pendingVisualAttachments
+                )
                 completeChatByProvider(
-                    userMessages = userMessages,
-                    assistantMessages = assistantMessages,
+                    userMessages = visualMessages?.let { userMessages + it } ?: userMessages,
+                    assistantMessages = visualMessages?.let {
+                        assistantMessages + List(it.size) { emptyList() }
+                    } ?: assistantMessages,
                     platform = platform,
                     memoryPrompt = memoryPrompt,
                     reasoningMode = reasoningMode,
                     extraPrompt = loopResult.finalAnswerPrompt,
                     emitEstimatedUsageWithoutOutput = true,
-                    conversationSnapshot = frozenConversationSnapshot
+                    conversationSnapshot = frozenConversationSnapshot.takeIf { visualMessages == null }
                 ).collect { state ->
                     when (state) {
                         is ApiState.Loading -> {}
@@ -700,15 +733,21 @@ class ChatRepositoryImpl @Inject constructor(
                     }
                     emit(ApiState.Done)
                 } else if (loopResult.hadToolInteraction) {
+                    val visualMessages = syntheticVisualMessages(
+                        sourceMessages = userMessages,
+                        attachments = pendingVisualAttachments
+                    )
                     emitToolAggregatedProviderStates(
                         states = completeChatByProvider(
-                            userMessages = userMessages,
-                            assistantMessages = assistantMessages,
+                            userMessages = visualMessages?.let { userMessages + it } ?: userMessages,
+                            assistantMessages = visualMessages?.let {
+                                assistantMessages + List(it.size) { emptyList() }
+                            } ?: assistantMessages,
                             platform = platform,
                             memoryPrompt = memoryPrompt,
                             reasoningMode = reasoningMode,
                             emitEstimatedUsageWithoutOutput = true,
-                            conversationSnapshot = frozenConversationSnapshot
+                            conversationSnapshot = frozenConversationSnapshot.takeIf { visualMessages == null }
                         ),
                         initialToolUsages = toolUsageRecords
                     )
@@ -1002,7 +1041,8 @@ class ChatRepositoryImpl @Inject constructor(
         var hasToolInteraction = false
         val toolExecutionSession = toolLoopOrchestrator.createExecutionSession(
             chatId = userMessages.approvalChatId(),
-            turnKey = userMessages.memoryTurnKey()
+            turnKey = userMessages.memoryTurnKey(),
+            supportsVisualInput = platform.supportsVisualAssetInput()
         )
         val roundStateMachine = ToolRoundStateMachine(toolScope.definitions)
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)
@@ -1441,7 +1481,8 @@ class ChatRepositoryImpl @Inject constructor(
         var hasToolInteraction = false
         val toolExecutionSession = toolLoopOrchestrator.createExecutionSession(
             chatId = userMessages.approvalChatId(),
-            turnKey = userMessages.memoryTurnKey()
+            turnKey = userMessages.memoryTurnKey(),
+            supportsVisualInput = platform.supportsVisualAssetInput()
         )
         val roundStateMachine = ToolRoundStateMachine(toolScope.definitions)
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)
@@ -1878,7 +1919,8 @@ class ChatRepositoryImpl @Inject constructor(
         var hasToolInteraction = false
         val toolExecutionSession = toolLoopOrchestrator.createExecutionSession(
             chatId = userMessages.approvalChatId(),
-            turnKey = userMessages.memoryTurnKey()
+            turnKey = userMessages.memoryTurnKey(),
+            supportsVisualInput = platform.supportsVisualAssetInput()
         )
         val roundStateMachine = ToolRoundStateMachine(toolScope.definitions)
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)
@@ -2246,7 +2288,8 @@ class ChatRepositoryImpl @Inject constructor(
         var hasToolInteraction = false
         val toolExecutionSession = toolLoopOrchestrator.createExecutionSession(
             chatId = userMessages.approvalChatId(),
-            turnKey = userMessages.memoryTurnKey()
+            turnKey = userMessages.memoryTurnKey(),
+            supportsVisualInput = platform.supportsVisualAssetInput()
         )
         val roundStateMachine = ToolRoundStateMachine(toolScope.definitions)
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)
@@ -2880,6 +2923,7 @@ class ChatRepositoryImpl @Inject constructor(
         assistantMessages: List<List<MessageV2>>,
         platform: PlatformV2
     ): ProviderConversationSnapshot {
+        indexVisualAssetsForMessages(userMessages + assistantMessages.flatten())
         val managed = buildManagedContextResult(userMessages, assistantMessages, platform)
         enqueueBackgroundFoldIfNeeded(userMessages, platform, managed)
         return ProviderConversationSnapshot(
@@ -2953,9 +2997,73 @@ class ChatRepositoryImpl @Inject constructor(
                     .getOrDefault(CheckpointChainView()),
                 nativeState = runCatching { checkpointRepository.loadNativeState(chatRoomId, platform.uid) }
                     .getOrNull(),
-                policy = policy
+                policy = policy,
+                visualAssets = runCatching {
+                    visualAssetRepository?.listAssets(chatId = chatRoomId, limit = VISUAL_ASSET_CATALOG_LIMIT)
+                }.getOrNull().orEmpty()
             )
         )
+    }
+
+    private suspend fun indexVisualAssetsForMessages(messages: List<MessageV2>) {
+        val repository = visualAssetRepository ?: return
+        if (messages.isEmpty()) return
+        try {
+            repository.indexMessages(messages)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Throwable) {
+            // Visual indexing is derived state and must not block a request.
+        }
+    }
+
+    private suspend fun indexVisualAssetsForChat(chatId: Int) {
+        if (chatId <= 0 || visualAssetRepository == null) return
+        try {
+            val messages = messageV2Dao.loadMessages(chatId)
+            indexVisualAssetsForMessages(messages)
+            visualAssetGarbageCollector?.collect()
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Throwable) {
+            // Visual indexing and GC are derived maintenance work; chat persistence wins.
+        }
+    }
+
+    private fun syntheticVisualMessages(
+        sourceMessages: List<MessageV2>,
+        attachments: List<ToolResultVisualAttachment>
+    ): List<MessageV2>? {
+        val sendable = attachments
+            .distinctBy { attachment -> attachment.assetId to attachment.profile }
+            .filter { attachment ->
+                val path = attachment.localPath?.takeIf(String::isNotBlank) ?: return@filter false
+                File(path).isFile
+            }
+        if (sendable.isEmpty()) return null
+
+        val chatId = sourceMessages.lastOrNull()?.chatId ?: 0
+        val visualMessage = MessageV2(
+            chatId = chatId,
+            content = "以下是 view_image 读取到的图片像素：" +
+                sendable.joinToString(separator = ", ") { attachment ->
+                    "${attachment.visualRef ?: attachment.assetId} (${attachment.profile.storageValue})"
+                },
+            attachments = sendable.map { attachment ->
+                val path = requireNotNull(attachment.localPath)
+                ChatAttachment(
+                    localFilePath = path,
+                    preparedFilePath = path,
+                    displayName = attachment.visualRef ?: attachment.assetId,
+                    mimeType = attachment.mimeType,
+                    sizeBytes = attachment.sizeBytes,
+                    width = attachment.width,
+                    height = attachment.height
+                )
+            },
+            platformType = null
+        )
+        return listOf(visualMessage)
     }
 
     /**
@@ -3541,6 +3649,7 @@ class ChatRepositoryImpl @Inject constructor(
 
         if (changedMessages.isNotEmpty()) {
             messageV2Dao.editMessages(*changedMessages.toTypedArray())
+            indexVisualAssetsForMessages(changedMessages)
         }
 
         return updatedMessages
@@ -3708,7 +3817,8 @@ class ChatRepositoryImpl @Inject constructor(
                 chatRoomV2Dao.editChatRoom(savedChatRoom)
 
                 savedChatRoom
-            }
+        }
+            indexVisualAssetsForChat(savedChat.id)
             enqueueHistoryReconciliation(savedChat.id)
             return savedChat
         }
@@ -3741,6 +3851,7 @@ class ChatRepositoryImpl @Inject constructor(
 
             touchedChatRoom
         }
+        indexVisualAssetsForChat(savedChat.id)
         enqueueHistoryReconciliation(savedChat.id)
         return savedChat
     }
@@ -3794,6 +3905,7 @@ class ChatRepositoryImpl @Inject constructor(
             )
             savedChatRoom
         }
+        indexVisualAssetsForChat(savedChat.id)
         enqueueHistoryReconciliation(savedChat.id)
         return savedChat
     }
@@ -3820,6 +3932,7 @@ class ChatRepositoryImpl @Inject constructor(
         if (messages.isNotEmpty()) {
             messageV2Dao.addMessages(*messages.toTypedArray())
         }
+        indexVisualAssetsForChat(duplicatedChatId)
 
         val chatPlatformModels = fetchChatPlatformModels(chatRoom.id)
         saveChatPlatformModels(duplicatedChatId, chatPlatformModels)
@@ -3840,6 +3953,7 @@ class ChatRepositoryImpl @Inject constructor(
     override suspend fun deleteChatsV2(chatRooms: List<ChatRoomV2>) {
         chatRooms.forEach { chatHistoryIndexCoordinator?.invalidateDeletedChat(it.id) }
         chatRoomV2Dao.deleteChatRooms(*chatRooms.toTypedArray())
+        runCatching { visualAssetGarbageCollector?.collect() }
     }
 
     override suspend fun fetchSessionTextSkillBindings(chatId: Int): List<SessionTextSkillBinding> =
@@ -4469,6 +4583,42 @@ internal fun mergePromptSections(vararg sections: String?): String? {
     }
     return withoutEnvelope.takeIf { it.isNotEmpty() }?.joinToString(separator = "\n\n")
 }
+
+private const val VISUAL_ASSET_CATALOG_LIMIT = 200
+
+internal fun PlatformV2.supportsVisualAssetInput(): Boolean {
+    val normalizedModel = model.trim().lowercase()
+    return when (compatibleType) {
+        ClientType.OPENAI,
+        ClientType.ANTHROPIC,
+        ClientType.GOOGLE -> true
+        ClientType.GROQ,
+        ClientType.GLM,
+        ClientType.OLLAMA,
+        ClientType.OPENROUTER,
+        ClientType.CUSTOM -> VISION_MODEL_MARKERS.any(normalizedModel::contains)
+    }
+}
+
+private val VISION_MODEL_MARKERS = listOf(
+    "vision",
+    "multimodal",
+    "gemini",
+    "claude",
+    "gpt-4o",
+    "gpt-4.1",
+    "o3",
+    "o4",
+    "llama-4",
+    "llama4",
+    "scout",
+    "maverick",
+    "llava",
+    "qwen-vl",
+    "qwen2.5-vl",
+    "glm-4v",
+    "glm-4.5v"
+)
 
 private fun textSkillPromptEnvelope(textSkillPrompt: String?, memoryPrompt: String?): String? =
     if (textSkillPrompt.isNullOrBlank()) memoryPrompt else TextSkillPromptEnvelope.encode(textSkillPrompt, memoryPrompt)

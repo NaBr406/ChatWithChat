@@ -37,11 +37,16 @@ class ToolLoopOrchestrator(
         .filter { artifact -> artifact.instanceId.isNotBlank() }
         .distinctBy { artifact -> artifact.instanceId }
 
-    fun createExecutionSession(chatId: Int = 0, turnKey: String? = null): ToolLoopExecutionSession = ToolLoopExecutionSession(
+    fun createExecutionSession(
+        chatId: Int = 0,
+        turnKey: String? = null,
+        supportsVisualInput: Boolean = true
+    ): ToolLoopExecutionSession = ToolLoopExecutionSession(
         config = config,
         policyFor = toolExecutor::policyFor,
         chatId = chatId,
-        turnKey = turnKey
+        turnKey = turnKey,
+        supportsVisualInput = supportsVisualInput
     )
 
     fun createToolScope(
@@ -84,10 +89,9 @@ class ToolLoopOrchestrator(
         adapter = adapter,
         onProgress = onProgress,
         chatId = chatId,
-        turnKey = turnKey
-    ) { toolPrompt, _ ->
-        requestModel(toolPrompt)
-    }
+        turnKey = turnKey,
+        requestModel = { toolPrompt, _ -> requestModel(toolPrompt) }
+    )
 
     /**
      * [chatId] scopes conversation-level approval grants. Zero disables them, so a caller that cannot
@@ -99,6 +103,8 @@ class ToolLoopOrchestrator(
         onProgress: suspend (ApiState) -> Unit = {},
         chatId: Int = 0,
         turnKey: String? = null,
+        supportsVisualInput: Boolean = true,
+        onToolResults: suspend (List<ToolResult>) -> Unit = {},
         requestModel: suspend (
             toolPrompt: String,
             reasoningPolicy: ToolRoundReasoningPolicy
@@ -112,7 +118,7 @@ class ToolLoopOrchestrator(
         val allCalls = mutableListOf<ToolCall>()
         val allResults = mutableListOf<ToolResult>()
         var hadToolInteraction = false
-        val executionSession = createExecutionSession(chatId, turnKey)
+        val executionSession = createExecutionSession(chatId, turnKey, supportsVisualInput)
         val roundStateMachine = ToolRoundStateMachine(scope.definitions)
 
         var allowedRounds = maxRounds
@@ -199,6 +205,7 @@ class ToolLoopOrchestrator(
                         executionSession = executionSession,
                         onProgress = onProgress
                     )
+                    onToolResults(results)
                     allCalls += calls
                     allResults += results
                     roundStateMachine.onToolResults(results)
@@ -521,11 +528,12 @@ class ToolLoopExecutionSession internal constructor(
     config: ToolLoopConfig,
     policyFor: (String) -> ToolPolicy,
     chatId: Int = 0,
-    turnKey: String? = null
+    turnKey: String? = null,
+    supportsVisualInput: Boolean = true
 ) {
     private val toolBudget = ToolBudgetState(config, policyFor)
     private val resultPayloadBudget = ToolResultPayloadBudget(config)
-    internal val state = ToolExecutionSessionState(chatId, turnKey)
+    internal val state = ToolExecutionSessionState(chatId, turnKey, supportsVisualInput)
 
     internal fun select(calls: List<ToolCall>): Pair<List<ToolCall>, List<ToolResult>> {
         val selection = toolBudget.select(calls)

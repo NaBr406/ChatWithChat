@@ -8,6 +8,7 @@ import cn.nabr.chatwithchat.data.database.entity.SafeMessageSourceTarget
 import cn.nabr.chatwithchat.data.database.entity.effectiveTokenUsage
 import cn.nabr.chatwithchat.data.database.entity.safeDedupeKey
 import cn.nabr.chatwithchat.data.database.entity.safeNavigationTarget
+import cn.nabr.chatwithchat.data.visual.VisualAssetCatalogItem
 import cn.nabr.chatwithchat.util.isAssistantErrorMessage
 import cn.nabr.chatwithchat.util.stripAssistantErrorNote
 import javax.inject.Inject
@@ -70,7 +71,7 @@ class ContextBuilder @Inject constructor() {
         val estimatedTokens = tokenCounter.estimateTurns(selectedTurns) + tokenCounter.estimateText(summary.orEmpty())
 
         return ConversationContext(
-            turns = applyAttachmentWindow(selectedTurns, policy),
+            turns = selectedTurns,
             summary = summary,
             estimatedTokens = estimatedTokens,
             omittedTurns = omittedTurns.toConversationTurnsWithoutAttachments()
@@ -102,7 +103,8 @@ class ContextBuilder @Inject constructor() {
             userMessages = request.userMessages,
             assistantMessages = request.assistantMessages,
             platformUid = request.platform.uid,
-            modelId = request.platform.model
+            modelId = request.platform.model,
+            visualAssets = request.visualAssets
         )
         if (pairedTurns.isEmpty()) return emptyResult
 
@@ -128,9 +130,16 @@ class ContextBuilder @Inject constructor() {
     fun buildFoldableTurns(
         userMessages: List<MessageV2>,
         assistantMessages: List<List<MessageV2>>,
-        platformUid: String
+        platformUid: String,
+        visualAssets: List<VisualAssetCatalogItem> = emptyList()
     ): List<ConversationTurn> =
-        pairManagedTurns(userMessages, assistantMessages, platformUid, modelId = null).map { it.turn }
+        pairManagedTurns(
+            userMessages,
+            assistantMessages,
+            platformUid,
+            modelId = null,
+            visualAssets = visualAssets
+        ).map { it.turn }
 
     /**
      * A model that folds server-side takes the native path — unless the provider has already answered
@@ -193,7 +202,8 @@ class ContextBuilder @Inject constructor() {
             strategy = request.strategy,
             range = request.range,
             budget = budget,
-            turns = applyAttachmentWindow(selectedTurns, request.policy),
+            turns = selectedTurns,
+            visualManifest = buildVisualManifest(request.visualAssets, selectedTurns),
             checkpointBody = checkpointBody,
             checkpointBoundaryUserMessageId = foldedThroughUserMessageId,
             deterministicSummary = deterministicSummary,
@@ -251,8 +261,9 @@ class ContextBuilder @Inject constructor() {
             strategy = request.strategy,
             range = request.range,
             budget = budget,
-            turns = applyAttachmentWindow(selectedTurns, request.policy),
+            turns = selectedTurns,
             nativeCompactionItemsJson = nativeState?.compactionItemsJson,
+            visualManifest = buildVisualManifest(request.visualAssets, selectedTurns),
             deterministicSummary = deterministicSummary,
             nativeInitializationRequired = rawTail.overflow.isNotEmpty(),
             estimatedTokens = windowTokens +
@@ -341,7 +352,8 @@ class ContextBuilder @Inject constructor() {
         userMessages: List<MessageV2>,
         assistantMessages: List<List<MessageV2>>,
         platformUid: String,
-        modelId: String?
+        modelId: String?,
+        visualAssets: List<VisualAssetCatalogItem>
     ): List<PairedTurn> = userMessages
         .mapIndexed { index, userMessage ->
             val candidates = assistantMessages.getOrNull(index).orEmpty()
@@ -352,7 +364,12 @@ class ContextBuilder @Inject constructor() {
                 turn = ConversationTurn(
                     userMessage = userMessage,
                     assistantMessage = ownReply ?: foreignReply,
-                    isCurrentTurn = index == userMessages.lastIndex
+                    isCurrentTurn = index == userMessages.lastIndex,
+                    visualAssets = visualAssets.filter { entry ->
+                        entry.messageId == userMessage.id ||
+                            entry.messageId == ownReply?.id ||
+                            entry.messageId == foreignReply?.id
+                    }
                 ),
                 isCrossProviderDegraded = foreignReply != null
             )
@@ -511,45 +528,59 @@ class ContextBuilder @Inject constructor() {
         }
     }
 
-    private fun applyAttachmentWindow(
-        turns: List<ConversationTurn>,
-        policy: ProviderContextPolicy
-    ): List<ConversationTurn> {
-        if (turns.isEmpty()) return emptyList()
-
-        val lastIndex = turns.lastIndex
-        return turns.mapIndexed { index, turn ->
-            val shouldKeepAttachments = (lastIndex - index) <= policy.historicalImageTurnWindow
-            val userMessage = if (shouldKeepAttachments) {
-                turn.userMessage
-            } else {
-                turn.userMessage.copy(attachments = emptyList())
-            }
-
-            val assistantMessage = turn.assistantMessage?.let { message ->
-                if (shouldKeepAttachments) {
-                    message
-                } else {
-                    message.copy(attachments = emptyList())
-                }
-            }
-
-            ConversationTurn(
-                userMessage = userMessage,
-                assistantMessage = assistantMessage,
-                isCurrentTurn = turn.isCurrentTurn
-            )
-        }
-    }
-
     private fun List<ConversationTurn>.toConversationTurnsWithoutAttachments(): List<ConversationTurn> =
         map { turn ->
             ConversationTurn(
                 userMessage = turn.userMessage.copy(attachments = emptyList()),
                 assistantMessage = turn.assistantMessage?.copy(attachments = emptyList()),
-                isCurrentTurn = false
+                isCurrentTurn = false,
+                visualAssets = turn.visualAssets
             )
         }
+
+    private fun buildVisualManifest(
+        visualAssets: List<VisualAssetCatalogItem>,
+        selectedTurns: List<ConversationTurn>
+    ): String? {
+        if (visualAssets.isEmpty()) return null
+        val selectedMessageIds = selectedTurns
+            .flatMap { turn -> listOfNotNull(turn.userMessage.id, turn.assistantMessage?.id) }
+            .toSet()
+        val manifestEntries = visualAssets.filterNot { entry -> entry.messageId in selectedMessageIds }
+        if (manifestEntries.isEmpty()) return null
+
+        return buildString {
+            appendLine(ContextBuildResult.VISUAL_MANIFEST_HEADER)
+            manifestEntries.forEach { entry ->
+                append("[visual asset ref=")
+                append(entry.visualRef)
+                append(" hash=sha256:")
+                append(entry.assetHash)
+                append(" turn=")
+                append(entry.turnOrdinal)
+                append(" role=")
+                append(entry.role)
+                append(" attachment_index=")
+                append(entry.attachmentIndex)
+                append(" profile=")
+                append(entry.compactedProfile ?: "ORIGINAL")
+                append(" name=")
+                append(entry.displayName)
+                append(" mime=")
+                append(entry.mimeType)
+                entry.width?.let { width ->
+                    append(" width=")
+                    append(width)
+                }
+                entry.height?.let { height ->
+                    append(" height=")
+                    append(height)
+                }
+                append("]")
+                appendLine()
+            }
+        }.trim()
+    }
 
     private fun sanitizeAssistantMessageForContext(message: MessageV2): MessageV2 {
         val sanitizedContent = stripAssistantErrorNote(message.semanticAssistantContent()).trimEnd()

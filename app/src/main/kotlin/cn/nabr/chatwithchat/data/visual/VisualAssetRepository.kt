@@ -157,6 +157,39 @@ class VisualAssetRepository @Inject constructor(
             .toList()
     }
 
+    suspend fun listDiagnostics(): List<VisualAssetDiagnostic> {
+        val assetsByHash = dao.getAllAssets().associateBy(VisualAssetEntity::assetHash)
+        val providerRefsByAsset = dao.getAllProviderRefs().groupingBy { ref -> ref.assetHash }.eachCount()
+        return dao.getAllCatalogEntries().mapNotNull { catalog ->
+            val asset = assetsByHash[catalog.assetHash] ?: return@mapNotNull null
+            VisualAssetDiagnostic(
+                chatId = catalog.chatId,
+                visualRef = catalog.visualRef,
+                assetHash = catalog.assetHash,
+                messageId = catalog.messageId,
+                attachmentIndex = catalog.attachmentIndex,
+                role = catalog.role,
+                turnOrdinal = catalog.turnOrdinal,
+                displayName = catalog.displayName,
+                mimeType = catalog.mimeType,
+                foldedAt = catalog.foldedAt,
+                compactedProfile = catalog.compactedProfile,
+                originalPath = asset.originalPath,
+                originalExists = File(asset.originalPath).isFile,
+                originalWidth = asset.originalWidth,
+                originalHeight = asset.originalHeight,
+                originalSizeBytes = asset.originalSizeBytes,
+                compactedPath = asset.compactedPath,
+                compactedExists = !asset.compactedPath.isNullOrBlank() && File(asset.compactedPath).isFile,
+                compactedWidth = asset.compactedWidth,
+                compactedHeight = asset.compactedHeight,
+                compactedSizeBytes = asset.compactedSizeBytes,
+                compactionError = asset.compactionError,
+                providerRefCount = providerRefsByAsset[asset.assetHash] ?: 0
+            )
+        }
+    }
+
     suspend fun markMessagesFolded(
         chatId: Int,
         messageIds: Collection<Int>,

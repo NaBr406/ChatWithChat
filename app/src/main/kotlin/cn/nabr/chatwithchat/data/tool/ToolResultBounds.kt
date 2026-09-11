@@ -11,7 +11,10 @@ data class ToolResultBounds(
     val maxSourcePayloadChars: Int = 1_024,
     val maxSourceTextChars: Int = 512,
     val maxMetadataChars: Int = maxContentChars,
-    val maxTotalPayloadChars: Int = Int.MAX_VALUE
+    val maxTotalPayloadChars: Int = Int.MAX_VALUE,
+    val maxVisualAttachmentCount: Int = 4,
+    val maxVisualAttachmentPayloadBytes: Long = 16L * 1024L * 1024L,
+    val maxVisualAttachmentTokens: Int = 8_192
 ) {
     init {
         require(maxContentChars >= 0)
@@ -21,6 +24,9 @@ data class ToolResultBounds(
         require(maxSourceTextChars >= 0)
         require(maxMetadataChars >= 0)
         require(maxTotalPayloadChars >= 0)
+        require(maxVisualAttachmentCount >= 0)
+        require(maxVisualAttachmentPayloadBytes >= 0L)
+        require(maxVisualAttachmentTokens >= 0)
     }
 }
 
@@ -33,7 +39,8 @@ enum class ToolResultPayloadPart {
     CONTENT,
     STRUCTURED_CONTENT,
     SOURCES,
-    METADATA
+    METADATA,
+    VISUAL_ATTACHMENTS
 }
 
 data class BoundedToolResult(
@@ -111,6 +118,33 @@ fun ToolResult.boundPayload(
         remainingChars -= toolProtocolJson.encodeToString(boundedSources).length
     }
 
+    val boundedVisualAttachments = mutableListOf<ToolResultVisualAttachment>()
+    var visualPayloadBytes = 0L
+    var visualTokens = 0
+    visualAttachments.forEach { attachment ->
+        val attachmentBytes = attachment.sizeBytes.coerceAtLeast(0L)
+        val attachmentTokens = attachment.estimatedTokens()
+        when {
+            boundedVisualAttachments.size >= bounds.maxVisualAttachmentCount -> {
+                droppedParts += ToolResultPayloadPart.VISUAL_ATTACHMENTS
+                hasOversizedOptionalPayload = true
+            }
+            visualPayloadBytes + attachmentBytes > bounds.maxVisualAttachmentPayloadBytes -> {
+                droppedParts += ToolResultPayloadPart.VISUAL_ATTACHMENTS
+                hasOversizedOptionalPayload = true
+            }
+            visualTokens + attachmentTokens > bounds.maxVisualAttachmentTokens -> {
+                droppedParts += ToolResultPayloadPart.VISUAL_ATTACHMENTS
+                hasOversizedOptionalPayload = true
+            }
+            else -> {
+                boundedVisualAttachments += attachment
+                visualPayloadBytes += attachmentBytes
+                visualTokens += attachmentTokens
+            }
+        }
+    }
+
     metadata.toSortedMap().forEach { (key, value) ->
         if (key == ERROR_CODE_METADATA_KEY) return@forEach
         val candidate = boundedMetadata + (key to value)
@@ -146,7 +180,8 @@ fun ToolResult.boundPayload(
             content = boundedContent,
             metadata = boundedMetadata,
             structuredContent = boundedStructuredContent,
-            sources = boundedSources
+            sources = boundedSources,
+            visualAttachments = boundedVisualAttachments
         ),
         droppedPayloadParts = droppedParts
     )

@@ -9,6 +9,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.DataObject
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
@@ -26,7 +27,8 @@ import cn.nabr.chatwithchat.presentation.common.settingsCanvasBackground
 fun DeveloperDebugScreen(
     onNavigationClick: () -> Unit,
     onNavigateToPromptTrace: () -> Unit,
-    onNavigateToMemoryMaintenanceFailures: () -> Unit
+    onNavigateToMemoryMaintenanceFailures: () -> Unit,
+    onNavigateToVisualAssets: () -> Unit
 ) {
     Scaffold(
         modifier = Modifier
@@ -70,6 +72,19 @@ fun DeveloperDebugScreen(
                     leadingIcon = {
                         Icon(
                             imageVector = Icons.Outlined.DataObject,
+                            contentDescription = null
+                        )
+                    }
+                )
+                SettingItem(
+                    title = stringResource(R.string.developer_debug_visual_assets),
+                    description = stringResource(R.string.developer_debug_visual_assets_description),
+                    onItemClick = onNavigateToVisualAssets,
+                    showTrailingIcon = true,
+                    showLeadingIcon = true,
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Outlined.Image,
                             contentDescription = null
                         )
                     }

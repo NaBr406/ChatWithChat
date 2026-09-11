@@ -87,6 +87,32 @@ data class VisualAssetCompressionResult(
     val version: Int = VisualAssetProfile.COMPACTED_V1.version
 )
 
+data class VisualAssetDiagnostic(
+    val chatId: Int,
+    val visualRef: String,
+    val assetHash: String,
+    val messageId: Int,
+    val attachmentIndex: Int,
+    val role: String,
+    val turnOrdinal: Int,
+    val displayName: String,
+    val mimeType: String,
+    val foldedAt: Long?,
+    val compactedProfile: String?,
+    val originalPath: String,
+    val originalExists: Boolean,
+    val originalWidth: Int?,
+    val originalHeight: Int?,
+    val originalSizeBytes: Long,
+    val compactedPath: String?,
+    val compactedExists: Boolean,
+    val compactedWidth: Int?,
+    val compactedHeight: Int?,
+    val compactedSizeBytes: Long?,
+    val compactionError: String?,
+    val providerRefCount: Int
+)
+
 sealed interface VisualAssetFailure {
     val code: String
 

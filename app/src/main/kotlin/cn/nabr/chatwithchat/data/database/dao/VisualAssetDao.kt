@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
+import androidx.room.Upsert
 import cn.nabr.chatwithchat.data.database.entity.MessageVisualRefEntity
 import cn.nabr.chatwithchat.data.database.entity.VisualAssetCatalogEntity
 import cn.nabr.chatwithchat.data.database.entity.VisualAssetEntity
@@ -19,7 +20,15 @@ interface VisualAssetDao {
     @Query("SELECT * FROM visual_asset")
     suspend fun getAllAssets(): List<VisualAssetEntity>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Query(
+        """
+        SELECT * FROM visual_asset_catalog
+        ORDER BY chat_id ASC, turn_ordinal ASC, message_id ASC, attachment_index ASC
+        """
+    )
+    suspend fun getAllCatalogEntries(): List<VisualAssetCatalogEntity>
+
+    @Upsert
     suspend fun upsertAsset(asset: VisualAssetEntity)
 
     @Query(
@@ -40,7 +49,7 @@ interface VisualAssetDao {
     )
     suspend fun getCatalogEntries(chatId: Int): List<VisualAssetCatalogEntity>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Upsert
     suspend fun upsertCatalogEntries(entries: List<VisualAssetCatalogEntity>)
 
     @Query("DELETE FROM visual_asset_catalog WHERE message_id = :messageId")
@@ -90,6 +99,9 @@ interface VisualAssetDao {
 
     @Query("DELETE FROM visual_asset_provider_ref WHERE asset_hash = :assetHash")
     suspend fun deleteProviderRefsForAsset(assetHash: String)
+
+    @Query("SELECT * FROM visual_asset_provider_ref")
+    suspend fun getAllProviderRefs(): List<VisualAssetProviderRefEntity>
 
     @Query(
         """

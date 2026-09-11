@@ -4,6 +4,7 @@ import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 
 @Serializable
@@ -27,7 +28,7 @@ data class ToolResultContent(
     val toolUseId: String,
 
     @SerialName("content")
-    val content: String,
+    val content: JsonElement,
 
     @SerialName("is_error")
     @EncodeDefault(EncodeDefault.Mode.NEVER)

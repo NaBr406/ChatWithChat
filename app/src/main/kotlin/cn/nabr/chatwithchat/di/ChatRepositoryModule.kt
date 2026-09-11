@@ -29,6 +29,8 @@ import cn.nabr.chatwithchat.data.repository.ChatRepository
 import cn.nabr.chatwithchat.data.repository.ChatRepositoryImpl
 import cn.nabr.chatwithchat.data.repository.SettingRepository
 import cn.nabr.chatwithchat.data.tool.ToolLoopOrchestrator
+import cn.nabr.chatwithchat.data.visual.VisualAssetGarbageCollector
+import cn.nabr.chatwithchat.data.visual.VisualAssetRepository
 import cn.nabr.chatwithchat.data.websearch.SearchDecisionService
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
@@ -64,6 +66,8 @@ object ChatRepositoryModule {
         contextWindowResolver: ContextWindowResolver,
         contextFoldScheduler: ContextFoldScheduler,
         openAINativeCompactionService: OpenAINativeCompactionService,
+        visualAssetRepository: VisualAssetRepository,
+        visualAssetGarbageCollector: VisualAssetGarbageCollector,
         @ApplicationScope applicationScope: CoroutineScope
     ): ChatRepository = ChatRepositoryImpl(
         context,
@@ -90,6 +94,8 @@ object ChatRepositoryModule {
         contextFoldScheduler = contextFoldScheduler,
         applicationScope = applicationScope,
         openAINativeCompactionService = openAINativeCompactionService,
-        textSkillDao = textSkillDao
+        textSkillDao = textSkillDao,
+        visualAssetRepository = visualAssetRepository,
+        visualAssetGarbageCollector = visualAssetGarbageCollector
     )
 }

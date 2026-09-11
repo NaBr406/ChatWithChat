@@ -1,6 +1,7 @@
 package cn.nabr.chatwithchat.data.memory
 
 import cn.nabr.chatwithchat.data.memory.embedding.ProductionMemoryEmbeddingProvisioner
+import cn.nabr.chatwithchat.data.visual.VisualAssetGarbageCollector
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 
@@ -10,7 +11,8 @@ class MemoryMaintenanceStartupCoordinator @Inject constructor(
     private val vectorIndexBootstrapService: MemoryVectorIndexBootstrapService,
     private val memoryMaintenanceRepairer: MemoryMaintenanceRepairer,
     private val workEnqueuer: MemoryMaintenanceWorkEnqueuer,
-    private val activityLogger: MemoryActivityLogger
+    private val activityLogger: MemoryActivityLogger,
+    private val visualAssetGarbageCollector: VisualAssetGarbageCollector? = null
 ) {
     suspend fun run() {
         runMemoryStartupTasks(
@@ -24,6 +26,7 @@ class MemoryMaintenanceStartupCoordinator @Inject constructor(
             recoverReceipts = { memoryMutationRecoveryService.recoverIncomplete() },
             bootstrap = { vectorIndexBootstrapService.bootstrap() },
             repair = { memoryMaintenanceRepairer.repairAndEnqueue(reopenWaitingRepair = true) },
+            collectVisualAssets = { visualAssetGarbageCollector?.collect() },
             recordFailure = { errorCode, status ->
                 activityLogger.recordStandalonePlanningResult(
                     jobType = null,
@@ -46,6 +49,7 @@ internal suspend fun runMemoryStartupTasks(
     recoverReceipts: suspend () -> MemoryMutationRecoveryResult,
     bootstrap: suspend () -> Unit,
     repair: suspend () -> Unit,
+    collectVisualAssets: suspend () -> Unit = {},
     recordFailure: suspend (errorCode: String, status: String) -> Unit = { _, _ -> }
 ) {
     runOptionalStartupStep("startup_repair_enqueue_failed", recordFailure, enqueueRepair)
@@ -67,6 +71,7 @@ internal suspend fun runMemoryStartupTasks(
     if (receiptsRecovered) {
         runOptionalStartupStep("startup_vector_bootstrap_failed", recordFailure, bootstrap)
     }
+    runOptionalStartupStep("startup_visual_asset_gc_failed", recordFailure, collectVisualAssets)
     try {
         repair()
     } catch (cancellation: CancellationException) {

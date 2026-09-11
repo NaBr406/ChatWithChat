@@ -59,7 +59,14 @@ class ChatHistoryProviderDeviceInstrumentedTest {
                 ChatDatabaseV2Migrations.MIGRATION_16_17,
                 ChatDatabaseV2Migrations.MIGRATION_17_18,
                 ChatDatabaseV2Migrations.MIGRATION_18_19,
-                ChatDatabaseV2Migrations.MIGRATION_19_20
+                ChatDatabaseV2Migrations.MIGRATION_19_20,
+                ChatDatabaseV2Migrations.MIGRATION_20_21,
+                ChatDatabaseV2Migrations.MIGRATION_21_22,
+                ChatDatabaseV2Migrations.MIGRATION_22_23,
+                ChatDatabaseV2Migrations.MIGRATION_23_24,
+                ChatDatabaseV2Migrations.MIGRATION_24_25,
+                ChatDatabaseV2Migrations.MIGRATION_25_26,
+                ChatDatabaseV2Migrations.MIGRATION_26_27
             )
             .addCallback(ChatHistoryDatabaseCallback())
             .build()

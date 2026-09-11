@@ -115,6 +115,9 @@ internal object ContextCompactionPrompt {
             turn.assistantMessage?.let { assistant ->
                 sections += "助手: ${take(assistant.semanticAssistantContent())}"
             }
+            turn.visualAssetLines().forEach { line ->
+                sections += "图片资产: $line"
+            }
         }
 
         return sections.joinToString("\n").trim()

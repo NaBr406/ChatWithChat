@@ -28,6 +28,7 @@ object Route {
     const val DEVELOPER_DEBUG = "developer_debug"
     const val PROMPT_TRACE_DEBUG = "prompt_trace_debug"
     const val MEMORY_MAINTENANCE_FAILURES_DEBUG = "memory_maintenance_failures_debug"
+    const val VISUAL_ASSET_DEBUG = "visual_asset_debug"
 
     const val MIGRATE_V2 = "migrate_v2"
 }

@@ -75,7 +75,11 @@ private fun ToolCatalogEntry.isSafeForDefaultEnablement(): Boolean =
         when (securityPolicy.effect) {
             ToolEffect.READ_ONLY_PUBLIC -> true
             ToolEffect.READ_ONLY_PRIVATE ->
-                settings.enablementGroup == ToolEnablementGroup.AutomaticStickerReplies
+                settings.defaultEnabled &&
+                    (
+                        settings.enablementGroup == ToolEnablementGroup.AutomaticStickerReplies ||
+                            settings.allowDefaultReadOnlyPrivate
+                        )
             ToolEffect.INTERNAL_STATE -> true
             ToolEffect.LOCAL_WRITE,
             ToolEffect.EXTERNAL_WRITE,

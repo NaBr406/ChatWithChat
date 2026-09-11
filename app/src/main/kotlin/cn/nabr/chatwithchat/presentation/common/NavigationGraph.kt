@@ -28,6 +28,7 @@ import cn.nabr.chatwithchat.presentation.ui.chat.EmptyChatScreen
 import cn.nabr.chatwithchat.presentation.ui.chat.encodePendingTextSkillSelections
 import cn.nabr.chatwithchat.presentation.ui.debug.DeveloperDebugScreen
 import cn.nabr.chatwithchat.presentation.ui.debug.MemoryMaintenanceFailureResponseScreen
+import cn.nabr.chatwithchat.presentation.ui.debug.VisualAssetDebugScreen
 import cn.nabr.chatwithchat.presentation.ui.debug.PromptTraceScreen
 import cn.nabr.chatwithchat.presentation.ui.main.MainLaunchDestination
 import cn.nabr.chatwithchat.presentation.ui.memory.MemoryScreen
@@ -395,7 +396,8 @@ fun NavGraphBuilder.settingNavigation(navController: NavHostController) {
                 onNavigateToPromptTrace = { navController.navigate(Route.PROMPT_TRACE_DEBUG) },
                 onNavigateToMemoryMaintenanceFailures = {
                     navController.navigate(Route.MEMORY_MAINTENANCE_FAILURES_DEBUG)
-                }
+                },
+                onNavigateToVisualAssets = { navController.navigate(Route.VISUAL_ASSET_DEBUG) }
             )
         }
         composable(Route.PROMPT_TRACE_DEBUG) {
@@ -403,6 +405,9 @@ fun NavGraphBuilder.settingNavigation(navController: NavHostController) {
         }
         composable(Route.MEMORY_MAINTENANCE_FAILURES_DEBUG) {
             MemoryMaintenanceFailureResponseScreen(onNavigationClick = { navController.navigateUp() })
+        }
+        composable(Route.VISUAL_ASSET_DEBUG) {
+            VisualAssetDebugScreen(onNavigationClick = { navController.navigateUp() })
         }
         composable(Route.MEMORY) {
             MemoryScreen(onNavigationClick = { navController.navigateUp() })

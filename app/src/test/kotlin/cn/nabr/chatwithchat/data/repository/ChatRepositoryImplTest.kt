@@ -3477,7 +3477,7 @@ class ChatRepositoryImplTest {
                 message.role.name == "USER" &&
                     message.content.filterIsInstance<ToolResultContent>().any { result ->
                         result.toolUseId == "toolu_1" &&
-                            result.content.contains("Example Source")
+                            result.content.toString().contains("Example Source")
                     }
             }
         )
