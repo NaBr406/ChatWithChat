@@ -24,6 +24,7 @@ import cn.nabr.chatwithchat.data.database.dao.PlatformModelV2Dao
 import cn.nabr.chatwithchat.data.database.dao.PlatformV2Dao
 import cn.nabr.chatwithchat.data.database.dao.StickerCatalogDao
 import cn.nabr.chatwithchat.data.database.dao.TextSkillDao
+import cn.nabr.chatwithchat.data.database.dao.VisualAssetDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -95,6 +96,10 @@ object DatabaseModule {
 
     @Provides
     @Singleton
+    fun provideVisualAssetDao(chatDatabaseV2: ChatDatabaseV2): VisualAssetDao = chatDatabaseV2.visualAssetDao()
+
+    @Provides
+    @Singleton
     fun provideChatDatabase(@ApplicationContext appContext: Context): ChatDatabase = Room.databaseBuilder(
         appContext,
         ChatDatabase::class.java,
@@ -132,6 +137,7 @@ object DatabaseModule {
         ChatDatabaseV2Migrations.MIGRATION_22_23,
         ChatDatabaseV2Migrations.MIGRATION_23_24,
         ChatDatabaseV2Migrations.MIGRATION_24_25,
-        ChatDatabaseV2Migrations.MIGRATION_25_26
+        ChatDatabaseV2Migrations.MIGRATION_25_26,
+        ChatDatabaseV2Migrations.MIGRATION_26_27
     ).addCallback(ChatHistoryDatabaseCallback()).build()
 }

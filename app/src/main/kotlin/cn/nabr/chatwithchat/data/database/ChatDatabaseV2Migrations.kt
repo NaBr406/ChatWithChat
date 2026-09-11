@@ -17,6 +17,100 @@ import java.io.File
 
 object ChatDatabaseV2Migrations {
 
+    val MIGRATION_26_27 = object : Migration(26, 27) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `visual_asset` (
+                    `asset_hash` TEXT NOT NULL,
+                    `mime_type` TEXT NOT NULL,
+                    `original_path` TEXT NOT NULL,
+                    `original_width` INTEGER,
+                    `original_height` INTEGER,
+                    `original_size_bytes` INTEGER NOT NULL,
+                    `compacted_path` TEXT,
+                    `compacted_mime_type` TEXT,
+                    `compacted_width` INTEGER,
+                    `compacted_height` INTEGER,
+                    `compacted_size_bytes` INTEGER,
+                    `compacted_version` INTEGER,
+                    `compaction_error` TEXT,
+                    `created_at` INTEGER NOT NULL,
+                    `updated_at` INTEGER NOT NULL,
+                    PRIMARY KEY(`asset_hash`)
+                )
+                """.trimIndent()
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_visual_asset_created_at` ON `visual_asset` (`created_at`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_visual_asset_compacted_path` ON `visual_asset` (`compacted_path`)")
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `visual_asset_catalog` (
+                    `chat_id` INTEGER NOT NULL,
+                    `visual_ref` TEXT NOT NULL,
+                    `asset_hash` TEXT NOT NULL,
+                    `message_id` INTEGER NOT NULL,
+                    `attachment_index` INTEGER NOT NULL,
+                    `role` TEXT NOT NULL,
+                    `turn_ordinal` INTEGER NOT NULL,
+                    `display_name` TEXT NOT NULL,
+                    `mime_type` TEXT NOT NULL,
+                    `width` INTEGER,
+                    `height` INTEGER,
+                    `created_at` INTEGER NOT NULL,
+                    `folded_at` INTEGER,
+                    `compacted_profile` TEXT,
+                    PRIMARY KEY(`chat_id`, `visual_ref`),
+                    FOREIGN KEY(`chat_id`) REFERENCES `chats_v2`(`chat_id`) ON UPDATE NO ACTION ON DELETE CASCADE,
+                    FOREIGN KEY(`message_id`) REFERENCES `messages_v2`(`message_id`) ON UPDATE NO ACTION ON DELETE CASCADE,
+                    FOREIGN KEY(`asset_hash`) REFERENCES `visual_asset`(`asset_hash`) ON UPDATE NO ACTION ON DELETE CASCADE
+                )
+                """.trimIndent()
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_visual_asset_catalog_chat_id` ON `visual_asset_catalog` (`chat_id`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_visual_asset_catalog_asset_hash` ON `visual_asset_catalog` (`asset_hash`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_visual_asset_catalog_message_id` ON `visual_asset_catalog` (`message_id`)")
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS " +
+                    "`index_visual_asset_catalog_chat_id_turn_ordinal_message_id_attachment_index` " +
+                    "ON `visual_asset_catalog` (`chat_id`, `turn_ordinal`, `message_id`, `attachment_index`)"
+            )
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `message_visual_ref` (
+                    `message_id` INTEGER NOT NULL,
+                    `attachment_index` INTEGER NOT NULL,
+                    `asset_hash` TEXT NOT NULL,
+                    `visual_ref` TEXT NOT NULL,
+                    PRIMARY KEY(`message_id`, `attachment_index`),
+                    FOREIGN KEY(`message_id`) REFERENCES `messages_v2`(`message_id`) ON UPDATE NO ACTION ON DELETE CASCADE,
+                    FOREIGN KEY(`asset_hash`) REFERENCES `visual_asset`(`asset_hash`) ON UPDATE NO ACTION ON DELETE CASCADE
+                )
+                """.trimIndent()
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_message_visual_ref_asset_hash` ON `message_visual_ref` (`asset_hash`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_message_visual_ref_message_id` ON `message_visual_ref` (`message_id`)")
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `visual_asset_provider_ref` (
+                    `asset_hash` TEXT NOT NULL,
+                    `profile` TEXT NOT NULL,
+                    `platform_uid` TEXT NOT NULL,
+                    `remote_type` TEXT NOT NULL,
+                    `remote_id` TEXT NOT NULL,
+                    `remote_name` TEXT,
+                    `mime_type` TEXT NOT NULL,
+                    `updated_at` INTEGER NOT NULL,
+                    PRIMARY KEY(`asset_hash`, `profile`, `platform_uid`),
+                    FOREIGN KEY(`asset_hash`) REFERENCES `visual_asset`(`asset_hash`) ON UPDATE NO ACTION ON DELETE CASCADE
+                )
+                """.trimIndent()
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_visual_asset_provider_ref_asset_hash` ON `visual_asset_provider_ref` (`asset_hash`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_visual_asset_provider_ref_platform_uid` ON `visual_asset_provider_ref` (`platform_uid`)")
+        }
+    }
+
     val MIGRATION_25_26 = object : Migration(25, 26) {
         override fun migrate(db: SupportSQLiteDatabase) {
             db.execSQL(

@@ -19,6 +19,7 @@ import cn.nabr.chatwithchat.data.database.dao.PlatformModelV2Dao
 import cn.nabr.chatwithchat.data.database.dao.PlatformV2Dao
 import cn.nabr.chatwithchat.data.database.dao.StickerCatalogDao
 import cn.nabr.chatwithchat.data.database.dao.TextSkillDao
+import cn.nabr.chatwithchat.data.database.dao.VisualAssetDao
 import cn.nabr.chatwithchat.data.database.entity.AssistantRevisionListConverter
 import cn.nabr.chatwithchat.data.database.entity.ChatAttachmentListConverter
 import cn.nabr.chatwithchat.data.database.entity.ChatPlatformModelV2
@@ -58,6 +59,10 @@ import cn.nabr.chatwithchat.data.database.entity.SessionTextSkillBinding
 import cn.nabr.chatwithchat.data.database.entity.MessageTextSkillInvocation
 import cn.nabr.chatwithchat.data.database.entity.StringListConverter
 import cn.nabr.chatwithchat.data.database.entity.TokenUsageRecordConverter
+import cn.nabr.chatwithchat.data.database.entity.MessageVisualRefEntity
+import cn.nabr.chatwithchat.data.database.entity.VisualAssetCatalogEntity
+import cn.nabr.chatwithchat.data.database.entity.VisualAssetEntity
+import cn.nabr.chatwithchat.data.database.entity.VisualAssetProviderRefEntity
 
 @Database(
     entities = [
@@ -93,9 +98,13 @@ import cn.nabr.chatwithchat.data.database.entity.TokenUsageRecordConverter
         SessionTextSkillBinding::class,
         MessageTextSkillInvocation::class,
         McpServerEntity::class,
-        McpToolEntity::class
+        McpToolEntity::class,
+        VisualAssetEntity::class,
+        VisualAssetCatalogEntity::class,
+        MessageVisualRefEntity::class,
+        VisualAssetProviderRefEntity::class
     ],
-    version = 26,
+    version = 27,
     exportSchema = true
 )
 @TypeConverters(
@@ -124,4 +133,5 @@ abstract class ChatDatabaseV2 : RoomDatabase() {
     abstract fun contextManagementDao(): ContextManagementDao
     abstract fun textSkillDao(): TextSkillDao
     abstract fun mcpDao(): McpDao
+    abstract fun visualAssetDao(): VisualAssetDao
 }
