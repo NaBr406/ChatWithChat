@@ -14,19 +14,29 @@ private const val STREAMING_TEXT_FRAME_MILLIS = 24L
 internal const val STREAMING_TEXT_COMPLETION_FRAME_COUNT = 80
 private const val STREAMING_TEXT_TAIL = "●"
 
+internal data class SerializedStreamingText(
+    val text: String,
+    val thoughts: String,
+    val isTextAnimating: Boolean,
+    val isThoughtTextAnimating: Boolean
+)
+
+private enum class StreamingPresentationSide {
+    THOUGHTS,
+    TEXT
+}
+
 @Composable
 internal fun rememberSmoothedStreamingText(
     targetText: String,
     isStreaming: Boolean,
-    animateInitialText: Boolean = isStreaming,
     contentIdentity: Any
 ): String {
-    val shouldAnimateInitialText = isStreaming || animateInitialText
     var visibleText by remember(contentIdentity) {
-        mutableStateOf(if (shouldAnimateInitialText) "" else targetText)
+        mutableStateOf(targetText)
     }
     var shouldAnimatePendingText by remember(contentIdentity) {
-        mutableStateOf(shouldAnimateInitialText)
+        mutableStateOf(false)
     }
     val latestTargetText by rememberUpdatedState(targetText)
 
@@ -86,6 +96,146 @@ internal fun rememberSmoothedStreamingText(
     }
 
     return visibleText
+}
+
+/**
+ * Reveals thinking and answer text through one serialized queue.
+ *
+ * A thinking backlog always wins; answer text stays staged until the thinking side catches up.
+ * If thinking resumes while the answer is revealing, the answer pauses at its current visible
+ * boundary and resumes only after the new thinking segment is complete.
+ */
+@Composable
+internal fun rememberSerializedStreamingText(
+    targetText: String,
+    targetThoughts: String,
+    isStreaming: Boolean,
+    contentIdentity: Any
+): SerializedStreamingText {
+    var visibleText by remember(contentIdentity) {
+        mutableStateOf(targetText)
+    }
+    var visibleThoughts by remember(contentIdentity) {
+        mutableStateOf(targetThoughts)
+    }
+    var activeSide by remember(contentIdentity) {
+        mutableStateOf(
+            if (targetThoughts.isNotBlank()) {
+                StreamingPresentationSide.THOUGHTS
+            } else {
+                StreamingPresentationSide.TEXT
+            }
+        )
+    }
+    val latestTargetText by rememberUpdatedState(targetText)
+    val latestTargetThoughts by rememberUpdatedState(targetThoughts)
+
+    LaunchedEffect(contentIdentity, isStreaming) {
+        var observedText = targetText
+        var observedThoughts = targetThoughts
+        var textCompletionStartIndex = visibleText.length
+        var textCompletionFrame = 0
+        var thoughtsCompletionStartIndex = visibleThoughts.length
+        var thoughtsCompletionFrame = 0
+
+        while (isActive) {
+            val textTarget = latestTargetText
+            val thoughtsTarget = latestTargetThoughts
+
+            if (visibleText.length > textTarget.length || !textTarget.startsWith(visibleText)) {
+                visibleText = textTarget.take(
+                    safeTextEnd(textTarget, commonPrefixLength(visibleText, textTarget))
+                )
+                textCompletionStartIndex = visibleText.length
+                textCompletionFrame = 0
+            }
+            if (visibleThoughts.length > thoughtsTarget.length || !thoughtsTarget.startsWith(visibleThoughts)) {
+                visibleThoughts = thoughtsTarget.take(
+                    safeTextEnd(thoughtsTarget, commonPrefixLength(visibleThoughts, thoughtsTarget))
+                )
+                thoughtsCompletionStartIndex = visibleThoughts.length
+                thoughtsCompletionFrame = 0
+            }
+
+            val thoughtsChanged = thoughtsTarget != observedThoughts
+            val textChanged = textTarget != observedText
+            when {
+                thoughtsChanged -> activeSide = StreamingPresentationSide.THOUGHTS
+                textChanged && visibleThoughts.length >= thoughtsTarget.length -> {
+                    activeSide = StreamingPresentationSide.TEXT
+                }
+            }
+            observedText = textTarget
+            observedThoughts = thoughtsTarget
+
+            val hasThoughtBacklog = visibleThoughts.length < thoughtsTarget.length
+            val hasTextBacklog = visibleText.length < textTarget.length
+            when (activeSide) {
+                StreamingPresentationSide.THOUGHTS -> {
+                    if (hasThoughtBacklog) {
+                        if (!isStreaming) thoughtsCompletionFrame++
+                        visibleThoughts = thoughtsTarget.take(
+                            if (isStreaming) {
+                                nextStreamingTextEnd(
+                                    text = thoughtsTarget,
+                                    currentIndex = visibleThoughts.length
+                                )
+                            } else {
+                                nextCompletedStreamingTextEnd(
+                                    text = thoughtsTarget,
+                                    currentIndex = visibleThoughts.length,
+                                    completionStartIndex = thoughtsCompletionStartIndex,
+                                    completionFrame = thoughtsCompletionFrame
+                                )
+                            }
+                        )
+                    } else if (hasTextBacklog) {
+                        activeSide = StreamingPresentationSide.TEXT
+                    }
+                }
+
+                StreamingPresentationSide.TEXT -> {
+                    if (hasTextBacklog) {
+                        if (!isStreaming) textCompletionFrame++
+                        visibleText = textTarget.take(
+                            if (isStreaming) {
+                                nextStreamingTextEnd(
+                                    text = textTarget,
+                                    currentIndex = visibleText.length
+                                )
+                            } else {
+                                nextCompletedStreamingTextEnd(
+                                    text = textTarget,
+                                    currentIndex = visibleText.length,
+                                    completionStartIndex = textCompletionStartIndex,
+                                    completionFrame = textCompletionFrame
+                                )
+                            }
+                        )
+                    } else if (hasThoughtBacklog) {
+                        activeSide = StreamingPresentationSide.THOUGHTS
+                    }
+                }
+            }
+
+            if (!isStreaming && !hasThoughtBacklog && !hasTextBacklog) {
+                return@LaunchedEffect
+            }
+            delay(STREAMING_TEXT_FRAME_MILLIS)
+        }
+    }
+
+    val isThoughtTextAnimating =
+        activeSide == StreamingPresentationSide.THOUGHTS && visibleThoughts != targetThoughts
+    val isTextAnimating =
+        activeSide == StreamingPresentationSide.TEXT && visibleText != targetText
+
+    return SerializedStreamingText(
+        text = visibleText,
+        thoughts = visibleThoughts,
+        isTextAnimating = isTextAnimating,
+        isThoughtTextAnimating = isThoughtTextAnimating
+    )
 }
 
 internal fun appendStreamingTextTail(text: String, isStreaming: Boolean): String =

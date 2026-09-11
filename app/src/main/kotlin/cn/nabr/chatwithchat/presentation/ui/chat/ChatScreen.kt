@@ -965,6 +965,8 @@ private fun ChatMessagePair(
                 },
                 canShowPreviousRevision = canShowPreviousRevision,
                 canShowNextRevision = canShowNextRevision,
+                // 只有当前消息整轮结束（含持久化窗口）后才显示操作/版本，历史消息不受新一轮影响。
+                canShowActions = canSubmitOrEdit || !isActiveMessage,
                 onCopyClick = {
                     onCopyText(
                         if (isInterruptedInitialRequest) displayedAssistantContent else assistantContent

@@ -25,7 +25,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -58,30 +57,44 @@ fun ThinkingBlock(
 ) {
     if (thoughts.isBlank()) return
 
-    val materialColors = settingsMaterialColors()
     val visibleThoughts = rememberSmoothedStreamingText(
         targetText = thoughts,
         isStreaming = isThinking,
-        animateInitialText = isLoading,
         contentIdentity = contentIdentity
     )
-    val isThoughtTextAnimating = isThinking || visibleThoughts != thoughts
+    ThinkingBlockContent(
+        modifier = modifier,
+        thoughts = thoughts,
+        visibleThoughts = visibleThoughts,
+        isThoughtTextAnimating = isThinking || visibleThoughts != thoughts,
+        contentIdentity = contentIdentity,
+        isLoading = isLoading,
+        isAnswerVisible = isAnswerVisible,
+        initiallyExpanded = initiallyExpanded
+    )
+}
+
+@Composable
+internal fun ThinkingBlockContent(
+    modifier: Modifier,
+    thoughts: String,
+    visibleThoughts: String,
+    isThoughtTextAnimating: Boolean,
+    contentIdentity: Any,
+    isLoading: Boolean,
+    isAnswerVisible: Boolean,
+    initiallyExpanded: Boolean
+) {
+    if (thoughts.isBlank()) return
+
+    val materialColors = settingsMaterialColors()
     // MathJax 要等整条回复收尾才接管。分步执行时推理会中断又恢复，跟着 isThoughtTextAnimating 开关
     // 会让公式在原生降级渲染和 WebView 渲染之间来回切，回填的高度反复改写 heightIn，把下方正文顶乱。
     val useMathJax = !isLoading && !isThoughtTextAnimating
-    var hasUserChangedExpansion by rememberSaveable(contentIdentity) { mutableStateOf(false) }
     // 正文已经在下面了就不要展开着进场：模型也可能先吐正文再吐 <thinking>，
     // 那种顺序下"先展开再自动收起"会闪一下。
     var isExpanded by rememberSaveable(contentIdentity) {
         mutableStateOf(initiallyExpanded && !isAnswerVisible)
-    }
-    // 思考块在正文上方，它每凑满一行就把正文整体下顶一行——文本高度是按行量化的，
-    // 逐字平滑揭示换不来平滑的高度（约每 60ms 蹦一行）。所以正文一落地就自动收起：
-    // 此后无论推理长多少，正文的位置都不再被它推动。用户手动开合过就完全听用户的。
-    LaunchedEffect(contentIdentity, isLoading, isAnswerVisible, hasUserChangedExpansion) {
-        if (isLoading && isAnswerVisible && !hasUserChangedExpansion) {
-            isExpanded = false
-        }
     }
     val rotationAngle by animateFloatAsState(
         targetValue = if (isExpanded) 180f else 0f,
@@ -98,7 +111,6 @@ fun ThinkingBlock(
                 .fillMaxWidth()
                 .defaultMinSize(minHeight = 44.dp)
                 .clickable {
-                    hasUserChangedExpansion = true
                     isExpanded = !isExpanded
                 }
                 .padding(horizontal = 4.dp, vertical = 8.dp)

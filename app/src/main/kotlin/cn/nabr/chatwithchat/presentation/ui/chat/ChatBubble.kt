@@ -130,6 +130,7 @@ fun OpponentChatBubble(
     revisionIndexLabel: String? = null,
     canShowPreviousRevision: Boolean = false,
     canShowNextRevision: Boolean = false,
+    canShowActions: Boolean = true,
     onCopyClick: () -> Unit = {},
     onSelectClick: () -> Unit = {},
     onRetryClick: () -> Unit = {},
@@ -137,10 +138,10 @@ fun OpponentChatBubble(
     onShowPreviousRevision: () -> Unit = {},
     onShowNextRevision: () -> Unit = {}
 ) {
-    val isThinking = rememberThoughtStreamActive(
-        thoughts = thoughts,
-        text = text,
-        isLoading = isLoading,
+    val serializedStreamingText = rememberSerializedStreamingText(
+        targetText = text,
+        targetThoughts = thoughts,
+        isStreaming = isLoading,
         contentIdentity = contentIdentity
     )
     var hasObservedStreaming by remember(contentIdentity) { mutableStateOf(isLoading) }
@@ -149,27 +150,23 @@ fun OpponentChatBubble(
             hasObservedStreaming = true
         }
     }
-    val visibleText = rememberSmoothedStreamingText(
-        targetText = text,
-        isStreaming = isLoading,
-        contentIdentity = contentIdentity
-    )
-    val isTextAnimating = isLoading || visibleText != text
+    val isTextAnimating = serializedStreamingText.isTextAnimating
     Column(modifier = modifier) {
         if (thoughts.isNotBlank()) {
-            ThinkingBlock(
+            ThinkingBlockContent(
                 modifier = Modifier.padding(top = 6.dp),
                 thoughts = thoughts,
+                visibleThoughts = serializedStreamingText.thoughts,
+                isThoughtTextAnimating = serializedStreamingText.isThoughtTextAnimating,
                 contentIdentity = contentIdentity,
                 isLoading = isLoading,
-                isThinking = isThinking,
                 isAnswerVisible = text.isNotBlank(),
                 initiallyExpanded = isLoading || hasObservedStreaming
             )
         }
 
         Column {
-            val displayText = visibleText
+            val displayText = serializedStreamingText.text
 
             when {
                 isLoading && displayText.isBlank() && thoughts.isBlank() && stickerRefs.isEmpty() && showPendingIndicator -> {
@@ -203,7 +200,7 @@ fun OpponentChatBubble(
                 modifier = Modifier.padding(top = 2.dp, bottom = 8.dp)
             )
 
-            if (!isTextAnimating) {
+            if (canShowActions && !isTextAnimating && !serializedStreamingText.isThoughtTextAnimating) {
                 Row(
                     modifier = Modifier
                         .padding(top = 4.dp)

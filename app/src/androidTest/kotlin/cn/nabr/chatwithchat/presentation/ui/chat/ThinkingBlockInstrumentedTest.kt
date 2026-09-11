@@ -14,6 +14,7 @@ import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import cn.nabr.chatwithchat.presentation.theme.ChatWithChatTheme
@@ -44,6 +45,111 @@ class ThinkingBlockInstrumentedTest {
             .assertTextContains("思考中")
         composeRule.onNodeWithTag(THINKING_CONTENT_TEST_TAG)
             .assertIsDisplayed()
+    }
+
+    @Test
+    fun preloadedStreamingText_isVisibleWithoutReplay() {
+        val alreadyReceived = "already received ".repeat(50)
+
+        composeRule.setContent {
+            Text(
+                text = rememberSmoothedStreamingText(
+                    targetText = alreadyReceived,
+                    isStreaming = true,
+                    contentIdentity = "preloaded-stream"
+                ),
+                modifier = Modifier.testTag(STREAMING_TEXT_TEST_TAG)
+            )
+        }
+
+        composeRule.mainClock.advanceTimeBy(48)
+        assertEquals(alreadyReceived, displayedStreamingText())
+    }
+
+    @Test
+    fun thinkingBacklog_holdsTextUntilThoughtsFinishRevealing() {
+        composeRule.mainClock.autoAdvance = false
+        val thoughts = "reasoning ".repeat(20)
+        val text = "answer ".repeat(500)
+        lateinit var publishBacklog: () -> Unit
+        composeRule.setContent {
+            var thoughtsState by remember { mutableStateOf("") }
+            var textState by remember { mutableStateOf("") }
+            publishBacklog = {
+                thoughtsState = thoughts
+                textState = text
+            }
+            val stream = rememberSerializedStreamingText(
+                targetText = textState,
+                targetThoughts = thoughtsState,
+                isStreaming = true,
+                contentIdentity = "serialized-thinking-first"
+            )
+            Text(
+                text = stream.thoughts,
+                modifier = Modifier.testTag(THINKING_STREAM_TEST_TAG)
+            )
+            Text(
+                text = stream.text,
+                modifier = Modifier.testTag(STREAMING_TEXT_TEST_TAG)
+            )
+        }
+
+        composeRule.mainClock.advanceTimeByFrame()
+        assertEquals("", displayedStreamingText())
+        composeRule.runOnIdle(publishBacklog)
+        composeRule.mainClock.advanceTimeBy(48)
+        assertTrue(displayedThinkingText().isNotEmpty())
+        assertEquals("", displayedStreamingText())
+
+        composeRule.mainClock.advanceTimeBy(2_000)
+        assertEquals(thoughts, displayedThinkingText())
+        assertTrue(displayedStreamingText().isNotEmpty())
+        assertTrue(displayedStreamingText().length < text.length)
+    }
+
+    @Test
+    fun resumedThinking_pausesTextUntilTheThoughtBacklogIsRevealed() {
+        composeRule.mainClock.autoAdvance = false
+        val text = "answer ".repeat(500)
+        val thoughts = "reasoning ".repeat(20)
+        lateinit var publishText: () -> Unit
+        lateinit var publishThoughts: () -> Unit
+        composeRule.setContent {
+            var thoughtsState by remember { mutableStateOf("") }
+            var textState by remember { mutableStateOf("") }
+            publishText = { textState = text }
+            publishThoughts = { thoughtsState = thoughts }
+            val stream = rememberSerializedStreamingText(
+                targetText = textState,
+                targetThoughts = thoughtsState,
+                isStreaming = true,
+                contentIdentity = "serialized-thought-resume"
+            )
+            Text(
+                text = stream.thoughts,
+                modifier = Modifier.testTag(THINKING_STREAM_TEST_TAG)
+            )
+            Text(
+                text = stream.text,
+                modifier = Modifier.testTag(STREAMING_TEXT_TEST_TAG)
+            )
+        }
+
+        composeRule.runOnIdle(publishText)
+        composeRule.mainClock.advanceTimeBy(240)
+        val textLengthBeforeThinking = displayedStreamingText().length
+        assertTrue(textLengthBeforeThinking > 0)
+
+        composeRule.runOnIdle(publishThoughts)
+        composeRule.mainClock.advanceTimeBy(48)
+        assertTrue(displayedThinkingText().isNotEmpty())
+        assertEquals(textLengthBeforeThinking, displayedStreamingText().length)
+
+        composeRule.mainClock.advanceTimeBy(2_000)
+        assertEquals(thoughts, displayedThinkingText())
+        assertTrue(displayedStreamingText().length > textLengthBeforeThinking)
+        assertTrue(displayedStreamingText().length < text.length)
     }
 
     @Test
@@ -102,6 +208,28 @@ class ThinkingBlockInstrumentedTest {
     }
 
     @Test
+    fun completedThinking_rendersFencedCodeContent() {
+        composeRule.setContent {
+            ChatWithChatTheme {
+                ThinkingBlock(
+                    thoughts = """
+                        Before the code block.
+
+                        ```kotlin
+                        val answer = 42
+                        ```
+                    """.trimIndent(),
+                    contentIdentity = "history-code-block",
+                    isLoading = false,
+                    initiallyExpanded = true
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("val answer = 42", substring = true).assertIsDisplayed()
+    }
+
+    @Test
     fun activeResponseAfterThinkingPhase_startsExpanded() {
         composeRule.setContent {
             ChatWithChatTheme {
@@ -120,7 +248,7 @@ class ThinkingBlockInstrumentedTest {
     }
 
     @Test
-    fun answerPhase_finishesThoughtPresentationWhileResponseStillStreams() {
+    fun preloadedThoughts_doNotReplayWhileResponseStillStreams() {
         composeRule.mainClock.autoAdvance = false
         composeRule.setContent {
             ChatWithChatTheme {
@@ -136,11 +264,9 @@ class ThinkingBlockInstrumentedTest {
 
         composeRule.mainClock.advanceTimeBy(300)
         composeRule.onNodeWithTag(THINKING_HEADER_TEST_TAG)
-            .assertTextContains("思考中")
-
-        composeRule.mainClock.advanceTimeBy(2_200)
-        composeRule.onNodeWithTag(THINKING_HEADER_TEST_TAG)
             .assertTextContains("已思考")
+        composeRule.onNodeWithTag(THINKING_CONTENT_TEST_TAG)
+            .assertIsDisplayed()
     }
 
     @Test
@@ -168,14 +294,18 @@ class ThinkingBlockInstrumentedTest {
     @Test
     fun streamCompletion_keepsPacingInsteadOfDumpingTheBacklog() {
         composeRule.mainClock.autoAdvance = false
+        val initial = "reasoning ".repeat(20)
         val target = "reasoning ".repeat(2_000)
+        lateinit var pushBacklog: () -> Unit
         lateinit var finishStreaming: () -> Unit
         composeRule.setContent {
             var isStreaming by remember { mutableStateOf(true) }
+            var text by remember { mutableStateOf(initial) }
+            pushBacklog = { text = target }
             finishStreaming = { isStreaming = false }
             Text(
                 text = rememberSmoothedStreamingText(
-                    targetText = target,
+                    targetText = text,
                     isStreaming = isStreaming,
                     contentIdentity = "bounded-drain"
                 ),
@@ -184,10 +314,13 @@ class ThinkingBlockInstrumentedTest {
         }
 
         composeRule.mainClock.advanceTimeBy(48)
-        assertTrue(displayedStreamingText().length in 1 until target.length)
+        assertEquals(initial, displayedStreamingText())
 
         val lengthBeforeCompletion = displayedStreamingText().length
-        composeRule.runOnIdle { finishStreaming() }
+        composeRule.runOnIdle {
+            pushBacklog()
+            finishStreaming()
+        }
         composeRule.mainClock.advanceTimeByFrame()
         val firstCompletedFrameLength = displayedStreamingText().length
         assertTrue(firstCompletedFrameLength - lengthBeforeCompletion in 1..16)
@@ -275,7 +408,7 @@ class ThinkingBlockInstrumentedTest {
     }
 
     @Test
-    fun answerArrival_collapsesThinkingSoTheAnswerStopsMoving() {
+    fun answerArrival_keepsThinkingExpanded() {
         composeRule.mainClock.autoAdvance = false
         lateinit var startAnswer: () -> Unit
         composeRule.setContent {
@@ -296,10 +429,41 @@ class ThinkingBlockInstrumentedTest {
         composeRule.mainClock.advanceTimeBy(300)
         composeRule.onNodeWithTag(THINKING_CONTENT_TEST_TAG).assertIsDisplayed()
 
-        // 正文一落地思考块就收起，之后再长多少推理都不会推动正文。
+        // 正文到达不能再改变用户当前正在阅读的思考块状态。
         composeRule.runOnIdle { startAnswer() }
         composeRule.mainClock.advanceTimeBy(300)
-        composeRule.onAllNodesWithTag(THINKING_CONTENT_TEST_TAG).assertCountEquals(0)
+        composeRule.onNodeWithTag(THINKING_CONTENT_TEST_TAG).assertIsDisplayed()
+    }
+
+    @Test
+    fun answerArrival_keepsThinkingWithCodeExpanded() {
+        lateinit var showAnswer: () -> Unit
+        composeRule.setContent {
+            var isAnswerVisible by remember { mutableStateOf(false) }
+            showAnswer = { isAnswerVisible = true }
+
+            ChatWithChatTheme {
+                ThinkingBlock(
+                    thoughts = """
+                        Checking the implementation.
+
+                        ```kotlin
+                        val answer = 42
+                        ```
+                    """.trimIndent(),
+                    contentIdentity = "code-answer-phase",
+                    isLoading = true,
+                    isThinking = false,
+                    isAnswerVisible = isAnswerVisible,
+                    initiallyExpanded = true
+                )
+            }
+        }
+
+        composeRule.waitForIdle()
+        composeRule.runOnIdle(showAnswer)
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("val answer = 42", substring = true).assertIsDisplayed()
     }
 
     @Test
@@ -354,7 +518,14 @@ class ThinkingBlockInstrumentedTest {
         .config[SemanticsProperties.Text]
         .joinToString(separator = "") { it.text }
 
+    private fun displayedThinkingText(): String = composeRule
+        .onNodeWithTag(THINKING_STREAM_TEST_TAG)
+        .fetchSemanticsNode()
+        .config[SemanticsProperties.Text]
+        .joinToString(separator = "") { it.text }
+
     private companion object {
         const val STREAMING_TEXT_TEST_TAG = "streaming-text"
+        const val THINKING_STREAM_TEST_TAG = "thinking-streaming-text"
     }
 }
