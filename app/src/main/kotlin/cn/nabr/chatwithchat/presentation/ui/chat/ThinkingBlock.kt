@@ -169,13 +169,13 @@ internal fun ThinkingBlockContent(
                 animationSpec = tween(durationMillis = 90)
             )
         ) {
-            ChatMarkdown(
-                content = appendStreamingTextTail(visibleThoughts, isThoughtTextAnimating),
+            IncrementalThinkingMarkdown(
+                thoughts = visibleThoughts,
+                isStreaming = isLoading || isThoughtTextAnimating,
+                isPendingAnimating = isThoughtTextAnimating,
                 contentIdentity = contentIdentity,
-                renderMath = true,
                 useMathJax = useMathJax,
                 contentColor = materialColors.secondaryLabel,
-                style = ChatMarkdownStyle.THINKING,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(start = 30.dp, end = 4.dp)
