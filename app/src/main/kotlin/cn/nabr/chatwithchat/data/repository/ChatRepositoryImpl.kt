@@ -4617,7 +4617,10 @@ private val VISION_MODEL_MARKERS = listOf(
     "qwen-vl",
     "qwen2.5-vl",
     "glm-4v",
-    "glm-4.5v"
+    "glm-4.5v",
+    "deepseek-flash",
+    "deepseek-v4-flash",
+    "deepseek-v4-pro"
 )
 
 private fun textSkillPromptEnvelope(textSkillPrompt: String?, memoryPrompt: String?): String? =
