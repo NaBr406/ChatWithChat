@@ -1,5 +1,6 @@
 package cn.nabr.chatwithchat.data.tool.provider
 
+import cn.nabr.chatwithchat.data.dto.openai.common.ImageContent
 import cn.nabr.chatwithchat.data.dto.openai.request.ResponseFunctionCallOutputPartsItem
 import cn.nabr.chatwithchat.data.dto.anthropic.common.MessageContent
 import cn.nabr.chatwithchat.data.tool.ToolCall
@@ -66,6 +67,27 @@ class VisualToolResultProviderContractTest {
         val visualMessage = messages.last()
         assertEquals("user", visualMessage.role.name.lowercase())
         assertTrue(visualMessage.content.any { part -> part::class.simpleName == "ImageContent" })
+    }
+
+    @Test
+    fun `chat completions injects every visual attachment in one round`() {
+        val results = (1..4).map { index ->
+            result.copy(
+                callId = "call-$index",
+                visualAttachments = listOf(
+                    result.visualAttachments.single().copy(
+                        assetId = "asset-$index",
+                        visualRef = "v17-$index"
+                    )
+                )
+            )
+        }
+        val calls = results.map { result -> call.copy(id = result.callId) }
+
+        val messages = OpenAIChatCompletionsToolAdapter().continuationMessages(calls, results)
+        val images = messages.last().content.filterIsInstance<ImageContent>()
+
+        assertEquals(4, images.size)
     }
 
     @Test

@@ -11,6 +11,12 @@ import cn.nabr.chatwithchat.data.database.ChatDatabaseV2
 import cn.nabr.chatwithchat.data.database.entity.ChatRoomV2
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.model.ChatAttachment
+import cn.nabr.chatwithchat.data.tool.ToolCall
+import cn.nabr.chatwithchat.data.tool.ToolExecutionContextFactory
+import cn.nabr.chatwithchat.data.tool.ToolExecutionSessionState
+import cn.nabr.chatwithchat.data.tool.ToolExecutor
+import cn.nabr.chatwithchat.data.tool.ToolRegistry
+import cn.nabr.chatwithchat.data.tool.ViewImageToolProvider
 import java.io.File
 import java.io.FileOutputStream
 import kotlinx.coroutines.runBlocking
@@ -39,6 +45,7 @@ class VisualAssetRepositoryInstrumentedTest {
         val store = VisualAssetStore(context)
         repository = VisualAssetRepository(
             dao = database.visualAssetDao(),
+            messageDao = database.messageDao(),
             store = store,
             compressor = VisualAssetCompressor(store)
         )
@@ -151,6 +158,103 @@ class VisualAssetRepositoryInstrumentedTest {
         assertNotNull(bitmap)
         assertEquals(0, Color.alpha(bitmap.getPixel(0, 0)))
         bitmap.recycle()
+    }
+
+    @Test
+    fun viewImageExecutorKeepsLargeOriginalPixels() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val source = File(context.cacheDir, "visual-large-original.png")
+        writeBitmap(source, width = 3_072, height = 2_048)
+        val chatId = database.chatRoomDao().addChatRoom(
+            ChatRoomV2(title = "large-original", enabledPlatform = emptyList())
+        ).toInt()
+        database.messageDao().addMessages(
+            MessageV2(
+                chatId = chatId,
+                content = "large image",
+                attachments = listOf(
+                    ChatAttachment(
+                        localFilePath = source.absolutePath,
+                        preparedFilePath = source.absolutePath,
+                        displayName = "large-original.png",
+                        mimeType = "image/png",
+                        sizeBytes = source.length(),
+                        width = 3_072,
+                        height = 2_048
+                    )
+                ),
+                platformType = null
+            )
+        )
+        val message = database.messageDao().loadMessages(chatId).single()
+        val visualRef = VisualAssetRepository.visualRef(message.id, 1)
+        repository.ensureChatIndexed(chatId)
+
+        val call = ToolCall(
+            id = "call-large-original",
+            name = "view_image",
+            arguments = """{"visual_ref":"$visualRef","detail":"original"}"""
+        )
+        val executionContext = ToolExecutionContextFactory()
+            .create(call = call, chatId = chatId)
+            .getOrThrow()
+        val executor = ToolExecutor(ToolRegistry(listOf(ViewImageToolProvider(repository))))
+
+        val result = executor.execute(
+            call = call,
+            activeToolNames = setOf("view_image"),
+            executionContext = executionContext,
+            sessionState = ToolExecutionSessionState(chatId = chatId, supportsVisualInput = true)
+        )
+
+        assertFalse(result.isError)
+        assertEquals(1, result.visualAttachments.size)
+        assertTrue(result.visualAttachments.single().base64Data.orEmpty().isNotEmpty())
+    }
+
+    @Test
+    fun reindexingFoldedAssetPreservesCatalogState() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val source = File(context.cacheDir, "visual-reindex.png")
+        writeBitmap(source, width = 2_400, height = 800)
+        val chatId = database.chatRoomDao().addChatRoom(
+            ChatRoomV2(title = "reindex", enabledPlatform = emptyList())
+        ).toInt()
+        database.messageDao().addMessages(
+            MessageV2(
+                chatId = chatId,
+                content = "fold me",
+                attachments = listOf(
+                    ChatAttachment(
+                        localFilePath = source.absolutePath,
+                        preparedFilePath = source.absolutePath,
+                        displayName = "reindex.png",
+                        mimeType = "image/png",
+                        sizeBytes = source.length()
+                    )
+                ),
+                platformType = null
+            )
+        )
+        val message = database.messageDao().loadMessages(chatId).single()
+        val visualRef = VisualAssetRepository.visualRef(message.id, 1)
+
+        repository.indexMessage(message, turnOrdinal = 1)
+        repository.markMessagesFolded(chatId, listOf(message.id))
+
+        val folded = database.visualAssetDao().getCatalogEntry(chatId, visualRef)
+        assertNotNull(folded)
+        assertNotNull(folded!!.foldedAt)
+        assertEquals(VisualAssetProfile.COMPACTED_V1.storageValue, folded.compactedProfile)
+
+        repository.indexMessage(message, turnOrdinal = 1)
+
+        val reindexed = database.visualAssetDao().getCatalogEntry(chatId, visualRef)
+        assertNotNull(reindexed)
+        assertNotNull(reindexed!!.foldedAt)
+        assertEquals(VisualAssetProfile.COMPACTED_V1.storageValue, reindexed.compactedProfile)
+        val compactedAfterReindex = repository.resolve(chatId, visualRef, VisualDetail.COMPACT)
+        assertTrue("unexpected compact after reindex: $compactedAfterReindex", compactedAfterReindex is VisualAssetReadResult.Success)
     }
 
     private fun writeBitmap(

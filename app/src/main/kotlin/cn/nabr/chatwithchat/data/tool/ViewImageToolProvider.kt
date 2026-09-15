@@ -1,5 +1,6 @@
 package cn.nabr.chatwithchat.data.tool
 
+import cn.nabr.chatwithchat.data.visual.VisualAssetFailure
 import cn.nabr.chatwithchat.data.visual.VisualAssetReadResult
 import cn.nabr.chatwithchat.data.visual.VisualAssetRepository
 import cn.nabr.chatwithchat.data.visual.VisualDetail
@@ -71,7 +72,12 @@ class ViewImageToolProvider(
                 ?.jsonPrimitive
                 ?.contentOrNull
         )
-        return when (val resolved = repository.resolve(executionContext.chatId, visualRef, detail)) {
+        var resolved = repository.resolve(executionContext.chatId, visualRef, detail)
+        if (resolved is VisualAssetReadResult.Failure && resolved.failure == VisualAssetFailure.NotFound) {
+            repository.ensureChatIndexed(executionContext.chatId)
+            resolved = repository.resolve(executionContext.chatId, visualRef, detail)
+        }
+        return when (resolved) {
             is VisualAssetReadResult.Failure -> call.errorResult(
                 resolved.failure.code,
                 resolved.failure.code
@@ -79,15 +85,16 @@ class ViewImageToolProvider(
             is VisualAssetReadResult.Success -> {
                 val asset = resolved.asset
                 val fallback = detail != VisualDetail.ORIGINAL &&
-                    asset.profile == cn.nabr.chatwithchat.data.visual.VisualAssetProfile.ORIGINAL &&
-                    asset.asset.compactionError != null
+                    asset.profile == cn.nabr.chatwithchat.data.visual.VisualAssetProfile.ORIGINAL
                 ToolResult(
                     callId = call.id,
                     name = call.name,
                     content = buildString {
                         append("已查看 ")
                         append(asset.catalogItem.visualRef)
-                        append("；profile=")
+                        append("；requested_detail=")
+                        append(detail.wireValue)
+                        append("；delivered_profile=")
                         append(asset.profile.storageValue)
                         append("；")
                         append(asset.mimeType)
@@ -98,7 +105,7 @@ class ViewImageToolProvider(
                             append(asset.height ?: 0)
                         }
                         if (fallback) {
-                            append("；compaction_failed_fallback=original")
+                            append("；compaction_fallback=original")
                         }
                     },
                     visualAttachments = listOf(

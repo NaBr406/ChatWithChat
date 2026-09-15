@@ -36,16 +36,4 @@ data class ToolResultVisualAttachment(
     val localPath: String? = null,
     @Transient
     val compactionFallback: Boolean = false
-) {
-    fun estimatedTokens(): Int {
-        val pixelCount = (width?.coerceAtLeast(1) ?: DEFAULT_ESTIMATED_EDGE) *
-            (height?.coerceAtLeast(1) ?: DEFAULT_ESTIMATED_EDGE)
-        return (pixelCount / PIXELS_PER_TOKEN).coerceAtLeast(MIN_ESTIMATED_TOKENS)
-    }
-
-    private companion object {
-        const val DEFAULT_ESTIMATED_EDGE = 1024
-        const val PIXELS_PER_TOKEN = 750
-        const val MIN_ESTIMATED_TOKENS = 85
-    }
-}
+)

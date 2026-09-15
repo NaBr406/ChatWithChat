@@ -1,6 +1,7 @@
 package cn.nabr.chatwithchat.data.visual
 
 import android.graphics.BitmapFactory
+import cn.nabr.chatwithchat.data.database.dao.MessageV2Dao
 import cn.nabr.chatwithchat.data.database.dao.VisualAssetDao
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.MessageVisualRefEntity
@@ -20,6 +21,7 @@ import kotlinx.coroutines.sync.withLock
 @Singleton
 class VisualAssetRepository @Inject constructor(
     private val dao: VisualAssetDao,
+    private val messageDao: MessageV2Dao,
     private val store: VisualAssetStore,
     private val compressor: VisualAssetCompressor
 ) {
@@ -34,6 +36,11 @@ class VisualAssetRepository @Inject constructor(
             if (message.platformType == null) turnOrdinal += 1
             indexMessage(message, turnOrdinal.coerceAtLeast(1))
         }
+    }
+
+    suspend fun ensureChatIndexed(chatId: Int) {
+        if (chatId <= 0) return
+        indexMessages(messageDao.loadMessages(chatId))
     }
 
     suspend fun indexMessage(message: MessageV2, turnOrdinal: Int) {
@@ -77,11 +84,17 @@ class VisualAssetRepository @Inject constructor(
 
         val profile = when (detail) {
             VisualDetail.ORIGINAL -> VisualAssetProfile.ORIGINAL
-            VisualDetail.AUTO,
-            VisualDetail.COMPACT -> if (asset.hasCompactedProfile()) {
+            VisualDetail.AUTO -> if (asset.hasCompactedProfile()) {
                 VisualAssetProfile.COMPACTED_V1
             } else {
                 VisualAssetProfile.ORIGINAL
+            }
+            VisualDetail.COMPACT -> if (asset.hasCompactedProfile()) {
+                VisualAssetProfile.COMPACTED_V1
+            } else {
+                return VisualAssetReadResult.Failure(
+                    VisualAssetFailure.Unsupported("visual_asset_compaction_unavailable")
+                )
             }
         }
         val resolved = when (profile) {
@@ -272,6 +285,7 @@ class VisualAssetRepository @Inject constructor(
         turnOrdinal: Int,
         attachment: ChatAttachment
     ): IndexedAttachment? {
+        val visualRef = visualRef(message.id, attachmentIndex)
         val path = attachment.preparedFilePath.ifBlank { attachment.localFilePath }
         if (path.isBlank()) return null
         val mimeType = attachment.mimeType.ifBlank { FileUtils.getMimeTypeFromPath(path) }
@@ -280,6 +294,8 @@ class VisualAssetRepository @Inject constructor(
             ?: attachment.sizeBytes.takeIf { it > 0L }
             ?: return null
         val assetHash = store.sha256(path) ?: return null
+        val existingCatalog = dao.getCatalogEntry(message.chatId, visualRef)
+            ?.takeIf { catalog -> catalog.assetHash == assetHash }
         val storedPath = store.ensureOriginalStored(assetHash, mimeType, path) ?: return null
         val dimensions = readDimensions(storedPath)
         val now = System.currentTimeMillis() / 1000
@@ -318,7 +334,6 @@ class VisualAssetRepository @Inject constructor(
             )
         }
 
-        val visualRef = visualRef(message.id, attachmentIndex)
         return IndexedAttachment(
             catalog = VisualAssetCatalogEntity(
                 chatId = message.chatId,
@@ -332,7 +347,9 @@ class VisualAssetRepository @Inject constructor(
                 mimeType = mimeType,
                 width = dimensions?.first ?: attachment.width,
                 height = dimensions?.second ?: attachment.height,
-                createdAt = message.createdAt
+                createdAt = message.createdAt,
+                foldedAt = existingCatalog?.foldedAt,
+                compactedProfile = existingCatalog?.compactedProfile
             ),
             ref = MessageVisualRefEntity(
                 messageId = message.id,

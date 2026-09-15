@@ -13,8 +13,7 @@ data class ToolResultBounds(
     val maxMetadataChars: Int = maxContentChars,
     val maxTotalPayloadChars: Int = Int.MAX_VALUE,
     val maxVisualAttachmentCount: Int = 4,
-    val maxVisualAttachmentPayloadBytes: Long = 16L * 1024L * 1024L,
-    val maxVisualAttachmentTokens: Int = 8_192
+    val maxVisualAttachmentPayloadBytes: Long = 16L * 1024L * 1024L
 ) {
     init {
         require(maxContentChars >= 0)
@@ -26,7 +25,6 @@ data class ToolResultBounds(
         require(maxTotalPayloadChars >= 0)
         require(maxVisualAttachmentCount >= 0)
         require(maxVisualAttachmentPayloadBytes >= 0L)
-        require(maxVisualAttachmentTokens >= 0)
     }
 }
 
@@ -120,27 +118,23 @@ fun ToolResult.boundPayload(
 
     val boundedVisualAttachments = mutableListOf<ToolResultVisualAttachment>()
     var visualPayloadBytes = 0L
-    var visualTokens = 0
+    var droppedVisualAttachments = false
     visualAttachments.forEach { attachment ->
         val attachmentBytes = attachment.sizeBytes.coerceAtLeast(0L)
-        val attachmentTokens = attachment.estimatedTokens()
         when {
             boundedVisualAttachments.size >= bounds.maxVisualAttachmentCount -> {
                 droppedParts += ToolResultPayloadPart.VISUAL_ATTACHMENTS
                 hasOversizedOptionalPayload = true
+                droppedVisualAttachments = true
             }
             visualPayloadBytes + attachmentBytes > bounds.maxVisualAttachmentPayloadBytes -> {
                 droppedParts += ToolResultPayloadPart.VISUAL_ATTACHMENTS
                 hasOversizedOptionalPayload = true
-            }
-            visualTokens + attachmentTokens > bounds.maxVisualAttachmentTokens -> {
-                droppedParts += ToolResultPayloadPart.VISUAL_ATTACHMENTS
-                hasOversizedOptionalPayload = true
+                droppedVisualAttachments = true
             }
             else -> {
                 boundedVisualAttachments += attachment
                 visualPayloadBytes += attachmentBytes
-                visualTokens += attachmentTokens
             }
         }
     }
@@ -160,6 +154,10 @@ fun ToolResult.boundPayload(
         }
     }
 
+    if (droppedVisualAttachments) {
+        boundedMetadata[ERROR_CODE_METADATA_KEY] = VISUAL_ATTACHMENT_DELIVERY_REJECTED
+    }
+
     if (hasOversizedOptionalPayload && oversizedPayloadPolicy == OversizedToolPayloadPolicy.REJECT_RESULT) {
         val boundedRejection = ToolResult(
             callId = callId,
@@ -175,9 +173,16 @@ fun ToolResult.boundPayload(
         )
     }
 
+    val finalContent = if (droppedVisualAttachments) {
+        boundedContent.withVisualAttachmentRejectionNotice(contentLimit)
+    } else {
+        boundedContent
+    }
+
     return BoundedToolResult(
         result = copy(
-            content = boundedContent,
+            content = finalContent,
+            isError = isError || droppedVisualAttachments,
             metadata = boundedMetadata,
             structuredContent = boundedStructuredContent,
             sources = boundedSources,
@@ -247,10 +252,20 @@ private fun String.clipWithNotice(maxChars: Int): String {
     return body + TRUNCATION_NOTICE
 }
 
+private fun String.withVisualAttachmentRejectionNotice(maxChars: Int): String {
+    if (maxChars <= 0) return ""
+    val notice = VISUAL_ATTACHMENT_REJECTION_NOTICE
+    if (notice.length >= maxChars) return notice.take(maxChars)
+    val body = take(maxChars - notice.length).trimEnd()
+    return if (body.isBlank()) notice else "$body\n$notice"
+}
+
 private const val TRUNCATION_NOTICE =
     "\n\n[truncated: the result exceeded this app's per-result size limit and was cut here. " +
         "Re-running the same call returns the same truncation — narrow the request instead, " +
         "or continue with the part that arrived.]"
 
 private const val TOOL_RESULT_TOO_LARGE = "tool_result_too_large"
+private const val VISUAL_ATTACHMENT_DELIVERY_REJECTED = "visual_attachment_delivery_rejected"
+private const val VISUAL_ATTACHMENT_REJECTION_NOTICE = "[visual attachments omitted: local delivery byte/count limit exceeded]"
 private const val ERROR_CODE_METADATA_KEY = "error_code"

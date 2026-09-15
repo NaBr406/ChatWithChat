@@ -71,13 +71,23 @@ class ListVisualAssetsToolProvider(
         }
         val includeRaw = arguments["include_raw"]?.jsonPrimitive?.booleanOrNull ?: true
         val includeFolded = arguments["include_folded"]?.jsonPrimitive?.booleanOrNull ?: true
-        val items = repository.listAssets(
+        var items = repository.listAssets(
             chatId = executionContext.chatId,
             query = query,
             limit = limit,
             includeRaw = includeRaw,
             includeFolded = includeFolded
         )
+        if (items.isEmpty() && repository.listAssets(chatId = executionContext.chatId, limit = 1).isEmpty()) {
+            repository.ensureChatIndexed(executionContext.chatId)
+            items = repository.listAssets(
+                chatId = executionContext.chatId,
+                query = query,
+                limit = limit,
+                includeRaw = includeRaw,
+                includeFolded = includeFolded
+            )
+        }
         return ToolResult(
             callId = call.id,
             name = call.name,
