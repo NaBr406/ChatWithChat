@@ -35,11 +35,11 @@ import cn.nabr.chatwithchat.data.dto.openai.response.ResponseFailedEvent
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponseIncompleteEvent
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponsesStreamEvent
 import cn.nabr.chatwithchat.data.model.ClientType
+import cn.nabr.chatwithchat.data.model.usesOfficialDeepSeekApi
 import cn.nabr.chatwithchat.data.network.AnthropicAPI
 import cn.nabr.chatwithchat.data.network.GoogleAPI
 import cn.nabr.chatwithchat.data.network.OpenAIAPI
 import cn.nabr.chatwithchat.data.network.providerEndpoint
-import cn.nabr.chatwithchat.data.repository.usesOfficialDeepSeekApi
 import cn.nabr.chatwithchat.util.formatCurrentDate
 import cn.nabr.chatwithchat.util.formatEpochSecondsAsDate
 import java.time.Clock

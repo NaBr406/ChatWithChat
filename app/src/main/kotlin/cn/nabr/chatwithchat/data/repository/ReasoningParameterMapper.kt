@@ -10,7 +10,7 @@ import cn.nabr.chatwithchat.data.model.isGlmReasoningEffortModel
 import cn.nabr.chatwithchat.data.model.isGlmThinkingModel
 import cn.nabr.chatwithchat.data.model.isGptOssModel
 import cn.nabr.chatwithchat.data.model.reasoningCapabilityForModel
-import java.net.URI
+import cn.nabr.chatwithchat.data.model.usesOfficialDeepSeekApi
 
 internal fun mapReasoningMode(
     platform: PlatformV2,
@@ -75,13 +75,17 @@ internal fun mapReasoningMode(
         }
 
         ClientType.OPENROUTER, ClientType.CUSTOM -> {
-            val usesOfficialDeepSeekThinking = platform.usesOfficialDeepSeekApi()
+            val isOfficialDeepSeekApi = platform.usesOfficialDeepSeekApi()
             ReasoningRequestParameters(
                 mode = mode,
-                openAICompatibleReasoningEffort = effort.takeIf {
-                    mode.isExplicitReasoningEnabled() && capability.capability == ReasoningCapability.EFFORT
+                openAICompatibleReasoningEffort = when {
+                    isOfficialDeepSeekApi -> deepSeekReasoningEffort(mode)
+                    mode.isExplicitReasoningEnabled() && capability.capability == ReasoningCapability.EFFORT -> effort
+                    else -> null
                 },
-                openAICompatibleThinkingType = "enabled".takeIf { usesOfficialDeepSeekThinking }
+                openAICompatibleThinkingType = "enabled".takeIf {
+                    isOfficialDeepSeekApi && mode.isExplicitReasoningEnabled()
+                }
             )
         }
 
@@ -97,6 +101,15 @@ private fun ReasoningMode.toEffort(): String? = when (this) {
 
     ReasoningMode.AUTO,
     ReasoningMode.OFF -> null
+}
+
+private fun deepSeekReasoningEffort(mode: ReasoningMode): String? = when (mode) {
+    ReasoningMode.OFF -> "none"
+    ReasoningMode.LOW -> "low"
+    ReasoningMode.MEDIUM,
+    ReasoningMode.HIGH -> "high"
+    ReasoningMode.MAX -> "max"
+    ReasoningMode.AUTO -> null
 }
 
 private fun ReasoningMode.toAnthropicBudgetTokens(): Int? = when (this) {
@@ -128,12 +141,6 @@ private fun glmReasoningEffort(model: String, mode: ReasoningMode): String? {
         ReasoningMode.AUTO,
         ReasoningMode.OFF -> null
     }
-}
-
-internal fun PlatformV2.usesOfficialDeepSeekApi(): Boolean {
-    if (compatibleType != ClientType.CUSTOM || !model.contains("deepseek", ignoreCase = true)) return false
-    val host = runCatching { URI(apiUrl.trim()).host }.getOrNull()
-    return host.equals("api.deepseek.com", ignoreCase = true)
 }
 
 private const val ANTHROPIC_RESPONSE_TOKEN_HEADROOM = 4_096

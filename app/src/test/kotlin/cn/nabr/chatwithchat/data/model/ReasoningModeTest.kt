@@ -39,12 +39,34 @@ class ReasoningModeTest {
     }
 
     @Test
-    fun `deepseek v4 uses model default reasoning without fabricated effort levels`() {
+    fun `unofficial deepseek endpoint uses model default reasoning without fabricated effort levels`() {
         val platform = platform(ClientType.CUSTOM, "deepseek-v4")
 
         assertEquals(ReasoningCapability.DEFAULT_ONLY, platform.reasoningCapabilityForModel().capability)
         assertTrue(platform.reasoningModesForModel().isEmpty())
         assertEquals(ReasoningMode.AUTO, platform.coerceReasoningModeForModel(ReasoningMode.HIGH))
+    }
+
+    @Test
+    fun `official deepseek api exposes effort modes`() {
+        val platform = platform(
+            clientType = ClientType.CUSTOM,
+            model = "deepseek-v4-pro",
+            apiUrl = "https://api.deepseek.com/v1"
+        )
+
+        assertEquals(ReasoningCapability.EFFORT, platform.reasoningCapabilityForModel().capability)
+        assertEquals(
+            listOf(
+                ReasoningMode.AUTO,
+                ReasoningMode.OFF,
+                ReasoningMode.LOW,
+                ReasoningMode.MEDIUM,
+                ReasoningMode.HIGH,
+                ReasoningMode.MAX
+            ),
+            platform.reasoningModesForModel()
+        )
     }
 
     @Test
@@ -124,11 +146,12 @@ class ReasoningModeTest {
     private fun platform(
         clientType: ClientType,
         model: String,
-        reasoning: Boolean = false
+        reasoning: Boolean = false,
+        apiUrl: String = "https://example.test"
     ) = PlatformV2(
         name = clientType.name,
         compatibleType = clientType,
-        apiUrl = "https://example.test",
+        apiUrl = apiUrl,
         model = model,
         reasoning = reasoning
     )

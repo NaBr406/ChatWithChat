@@ -117,7 +117,7 @@ class ReasoningParameterMapperTest {
     }
 
     @Test
-    fun `official deepseek api explicitly enables thinking for deepseek models`() {
+    fun `official deepseek api keeps auto on model defaults`() {
         val params = mapReasoningMode(
             platform = platform(
                 clientType = ClientType.CUSTOM,
@@ -127,8 +127,50 @@ class ReasoningParameterMapperTest {
             requestedMode = ReasoningMode.AUTO
         )
 
-        assertEquals("enabled", params.openAICompatibleThinkingType)
+        assertNull(params.openAICompatibleThinkingType)
         assertNull(params.openAICompatibleReasoningEffort)
+    }
+
+    @Test
+    fun `official deepseek api maps explicit strengths to effort`() {
+        val cases = listOf(
+            ReasoningMode.LOW to "low",
+            ReasoningMode.MEDIUM to "high",
+            ReasoningMode.HIGH to "high",
+            ReasoningMode.MAX to "max"
+        )
+
+        cases.forEach { (requestedMode, expectedEffort) ->
+            val params = mapReasoningMode(
+                platform = platform(
+                    clientType = ClientType.CUSTOM,
+                    model = "deepseek-flash",
+                    apiUrl = "https://api.deepseek.com/v1"
+                ),
+                requestedMode = requestedMode
+            )
+
+            assertEquals(requestedMode, params.mode)
+            assertEquals(expectedEffort, params.openAICompatibleReasoningEffort)
+            assertEquals("enabled", params.openAICompatibleThinkingType)
+            assertTrue(params.hasExplicitReasoning)
+        }
+    }
+
+    @Test
+    fun `official deepseek api maps off to none without enabling thinking`() {
+        val params = mapReasoningMode(
+            platform = platform(
+                clientType = ClientType.CUSTOM,
+                model = "deepseek-flash",
+                apiUrl = "https://api.deepseek.com/v1"
+            ),
+            requestedMode = ReasoningMode.OFF
+        )
+
+        assertEquals(ReasoningMode.OFF, params.mode)
+        assertEquals("none", params.openAICompatibleReasoningEffort)
+        assertNull(params.openAICompatibleThinkingType)
     }
 
     @Test

@@ -1,6 +1,7 @@
 package cn.nabr.chatwithchat.data.model
 
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
+import java.net.URI
 
 enum class ReasoningMode(val storageValue: String) {
     AUTO("auto"),
@@ -82,6 +83,7 @@ fun PlatformV2.reasoningCapabilityForModel(modelId: String = model): ReasoningCa
     }
 
     ClientType.OPENROUTER, ClientType.CUSTOM, ClientType.OLLAMA -> when {
+        usesOfficialDeepSeekApi(modelId) -> effortCapability(includeMax = true, includeOff = true)
         isRecognizedReasoningFamily(modelId) -> defaultOnlyCapability()
         isKnownOrdinaryModel(modelId) -> unsupportedCapability()
         else -> unknownCapability()
@@ -237,6 +239,12 @@ private fun isDefaultOnlyReasoningModel(modelId: String): Boolean {
 
 private fun isDeepSeekModel(modelId: String): Boolean =
     modelId.contains("deepseek", ignoreCase = true)
+
+internal fun PlatformV2.usesOfficialDeepSeekApi(modelId: String = model): Boolean {
+    if (compatibleType != ClientType.CUSTOM || !isDeepSeekModel(modelId)) return false
+    val host = runCatching { URI(apiUrl.trim()).host }.getOrNull()
+    return host.equals("api.deepseek.com", ignoreCase = true)
+}
 
 private fun isKnownOrdinaryModel(modelId: String): Boolean {
     val normalized = modelId.trim().lowercase()

@@ -446,7 +446,7 @@ class ChatRepositoryImplTest {
             states.withoutUsageUpdates()
         )
         val request = openAIAPI.chatCompletionRequests.single()
-        assertEquals("enabled", request.thinking?.type)
+        assertNull(request.thinking)
         assertNull(request.temperature)
         assertNull(request.topP)
     }
@@ -497,7 +497,7 @@ class ChatRepositoryImplTest {
             states.withoutUsageUpdates()
         )
         val request = openAIAPI.chatCompletionRequests.single()
-        assertEquals("enabled", request.thinking?.type)
+        assertNull(request.thinking)
         assertNull(request.temperature)
         assertNull(request.topP)
         assertEquals(ChatCompletionToolChoice.Auto, request.toolChoice)
@@ -1140,7 +1140,7 @@ class ChatRepositoryImplTest {
             states.withoutUsageUpdates()
         )
         assertEquals(2, openAIAPI.chatCompletionRequests.size)
-        assertTrue(openAIAPI.chatCompletionRequests.all { request -> request.thinking?.type == "enabled" })
+        assertTrue(openAIAPI.chatCompletionRequests.all { request -> request.thinking == null })
         assertTrue(openAIAPI.chatCompletionRequests.all { request -> request.temperature == null && request.topP == null })
         assertTrue(
             openAIAPI.chatCompletionRequests[1].messages.any { message ->
