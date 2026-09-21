@@ -141,6 +141,7 @@ fun ChatScreen(
     val pendingMessageEditAttachmentBatches by chatViewModel.pendingMessageEditAttachmentBatches.collectAsStateWithLifecycle()
     val toolProgressStates by chatViewModel.toolProgressStates.collectAsStateWithLifecycle()
     val pendingToolApproval by chatViewModel.pendingToolApproval.collectAsStateWithLifecycle()
+    val pendingUserQuestion by chatViewModel.pendingUserQuestion.collectAsStateWithLifecycle()
     val isChatTitleDialogOpen by chatViewModel.isChatTitleDialogOpen.collectAsStateWithLifecycle()
     val messageEditSession by chatViewModel.messageEditSession.collectAsStateWithLifecycle()
     val isSelectTextSheetOpen by chatViewModel.isSelectTextSheetOpen.collectAsStateWithLifecycle()
@@ -286,6 +287,14 @@ fun ChatScreen(
             onDeny = { chatViewModel.denyToolApproval(pending.requestId) },
             canApproveForSession = pending.canGrantForSession,
             onApproveForSession = { chatViewModel.approveToolApprovalForSession(pending.requestId) }
+        )
+    }
+
+    pendingUserQuestion?.let { pending ->
+        AskUserQuestionDialog(
+            pending = pending,
+            onSubmit = { answers -> chatViewModel.submitUserQuestion(pending.requestId, answers) },
+            onCancel = { chatViewModel.cancelUserQuestion(pending.requestId) }
         )
     }
 

@@ -70,6 +70,7 @@ private const val CURRENT_DATETIME_TOOL = "current_datetime"
 private const val DEVICE_LOCATION_TOOL = "device_location"
 private const val ADD_SCHEDULE_TOOL = "add_schedule"
 private const val SET_ALARM_TOOL = "set_alarm"
+private const val ASK_USER_QUESTION_TOOL = "ask_user_question"
 private const val TOOL_PERMISSION_DENIED = "tool_permission_denied"
 private const val MAX_VISIBLE_TOOL_ROWS = 4
 
@@ -276,6 +277,7 @@ private fun ChatViewModel.ToolProgressState.primaryText(): String = when (status
         DEVICE_LOCATION_TOOL -> stringResource(R.string.tool_device_location_running)
         ADD_SCHEDULE_TOOL -> stringResource(R.string.tool_add_schedule_running)
         SET_ALARM_TOOL -> stringResource(R.string.tool_set_alarm_running)
+        ASK_USER_QUESTION_TOOL -> stringResource(R.string.tool_ask_user_question_running)
         else -> stringResource(R.string.tool_running)
     }
     ChatViewModel.ToolProgressStatus.Finished -> when (toolName) {
@@ -285,6 +287,7 @@ private fun ChatViewModel.ToolProgressState.primaryText(): String = when (status
         DEVICE_LOCATION_TOOL -> stringResource(R.string.tool_device_location_finished)
         ADD_SCHEDULE_TOOL -> stringResource(R.string.tool_add_schedule_finished)
         SET_ALARM_TOOL -> stringResource(R.string.tool_set_alarm_finished)
+        ASK_USER_QUESTION_TOOL -> stringResource(R.string.tool_ask_user_question_finished)
         else -> stringResource(R.string.tool_finished)
     }
     ChatViewModel.ToolProgressStatus.Failed -> when (toolName) {
@@ -294,6 +297,7 @@ private fun ChatViewModel.ToolProgressState.primaryText(): String = when (status
         DEVICE_LOCATION_TOOL -> stringResource(R.string.tool_device_location_failed)
         ADD_SCHEDULE_TOOL -> stringResource(R.string.tool_add_schedule_failed)
         SET_ALARM_TOOL -> stringResource(R.string.tool_set_alarm_failed)
+        ASK_USER_QUESTION_TOOL -> stringResource(R.string.tool_ask_user_question_failed)
         else -> stringResource(R.string.tool_failed)
     }
 }

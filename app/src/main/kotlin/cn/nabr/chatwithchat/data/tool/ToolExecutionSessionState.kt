@@ -11,7 +11,8 @@ package cn.nabr.chatwithchat.data.tool
 class ToolExecutionSessionState internal constructor(
     val chatId: Int = 0,
     val turnKey: String? = null,
-    val supportsVisualInput: Boolean = true
+    val supportsVisualInput: Boolean = true,
+    val supportsUserInteraction: Boolean = false
 ) {
     private val valuesByKey = mutableMapOf<String, Set<String>>()
 

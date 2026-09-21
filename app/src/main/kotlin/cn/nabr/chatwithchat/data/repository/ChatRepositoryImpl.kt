@@ -609,6 +609,7 @@ class ChatRepositoryImpl @Inject constructor(
             chatId = userMessages.approvalChatId(),
             turnKey = userMessages.memoryTurnKey(),
             supportsVisualInput = platform.supportsVisualAssetInput(),
+            supportsUserInteraction = true,
             requestModel = { toolPrompt, reasoningPolicy ->
                 val visualMessages = syntheticVisualMessages(
                     sourceMessages = userMessages,
@@ -1044,7 +1045,8 @@ class ChatRepositoryImpl @Inject constructor(
         val toolExecutionSession = toolLoopOrchestrator.createExecutionSession(
             chatId = userMessages.approvalChatId(),
             turnKey = userMessages.memoryTurnKey(),
-            supportsVisualInput = platform.supportsVisualAssetInput()
+            supportsVisualInput = platform.supportsVisualAssetInput(),
+            supportsUserInteraction = true
         )
         val roundStateMachine = ToolRoundStateMachine(toolScope.definitions)
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)
@@ -1484,7 +1486,8 @@ class ChatRepositoryImpl @Inject constructor(
         val toolExecutionSession = toolLoopOrchestrator.createExecutionSession(
             chatId = userMessages.approvalChatId(),
             turnKey = userMessages.memoryTurnKey(),
-            supportsVisualInput = platform.supportsVisualAssetInput()
+            supportsVisualInput = platform.supportsVisualAssetInput(),
+            supportsUserInteraction = true
         )
         val roundStateMachine = ToolRoundStateMachine(toolScope.definitions)
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)
@@ -1922,7 +1925,8 @@ class ChatRepositoryImpl @Inject constructor(
         val toolExecutionSession = toolLoopOrchestrator.createExecutionSession(
             chatId = userMessages.approvalChatId(),
             turnKey = userMessages.memoryTurnKey(),
-            supportsVisualInput = platform.supportsVisualAssetInput()
+            supportsVisualInput = platform.supportsVisualAssetInput(),
+            supportsUserInteraction = true
         )
         val roundStateMachine = ToolRoundStateMachine(toolScope.definitions)
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)
@@ -2291,7 +2295,8 @@ class ChatRepositoryImpl @Inject constructor(
         val toolExecutionSession = toolLoopOrchestrator.createExecutionSession(
             chatId = userMessages.approvalChatId(),
             turnKey = userMessages.memoryTurnKey(),
-            supportsVisualInput = platform.supportsVisualAssetInput()
+            supportsVisualInput = platform.supportsVisualAssetInput(),
+            supportsUserInteraction = true
         )
         val roundStateMachine = ToolRoundStateMachine(toolScope.definitions)
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)

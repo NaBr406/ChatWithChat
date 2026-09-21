@@ -15,7 +15,8 @@ class BuiltInTools(
     private val alarmLauncher: AlarmLauncher = UnavailableAlarmLauncher,
     private val stickerRepository: StickerRepository? = null,
     private val memoryProposalStore: MemoryProposalStore = InMemoryMemoryProposalStore(),
-    private val visualAssetRepository: VisualAssetRepository? = null
+    private val visualAssetRepository: VisualAssetRepository? = null,
+    private val askUserQuestionBroker: AskUserQuestionBroker = AskUserQuestionBroker()
 ) {
     fun providers(): List<ToolProvider> = buildList {
         add(WebSearchToolProvider(webSearchRepository))
@@ -25,6 +26,7 @@ class BuiltInTools(
         add(AddScheduleToolProvider(scheduleEventLauncher))
         add(SetAlarmToolProvider(alarmLauncher))
         add(ProposeMemoryChangeToolProvider(memoryProposalStore))
+        add(AskUserQuestionToolProvider(askUserQuestionBroker))
         stickerRepository?.let { repository ->
             add(SearchStickersToolProvider(repository))
             add(SendStickerToolProvider(repository))

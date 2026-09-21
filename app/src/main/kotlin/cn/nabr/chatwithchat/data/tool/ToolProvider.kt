@@ -2,6 +2,11 @@ package cn.nabr.chatwithchat.data.tool
 
 import cn.nabr.chatwithchat.data.database.entity.MessageSourceMetadata
 
+enum class ToolInteractionMode {
+    HeadlessAllowed,
+    ForegroundRequired
+}
+
 interface ToolProvider {
     val definition: ToolDefinition
 
@@ -12,6 +17,12 @@ interface ToolProvider {
         get() = ToolDiscoveryMetadata()
 
     val securityPolicy: ToolSecurityPolicy
+
+    /**
+     * Foreground-required tools may suspend on UI interaction and must never run in an unattended loop.
+     */
+    val interactionMode: ToolInteractionMode
+        get() = ToolInteractionMode.HeadlessAllowed
 
     /**
      * Opaque key naming what a conversation-scoped approval grant covers, or `null` to forbid grants.

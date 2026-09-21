@@ -309,6 +309,66 @@ data class ToolDefinition(
             )
         )
 
+        val AskUserQuestion = ToolDefinition(
+            name = "ask_user_question",
+            description = "当缺少会实质影响结果、且无法从上下文合理推断的关键选择时，暂停并向用户提出 1 到 4 个简短问题。仅在问题会阻塞正确执行时使用，不要用于例行确认；每个问题提供 2 到 4 个互斥或有明确含义的选项。",
+            parameters = Parameters(
+                properties = mapOf(
+                    "questions" to Parameter(
+                        type = "array",
+                        description = "要向用户提出的问题列表，最多 4 个。",
+                        items = Parameter(
+                            type = "object",
+                            properties = mapOf(
+                                "header" to Parameter(
+                                    type = "string",
+                                    description = "简短的问题标签，最多 24 个字符。",
+                                    minLength = 1,
+                                    maxLength = 24
+                                ),
+                                "question" to Parameter(
+                                    type = "string",
+                                    description = "完整、具体、可以直接回答的问题。",
+                                    minLength = 1,
+                                    maxLength = 600
+                                ),
+                                "multiSelect" to Parameter(
+                                    type = "boolean",
+                                    description = "是否允许同时选择多个选项，默认 false。"
+                                ),
+                                "options" to Parameter(
+                                    type = "array",
+                                    description = "该问题的候选选项，必须提供 2 到 4 个。",
+                                    items = Parameter(
+                                        type = "object",
+                                        properties = mapOf(
+                                            "label" to Parameter(
+                                                type = "string",
+                                                description = "简洁的选项名称。",
+                                                minLength = 1,
+                                                maxLength = 80
+                                            ),
+                                            "description" to Parameter(
+                                                type = "string",
+                                                description = "说明该选项的含义、影响或取舍。",
+                                                minLength = 1,
+                                                maxLength = 240
+                                            )
+                                        ),
+                                        required = listOf("label", "description"),
+                                        additionalProperties = false
+                                    )
+                                )
+                            ),
+                            required = listOf("header", "question", "options"),
+                            additionalProperties = false
+                        )
+                    )
+                ),
+                required = listOf("questions")
+            )
+        )
+
         val DiscoverTools = ToolDefinition(
             name = "discover_tools",
             description = "为当前尚不可用的能力查找已启用的按需工具。返回的工具会从下一次响应开始可用。",
@@ -336,7 +396,8 @@ data class ToolDefinition(
             SendSticker,
             ViewImage,
             ListVisualAssets,
-            ProposeMemoryChange
+            ProposeMemoryChange,
+            AskUserQuestion
         )
     }
 }

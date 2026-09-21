@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Alarm
 import androidx.compose.material.icons.outlined.Check
@@ -428,6 +429,7 @@ private fun ToolCatalogEntry.settingsTitle(): String = when (settings.presentati
     "device_location" -> stringResource(R.string.tool_device_location_title)
     "add_schedule" -> stringResource(R.string.tool_add_schedule_title)
     "set_alarm" -> stringResource(R.string.tool_set_alarm_title)
+    "ask_user_question" -> stringResource(R.string.tool_ask_user_question_title)
     else -> definition.name.replace('_', ' ').ifBlank { stringResource(R.string.tool_generic_title) }
 }
 
@@ -439,6 +441,7 @@ private fun ToolCatalogEntry.settingsDescription(): String = when (settings.pres
     "device_location" -> stringResource(R.string.tool_device_location_description)
     "add_schedule" -> stringResource(R.string.tool_add_schedule_description)
     "set_alarm" -> stringResource(R.string.tool_set_alarm_description)
+    "ask_user_question" -> stringResource(R.string.tool_ask_user_question_description)
     else -> definition.description.ifBlank { stringResource(R.string.tool_generic_description) }
 }
 
@@ -449,6 +452,7 @@ private fun ToolCatalogEntry.settingsIcon(): ImageVector = when (settings.iconKe
     "location" -> Icons.Outlined.LocationOn
     "event" -> Icons.Outlined.Event
     "alarm" -> Icons.Outlined.Alarm
+    "help" -> Icons.AutoMirrored.Outlined.HelpOutline
     else -> Icons.Outlined.Extension
 }
 

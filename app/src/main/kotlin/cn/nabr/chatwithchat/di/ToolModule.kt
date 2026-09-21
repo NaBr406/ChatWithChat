@@ -14,6 +14,7 @@ import cn.nabr.chatwithchat.data.tool.AndroidAlarmLauncher
 import cn.nabr.chatwithchat.data.tool.AndroidDeviceLocationReader
 import cn.nabr.chatwithchat.data.tool.AndroidScheduleEventLauncher
 import cn.nabr.chatwithchat.data.tool.AndroidToolPermissionChecker
+import cn.nabr.chatwithchat.data.tool.AskUserQuestionBroker
 import cn.nabr.chatwithchat.data.tool.BuiltInTools
 import cn.nabr.chatwithchat.data.tool.JsonToolCallParser
 import cn.nabr.chatwithchat.data.tool.NoOpToolAuditSink
@@ -45,6 +46,7 @@ object ToolModule {
         stickerRepository: StickerRepository,
         memoryProposalStore: MemoryProposalStore,
         visualAssetRepository: VisualAssetRepository,
+        askUserQuestionBroker: AskUserQuestionBroker,
         @ApplicationContext context: Context
     ): List<ToolProvider> = BuiltInTools(
         webSearchRepository,
@@ -54,7 +56,8 @@ object ToolModule {
         AndroidAlarmLauncher(context),
         stickerRepository,
         memoryProposalStore,
-        visualAssetRepository
+        visualAssetRepository,
+        askUserQuestionBroker
     ).providers()
 
     @Provides

@@ -83,6 +83,13 @@ class ToolExecutor(
             audit(ToolAuditStatus.FAILED, trustedContext, auditBinding)
             return result.boundForExecution(maxResultChars)
         }
+        val interactionMode = toolRegistry.providerFor(call.name)?.interactionMode
+            ?: ToolInteractionMode.HeadlessAllowed
+        if (interactionMode == ToolInteractionMode.ForegroundRequired && !sessionState.supportsUserInteraction) {
+            audit(ToolAuditStatus.FAILED, trustedContext, auditBinding)
+            return call.errorResult(TOOL_USER_INTERACTION_UNAVAILABLE, TOOL_USER_INTERACTION_UNAVAILABLE)
+                .boundForExecution(maxResultChars)
+        }
 
         return try {
             val missingPermissions = permissionChecker.missingRequirements(toolRegistry.permissionRequirementsFor(call.name))
@@ -100,18 +107,25 @@ class ToolExecutor(
                 audit(ToolAuditStatus.APPROVED, trustedContext, auditBinding)
             }
 
+            val executeRegistered: suspend () -> ToolResult = {
+                runCatching {
+                    toolRegistry.execute(call, config, trustedContext)
+                        ?: call.errorResult("unknown_tool:${call.name}", UNKNOWN_TOOL)
+                }.getOrElse { throwable ->
+                    if (throwable is CancellationException || throwable is ToolPermissionDeniedException) throw throwable
+                    call.errorResult(
+                        "tool_failed:${throwable.message ?: throwable::class.simpleName.orEmpty()}",
+                        TOOL_FAILED
+                    )
+                }.boundForExecution(maxResultChars)
+            }
             val result = withContext(dispatcher) {
-                withTimeout(config.timeoutMillis(policy)) {
-                    runCatching {
-                        toolRegistry.execute(call, config, trustedContext)
-                            ?: call.errorResult("unknown_tool:${call.name}", UNKNOWN_TOOL)
-                    }.getOrElse { throwable ->
-                        if (throwable is CancellationException || throwable is ToolPermissionDeniedException) throw throwable
-                        call.errorResult(
-                            "tool_failed:${throwable.message ?: throwable::class.simpleName.orEmpty()}",
-                            TOOL_FAILED
-                        )
-                    }.boundForExecution(maxResultChars)
+                if (interactionMode == ToolInteractionMode.ForegroundRequired) {
+                    executeRegistered()
+                } else {
+                    withTimeout(config.timeoutMillis(policy)) {
+                        executeRegistered()
+                    }
                 }
             }
             if (!result.isError && result.visualAttachments.isNotEmpty() && !sessionState.supportsVisualInput) {
@@ -275,6 +289,7 @@ private fun ToolApprovalStatus.auditStatus(): ToolAuditStatus = when (this) {
 private const val TOOL_ARGUMENTS_INVALID = "tool_arguments_invalid"
 private const val TOOL_APPROVAL_INVALID = "tool_approval_invalid"
 private const val TOOL_EXECUTION_CONTEXT_INVALID = "tool_execution_context_invalid"
+private const val TOOL_USER_INTERACTION_UNAVAILABLE = "tool_user_interaction_unavailable"
 private const val TOOL_FAILED = "tool_failed"
 private const val TOOL_TIMEOUT = "tool_timeout"
 private const val TOOL_UNAVAILABLE = "tool_unavailable"

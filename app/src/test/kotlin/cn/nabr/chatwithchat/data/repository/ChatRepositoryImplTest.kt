@@ -1787,7 +1787,11 @@ class ChatRepositoryImplTest {
         assertTrue(webSearchRepository.queries.isEmpty())
         assertEquals(2, openAIAPI.streamResponsesCalls)
         assertEquals(
-            listOf(ToolDefinition.DiscoverTools.name, ToolDefinition.CurrentDateTime.name),
+            listOf(
+                ToolDefinition.DiscoverTools.name,
+                ToolDefinition.AskUserQuestion.name,
+                ToolDefinition.CurrentDateTime.name
+            ),
             openAIAPI.responsesRequests[0].tools.orEmpty().map { tool -> tool.name }
         )
         assertFalse(openAIAPI.responsesRequests[0].instructions.orEmpty().contains("web_search"))

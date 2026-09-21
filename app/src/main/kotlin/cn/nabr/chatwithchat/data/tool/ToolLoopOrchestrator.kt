@@ -40,13 +40,15 @@ class ToolLoopOrchestrator(
     fun createExecutionSession(
         chatId: Int = 0,
         turnKey: String? = null,
-        supportsVisualInput: Boolean = true
+        supportsVisualInput: Boolean = true,
+        supportsUserInteraction: Boolean = false
     ): ToolLoopExecutionSession = ToolLoopExecutionSession(
         config = config,
         policyFor = toolExecutor::policyFor,
         chatId = chatId,
         turnKey = turnKey,
-        supportsVisualInput = supportsVisualInput
+        supportsVisualInput = supportsVisualInput,
+        supportsUserInteraction = supportsUserInteraction
     )
 
     fun createToolScope(
@@ -104,6 +106,7 @@ class ToolLoopOrchestrator(
         chatId: Int = 0,
         turnKey: String? = null,
         supportsVisualInput: Boolean = true,
+        supportsUserInteraction: Boolean = false,
         onToolResults: suspend (List<ToolResult>) -> Unit = {},
         requestModel: suspend (
             toolPrompt: String,
@@ -118,7 +121,7 @@ class ToolLoopOrchestrator(
         val allCalls = mutableListOf<ToolCall>()
         val allResults = mutableListOf<ToolResult>()
         var hadToolInteraction = false
-        val executionSession = createExecutionSession(chatId, turnKey, supportsVisualInput)
+        val executionSession = createExecutionSession(chatId, turnKey, supportsVisualInput, supportsUserInteraction)
         val roundStateMachine = ToolRoundStateMachine(scope.definitions)
 
         var allowedRounds = maxRounds
@@ -529,11 +532,12 @@ class ToolLoopExecutionSession internal constructor(
     policyFor: (String) -> ToolPolicy,
     chatId: Int = 0,
     turnKey: String? = null,
-    supportsVisualInput: Boolean = true
+    supportsVisualInput: Boolean = true,
+    supportsUserInteraction: Boolean = false
 ) {
     private val toolBudget = ToolBudgetState(config, policyFor)
     private val resultPayloadBudget = ToolResultPayloadBudget(config)
-    internal val state = ToolExecutionSessionState(chatId, turnKey, supportsVisualInput)
+    internal val state = ToolExecutionSessionState(chatId, turnKey, supportsVisualInput, supportsUserInteraction)
 
     internal fun select(calls: List<ToolCall>): Pair<List<ToolCall>, List<ToolResult>> {
         val selection = toolBudget.select(calls)

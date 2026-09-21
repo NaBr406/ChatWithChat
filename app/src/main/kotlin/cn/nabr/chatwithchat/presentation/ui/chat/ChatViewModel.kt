@@ -53,6 +53,8 @@ import cn.nabr.chatwithchat.data.textskill.TextSkillVariantKey
 import cn.nabr.chatwithchat.data.textskill.selectionKey
 import cn.nabr.chatwithchat.data.textskill.toSelectableTextSkills
 import cn.nabr.chatwithchat.data.title.ChatTitleGenerationService
+import cn.nabr.chatwithchat.data.tool.AskUserQuestionAnswer
+import cn.nabr.chatwithchat.data.tool.AskUserQuestionBroker
 import cn.nabr.chatwithchat.data.tool.ToolApprovalBroker
 import cn.nabr.chatwithchat.data.tool.ToolDefinition
 import cn.nabr.chatwithchat.di.ApplicationScope
@@ -97,6 +99,7 @@ class ChatViewModel @Inject constructor(
     private val chatTitleGenerationService: ChatTitleGenerationService,
     private val attachmentUploadCoordinator: AttachmentUploadCoordinator,
     private val toolApprovalBroker: ToolApprovalBroker,
+    private val askUserQuestionBroker: AskUserQuestionBroker,
     private val contextCheckpointRepository: ContextCheckpointRepository,
     private val textSkillPackageRepository: TextSkillPackageRepository,
     private val textSkillInvocationCompiler: TextSkillInvocationCompiler,
@@ -302,6 +305,10 @@ class ChatViewModel @Inject constructor(
      */
     val pendingToolApproval: StateFlow<ToolApprovalBroker.PendingApproval?> = toolApprovalBroker.queued
         .map { waiting -> waiting.firstOrNull { approval -> approval.chatId == chatRoomId } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    val pendingUserQuestion: StateFlow<AskUserQuestionBroker.PendingQuestion?> = askUserQuestionBroker.queued
+        .map { waiting -> waiting.firstOrNull { question -> question.chatId == chatRoomId } }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     // Used for text data to show in SelectText Bottom Sheet
@@ -784,6 +791,14 @@ class ChatViewModel @Inject constructor(
 
     fun denyToolApproval(requestId: String) {
         toolApprovalBroker.deny(requestId)
+    }
+
+    fun submitUserQuestion(requestId: String, answers: List<AskUserQuestionAnswer>) {
+        askUserQuestionBroker.submit(requestId, answers)
+    }
+
+    fun cancelUserQuestion(requestId: String) {
+        askUserQuestionBroker.cancel(requestId)
     }
 
     fun updateChatTitle(title: String) {
