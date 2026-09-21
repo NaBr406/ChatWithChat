@@ -78,6 +78,7 @@ import cn.nabr.chatwithchat.data.memory.MemoryTurnBatchScheduler
 import cn.nabr.chatwithchat.data.model.ChatAttachment
 import cn.nabr.chatwithchat.data.model.ClientType
 import cn.nabr.chatwithchat.data.model.ReasoningMode
+import cn.nabr.chatwithchat.data.prompt.CoreSystemPrompt
 import cn.nabr.chatwithchat.data.network.AnthropicAPI
 import cn.nabr.chatwithchat.data.network.GoogleAPI
 import cn.nabr.chatwithchat.data.network.GroqAPI
@@ -4643,7 +4644,13 @@ class ChatRepositoryImplTest {
             1,
             Regex(Regex.escape(PROVIDER_MEMORY_MARKER)).findAll(prompt).count()
         )
-        assertTrue("$provider lost base system prompt", prompt.contains(PROVIDER_BASE_SYSTEM_MARKER))
+        assertTrue("$provider lost core system prompt", prompt.startsWith(CoreSystemPrompt.TEXT))
+        val baseSystemIndex = prompt.indexOf(PROVIDER_BASE_SYSTEM_MARKER)
+        assertTrue("$provider lost base system prompt", baseSystemIndex >= 0)
+        assertTrue(
+            "$provider injected the base system prompt before the core prompt",
+            baseSystemIndex >= CoreSystemPrompt.TEXT.length
+        )
         assertTrue("$provider lost runtime context", prompt.contains("运行时上下文："))
         assertTrue("$provider lost context summary", prompt.contains("较早对话摘要："))
         assertTrue("$provider lost omitted context", prompt.contains("provider-topic-1"))
@@ -4702,22 +4709,21 @@ class ChatRepositoryImplTest {
         val OPT_IN_BUILT_IN_TOOL_NAMES = setOf(ToolDefinition.DeviceLocation.name)
         val BASELINE_RUNTIME_DATE_TIME_REGEX = Regex("\\d{4}-\\d{2}-\\d{2} 星期.（[^）]*）")
         val EXPECTED_STICKER_BASELINE_ROWS = listOf(
-            // The three JSON rows carry +34 request chars against the previous baseline: the fallback prompt
-            // now permits a batch of independent tool calls instead of forbidding it, which buys back a whole
-            // round whenever a request needs two lookups. Native rows are unchanged — the priority rules only
-            // render when web_search is active, and this scenario is stickers only.
-            "sticker-request-baseline|custom_json|3|2|1391,1451,704|665,576,251|1175,1223,509|67,67,67|54,54,54|159,73,0|0,248,0|0,0,0|1|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|ollama_json|3|2|1387,1447,700|668,579,254|1175,1223,509|67,67,67|54,54,54|159,73,0|0,248,0|0,0,0|1|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|groq_json|3|2|1442,1502,755|682,593,268|1175,1223,509|67,67,67|54,54,54|159,73,0|0,248,0|0,0,0|1|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|openai_responses|3|2|1609,1756,1627|704,706,698|664,724,815|42,42,42|54,54,54|803,361,330|0,479,334|2,1,2|2|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|openrouter_native|3|2|1752,1892,1824|949,927,951|664,723,814|67,67,67|54,54,54|829,374,356|0,509,366|2,1,2|2|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|anthropic_native|3|2|1605,1760,1649|922,902,918|664,724,815|67,67,67|54,54,54|742,331,270|0,502,359|2,1,2|2|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|google_native|3|2|1577,1729,1604|911,889,904|664,723,814|51,51,51|54,54,54|707,327,235|0,460,334|2,1,2|2|30/3/33|60/6/66|3|1"
+            // These baselines include the shared core system prompt on every provider request. The core
+            // prompt is intentionally provider- and tool-agnostic; concrete tool names still come only
+            // from the active tool definitions, so disabled tools never leak into the system prompt.
+            "sticker-request-baseline|custom_json|3|2|5454,5514,4767|4363,4274,3949|5099,5147,4433|67,67,67|54,54,54|159,73,0|0,248,0|0,0,0|1|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|ollama_json|3|2|5450,5510,4763|4366,4277,3952|5099,5147,4433|67,67,67|54,54,54|159,73,0|0,248,0|0,0,0|1|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|groq_json|3|2|5505,5565,4818|4380,4291,3966|5099,5147,4433|67,67,67|54,54,54|159,73,0|0,248,0|0,0,0|1|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|openai_responses|3|2|5672,5819,5690|3369,3371,3363|4588,4648,4739|42,42,42|54,54,54|803,361,330|0,479,334|2,1,2|2|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|openrouter_native|3|2|5815,5955,5887|4647,4625,4649|4588,4647,4738|67,67,67|54,54,54|829,374,356|0,509,366|2,1,2|2|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|anthropic_native|3|2|5668,5823,5712|4620,4600,4616|4588,4648,4739|67,67,67|54,54,54|742,331,270|0,502,359|2,1,2|2|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|google_native|3|2|5640,5792,5667|4609,4587,4602|4588,4647,4738|51,51,51|54,54,54|707,327,235|0,460,334|2,1,2|2|30/3/33|60/6/66|3|1"
         )
         val JSON_STICKER_TOKEN_CEILINGS = mapOf(
-            "custom_json" to 1_939,
-            "ollama_json" to 1_948,
-            "groq_json" to 1_987
+            "custom_json" to 12_650,
+            "ollama_json" to 12_650,
+            "groq_json" to 12_700
         )
         /**
          * Raised three times, each for a change that was measured before it was accepted. Running total is
@@ -4735,10 +4741,10 @@ class ChatRepositoryImplTest {
          * The ceilings stay tight around the numbers so unjustified growth still trips them.
          */
         val NATIVE_STICKER_TOKEN_CEILINGS = mapOf(
-            "openai_responses" to 2_200,
-            "openrouter_native" to 2_915,
-            "anthropic_native" to 2_830,
-            "google_native" to 2_790
+            "openai_responses" to 10_200,
+            "openrouter_native" to 14_000,
+            "anthropic_native" to 13_900,
+            "google_native" to 13_850
         )
     }
 

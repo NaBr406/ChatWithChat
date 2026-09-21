@@ -120,6 +120,7 @@ import cn.nabr.chatwithchat.data.network.GroqAPI
 import cn.nabr.chatwithchat.data.network.NetworkClient
 import cn.nabr.chatwithchat.data.network.OpenAIAPI
 import cn.nabr.chatwithchat.data.network.providerEndpoint
+import cn.nabr.chatwithchat.data.prompt.CoreSystemPrompt
 import cn.nabr.chatwithchat.data.sticker.StickerPresentationArtifact
 import cn.nabr.chatwithchat.data.sticker.toMessageStickerRef
 import cn.nabr.chatwithchat.data.token.TokenCacheStatus
@@ -1006,7 +1007,7 @@ class ChatRepositoryImpl @Inject constructor(
         val nativeExchange = nativeCompactionExchangeFor(userMessages, platform, conversationSnapshot)
         val prepared = withContext(Dispatchers.Default) {
             val inputMessages = buildResponsesInputMessages(conversationSnapshot.context.turns, platform.uid)
-            val instructions = mergePromptSections(
+            val instructions = chatSystemPrompt(
                 platform.systemPrompt,
                 conversationSnapshot.runtimeContextPrompt,
                 memoryPrompt,
@@ -1442,7 +1443,7 @@ class ChatRepositoryImpl @Inject constructor(
             validateInlineBudgetIfNeeded(conversationSnapshot.context.turns, platform)
             val messages = buildOpenAIChatMessages(
                 conversationSnapshot.context.turns,
-                mergePromptSections(
+                chatSystemPrompt(
                     platform.systemPrompt,
                     conversationSnapshot.runtimeContextPrompt,
                     memoryPrompt,
@@ -1882,7 +1883,7 @@ class ChatRepositoryImpl @Inject constructor(
 
         val prepared = withContext(Dispatchers.Default) {
             val messages = buildAnthropicInputMessages(conversationSnapshot.context.turns, platform.uid)
-            val systemPrompt = mergePromptSections(
+            val systemPrompt = chatSystemPrompt(
                 platform.systemPrompt,
                 conversationSnapshot.runtimeContextPrompt,
                 memoryPrompt,
@@ -2249,7 +2250,7 @@ class ChatRepositoryImpl @Inject constructor(
 
         val prepared = withContext(Dispatchers.Default) {
             val contents = buildGoogleContents(conversationSnapshot.context.turns, platform.uid)
-            val systemInstruction = mergePromptSections(
+            val systemInstruction = chatSystemPrompt(
                 platform.systemPrompt,
                 conversationSnapshot.runtimeContextPrompt,
                 memoryPrompt,
@@ -2588,7 +2589,7 @@ class ChatRepositoryImpl @Inject constructor(
                         // to precede the turns that came after it.
                         input = exchange.replayItems + inputMessages,
                         stream = true,
-                        instructions = mergePromptSections(
+                        instructions = chatSystemPrompt(
                             platform.systemPrompt,
                             frozenConversation.runtimeContextPrompt,
                             memoryPrompt,
@@ -2700,7 +2701,7 @@ class ChatRepositoryImpl @Inject constructor(
                 validateInlineBudgetIfNeeded(conversationContext.turns, platform)
                 val messages = buildOpenAIChatMessages(
                     conversationContext.turns,
-                    mergePromptSections(
+                    chatSystemPrompt(
                         platform.systemPrompt,
                         frozenConversation.runtimeContextPrompt,
                         memoryPrompt,
@@ -2799,7 +2800,7 @@ class ChatRepositoryImpl @Inject constructor(
                 validateInlineBudgetIfNeeded(conversationContext.turns, platform)
                 val messages = buildOpenAIChatMessages(
                     conversationContext.turns,
-                    mergePromptSections(
+                    chatSystemPrompt(
                         platform.systemPrompt,
                         frozenConversation.runtimeContextPrompt,
                         memoryPrompt,
@@ -3355,7 +3356,7 @@ class ChatRepositoryImpl @Inject constructor(
                         messages = messages,
                         maxTokens = reasoningParameters.anthropicMaxTokens ?: 4096,
                         stream = platform.stream,
-                        systemPrompt = mergePromptSections(
+                        systemPrompt = chatSystemPrompt(
                             platform.systemPrompt,
                             frozenConversation.runtimeContextPrompt,
                             memoryPrompt,
@@ -3507,7 +3508,7 @@ class ChatRepositoryImpl @Inject constructor(
                                 )
                             }
                         ),
-                        systemInstruction = mergePromptSections(
+                        systemInstruction = chatSystemPrompt(
                             platform.systemPrompt,
                             frozenConversation.runtimeContextPrompt,
                             memoryPrompt,
@@ -4435,6 +4436,23 @@ private fun List<MessageSourceMetadata>.dedupeMessageSources(): List<MessageSour
     mapNotNull { source -> source.safeDedupeKey()?.let { key -> key to source } }
         .distinctBy { (key, _) -> key }
         .map { (_, source) -> source }
+
+private fun chatSystemPrompt(
+    platformSystemPrompt: String?,
+    runtimeContextPrompt: String?,
+    memoryPrompt: String?,
+    contextSummary: String?,
+    extraPrompt: String? = null
+): String? = mergePromptSections(
+    CoreSystemPrompt.TEXT,
+    mergePromptSections(
+        platformSystemPrompt,
+        runtimeContextPrompt,
+        memoryPrompt,
+        contextSummary,
+        extraPrompt
+    )
+)
 
 internal fun mergeSystemPrompt(basePrompt: String?, memoryPrompt: String?): String? = mergePromptSections(basePrompt, memoryPrompt)
 
