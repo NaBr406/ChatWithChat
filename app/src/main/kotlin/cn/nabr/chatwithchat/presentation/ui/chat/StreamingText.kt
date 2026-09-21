@@ -10,6 +10,7 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
+internal const val STREAMING_TEXT_SMOOTHING_ENABLED = false
 private const val STREAMING_TEXT_FRAME_MILLIS = 24L
 internal const val STREAMING_TEXT_COMPLETION_FRAME_COUNT = 80
 private const val STREAMING_TEXT_TAIL = "●"
@@ -110,7 +111,8 @@ internal fun rememberSerializedStreamingText(
     targetText: String,
     targetThoughts: String,
     isStreaming: Boolean,
-    contentIdentity: Any
+    contentIdentity: Any,
+    onVisibleContentChanged: () -> Unit = {}
 ): SerializedStreamingText {
     var visibleText by remember(contentIdentity) {
         mutableStateOf(targetText)
@@ -129,6 +131,7 @@ internal fun rememberSerializedStreamingText(
     }
     val latestTargetText by rememberUpdatedState(targetText)
     val latestTargetThoughts by rememberUpdatedState(targetThoughts)
+    val latestOnVisibleContentChanged by rememberUpdatedState(onVisibleContentChanged)
 
     LaunchedEffect(contentIdentity, isStreaming) {
         var observedText = targetText
@@ -139,6 +142,8 @@ internal fun rememberSerializedStreamingText(
         var thoughtsCompletionFrame = 0
 
         while (isActive) {
+            val previousVisibleTextLength = visibleText.length
+            val previousVisibleThoughtsLength = visibleThoughts.length
             val textTarget = latestTargetText
             val thoughtsTarget = latestTargetThoughts
 
@@ -216,6 +221,13 @@ internal fun rememberSerializedStreamingText(
                         activeSide = StreamingPresentationSide.THOUGHTS
                     }
                 }
+            }
+
+            if (
+                visibleText.length > previousVisibleTextLength ||
+                visibleThoughts.length > previousVisibleThoughtsLength
+            ) {
+                latestOnVisibleContentChanged()
             }
 
             if (!isStreaming && !hasThoughtBacklog && !hasTextBacklog) {

@@ -126,6 +126,7 @@ fun OpponentChatBubble(
     stickerAssetResolver: StickerAssetResolver? = null,
     sourceMetadata: List<MessageSourceMetadata> = emptyList(),
     contentIdentity: Any = text,
+    onVisibleContentChanged: () -> Unit = {},
     canEdit: Boolean = false,
     revisionIndexLabel: String? = null,
     canShowPreviousRevision: Boolean = false,
@@ -138,12 +139,22 @@ fun OpponentChatBubble(
     onShowPreviousRevision: () -> Unit = {},
     onShowNextRevision: () -> Unit = {}
 ) {
-    val serializedStreamingText = rememberSerializedStreamingText(
-        targetText = text,
-        targetThoughts = thoughts,
-        isStreaming = isLoading,
-        contentIdentity = contentIdentity
-    )
+    val serializedStreamingText = if (STREAMING_TEXT_SMOOTHING_ENABLED) {
+        rememberSerializedStreamingText(
+            targetText = text,
+            targetThoughts = thoughts,
+            isStreaming = isLoading,
+            contentIdentity = contentIdentity,
+            onVisibleContentChanged = onVisibleContentChanged
+        )
+    } else {
+        SerializedStreamingText(
+            text = text,
+            thoughts = thoughts,
+            isTextAnimating = false,
+            isThoughtTextAnimating = false
+        )
+    }
     var hasObservedStreaming by remember(contentIdentity) { mutableStateOf(isLoading) }
     LaunchedEffect(isLoading) {
         if (isLoading) {
@@ -289,7 +300,7 @@ private fun ResponseLoadingIndicator() {
 }
 
 @Composable
-private fun SourceMetadataBlock(
+internal fun SourceMetadataBlock(
     sources: List<MessageSourceMetadata>,
     modifier: Modifier = Modifier
 ) {

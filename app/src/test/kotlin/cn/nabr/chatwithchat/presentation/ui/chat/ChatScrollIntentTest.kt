@@ -58,6 +58,17 @@ class ChatScrollIntentTest {
     }
 
     @Test
+    fun streamingContentOnlyFollowsLatestWhenUserIsAtTheBottom() {
+        assertTrue(ChatScrollIntent.FollowingLatest.shouldFollowStreaming(isStreaming = true))
+        assertFalse(ChatScrollIntent.FollowingLatest.shouldFollowStreaming(isStreaming = false))
+        assertFalse(
+            ChatScrollIntent.ReadingHistory(
+                ChatScrollAnchor("message-2-0", 18)
+            ).shouldFollowStreaming(isStreaming = true)
+        )
+    }
+
+    @Test
     fun followingLatestRestoresBottomAfterIdleViewportGrowth() {
         assertTrue(
             ChatScrollIntent.FollowingLatest.shouldRestoreFollowingViewport(

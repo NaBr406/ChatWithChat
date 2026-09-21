@@ -101,6 +101,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.context.stripInternalStickerMarkers
 import cn.nabr.chatwithchat.data.database.entity.ACTIVE_REVISION_LATEST
+import cn.nabr.chatwithchat.data.database.entity.MessageSourceMetadata
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.database.entity.effectiveContent
@@ -108,6 +109,7 @@ import cn.nabr.chatwithchat.data.database.entity.effectiveStickerRefs
 import cn.nabr.chatwithchat.data.database.entity.effectiveThoughts
 import cn.nabr.chatwithchat.data.database.entity.effectiveTokenUsage
 import cn.nabr.chatwithchat.data.model.ReasoningMode
+import cn.nabr.chatwithchat.data.token.TokenUsageRecord
 import cn.nabr.chatwithchat.presentation.common.settingsCanvasBackground
 import cn.nabr.chatwithchat.presentation.common.settingsDropdownMenuItemColors
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
@@ -411,6 +413,55 @@ private fun ChatContent(
         }
     }
     val roundNavigatorMaxHeight = (screenHeightDp * 0.62f).coerceAtMost(520.dp)
+    val latestStreamingContentVersion = remember(groupedMessages, toolProgressStates) {
+        buildString {
+            append(groupedMessages.userMessages.size)
+            append('|')
+            groupedMessages.assistantMessages.lastOrNull().orEmpty().forEach { message ->
+                append(message.effectiveContent().length)
+                append(':')
+                append(message.effectiveThoughts().length)
+                append(':')
+                append(message.attachments.size)
+                append(':')
+                append(message.sourceMetadata.size)
+                append(':')
+                append(message.effectiveTokenUsage()?.totalTokens ?: 0)
+                append('|')
+            }
+            toolProgressStates.entries.sortedBy { it.key }.forEach { (key, states) ->
+                append('|')
+                append(key)
+                append(':')
+                append(states.size)
+                append(':')
+                append(states.lastOrNull()?.status?.name.orEmpty())
+            }
+        }
+    }
+    val activeMetadataPlatformIndex = if (lastMessageIndex >= 0) {
+        indexStates.getOrElse(lastMessageIndex) { 0 }
+    } else {
+        0
+    }
+    val activeMetadataAssistant = groupedMessages.assistantMessages
+        .getOrNull(lastMessageIndex)
+        ?.getOrNull(activeMetadataPlatformIndex)
+    val activeTokenUsage = activeMetadataAssistant?.effectiveTokenUsage()
+    val activeSourceMetadata = activeMetadataAssistant?.sourceMetadata.orEmpty()
+    val activeSessionTokenUsages = remember(
+        groupedMessages.assistantMessages,
+        activeMetadataAssistant?.platformType,
+        activeTokenUsage?.model
+    ) {
+        sessionTokenUsagesFor(
+            allAssistantMessages = groupedMessages.assistantMessages,
+            platformUid = activeMetadataAssistant?.platformType.orEmpty(),
+            model = activeTokenUsage?.model.orEmpty()
+        )
+    }
+    val showStreamingMetadataFooter =
+        !isIdle && (activeTokenUsage != null || activeSourceMetadata.isNotEmpty())
     val scope = rememberCoroutineScope()
     val programmaticScrollMutex = remember { Mutex() }
     val currentBottomItemIndex by rememberUpdatedState(bottomItemIndex)
@@ -462,6 +513,17 @@ private fun ChatContent(
         }
     }
 
+    fun requestScrollToLatestMessage() {
+        if (
+            scrollIntent != ChatScrollIntent.FollowingLatest ||
+            programmaticScrollInProgress ||
+            listState.isScrollInProgress
+        ) {
+            return
+        }
+        listState.requestScrollToItem(currentBottomItemIndex)
+    }
+
     fun requestFollowLatest() {
         scrollIntent = reduceChatScrollIntent(scrollIntent, ChatScrollEvent.FollowLatestRequested)
     }
@@ -490,13 +552,14 @@ private fun ChatContent(
                     )
                 )
             } else if (
+                isIdle &&
                 scrollIntent.shouldRestoreFollowingViewport(
                     isScrollInProgress = viewport.isScrollInProgress,
                     canScrollForward = viewport.canScrollForward,
                     isProgrammaticScrollInProgress = programmaticScrollInProgress
                 )
             ) {
-                scrollToLatestMessage(animated = false)
+                requestScrollToLatestMessage()
             }
         }
     }
@@ -513,6 +576,12 @@ private fun ChatContent(
         previousBottomItemIndex = bottomItemIndex
         if (bottomItemIndex > previousIndex && scrollIntent == ChatScrollIntent.FollowingLatest) {
             scrollToLatestMessage(animated = false)
+        }
+    }
+
+    LaunchedEffect(latestStreamingContentVersion) {
+        if (scrollIntent.shouldFollowStreaming(isStreaming = !isIdle)) {
+            requestScrollToLatestMessage()
         }
     }
 
@@ -650,6 +719,7 @@ private fun ChatContent(
                                 isIdle = isIdle,
                                 canSubmitOrEdit = canSubmitOrEdit,
                                 isActiveMessage = true,
+                                showMetadata = !showStreamingMetadataFooter,
                                 maximumUserChatBubbleWidth = maximumUserChatBubbleWidth,
                                 maximumOpponentChatBubbleWidth = maximumOpponentChatBubbleWidth,
                                 onEditQuestion = onEditQuestion,
@@ -660,7 +730,10 @@ private fun ChatContent(
                                 onRetry = onRetry,
                                 onShowPreviousRevision = onShowPreviousRevision,
                                 onShowNextRevision = onShowNextRevision,
-                                stickerAssetResolver = stickerAssetResolver
+                                stickerAssetResolver = stickerAssetResolver,
+                                onStreamingContentDisplayed = {
+                                    requestScrollToLatestMessage()
+                                }
                             )
                         }
                     }
@@ -720,6 +793,14 @@ private fun ChatContent(
                         }
                     )
                 }
+            }
+
+            if (showStreamingMetadataFooter) {
+                StreamingAssistantMetadataFooter(
+                    tokenUsage = activeTokenUsage,
+                    sessionUsages = activeSessionTokenUsages,
+                    sourceMetadata = activeSourceMetadata
+                )
             }
 
             if (sessionTextSkills.isNotEmpty()) {
@@ -801,7 +882,9 @@ private fun ChatMessagePair(
     onRetry: (Int, Int) -> Unit,
     onShowPreviousRevision: (Int, Int) -> Unit,
     onShowNextRevision: (Int, Int) -> Unit,
-    stickerAssetResolver: StickerAssetResolver
+    stickerAssetResolver: StickerAssetResolver,
+    onStreamingContentDisplayed: () -> Unit = {},
+    showMetadata: Boolean = true
 ) {
     val selectedAssistantMessage = assistantMessages.getOrNull(platformIndexState)
     val selectedAssistantRevisionIndex = selectedAssistantMessage?.activeRevisionIndex ?: ACTIVE_REVISION_LATEST
@@ -830,19 +913,11 @@ private fun ChatMessagePair(
     val selectedPlatformUid = selectedAssistantMessage?.platformType.orEmpty()
     val selectedPlatformModel = selectedAssistantMessage?.effectiveTokenUsage()?.model.orEmpty()
     val sessionTokenUsages = remember(allAssistantMessages, selectedPlatformUid, selectedPlatformModel) {
-        if (selectedPlatformUid.isBlank() || selectedPlatformModel.isBlank()) {
-            return@remember emptyList()
-        }
-        allAssistantMessages.asSequence()
-            .flatten()
-            .mapNotNull { assistantMessage ->
-                assistantMessage.effectiveTokenUsage()
-                    ?.takeIf { usage ->
-                        usage.platformUid == selectedPlatformUid &&
-                            usage.model == selectedPlatformModel
-                    }
-            }
-            .toList()
+        sessionTokenUsagesFor(
+            allAssistantMessages = allAssistantMessages,
+            platformUid = selectedPlatformUid,
+            model = selectedPlatformModel
+        )
     }
     val selectedToolProgressStates = toolProgressStates[ChatViewModel.toolProgressKey(messageIndex, platformIndexState)].orEmpty()
     val isCurrentPlatformLoading =
@@ -945,8 +1020,13 @@ private fun ChatMessagePair(
                 attachments = selectedAssistantMessage?.attachments.orEmpty().map { it.filePathForDisplay },
                 stickerRefs = assistantStickerRefs,
                 stickerAssetResolver = stickerAssetResolver,
-                sourceMetadata = selectedAssistantMessage?.sourceMetadata.orEmpty(),
+                sourceMetadata = if (showMetadata) {
+                    selectedAssistantMessage?.sourceMetadata.orEmpty()
+                } else {
+                    emptyList()
+                },
                 contentIdentity = "$messageIndex:$selectedPlatformUid:$selectedAssistantRevisionIndex",
+                onVisibleContentChanged = onStreamingContentDisplayed,
                 revisionIndexLabel = selectedAssistantMessage?.takeUnless { isInterruptedInitialRequest }?.let { assistantMessage ->
                     val totalRevisions = assistantMessage.revisions.size + 1
                     if (assistantMessage.activeRevisionIndex == ACTIVE_REVISION_LATEST) {
@@ -982,14 +1062,61 @@ private fun ChatMessagePair(
                 onShowPreviousRevision = { onShowPreviousRevision(messageIndex, platformIndexState) },
                 onShowNextRevision = { onShowNextRevision(messageIndex, platformIndexState) }
             )
-            TokenUsageRow(
-                usage = selectedTokenUsage,
-                sessionUsages = sessionTokenUsages,
-                modifier = Modifier
-                    .padding(top = 4.dp)
-                    .widthIn(max = maximumOpponentChatBubbleWidth)
-            )
+            if (showMetadata) {
+                TokenUsageRow(
+                    usage = selectedTokenUsage,
+                    sessionUsages = sessionTokenUsages,
+                    modifier = Modifier
+                        .padding(top = 4.dp)
+                        .widthIn(max = maximumOpponentChatBubbleWidth)
+                )
+            }
         }
+    }
+}
+
+private fun sessionTokenUsagesFor(
+    allAssistantMessages: List<List<MessageV2>>,
+    platformUid: String,
+    model: String
+): List<TokenUsageRecord> {
+    if (platformUid.isBlank() || model.isBlank()) return emptyList()
+    return allAssistantMessages.asSequence()
+        .flatten()
+        .mapNotNull { assistantMessage ->
+            assistantMessage.effectiveTokenUsage()
+                ?.takeIf { usage ->
+                    usage.platformUid == platformUid &&
+                        usage.model == model
+                }
+        }
+        .toList()
+}
+
+@Composable
+private fun StreamingAssistantMetadataFooter(
+    tokenUsage: TokenUsageRecord?,
+    sessionUsages: List<TokenUsageRecord>,
+    sourceMetadata: List<MessageSourceMetadata>
+) {
+    if (tokenUsage == null && sourceMetadata.isEmpty()) return
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 360.dp)
+            .verticalScroll(rememberScrollState())
+            .padding(start = 12.dp, end = 16.dp, top = 2.dp, bottom = 4.dp)
+    ) {
+        SourceMetadataBlock(
+            sources = sourceMetadata,
+            modifier = Modifier.padding(bottom = 4.dp)
+        )
+        TokenUsageRow(
+            usage = tokenUsage,
+            sessionUsages = sessionUsages,
+            modifier = Modifier.fillMaxWidth()
+        )
     }
 }
 
