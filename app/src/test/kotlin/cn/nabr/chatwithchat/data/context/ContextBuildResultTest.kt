@@ -118,27 +118,39 @@ class ContextBuildResultTest {
     }
 
     @Test
-    fun `raw preferred waits for the conversation itself to approach the line`() {
+    fun `raw preferred prepares at its own warning line instead of the auto pre-fold line`() {
         // The user picked RAW_PREFERRED to avoid paying for compaction, so a fold whose checkpoint may
-        // never be needed is not free — it is the cost they opted out of. Under this strategy the raw
-        // tail is budgeted at the whole effectiveInputBudget, so estimatedTokens really does track the
-        // history and can carry the decision, which it cannot do under AUTO_COMPACT.
+        // never be needed is not free — it is the cost they opted out of. Its preparation starts at
+        // the RAW warning line, not at AUTO_COMPACT's tier-capped pre-fold line.
         val bigBatch = BUDGET.backgroundFoldMinBatchTokens
+        assertTrue(
+            "this test is only meaningful while the two lines differ",
+            BUDGET.preFoldTrigger < BUDGET.rawPreferredFoldTrigger
+        )
 
         assertFalse(
-            "still far from capacity, so folding would be speculative",
+            "the old AUTO pre-fold line must no longer drive RAW preparation",
             result(
                 strategy = ContextStrategy.RAW_PREFERRED,
-                estimatedTokens = BUDGET.preFoldTrigger - 1,
+                estimatedTokens = BUDGET.preFoldTrigger,
+                pendingFoldTokens = bigBatch,
+                pendingFoldTurns = listOf(turn(1))
+            ).shouldEnqueueBackgroundFold
+        )
+        assertFalse(
+            "still below the RAW warning line",
+            result(
+                strategy = ContextStrategy.RAW_PREFERRED,
+                estimatedTokens = BUDGET.rawPreferredFoldTrigger - 1,
                 pendingFoldTokens = bigBatch,
                 pendingFoldTurns = listOf(turn(1))
             ).shouldEnqueueBackgroundFold
         )
         assertTrue(
-            "at the line the checkpoint is about to be needed",
+            "at the RAW warning line the checkpoint can be prepared",
             result(
                 strategy = ContextStrategy.RAW_PREFERRED,
-                estimatedTokens = BUDGET.preFoldTrigger,
+                estimatedTokens = BUDGET.rawPreferredFoldTrigger,
                 pendingFoldTokens = bigBatch,
                 pendingFoldTurns = listOf(turn(1))
             ).shouldEnqueueBackgroundFold

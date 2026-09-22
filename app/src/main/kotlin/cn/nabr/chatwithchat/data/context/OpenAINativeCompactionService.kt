@@ -77,21 +77,28 @@ class OpenAINativeCompactionService(
     fun contextManagementFor(
         platform: PlatformV2,
         budget: ContextBudget,
-        nativeUnsupported: Boolean
+        nativeUnsupported: Boolean,
+        strategy: ContextStrategy
     ): List<ResponseContextManagement>? {
         if (nativeUnsupported || !supports(platform)) return null
 
-        return listOf(ResponseContextManagement.compaction(compactThresholdFor(budget)))
+        return listOf(ResponseContextManagement.compaction(compactThresholdFor(budget, strategy)))
     }
 
     /**
      * The threshold at which the server should fold, expressed in tokens of streamed context.
      *
-     * Deliberately the app's own [ContextBudget.compactTrigger] rather than a provider default, so
-     * both paths fold at the same point and switching a chat between an app-side and a native
-     * provider does not visibly change when history stops being verbatim.
+     * AUTO_COMPACT keeps using [ContextBudget.compactTrigger]. RAW_PREFERRED gets its own line near
+     * the effective input budget instead: its whole reason for existing is to keep sending verbatim
+     * history while capacity allows, so inheriting the tier-capped AUTO line would make native and
+     * app-side providers diverge for the same selection.
      */
-    fun compactThresholdFor(budget: ContextBudget): Int = budget.compactTrigger
+    fun compactThresholdFor(budget: ContextBudget, strategy: ContextStrategy): Int =
+        if (strategy.sendsRawWhileCapacityAllows) {
+            budget.rawPreferredFoldTrigger
+        } else {
+            budget.compactTrigger
+        }
 
     /**
      * A compaction-enabled request must either omit `max_output_tokens` or leave at least

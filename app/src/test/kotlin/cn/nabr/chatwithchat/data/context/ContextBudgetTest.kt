@@ -96,6 +96,15 @@ class ContextBudgetTest {
     }
 
     @Test
+    fun `raw preferred preparation is independent of the auto compact ceiling`() {
+        val budget = ContextBudget.of(1_000_000, 1_200)
+
+        assertEquals((budget.effectiveInputBudget * 0.80).toInt(), budget.rawPreferredFoldTrigger)
+        assertTrue(budget.rawPreferredFoldTrigger > budget.preFoldTrigger)
+        assertTrue(budget.rawPreferredFoldTrigger < budget.effectiveInputBudget)
+    }
+
+    @Test
     fun `pre fold trigger is proportional on windows where the ceiling does not bind`() {
         val budget = ContextBudget.of(32_768, 1_200)
 

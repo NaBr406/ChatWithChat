@@ -332,7 +332,8 @@ internal class NativeCompactionExchange private constructor(
             val contextManagement = service.contextManagementFor(
                 platform = platform,
                 budget = managed.budget,
-                nativeUnsupported = false
+                nativeUnsupported = false,
+                strategy = managed.strategy
             ) ?: return disabled()
 
             val previousState = runCatching {

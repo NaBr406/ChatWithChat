@@ -77,6 +77,22 @@ class NativeCompactionExchangeTest {
         assertEquals(BUDGET.compactTrigger, entry.compactThreshold)
     }
 
+    @Test
+    fun `raw preferred uses an independent native compaction threshold`() = runBlocking {
+        val largeBudget = ContextBudget.of(1_000_000, 1_200)
+        val exchange = exchange(
+            managed = managed(
+                strategy = ContextStrategy.RAW_PREFERRED,
+                budget = largeBudget
+            )
+        )
+
+        assertTrue(exchange.isEnabled)
+        val entry = checkNotNull(exchange.contextManagement).single()
+        assertEquals(largeBudget.rawPreferredFoldTrigger, entry.compactThreshold)
+        assertTrue(entry.compactThreshold!! > largeBudget.compactTrigger * 5)
+    }
+
     /**
      * An OpenAI-compatible gateway reached through `CUSTOM` must never receive `context_management`:
      * an unknown parameter there is a hard failure, not a graceful degradation.
@@ -732,11 +748,13 @@ class NativeCompactionExchangeTest {
         fun managed(
             compactionState: ContextCompactionState = ContextCompactionState.NATIVE_SERVER_SIDE,
             nativeItems: String? = null,
-            lastUserMessageId: Int = LAST_USER_MESSAGE_ID
+            lastUserMessageId: Int = LAST_USER_MESSAGE_ID,
+            strategy: ContextStrategy = ContextStrategy.AUTO_COMPACT_BALANCED,
+            budget: ContextBudget = BUDGET
         ) = ContextBuildResult(
-            strategy = ContextStrategy.AUTO_COMPACT_BALANCED,
+            strategy = strategy,
             range = ContextRange.fullHistory(CHAT_ID, PLATFORM_UID),
-            budget = BUDGET,
+            budget = budget,
             turns = listOf(
                 ConversationTurn(
                     userMessage = MessageV2(id = lastUserMessageId, content = "最新的问题", platformType = null),

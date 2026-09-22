@@ -193,6 +193,54 @@ class ContextBuilderManagedContextTest {
     }
 
     @Test
+    fun `raw preferred ignores an existing checkpoint while the whole range still fits`() {
+        val (users, assistants) = conversation(8) { "turn-$it short question" }
+
+        val result = builder.buildManagedContext(
+            request(
+                users,
+                assistants,
+                strategy = ContextStrategy.RAW_PREFERRED,
+                chain = chainThrough(endUserMessageId = 4)
+            )
+        )
+
+        // This is also the strategy-switch case: a chain prepared by AUTO_COMPACT stays available for
+        // a future overflow, but it must not replace raw turns that still fit the RAW budget today.
+        assertEquals(users.map { it.id }, result.turns.map { it.userMessage.id })
+        assertNull(result.checkpointBody)
+        assertNull(result.checkpointBoundaryUserMessageId)
+        assertNull(result.deterministicSummary)
+        assertEquals(ContextCompactionState.NONE, result.compactionState)
+        assertFalse(result.didCompact)
+        assertTrue(result.pendingFoldTurns.isEmpty())
+    }
+
+    @Test
+    fun `raw preferred activates a checkpoint after the whole range stops fitting`() {
+        val (users, assistants) = conversation(6) { chunkyText("turn-$it").repeat(12) }
+
+        val result = builder.buildManagedContext(
+            request(
+                users,
+                assistants,
+                strategy = ContextStrategy.RAW_PREFERRED,
+                chain = chainThrough(endUserMessageId = 3)
+            )
+        )
+
+        assertEquals(CHECKPOINT_BODY, result.checkpointBody)
+        assertEquals(3, result.checkpointBoundaryUserMessageId)
+        assertTrue(result.turns.isNotEmpty())
+        assertTrue(result.turns.all { it.userMessage.id > 3 })
+        // The selected range is large enough that even checkpoint + a full RAW tail overflows this
+        // deliberately tiny test budget, so the deterministic floor also participates.
+        assertEquals(ContextCompactionState.DETERMINISTIC_FALLBACK, result.compactionState)
+        assertNotNull(result.deterministicSummary)
+        assertTrue(result.didCompact)
+    }
+
+    @Test
     fun `the checkpoint block is framed as history rather than instructions`() {
         val (users, assistants) = conversation(8) { "turn-$it short question" }
 

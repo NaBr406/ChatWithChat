@@ -164,11 +164,9 @@ data class ContextBuildResult(
 
             // RAW_PREFERRED is still sending every one of these turns verbatim, so the checkpoint a
             // fold would build is speculative — the conversation may well end before capacity runs
-            // out, and the user chose this strategy to avoid paying for compaction. Waiting for the
-            // conversation itself to grow is what keeps that promise. Here, and only here,
-            // estimatedTokens is the right operand: the raw tail is budgeted at the whole
-            // effectiveInputBudget, so it tracks the history instead of being clamped away from it.
-            return budget.shouldPreFold(estimatedTokens)
+            // out, and the user chose this strategy to avoid paying for compaction. Preparation
+            // therefore waits for its own warning line, not AUTO_COMPACT's tier-capped pre-fold line.
+            return estimatedTokens >= budget.rawPreferredFoldTrigger
         }
 
     companion object {

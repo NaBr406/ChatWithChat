@@ -40,6 +40,17 @@ data class ContextBudget(
     val rawWarningThreshold: Int get() = (effectiveInputBudget * RAW_WARNING_RATIO).toInt()
 
     /**
+     * The point at which RAW_PREFERRED may prepare an app-side checkpoint in the background.
+     *
+     * This is deliberately independent of [preFoldTrigger]. [preFoldTrigger] is an AUTO_COMPACT
+     * construction line and is additionally capped by the selected tier; on a large window that made
+     * RAW_PREFERRED start folding at roughly 76.8K even though its verbatim allowance covered almost
+     * the whole model window. RAW_PREFERRED already exposes its own warning at 80% of the effective
+     * input budget, so preparation starts there while activation still waits for actual overflow.
+     */
+    val rawPreferredFoldTrigger: Int get() = rawWarningThreshold
+
+    /**
      * Whether an *unclamped* history size has grown past the pre-fold line.
      *
      * The argument must be a figure that grows with the conversation. Only [ContextStrategy]s where

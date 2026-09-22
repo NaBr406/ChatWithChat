@@ -156,20 +156,40 @@ class ContextBuilder @Inject constructor() {
         tokenCounter: ContextTokenCounter
     ): ContextBuildResult {
         val budget = request.budget
-        val checkpointBody = request.chain.checkpointBody
-        val foldedThroughUserMessageId = request.chain.foldedThroughUserMessageId
+        val rawRangeTokens = tokenCounter.estimateTurns(rangeResolution.turns.map { it.turn })
+        val rawPreferredFits = request.strategy.sendsRawWhileCapacityAllows &&
+            rawRangeTokens <= budget.effectiveInputBudget
 
-        // Turns the checkpoint already covers must not also be replayed verbatim, or the model sees
-        // the same exchange twice — once summarised, once in full — and treats the repetition as
+        // A stored checkpoint may be useful if the raw range outgrows the window later, but while
+        // RAW_PREFERRED still fits it is deliberately inactive. This is what keeps a fold prepared by
+        // background work, or left over from an earlier AUTO_COMPACT selection, from turning into an
+        // early summary.
+        val checkpointBody = if (rawPreferredFits) null else request.chain.checkpointBody
+        val foldedThroughUserMessageId = if (rawPreferredFits) {
+            null
+        } else {
+            request.chain.foldedThroughUserMessageId
+        }
+
+        // Turns the active checkpoint already covers must not also be replayed verbatim, or the model
+        // sees the same exchange twice — once summarised, once in full — and treats the repetition as
         // emphasis.
-        val unfoldedTurns = rangeResolution.turns.dropFoldedPrefix(foldedThroughUserMessageId)
+        val unfoldedTurns = if (rawPreferredFits) {
+            rangeResolution.turns
+        } else {
+            rangeResolution.turns.dropFoldedPrefix(foldedThroughUserMessageId)
+        }
 
         val checkpointTokens = checkpointBody?.let { body ->
             tokenCounter.estimateText(ContextBuildResult.HISTORICAL_CONTEXT_HEADER) + tokenCounter.estimateText(body)
         } ?: 0
         val rawTail = selectRawTail(
             turns = unfoldedTurns,
-            maxTokens = rawTailBudgetFor(request.strategy, budget, checkpointTokens),
+            maxTokens = if (rawPreferredFits) {
+                budget.effectiveInputBudget
+            } else {
+                rawTailBudgetFor(request.strategy, budget, checkpointTokens)
+            },
             tokenCounter = tokenCounter
         )
 
@@ -183,13 +203,13 @@ class ContextBuilder @Inject constructor() {
         )
 
         // What a background fold should consume. Under the AUTO_COMPACT family the raw tail is already
-        // sized to recentRawTail so the overflow is exactly that batch; under RAW_PREFERRED the tail is
-        // much larger, so the same boundary has to be computed separately — folding must not wait until
-        // the conversation is over budget.
-        val pendingFoldBatch = if (request.strategy.sendsRawWhileCapacityAllows) {
-            selectRawTail(unfoldedTurns, budget.recentRawTail, tokenCounter).overflow
-        } else {
-            rawTail.overflow
+        // sized to recentRawTail so the overflow is exactly that batch. RAW_PREFERRED prepares the
+        // same batch while all raw turns still fit; an existing usable chain already supplies that
+        // future fallback, so it does not need a second speculative fold.
+        val pendingFoldBatch = when {
+            !request.strategy.sendsRawWhileCapacityAllows -> rawTail.overflow
+            rawPreferredFits && !request.chain.isEmpty -> emptyList()
+            else -> selectRawTail(unfoldedTurns, budget.recentRawTail, tokenCounter).overflow
         }
         val pendingFoldTurns = pendingFoldBatch.map { it.turn }
 
@@ -214,7 +234,7 @@ class ContextBuilder @Inject constructor() {
             estimatedTokens = estimatedTokens,
             compactionState = when {
                 rawTail.overflow.isNotEmpty() -> ContextCompactionState.DETERMINISTIC_FALLBACK
-                !request.chain.isEmpty -> ContextCompactionState.REUSED_CHECKPOINT
+                checkpointBody != null -> ContextCompactionState.REUSED_CHECKPOINT
                 else -> ContextCompactionState.NONE
             },
             crossProviderDegradedTurnCount = rawTail.selected.count { it.isCrossProviderDegraded },
