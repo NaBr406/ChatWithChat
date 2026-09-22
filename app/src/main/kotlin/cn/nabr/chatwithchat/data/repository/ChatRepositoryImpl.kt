@@ -4713,7 +4713,7 @@ internal fun <T> streamPreparedApiState(
 
 private fun usageFromProviderOrEstimate(
     providerUsage: ProviderUsage?,
-    requestText: String,
+    requestText: () -> String,
     outputText: String,
     platform: PlatformV2,
     label: String
@@ -4723,7 +4723,7 @@ private fun usageFromProviderOrEstimate(
         label = label
     )
     ?: TokenUsageEstimator.estimateRequestUsage(
-        requestText = requestText,
+        requestText = requestText(),
         outputText = outputText,
         platform = platform,
         label = label
@@ -4743,7 +4743,7 @@ private fun openAIResponsesUsageFromEvents(
             else -> null
         }
     },
-    requestText = NetworkClient.openAIJson.encodeToString(request),
+    requestText = { NetworkClient.openAIJson.encodeToString(request) },
     outputText = outputText,
     platform = platform,
     label = label
@@ -4757,7 +4757,7 @@ private fun openAIChatUsageFromChunks(
     label: String
 ): TokenUsageRecord = usageFromProviderOrEstimate(
     providerUsage = chunks.lastOrNull { chunk -> chunk.usage != null }?.usage,
-    requestText = NetworkClient.openAIJson.encodeToString(request),
+    requestText = { NetworkClient.openAIJson.encodeToString(request) },
     outputText = outputText,
     platform = platform,
     label = label
@@ -4773,7 +4773,7 @@ private fun groqUsageFromChunks(
     providerUsage = chunks
         .mapNotNull { chunk -> chunk.usage ?: chunk.xGroq?.usage }
         .lastOrNull(),
-    requestText = NetworkClient.openAIJson.encodeToString(request),
+    requestText = { NetworkClient.openAIJson.encodeToString(request) },
     outputText = outputText,
     platform = platform,
     label = label
@@ -4809,7 +4809,7 @@ private fun anthropicUsageFromChunks(
 
     return usageFromProviderOrEstimate(
         providerUsage = providerUsage,
-        requestText = kotlinx.serialization.json.Json.encodeToString(request),
+        requestText = { kotlinx.serialization.json.Json.encodeToString(request) },
         outputText = outputText,
         platform = platform,
         label = label
@@ -4835,7 +4835,7 @@ private fun googleUsageFromResponses(
 
     return usageFromProviderOrEstimate(
         providerUsage = providerUsage,
-        requestText = NetworkClient.json.encodeToString(request),
+        requestText = { NetworkClient.json.encodeToString(request) },
         outputText = outputText,
         platform = platform,
         label = label
