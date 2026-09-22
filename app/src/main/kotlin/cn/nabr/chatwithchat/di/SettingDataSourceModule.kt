@@ -6,6 +6,7 @@ import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import cn.nabr.chatwithchat.data.datastore.ContextWindowOverrideStore
 import cn.nabr.chatwithchat.data.datastore.SettingDataSource
 import cn.nabr.chatwithchat.data.datastore.SettingDataSourceImpl
 import javax.inject.Singleton
@@ -15,5 +16,15 @@ import javax.inject.Singleton
 object SettingDataSourceModule {
     @Provides
     @Singleton
-    fun provideSettingDataStore(dataStore: DataStore<Preferences>): SettingDataSource = SettingDataSourceImpl(dataStore)
+    fun provideSettingDataSourceImpl(
+        dataStore: DataStore<Preferences>
+    ): SettingDataSourceImpl = SettingDataSourceImpl(dataStore)
+
+    @Provides
+    @Singleton
+    fun provideSettingDataStore(impl: SettingDataSourceImpl): SettingDataSource = impl
+
+    @Provides
+    @Singleton
+    fun provideContextWindowOverrideStore(impl: SettingDataSourceImpl): ContextWindowOverrideStore = impl
 }

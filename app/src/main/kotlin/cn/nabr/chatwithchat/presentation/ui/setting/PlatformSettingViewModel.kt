@@ -5,7 +5,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import cn.nabr.chatwithchat.data.context.ContextStrategy
+import cn.nabr.chatwithchat.data.context.ContextWindowResolution
+import cn.nabr.chatwithchat.data.context.ContextWindowResolver
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
+import cn.nabr.chatwithchat.data.datastore.ContextWindowOverrideStore
 import cn.nabr.chatwithchat.data.repository.SettingRepository
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,6 +20,8 @@ import kotlinx.coroutines.launch
 @HiltViewModel
 class PlatformSettingViewModel @Inject constructor(
     private val settingRepository: SettingRepository,
+    private val contextWindowResolver: ContextWindowResolver,
+    private val contextWindowOverrideStore: ContextWindowOverrideStore,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
@@ -24,6 +29,15 @@ class PlatformSettingViewModel @Inject constructor(
 
     private val _platformState = MutableStateFlow<PlatformV2?>(null)
     val platformState: StateFlow<PlatformV2?> = _platformState.asStateFlow()
+
+    /**
+     * The effective model window and whether it came from a real discovery/curated table or merely a
+     * conservative provider fallback. The strategy page uses this to warn before a user chooses a
+     * budget tier against an unknown model.
+     */
+    private val _contextWindowResolution = MutableStateFlow<ContextWindowResolution?>(null)
+    val contextWindowResolution: StateFlow<ContextWindowResolution?> =
+        _contextWindowResolution.asStateFlow()
 
     private val _dialogState = MutableStateFlow(DialogState())
     val dialogState: StateFlow<DialogState> = _dialogState.asStateFlow()
@@ -48,6 +62,7 @@ class PlatformSettingViewModel @Inject constructor(
             val platforms = settingRepository.fetchPlatformV2s()
             val platform = platforms.firstOrNull { it.uid == platformUid }
             _platformState.update { platform }
+            platform?.let { refreshContextWindowResolution(it) }
         }
     }
 
@@ -61,7 +76,14 @@ class PlatformSettingViewModel @Inject constructor(
         viewModelScope.launch {
             settingRepository.updatePlatformV2(platform)
             _platformState.update { platform }
+            refreshContextWindowResolution(platform)
         }
+    }
+
+    private suspend fun refreshContextWindowResolution(platform: PlatformV2) {
+        _contextWindowResolution.value = runCatching {
+            contextWindowResolver.resolveDetailed(platform)
+        }.getOrNull()
     }
 
     fun openPlatformNameDialog() = _dialogState.update { it.copy(isPlatformNameDialogOpen = true) }
@@ -103,6 +125,14 @@ class PlatformSettingViewModel @Inject constructor(
                     .onSuccess { _platformState.update { updated } }
                     .onFailure { _contextStrategySaveError.update { true } }
             }
+        }
+    }
+
+    fun updateContextWindowOverride(tokens: Int?) {
+        val platform = _platformState.value ?: return
+        viewModelScope.launch {
+            contextWindowOverrideStore.setContextWindowOverride(platform.uid, tokens)
+            refreshContextWindowResolution(platform)
         }
     }
 

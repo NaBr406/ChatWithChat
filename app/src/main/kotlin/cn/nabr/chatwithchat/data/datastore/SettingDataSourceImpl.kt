@@ -18,7 +18,7 @@ import kotlinx.coroutines.flow.map
 
 class SettingDataSourceImpl @Inject constructor(
     private val dataStore: DataStore<Preferences>
-) : SettingDataSource {
+) : SettingDataSource, ContextWindowOverrideStore {
     private val apiStatusMap = mapOf(
         ApiType.OPENAI to booleanPreferencesKey("openai_status"),
         ApiType.GLM to booleanPreferencesKey("glm_status"),
@@ -223,6 +223,21 @@ class SettingDataSourceImpl @Inject constructor(
         }
     }
 
+    override suspend fun setContextWindowOverride(platformUid: String, tokens: Int?) {
+        val key = contextWindowOverrideKey(platformUid)
+        dataStore.edit { pref ->
+            if (tokens == null || tokens <= 0) {
+                pref.remove(key)
+            } else {
+                pref[key] = tokens
+            }
+        }
+    }
+
+    override suspend fun getContextWindowOverride(platformUid: String): Int? = dataStore.data.map { pref ->
+        pref[contextWindowOverrideKey(platformUid)]?.takeIf { it > 0 }
+    }.first()
+
     override suspend fun updateWebSearchBackend(backend: String) {
         dataStore.edit { pref ->
             pref[webSearchBackendKey] = backend
@@ -337,4 +352,8 @@ class SettingDataSourceImpl @Inject constructor(
     override suspend fun getWebSearchAnySearchApiKey(): String? = dataStore.data.map { pref ->
         pref[webSearchAnySearchApiKeyKey]
     }.first()
+
+    private fun contextWindowOverrideKey(platformUid: String) =
+        intPreferencesKey("context_window_override_$platformUid")
+
 }

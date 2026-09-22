@@ -318,6 +318,13 @@
     <string name="context_strategy">上下文管理</string>
     <string name="context_strategy_icon">上下文管理图标</string>
     <string name="context_strategy_description">决定发送给该供应商的历史如何组织，以及单次请求最多花多少上下文。所有选项都不会删除任何消息，只影响每次请求实际携带的内容。小窗口模型上各档位表现相同，档位只在窗口足够大时才起作用。</string>
+    <string name="context_window_unknown_warning_title">未能确认模型上下文窗口</string>
+    <string name="context_window_unknown_warning_body">当前模型没有可验证的上下文窗口，应用暂时按 %1$d token 保守估算。请展开下方“供应商 Context 值”，指定该供应商实际支持的值。</string>
+    <string name="context_window_value_section_title">供应商 Context 值</string>
+    <string name="context_window_value_section_description">用于计算模型上下文预算。未知时请选择供应商实际支持的值；选择“自动检测”可恢复系统识别。</string>
+    <string name="context_window_value_current">当前使用：%1$s token</string>
+    <string name="context_window_value_auto">自动检测</string>
+    <string name="context_window_value_auto_description">使用供应商返回值、已知模型表或保守默认值。</string>
     <string name="context_strategy_economy">自动压缩 · 节流</string>
     <string name="context_strategy_economy_description">最近约 8K token 原文，更早的内容用摘要代替。折叠得最勤，单次请求最便宜，长对话的连贯性相应弱一些。</string>
     <string name="context_strategy_balanced">自动压缩 · 均衡</string>

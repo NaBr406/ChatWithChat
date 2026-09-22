@@ -2,6 +2,7 @@ package cn.nabr.chatwithchat.data.context
 
 import cn.nabr.chatwithchat.data.database.dao.PlatformModelV2Dao
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
+import cn.nabr.chatwithchat.data.datastore.ContextWindowOverrideStore
 import cn.nabr.chatwithchat.data.model.ClientType
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -24,39 +25,135 @@ import javax.inject.Singleton
  */
 @Singleton
 class ContextWindowResolver @Inject constructor(
-    private val platformModelV2Dao: PlatformModelV2Dao
+    private val platformModelV2Dao: PlatformModelV2Dao,
+    private val contextWindowOverrideStore: ContextWindowOverrideStore = ContextWindowOverrideStore.None
 ) {
 
-    suspend fun resolve(platform: PlatformV2, model: String = platform.model): Int {
-        val policy = ProviderContextPolicy.forClientType(platform.compatibleType)
+    suspend fun resolve(platform: PlatformV2, model: String = platform.model): Int =
+        resolveDetailed(platform, model).tokens
 
-        // Ollama short-circuit: never trust a discovered or tabled window. The OpenAI-compatible
-        // endpoint this app uses cannot pass num_ctx, so the server's own limit (default 4096)
-        // governs and silently truncates anything larger. See Task 0 of the context-management plan.
-        if (platform.compatibleType == ClientType.OLLAMA) {
-            return policy.fallbackModelContextWindow
+    /**
+     * Resolves the window together with its provenance so the settings UI can warn when the number is
+     * only a conservative provider fallback rather than a discovered or curated model value.
+     */
+    suspend fun resolveDetailed(
+        platform: PlatformV2,
+        model: String = platform.model
+    ): ContextWindowResolution {
+        val userOverride = runCatching {
+            contextWindowOverrideStore.getContextWindowOverride(platform.uid)
+        }.getOrNull()?.takeIf { it > 0 }
+        val persisted = if (platform.compatibleType == ClientType.OLLAMA) {
+            null
+        } else {
+            runCatching {
+                platformModelV2Dao.getModel(platform.uid, model.trim())
+            }.getOrNull()?.contextWindow?.takeIf { it > 0 }
         }
 
-        val persisted = runCatching {
-            platformModelV2Dao.getModel(platform.uid, model.trim())
-        }.getOrNull()?.contextWindow?.takeIf { it > 0 }
-        if (persisted != null) return persisted
-
-        return resolveWithoutPersistence(platform.compatibleType, model)
+        return resolveContextWindow(
+            userOverride = userOverride,
+            persistedWindow = persisted,
+            clientType = platform.compatibleType,
+            model = model
+        )
     }
 
     /**
      * Steps 2 and 3 only. Exposed for callers that already know no persisted row exists, and for
      * tests that must not touch Room.
      */
-    fun resolveWithoutPersistence(clientType: ClientType, model: String): Int {
-        val policy = ProviderContextPolicy.forClientType(clientType)
-        if (clientType == ClientType.OLLAMA) return policy.fallbackModelContextWindow
+    fun resolveWithoutPersistence(clientType: ClientType, model: String): Int =
+        resolveWithoutPersistenceDetailed(clientType, model).tokens
 
-        return ModelContextWindowTable.lookup(clientType, model)
-            ?: policy.fallbackModelContextWindow
+    fun resolveWithoutPersistenceDetailed(
+        clientType: ClientType,
+        model: String
+    ): ContextWindowResolution = resolveContextWindowWithoutPersistence(clientType, model)
+}
+
+internal fun resolveContextWindowWithoutPersistence(
+    clientType: ClientType,
+    model: String
+): ContextWindowResolution = resolveContextWindow(
+    userOverride = null,
+    persistedWindow = null,
+    clientType = clientType,
+    model = model
+)
+
+internal fun resolveContextWindow(
+    userOverride: Int?,
+    persistedWindow: Int?,
+    clientType: ClientType,
+    model: String
+): ContextWindowResolution {
+    val automatic = when {
+        clientType == ClientType.OLLAMA -> ContextWindowResolution(
+            tokens = ProviderContextPolicy.forClientType(clientType).fallbackModelContextWindow,
+            source = ContextWindowSource.OLLAMA_FALLBACK
+        )
+
+        persistedWindow != null && persistedWindow > 0 -> ContextWindowResolution(
+            tokens = persistedWindow,
+            source = ContextWindowSource.DISCOVERED
+        )
+
+        else -> {
+            val tabled = ModelContextWindowTable.lookup(clientType, model)
+            if (tabled != null) {
+                ContextWindowResolution(tokens = tabled, source = ContextWindowSource.MODEL_TABLE)
+            } else {
+                ContextWindowResolution(
+                    tokens = ProviderContextPolicy.forClientType(clientType).fallbackModelContextWindow,
+                    source = ContextWindowSource.PROVIDER_FALLBACK
+                )
+            }
+        }
+    }
+
+    // A manual provider value is a fallback for an otherwise unknown window, not an override of a
+    // real provider-discovered or curated model value. This keeps the selection UI scoped to the
+    // unknown-model case and prevents stale user input from shadowing better automatic data later.
+    return if (automatic.source.isEstimated) {
+        userOverride?.takeIf { it > 0 }?.let { tokens ->
+            ContextWindowResolution(
+                tokens = tokens,
+                source = ContextWindowSource.USER_OVERRIDE,
+                detectedSource = automatic.source
+            )
+        } ?: automatic
+    } else {
+        automatic
     }
 }
+
+enum class ContextWindowSource {
+    /** A positive value explicitly selected by the user for this provider. */
+    USER_OVERRIDE,
+
+    /** A positive value discovered from the provider and persisted on `platform_model_v2`. */
+    DISCOVERED,
+
+    /** A curated model-family value maintained in [ModelContextWindowTable]. */
+    MODEL_TABLE,
+
+    /** The provider-specific conservative default because no trusted value was available. */
+    PROVIDER_FALLBACK,
+
+    /** Ollama always uses its conservative default because the OpenAI-compatible endpoint hides num_ctx. */
+    OLLAMA_FALLBACK;
+
+    val isEstimated: Boolean
+        get() = this == PROVIDER_FALLBACK || this == OLLAMA_FALLBACK
+}
+
+data class ContextWindowResolution(
+    val tokens: Int,
+    val source: ContextWindowSource,
+    /** The automatic result before a user fallback value was applied. */
+    val detectedSource: ContextWindowSource = source
+)
 
 /**
  * Hand-maintained prefix table of known model families.
