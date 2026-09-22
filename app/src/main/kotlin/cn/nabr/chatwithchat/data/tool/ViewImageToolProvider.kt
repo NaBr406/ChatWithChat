@@ -72,10 +72,10 @@ class ViewImageToolProvider(
                 ?.jsonPrimitive
                 ?.contentOrNull
         )
-        var resolved = repository.resolve(executionContext.chatId, visualRef, detail)
+        var resolved = repository.resolve(executionContext.chatId, visualRef, detail, allowInlineFallback = true)
         if (resolved is VisualAssetReadResult.Failure && resolved.failure == VisualAssetFailure.NotFound) {
             repository.ensureChatIndexed(executionContext.chatId)
-            resolved = repository.resolve(executionContext.chatId, visualRef, detail)
+            resolved = repository.resolve(executionContext.chatId, visualRef, detail, allowInlineFallback = true)
         }
         return when (resolved) {
             is VisualAssetReadResult.Failure -> call.errorResult(
@@ -84,8 +84,11 @@ class ViewImageToolProvider(
             )
             is VisualAssetReadResult.Success -> {
                 val asset = resolved.asset
-                val fallback = detail != VisualDetail.ORIGINAL &&
+                val compactedForOriginal = detail == VisualDetail.ORIGINAL &&
+                    asset.profile == cn.nabr.chatwithchat.data.visual.VisualAssetProfile.COMPACTED_V1
+                val originalFallback = detail == VisualDetail.AUTO &&
                     asset.profile == cn.nabr.chatwithchat.data.visual.VisualAssetProfile.ORIGINAL
+                val fallback = compactedForOriginal || originalFallback
                 ToolResult(
                     callId = call.id,
                     name = call.name,
@@ -104,7 +107,9 @@ class ViewImageToolProvider(
                             append("x")
                             append(asset.height ?: 0)
                         }
-                        if (fallback) {
+                        if (compactedForOriginal) {
+                            append("；inline_safety_fallback=compacted")
+                        } else if (originalFallback) {
                             append("；compaction_fallback=original")
                         }
                     },
@@ -127,7 +132,8 @@ class ViewImageToolProvider(
                         put("visual_ref", asset.catalogItem.visualRef)
                         put("asset_hash", asset.asset.assetHash)
                         put("profile", asset.profile.storageValue)
-                        if (fallback) put("compaction_fallback", "true")
+                        if (compactedForOriginal) put("inline_safety_fallback", "compacted")
+                        if (originalFallback) put("compaction_fallback", "true")
                     }
                 )
             }

@@ -72,17 +72,18 @@ class VisualAssetRepository @Inject constructor(
         chatId: Int,
         visualRef: String,
         detail: VisualDetail = VisualDetail.AUTO,
-        maxBytes: Long = DEFAULT_MAX_READ_BYTES
+        maxBytes: Long = DEFAULT_MAX_READ_BYTES,
+        allowInlineFallback: Boolean = false
     ): VisualAssetReadResult {
         if (chatId <= 0 || visualRef.isBlank()) {
             return VisualAssetReadResult.Failure(VisualAssetFailure.Forbidden)
         }
-        val catalog = dao.getCatalogEntry(chatId, visualRef.trim())
+        var catalog = dao.getCatalogEntry(chatId, visualRef.trim())
             ?: return VisualAssetReadResult.Failure(VisualAssetFailure.NotFound)
-        val asset = dao.getAsset(catalog.assetHash)
+        var asset = dao.getAsset(catalog.assetHash)
             ?: return VisualAssetReadResult.Failure(VisualAssetFailure.NotFound)
 
-        val profile = when (detail) {
+        var profile = when (detail) {
             VisualDetail.ORIGINAL -> VisualAssetProfile.ORIGINAL
             VisualDetail.AUTO -> if (asset.hasCompactedProfile()) {
                 VisualAssetProfile.COMPACTED_V1
@@ -91,12 +92,34 @@ class VisualAssetRepository @Inject constructor(
             }
             VisualDetail.COMPACT -> if (asset.hasCompactedProfile()) {
                 VisualAssetProfile.COMPACTED_V1
+            } else if (allowInlineFallback) {
+                VisualAssetProfile.COMPACTED_V1
             } else {
                 return VisualAssetReadResult.Failure(
                     VisualAssetFailure.Unsupported("visual_asset_compaction_unavailable")
                 )
             }
         }
+
+        val needsCompacted = profile == VisualAssetProfile.COMPACTED_V1 && !asset.hasCompactedProfile()
+        val unsafeOriginal = profile == VisualAssetProfile.ORIGINAL && asset.requiresInlineCompaction()
+        if (allowInlineFallback && (needsCompacted || unsafeOriginal)) {
+            val compacted = ensureCompactedForInline(asset.assetHash)
+                ?: return VisualAssetReadResult.Failure(
+                    if (detail == VisualDetail.COMPACT) {
+                        VisualAssetFailure.Unsupported("visual_asset_compaction_unavailable")
+                    } else {
+                        VisualAssetFailure.TooLarge
+                    }
+                )
+            asset = compacted
+            profile = VisualAssetProfile.COMPACTED_V1
+            if (catalog.compactedProfile != VisualAssetProfile.COMPACTED_V1.storageValue) {
+                catalog = catalog.copy(compactedProfile = VisualAssetProfile.COMPACTED_V1.storageValue)
+                dao.upsertCatalogEntries(listOf(catalog))
+            }
+        }
+
         val resolved = when (profile) {
             VisualAssetProfile.ORIGINAL -> ResolvedCandidate(
                 path = asset.originalPath,
@@ -141,6 +164,16 @@ class VisualAssetRepository @Inject constructor(
                 base64Data = Base64.getEncoder().encodeToString(bytes)
             )
         )
+    }
+
+    private suspend fun ensureCompactedForInline(assetHash: String): VisualAssetEntity? {
+        val current = dao.getAsset(assetHash) ?: return null
+        if (current.hasCompactedProfile() && File(current.compactedPath.orEmpty()).isFile) {
+            return current
+        }
+        compressAssets(listOf(assetHash))
+        return dao.getAsset(assetHash)
+            ?.takeIf { asset -> asset.hasCompactedProfile() && File(asset.compactedPath.orEmpty()).isFile }
     }
 
     suspend fun listAssets(
@@ -413,6 +446,13 @@ private fun VisualAssetEntity.toModel(): VisualAsset = VisualAsset(
     createdAt = createdAt,
     updatedAt = updatedAt
 )
+
+private const val MAX_INLINE_ORIGINAL_BYTES = 2L * 1024L * 1024L
+private const val MAX_INLINE_ORIGINAL_LONG_EDGE = 2048
+
+private fun VisualAssetEntity.requiresInlineCompaction(): Boolean =
+    originalSizeBytes > MAX_INLINE_ORIGINAL_BYTES ||
+        maxOf(originalWidth ?: 0, originalHeight ?: 0) > MAX_INLINE_ORIGINAL_LONG_EDGE
 
 private fun VisualAssetEntity.hasCompactedProfile(): Boolean =
     compactedVersion == VisualAssetProfile.COMPACTED_V1.version && !compactedPath.isNullOrBlank()

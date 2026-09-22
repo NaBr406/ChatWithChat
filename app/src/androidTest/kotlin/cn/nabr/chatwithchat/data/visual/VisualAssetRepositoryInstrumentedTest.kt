@@ -161,10 +161,10 @@ class VisualAssetRepositoryInstrumentedTest {
     }
 
     @Test
-    fun viewImageExecutorKeepsLargeOriginalPixels() = runBlocking {
+    fun viewImageExecutorCompactsUnsafeOriginalForInlineDelivery() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val source = File(context.cacheDir, "visual-large-original.png")
-        writeBitmap(source, width = 3_072, height = 2_048)
+        writeBitmap(source, width = 4_080, height = 3_072)
         val chatId = database.chatRoomDao().addChatRoom(
             ChatRoomV2(title = "large-original", enabledPlatform = emptyList())
         ).toInt()
@@ -179,8 +179,8 @@ class VisualAssetRepositoryInstrumentedTest {
                         displayName = "large-original.png",
                         mimeType = "image/png",
                         sizeBytes = source.length(),
-                        width = 3_072,
-                        height = 2_048
+                        width = 4_080,
+                        height = 3_072
                     )
                 ),
                 platformType = null
@@ -209,7 +209,62 @@ class VisualAssetRepositoryInstrumentedTest {
 
         assertFalse(result.isError)
         assertEquals(1, result.visualAttachments.size)
-        assertTrue(result.visualAttachments.single().base64Data.orEmpty().isNotEmpty())
+        val visual = result.visualAttachments.single()
+        assertEquals(VisualAssetProfile.COMPACTED_V1, visual.profile)
+        assertTrue(maxOf(visual.width ?: 0, visual.height ?: 0) <= 2_048)
+        assertTrue(visual.base64Data.orEmpty().isNotEmpty())
+        assertEquals("compacted", result.metadata["inline_safety_fallback"])
+        assertEquals(
+            VisualAssetProfile.COMPACTED_V1.storageValue,
+            database.visualAssetDao().getCatalogEntry(chatId, visualRef)?.compactedProfile
+        )
+    }
+
+    @Test
+    fun repeatedUnsafeOriginalToolReadsUseCompactedPayloads() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val chatId = database.chatRoomDao().addChatRoom(
+            ChatRoomV2(title = "visual-stress", enabledPlatform = emptyList())
+        ).toInt()
+        val attachments = (0 until 12).map { index ->
+            val source = File(context.cacheDir, "visual-stress-$index.png")
+            writeBitmap(source, width = 4_080, height = 3_072)
+            ChatAttachment(
+                localFilePath = source.absolutePath,
+                preparedFilePath = source.absolutePath,
+                displayName = "visual-stress-$index.png",
+                mimeType = "image/png",
+                sizeBytes = source.length(),
+                width = 4_080,
+                height = 3_072
+            )
+        }
+        database.messageDao().addMessages(
+            MessageV2(
+                chatId = chatId,
+                content = "stress images",
+                attachments = attachments,
+                platformType = null
+            )
+        )
+        val message = database.messageDao().loadMessages(chatId).single()
+        repository.indexMessage(message, turnOrdinal = 1)
+
+        val encodedChars = (1..12).map { attachmentIndex ->
+            val resolved = repository.resolve(
+                chatId = chatId,
+                visualRef = VisualAssetRepository.visualRef(message.id, attachmentIndex),
+                detail = VisualDetail.ORIGINAL,
+                allowInlineFallback = true
+            )
+            assertTrue("unexpected stress result: $resolved", resolved is VisualAssetReadResult.Success)
+            val asset = (resolved as VisualAssetReadResult.Success).asset
+            assertEquals(VisualAssetProfile.COMPACTED_V1, asset.profile)
+            assertTrue(maxOf(asset.width ?: 0, asset.height ?: 0) <= 2_048)
+            asset.base64Data.length
+        }
+
+        assertTrue("unexpected encoded payload: ${encodedChars.sum()}", encodedChars.sum() <= 24 * 1024 * 1024)
     }
 
     @Test
