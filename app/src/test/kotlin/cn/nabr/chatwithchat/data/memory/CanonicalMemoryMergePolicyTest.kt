@@ -752,6 +752,50 @@ class CanonicalMemoryMergePolicyTest {
         assertTrue(parsed.entries.any { entry -> entry.id == incorrectlyMergedAssistant.id })
     }
 
+    @Test
+    fun `project alias converges to canonical key and replay is idempotent`() {
+        val legacy = canonicalEntry(
+            id = "legacy_project",
+            text = "The user maintains ChatWithChat.",
+            canonicalKey = "project.gptmobile_ai_app"
+        )
+        val candidate = candidate(
+            text = legacy.text,
+            targetMemoryId = legacy.id,
+            canonicalKey = "project.gptmobile_ai_app"
+        )
+
+        val first = policy.merge(codec.renderLongTerm(listOf(legacy)), listOf(candidate), mutationAt = 30)
+        val parsed = codec.parse(first.markdown)
+        assertEquals("project.chatwithchat", parsed.entries.single().canonicalKey)
+
+        val replay = policy.merge(first.markdown, listOf(candidate), mutationAt = 31)
+        assertEquals(first.markdown, replay.markdown)
+        assertEquals(0, replay.materialMutationCount)
+    }
+
+    @Test
+    fun `corpus audit reports normalized duplicate and alias leakage`() {
+        val entries = listOf(
+            canonicalEntry(id = "a", text = "Project fact A.", canonicalKey = "project.gptmobile_ai_app"),
+            canonicalEntry(id = "b", text = "Project fact B.", canonicalKey = "project.chatwithchat"),
+            canonicalEntry(
+                id = "old",
+                text = "Old project fact.",
+                canonicalKey = "project.chatwithchat",
+                validity = MemoryValidity.OBSOLETE,
+                recallState = MemoryRecallState.QUERY
+            )
+        )
+
+        val audit = MemoryCanonicalCorpusAuditor.audit(entries)
+
+        assertEquals(listOf("project.chatwithchat@general"), audit.activeDuplicateKeys)
+        assertEquals(listOf("a:project.gptmobile_ai_app"), audit.aliasKeys)
+        assertEquals(listOf("old"), audit.obsoleteVisibleIds)
+        assertFalse(audit.isHealthy)
+    }
+
     private fun currentEntries(markdown: String): List<MarkdownMemoryEntry> = codec
         .parse(markdown)
         .entries

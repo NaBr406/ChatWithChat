@@ -16,6 +16,10 @@ internal object MemoryCanonicalIdentityPolicy {
         ASSISTANT_NAME_KEY to PREFERRED_ADDRESS_KEY
     )
 
+    private val CANONICAL_ALIASES = mapOf(
+        "project.gptmobile_ai_app" to "project.chatwithchat"
+    )
+
     private val ADDRESSING_KEYS = setOf(
         PREFERRED_ADDRESS_KEY,
         ASSISTANT_NAME_KEY,
@@ -24,10 +28,10 @@ internal object MemoryCanonicalIdentityPolicy {
     )
 
     fun normalizeCanonicalKey(canonicalKey: String, scope: String): String =
-        if (scope == MemoryScope.GENERAL && canonicalKey in ADDRESSING_KEYS) {
-            PREFERRED_ADDRESS_KEY
-        } else {
-            canonicalKey
+        when {
+            scope == MemoryScope.GENERAL && canonicalKey in ADDRESSING_KEYS -> PREFERRED_ADDRESS_KEY
+            canonicalKey in CANONICAL_ALIASES -> CANONICAL_ALIASES.getValue(canonicalKey)
+            else -> canonicalKey
         }
 
     fun isAddressingKey(canonicalKey: String?): Boolean = canonicalKey in ADDRESSING_KEYS

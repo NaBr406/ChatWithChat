@@ -328,7 +328,12 @@ internal class MemoryLongTermConsolidationPolicy {
         val currentCandidates = entries
             .filter { entry -> entry.isEligibleForCanonicalConsolidation() }
             .filter { entry -> entry.canonicalKey != null }
-            .groupBy { entry -> checkNotNull(entry.canonicalKey) to entry.scope }
+            .groupBy { entry ->
+                MemoryCanonicalIdentityPolicy.normalizeCanonicalKey(
+                    checkNotNull(entry.canonicalKey),
+                    entry.scope
+                ) to entry.scope
+            }
             .toSortedMap(compareBy<Pair<String, String>> { pair -> pair.first }.thenBy { pair -> pair.second })
             .filterValues { identityEntries ->
                 identityEntries.size > 1 || identityEntries.any { entry -> entry.requiresCoreRecallRepair() }
