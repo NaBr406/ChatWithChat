@@ -113,7 +113,9 @@ data class MemoryBatchProviderExistingMemory(
     val createdAt: Long = 0L,
     val lastObservedAt: Long = updatedAt,
     val validity: String = MemoryValidity.CURRENT,
-    val recallState: String = MemoryRecallState.QUERY
+    val recallState: String = MemoryRecallState.QUERY,
+    val canonicalKey: String? = null,
+    val scope: String = MemoryScope.GENERAL
 )
 
 @kotlinx.serialization.Serializable

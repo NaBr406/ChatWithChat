@@ -47,7 +47,6 @@ import javax.inject.Inject
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.toList
 import kotlinx.serialization.SerializationException
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -424,7 +423,6 @@ class LlmMemoryIntelligence @Inject constructor(
             logWarning("Memory $operation skipped: selected platform ${platform.name} has no token")
             return MemoryModelCallResponse.failure("memory_token_missing")
         }
-
 
         val effectiveSystemPrompt = memorySystemPrompt(systemPrompt)
         return when (platform.compatibleType) {
@@ -1060,7 +1058,9 @@ private fun MemoryBatchConsolidationRequest.toProviderRequest(): MemoryBatchProv
             createdAt = memory.createdAt,
             lastObservedAt = memory.lastObservedAt,
             validity = memory.validity,
-            recallState = memory.recallState
+            recallState = memory.recallState,
+            canonicalKey = memory.canonicalKey,
+            scope = memory.scope
         )
     }
     return MemoryBatchProviderRequest(

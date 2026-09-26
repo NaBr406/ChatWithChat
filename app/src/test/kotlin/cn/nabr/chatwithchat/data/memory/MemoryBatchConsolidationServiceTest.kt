@@ -36,12 +36,114 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MemoryBatchConsolidationServiceTest {
+    @Test
+    fun `provider generation recordings pass production parsing validation and commit`() = runBlocking {
+        val exportOnly = System.getenv("CHATWITHCHAT_EXPORT_GENERATION_REQUESTS") == "1"
+        val responseDirectory = System.getenv("CHATWITHCHAT_GENERATION_RESPONSES")
+        val cases = listOf(
+            "addressing" to ("以后一直叫我大哥，我叫你小c。另外不要使用😅表情。" to "好的。"),
+            "transient" to ("今天先调试索引，当前版本0.8.0，测试通过了18项。" to "我推测你长期喜欢 Rust 和机器人。"),
+            "project" to ("我长期维护 ChatWithChat，这是一个 Kotlin 和 Jetpack Compose 编写的 Android AI 聊天客户端。" to "知道了。"),
+            "correction" to ("纠正一下：我偏好的编辑器是 VS Code，不是 Vim。以后请记住。" to "已了解。")
+        )
+        val report = mutableListOf<String>()
+        cases.forEach { (caseId, conversation) ->
+            val response = when {
+                exportOnly -> "{\"operations\":[]}"
+                responseDirectory != null -> File(responseDirectory, "$caseId.json").readText()
+                else -> checkNotNull(javaClass.classLoader?.getResourceAsStream("memory_generation_recordings/$caseId.json")) {
+                    "Missing provider recording: $caseId"
+                }.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            }
+            val existing = if (caseId == "correction") {
+                listOf(
+                    longTermEntry("old_editor", "用户偏好 Vim 编辑器。").copy(
+                        type = "light_productivity_preference",
+                        canonicalKey = "preference.editor",
+                        scope = MemoryScope.GENERAL
+                    )
+                )
+            } else {
+                emptyList()
+            }
+            val fixture = activityBaselineFixture(response, existing)
+            try {
+                val job = fixture.createFiveTurnBatch(conversation.first, conversation.second)
+                val result = fixture.service.process(job)
+                val request = checkNotNull(fixture.openAIAPI.lastChatCompletionRequest)
+                val output = File("build/reports/memory/generation-requests/$caseId.json")
+                checkNotNull(output.parentFile).mkdirs()
+                output.writeText(Json.encodeToString(request.copy(stream = false)))
+                if (!exportOnly && responseDirectory == null) {
+                    val manifest = checkNotNull(javaClass.classLoader?.getResourceAsStream("memory_generation_recordings/manifest.json"))
+                        .bufferedReader(Charsets.UTF_8).use { Json.parseToJsonElement(it.readText()).jsonObject }
+                    val recording = checkNotNull(manifest["rows"]).jsonArray
+                        .map { it.jsonObject }
+                        .single { it.getValue("case").jsonPrimitive.content == caseId }
+                    assertEquals(recording.getValue("requestHash").jsonPrimitive.content, output.readText().sha256Utf8().uppercase())
+                }
+                if (!exportOnly) {
+                    assertEquals("$caseId: ${result.reason}", MemoryBatchProcessResult.STATUS_SUCCEEDED, result.status)
+                    val entries = MarkdownMemoryCodec().parse(fixture.fileStore.readLongTermMemory().getOrThrow()).entries
+                    val current = entries.filter { it.validity == MemoryValidity.CURRENT }
+                    assertTrue(MemoryCanonicalCorpusAuditor.audit(entries).activeDuplicateKeys.isEmpty())
+                    assertTrue(current.none { it.source == MemorySource.ASSISTANT_INFERRED && it.recallState == MemoryRecallState.CORE })
+                    assertTrue(current.all { it.evidenceRefs.isNotEmpty() })
+                    when (caseId) {
+                        "addressing" -> {
+                            val address = current.single { it.canonicalKey == "identity.preferred_address" }
+                            assertTrue(address.text.contains("大哥") && address.text.contains("小c"))
+                            assertFalse(address.text.contains("😅"))
+                            assertTrue(current.any { it.type in setOf("boundary", "communication_style") && it.text.contains("😅") })
+                            assertEquals(2, current.size)
+                        }
+                        "transient" -> assertTrue(current.isEmpty())
+                        "project" -> {
+                            val project = current.single()
+                            assertEquals("project_context", project.type)
+                            assertEquals(MemoryRecallState.QUERY, project.recallState)
+                            val freshness = MemoryFreshnessPolicy.resolve(project)
+                            assertEquals(MemoryLifecycleState.ACTIVE, freshness.lifecycleState)
+                            assertEquals(MemoryFreshness.REFRESHABLE, freshness.freshness)
+                            assertEquals(30, freshness.refreshAfterDays)
+                            assertTrue(MemoryFreshnessPolicy.allowsQuery(project, project.updatedAt * 1_000L))
+                            assertFalse(MemoryFreshnessPolicy.allowsQuery(project, (project.updatedAt + 31L * 86_400L) * 1_000L))
+                            assertFalse(MemoryFreshnessPolicy.allowsCore(project))
+                            assertTrue(project.text.contains("ChatWithChat"))
+                        }
+                        "correction" -> {
+                            assertEquals(1, current.size)
+                            assertTrue(current.single().text.contains("VS Code"))
+                            assertEquals("preference.editor", current.single().canonicalKey)
+                            assertTrue(entries.none { it.validity == MemoryValidity.CURRENT && it.text == existing.single().text })
+                        }
+                    }
+                    val committed = fixture.fileStore.readLongTermMemory().getOrThrow()
+                    val completedJob = checkNotNull(fixture.jobDao.getById(job.jobId))
+                    assertEquals(MemoryBatchProcessResult.STATUS_DUPLICATE, fixture.service.process(completedJob).status)
+                    assertEquals(committed, fixture.fileStore.readLongTermMemory().getOrThrow())
+                    report += "$caseId|passed=true|current=${current.size}|operations=${result.operationCount}"
+                }
+            } finally {
+                fixture.close()
+            }
+        }
+        if (!exportOnly) {
+            File("build/reports/memory/generation-validation.txt").writeText(report.joinToString("\n"))
+        }
+    }
+
     @Test
     fun `semantic attempt activity baseline reports one unified run at its real terminal phase`() = runBlocking {
         val scenarios = listOf(
@@ -1978,7 +2080,10 @@ class MemoryBatchConsolidationServiceTest {
         assertEquals(1, dailyMarkdown.split("Recovered compaction_flush through batching.").size - 1)
     }
 
-    private fun activityBaselineFixture(response: String?): ActivityBaselineFixture {
+    private fun activityBaselineFixture(
+        response: String?,
+        existing: List<MarkdownMemoryEntry> = emptyList()
+    ): ActivityBaselineFixture {
         val turnDao = InMemoryMemoryTurnBatchDao()
         val jobDao = InMemoryMaintenanceJobDao()
         val enqueuer = RecordingWorkEnqueuer()
@@ -2007,6 +2112,9 @@ class MemoryBatchConsolidationServiceTest {
         val tempRoot = Files.createTempDirectory("memory-activity-baseline").toFile()
         val fileStore = MemoryFileStore(MemoryFilePaths(tempRoot), FIXED_CLOCK)
         fileStore.ensureStore().getOrThrow()
+        if (existing.isNotEmpty()) {
+            fileStore.replaceLongTermMemory(MarkdownMemoryCodec().renderLongTerm(existing)).getOrThrow()
+        }
         val recoveryDao = InMemoryMemoryRecoveryDao()
         val mutationCoordinator = MemoryMutationCoordinator(
             recoveryDao = recoveryDao,
@@ -2026,7 +2134,7 @@ class MemoryBatchConsolidationServiceTest {
         )
         val maintenanceCorpusReader = object : MemoryMaintenanceCorpusReader {
             override suspend fun retrieveWorkingSet(request: MemoryRetrievalRequest): Result<List<MemoryRetrievalResult>> =
-                Result.success(emptyList())
+                Result.success(existing.map(::retrievalResult))
         }
         val coordinator = MemoryTurnBatchCoordinator(turnDao, turnBatchScheduler)
         return ActivityBaselineFixture(
@@ -2036,6 +2144,7 @@ class MemoryBatchConsolidationServiceTest {
             coordinator = coordinator,
             activityLogDao = activityLogDao,
             openAIAPI = openAIAPI,
+            fileStore = fileStore,
             tempRoot = tempRoot,
             service = MemoryBatchConsolidationService(
                 turnBatchDao = turnDao,
@@ -2254,10 +2363,11 @@ class MemoryBatchConsolidationServiceTest {
         val coordinator: MemoryTurnBatchCoordinator,
         val activityLogDao: BaselineMemoryActivityLogDao,
         val openAIAPI: BaselineMemoryOpenAIAPI,
+        val fileStore: MemoryFileStore,
         val tempRoot: File,
         val service: MemoryBatchConsolidationService
     ) {
-        suspend fun createFiveTurnBatch(): MemoryMaintenanceJob {
+        suspend fun createFiveTurnBatch(userText: String? = null, assistantText: String? = null): MemoryMaintenanceJob {
             (1..5).forEach { userMessageId ->
                 coordinator.recordCompletedTurn(
                     MemoryCompletedTurnInput(
@@ -2269,7 +2379,13 @@ class MemoryBatchConsolidationServiceTest {
                         userMessage = MessageV2(
                             id = userMessageId,
                             chatId = CHAT_ID,
-                            content = "Baseline question $userMessageId",
+                            content = if (userText == null) {
+                                "Baseline question $userMessageId"
+                            } else if (userMessageId == 1) {
+                                userText
+                            } else {
+                                "谢谢。"
+                            },
                             platformType = null,
                             createdAt = userMessageId.toLong()
                         ),
@@ -2277,7 +2393,13 @@ class MemoryBatchConsolidationServiceTest {
                             MessageV2(
                                 id = userMessageId + 100,
                                 chatId = CHAT_ID,
-                                content = "Baseline answer $userMessageId",
+                                content = if (assistantText == null) {
+                                    "Baseline answer $userMessageId"
+                                } else if (userMessageId == 1) {
+                                    assistantText
+                                } else {
+                                    "好的。"
+                                },
                                 platformType = "memory-baseline-platform"
                             )
                         ),

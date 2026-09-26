@@ -123,7 +123,9 @@ class LlmMemoryIntelligenceTest {
                     source = MemorySource.EXPLICIT_USER_STATEMENT,
                     updatedAt = epoch("2026-08-28T16:00:00Z"),
                     createdAt = epoch("2026-08-27T16:00:00Z"),
-                    lastObservedAt = epoch("2026-08-29T16:00:00Z")
+                    lastObservedAt = epoch("2026-08-29T16:00:00Z"),
+                    canonicalKey = "communication.response_style",
+                    scope = MemoryScope.GENERAL
                 )
             )
         )
@@ -139,6 +141,8 @@ class LlmMemoryIntelligenceTest {
         assertTrue(batchPayload.contains("\"createdAt\":\"2026-08-28\""))
         assertTrue(batchPayload.contains("\"updatedAt\":\"2026-08-29\""))
         assertTrue(batchPayload.contains("\"lastObservedAt\":\"2026-08-30\""))
+        assertTrue(batchPayload.contains("\"canonicalKey\":\"communication.response_style\""))
+        assertTrue(batchPayload.contains("\"scope\":\"general\""))
         assertTrue(!batchPayload.contains("\"completedAt\":178"))
         assertTrue(checkNotNull(openAIAPI.lastSystemPrompt).contains("Current local date: 2026-08-30 (Asia/Shanghai)."))
 
