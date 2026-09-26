@@ -34,6 +34,43 @@ import org.junit.Test
 class HybridMemoryRetrieverTest {
 
     @Test
+    fun `vector candidates exclude expired and completed project facts`() = runBlocking {
+        val nowSeconds = 1_790_306_209L
+        val active = chunk("active", "mem_active_project", "Current ChatWithChat project fact.").copy(
+            type = "project_context",
+            scope = "project:chatwithchat",
+            updatedAt = nowSeconds
+        )
+        val expired = chunk("expired", "mem_expired_project", "Expired ChatWithChat test result.").copy(
+            type = "project_context",
+            scope = "project:chatwithchat",
+            canonicalKey = "project.chatwithchat.test_result",
+            updatedAt = nowSeconds - 8L * 86_400L
+        )
+        val completed = chunk("completed", "mem_completed_project", "Completed ChatWithChat project fact.").copy(
+            type = "project_context",
+            scope = "project:chatwithchat",
+            lifecycleState = MemoryLifecycleState.COMPLETED,
+            updatedAt = nowSeconds
+        )
+        val fixture = fixture(
+            snapshot(chunks = listOf(active, expired, completed)),
+            nowMillis = { nowSeconds * 1_000L }
+        )
+        fixture.vectorStore.matches = listOf(
+            match(expired, TARGET_VECTOR, 0.01f),
+            match(completed, TARGET_VECTOR, 0.02f),
+            match(active, TARGET_VECTOR, 0.03f)
+        )
+
+        val report = fixture.retriever.retrieveWithDiagnostics(
+            request("unrelated semantic prompt").copy(strategy = MemoryRetrievalStrategy.VECTOR)
+        ).getOrThrow()
+
+        assertEquals(listOf(active.entryId), report.results.map { it.entryId })
+    }
+
+    @Test
     fun `semantic paraphrase retrieves current visible memory with vector provenance`() = runBlocking {
         val target = chunk("target", "mem_target", "用户偏好简洁直接的回答。")
         val distractor = chunk("distractor", "mem_distractor", "用户常用 Kotlin 开发 Android 应用。")
@@ -814,7 +851,8 @@ class HybridMemoryRetrieverTest {
     private fun fixture(
         snapshot: MemoryCorpusSnapshot,
         snapshotSource: MemoryCorpusSnapshotSource = StaticSnapshotSource(snapshot),
-        capability: MemoryEmbeddingCapability? = null
+        capability: MemoryEmbeddingCapability? = null,
+        nowMillis: () -> Long = System::currentTimeMillis
     ): Fixture {
         val configuration = configuration()
         val provider = FakeEmbeddingProvider()
@@ -826,14 +864,15 @@ class HybridMemoryRetrieverTest {
         )
         val vectorStore = FakeVectorStore(identity)
         val repairTrigger = FakeRepairTrigger()
-        val lexicalRetriever = MarkdownLexicalRetriever(snapshotSource)
+        val lexicalRetriever = MarkdownLexicalRetriever(snapshotSource, nowMillis)
         val retriever = HybridMemoryRetriever(
             snapshotSource = snapshotSource,
             lexicalRetriever = lexicalRetriever,
             vectorStore = vectorStore,
             embeddingCapabilitySource = MemoryEmbeddingCapabilitySource { resolvedCapability },
             vectorRecallStateSource = FixedVectorRecallStateSource(DURABLE_GENERATION),
-            repairTrigger = repairTrigger
+            repairTrigger = repairTrigger,
+            nowMillis = nowMillis
         )
         return Fixture(retriever, provider, vectorStore, repairTrigger, configuration)
     }

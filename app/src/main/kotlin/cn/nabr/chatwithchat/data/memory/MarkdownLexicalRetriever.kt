@@ -1,7 +1,8 @@
 package cn.nabr.chatwithchat.data.memory
 
 class MarkdownLexicalRetriever(
-    private val snapshotSource: MemoryCorpusSnapshotSource
+    private val snapshotSource: MemoryCorpusSnapshotSource,
+    private val nowMillis: () -> Long = System::currentTimeMillis
 ) : MemoryRetriever,
     MemoryMaintenanceCorpusReader {
 
@@ -122,6 +123,9 @@ class MarkdownLexicalRetriever(
             .filter { chunk ->
                 request.corpus != MemoryCorpus.CHAT_RECALL_LONG_TERM ||
                     chunk.sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME
+            }
+            .filter { chunk ->
+                request.corpus != MemoryCorpus.CHAT_RECALL_LONG_TERM || chunk.allowsQueryFreshness(nowMillis())
             }
             .filter { chunk ->
                 request.includePrivate ||

@@ -32,6 +32,64 @@ import org.junit.Test
 class MemoryMutationCoordinatorTest {
 
     @Test
+    fun `real export migration commits on a temporary copy and replays cleanly`() = runBlocking {
+        val exportPath = System.getenv("CHATWITHCHAT_REAL_MEMORY_EXPORT") ?: return@runBlocking
+        val export = File(exportPath)
+        val originalBytes = export.readBytes()
+        val fixture = Fixture()
+        fixture.fileStore.replaceLongTermMemory(originalBytes.toString(Charsets.UTF_8)).getOrThrow()
+        val base = fixture.fileStore.readLongTermMemory().getOrThrow()
+        val addressing = MarkdownMemoryCodec().parse(base).entries.single {
+            it.id == "import_0db7c068d4b81028079b91ca"
+        }
+        val proposal = MemoryMigrationPlanner.propose(
+            markdown = base,
+            mutationAt = 1_790_306_210L,
+            addressingReviews = listOf(
+                MemoryAddressingReview(
+                    entryId = addressing.id,
+                    sourceTextHash = addressing.text.sha256Utf8(),
+                    addressingText = "用户希望被称呼为“大哥”，并将 AI 称为“小c”。",
+                    boundaries = listOf(
+                        MemoryReviewedBoundary(
+                            canonicalKey = "boundary.emoji_usage",
+                            text = "用户不希望使用😅表情。",
+                            evidenceRefs = listOf("chat:30:user:178")
+                        )
+                    )
+                )
+            )
+        )
+        assertTrue(proposal.afterAudit.isHealthy)
+        assertTrue(proposal.materialMutationCount > 0)
+
+        val prepared = fixture.coordinator.prepareLocalMutation(
+            operationKey = "reviewed-real-export-migration",
+            targets = listOf(fixture.longTermTarget(base, proposal.targetMarkdown).copy(
+                materialMutationCount = proposal.materialMutationCount
+            ))
+        )
+        assertTrue(fixture.coordinator.reconcile(prepared) is MemoryMutationCommitResult.CanonicalCommitted)
+        val committed = fixture.fileStore.readLongTermMemory().getOrThrow()
+        assertEquals(proposal.targetMarkdown.trimEnd(), committed.trimEnd())
+        assertTrue(MemoryMigrationPlanner.propose(committed, 1_790_306_211L).isNoOp)
+        assertTrue(originalBytes.contentEquals(export.readBytes()))
+
+        val conflictFixture = Fixture()
+        conflictFixture.fileStore.replaceLongTermMemory(base).getOrThrow()
+        val conflictBase = conflictFixture.fileStore.readLongTermMemory().getOrThrow()
+        val pending = conflictFixture.coordinator.prepareLocalMutation(
+            operationKey = "reviewed-real-export-conflict",
+            targets = listOf(conflictFixture.longTermTarget(conflictBase, proposal.targetMarkdown))
+        )
+        val changedSource = "$conflictBase\n<!-- independent local edit -->\n"
+        conflictFixture.fileStore.replaceLongTermMemory(changedSource).getOrThrow()
+        assertTrue(conflictFixture.coordinator.reconcile(pending) is MemoryMutationCommitResult.Conflict)
+        assertEquals(changedSource.trimEnd(), conflictFixture.fileStore.readLongTermMemory().getOrThrow().trimEnd())
+        assertTrue(originalBytes.contentEquals(export.readBytes()))
+    }
+
+    @Test
     fun `material observer runs only after material long term commits`() = runBlocking {
         val observer = RecordingMaterialMutationObserver()
         val fixture = Fixture(observer)
@@ -1040,7 +1098,7 @@ class MemoryMutationCoordinatorTest {
         var repairRequests = 0
         val hybridRetriever = HybridMemoryRetriever(
             snapshotSource = snapshotSource,
-            lexicalRetriever = MarkdownLexicalRetriever(snapshotSource),
+            lexicalRetriever = MarkdownLexicalRetriever(snapshotSource, nowMillis = { 2_000L }),
             vectorStore = unusedVectorStore,
             embeddingCapabilitySource = MemoryEmbeddingCapabilitySource {
                 MemoryEmbeddingCapability.Ready(unusedProvider, MemoryVectorIndexDefaults.configuration)
@@ -1050,7 +1108,8 @@ class MemoryMutationCoordinatorTest {
                 override fun requestRepair() {
                     repairRequests += 1
                 }
-            }
+            },
+            nowMillis = { 2_000L }
         )
 
         val recalled = hybridRetriever.retrieve(

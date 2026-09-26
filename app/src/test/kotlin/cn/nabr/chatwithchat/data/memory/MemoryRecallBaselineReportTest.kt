@@ -339,7 +339,7 @@ private class BaselineRecordingRetriever(
     private val snapshot: MemoryCorpusSnapshot
 ) : MemoryRetriever {
     private val snapshotSource = BaselineSnapshotSource(snapshot)
-    private val lexicalRetriever = MarkdownLexicalRetriever(snapshotSource)
+    private val lexicalRetriever = MarkdownLexicalRetriever(snapshotSource, nowMillis = { 60_000L })
     private val hybridRetriever = HybridMemoryRetriever(
         snapshotSource = snapshotSource,
         lexicalRetriever = lexicalRetriever,
@@ -359,7 +359,8 @@ private class BaselineRecordingRetriever(
         },
         repairTrigger = object : MemoryVectorRecallRepairTrigger {
             override fun requestRepair() = Unit
-        }
+        },
+        nowMillis = { 60_000L }
     )
 
     var invocations: Int = 0

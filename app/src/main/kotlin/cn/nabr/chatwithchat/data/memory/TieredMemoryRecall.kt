@@ -79,7 +79,12 @@ internal fun MemoryCorpusSnapshot.selectCoreResults(includePrivate: Boolean): Li
         .toList()
 }
 
-private fun MemoryCorpusChunk.allowsCoreFreshness(): Boolean = MemoryFreshnessPolicy.allowsCore(
+private fun MemoryCorpusChunk.allowsCoreFreshness(): Boolean = MemoryFreshnessPolicy.allowsCore(toFreshnessEntry())
+
+internal fun MemoryCorpusChunk.allowsQueryFreshness(nowMillis: Long): Boolean =
+    MemoryFreshnessPolicy.allowsQuery(toFreshnessEntry(), nowMillis)
+
+private fun MemoryCorpusChunk.toFreshnessEntry(): MarkdownMemoryEntry =
     MarkdownMemoryEntry(
         id = entryId ?: "core",
         text = text,
@@ -102,7 +107,6 @@ private fun MemoryCorpusChunk.allowsCoreFreshness(): Boolean = MemoryFreshnessPo
         lifecycleState = lifecycleState,
         refreshAfterDays = refreshAfterDays
     )
-)
 
 private fun MemoryCorpusChunk.isPrivateOrSensitive(): Boolean =
     sensitivity in setOf(MemorySensitivity.PRIVATE, MemorySensitivity.SENSITIVE)

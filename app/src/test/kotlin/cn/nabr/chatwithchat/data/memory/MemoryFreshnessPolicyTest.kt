@@ -75,6 +75,25 @@ class MemoryFreshnessPolicyTest {
     }
 
     @Test
+    fun `production seconds are compared with a millisecond clock`() {
+        val updatedAtSeconds = 1_790_306_209L
+        val entry = MarkdownMemoryEntry(
+            id = "recent_result",
+            text = "The latest test passed.",
+            type = "project_context",
+            sensitivity = MemorySensitivity.NORMAL,
+            source = MemorySource.EXPLICIT_USER_STATEMENT,
+            createdAt = updatedAtSeconds,
+            updatedAt = updatedAtSeconds,
+            canonicalKey = "project.chatwithchat.test_result",
+            scope = "project:chatwithchat"
+        )
+        assertFalse(MemoryFreshnessPolicy.isStale(entry, (updatedAtSeconds + 6L * 24L * 60L * 60L) * 1_000L))
+        assertTrue(MemoryFreshnessPolicy.isStale(entry, (updatedAtSeconds + 8L * 24L * 60L * 60L) * 1_000L))
+        assertFalse(MemoryFreshnessPolicy.allowsQuery(entry.copy(lifecycleState = MemoryLifecycleState.COMPLETED), updatedAtSeconds * 1_000L))
+    }
+
+    @Test
     fun `assistant inferred facts cannot become core`() {
         val entry = MarkdownMemoryEntry(
             id = "mem_inferred",

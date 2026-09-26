@@ -378,7 +378,10 @@ class MarkdownLexicalRetrieverTest {
                 text = "Shared retrieval fact $index. " + "detail ".repeat(160)
             ).copy(scope = if (index % 2 == 0) MemoryScope.WORK else "project:top8")
         }
-        val results = MarkdownLexicalRetriever(StaticSnapshotSource(snapshot(1L, chunks))).retrieve(
+        val results = MarkdownLexicalRetriever(
+            StaticSnapshotSource(snapshot(1L, chunks)),
+            nowMillis = { 2_000L }
+        ).retrieve(
             MemoryRetrievalRequest(
                 corpus = MemoryCorpus.CHAT_RECALL_LONG_TERM,
                 query = "shared retrieval",

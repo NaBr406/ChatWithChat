@@ -198,7 +198,11 @@ class MemoryChunker(
             hashField("scope", scope),
             hashField("validity", validity),
             hashField("recallState", recallState),
-            hashField("updatedAt", updatedAt.toString())
+            hashField("updatedAt", updatedAt.toString()),
+            hashField("durability", durability),
+            hashField("freshness", freshness),
+            hashField("lifecycleState", lifecycleState),
+            hashField("refreshAfterDays", refreshAfterDays?.toString())
         ).joinToString(separator = "")
             .sha256Utf8()
         return MemoryCorpusChunk(

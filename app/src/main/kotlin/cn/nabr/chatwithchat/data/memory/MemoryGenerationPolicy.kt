@@ -52,12 +52,7 @@ internal object MemoryGenerationPolicy {
             }
         }
         if (source == MemorySource.ASSISTANT_INFERRED && recallState == MemoryRecallState.CORE) {
-            require(normalized != MemoryClass.TEMPORARY_OBSERVATION) {
-                "assistant_inferred_core_forbidden"
-            }
-            require(type !in setOf("stable_profile", "interest")) {
-                "assistant_inferred_core_forbidden"
-            }
+            throw IllegalArgumentException("assistant_inferred_core_forbidden")
         }
         return normalized
     }

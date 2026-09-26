@@ -20,7 +20,8 @@ class HybridMemoryRetriever(
     private val vectorStore: MemoryVectorStore,
     private val embeddingCapabilitySource: MemoryEmbeddingCapabilitySource,
     private val vectorRecallStateSource: MemoryVectorRecallStateSource,
-    private val repairTrigger: MemoryVectorRecallRepairTrigger
+    private val repairTrigger: MemoryVectorRecallRepairTrigger,
+    private val nowMillis: () -> Long = System::currentTimeMillis
 ) : MemoryRetriever {
     override suspend fun retrieve(request: MemoryRetrievalRequest): Result<List<MemoryRetrievalResult>> =
         retrieveWithDiagnostics(request).map { report -> report.coreResults + report.results }
@@ -220,7 +221,8 @@ class HybridMemoryRetriever(
                 val current = currentChunks[match.chunk.chunkId]
                     ?.takeIf { chunk ->
                         chunk.sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME &&
-                            chunk.embeddingContentHash == match.chunk.embeddingContentHash
+                            chunk.embeddingContentHash == match.chunk.embeddingContentHash &&
+                            chunk.allowsQueryFreshness(nowMillis())
                     }
                     ?: return@mapNotNull null
                 CurrentVectorMatch(current, match.embedding, match.cosineDistance)

@@ -64,17 +64,18 @@ class MemoryGenerationPolicyTest {
 
     @Test
     fun `assistant inference cannot enter core`() {
-        val error = assertThrows(IllegalArgumentException::class.java) {
-            MemoryGenerationPolicy.validate(
-                memoryClass = MemoryClass.DURABLE_FACT,
-                type = "interest",
-                scope = MemoryScope.GENERAL,
-                source = MemorySource.ASSISTANT_INFERRED,
-                recallState = MemoryRecallState.CORE,
-                longTermWrite = true
-            )
+        listOf("interest", "communication_style", "stable_profile", "boundary").forEach { type ->
+            val error = assertThrows(IllegalArgumentException::class.java) {
+                MemoryGenerationPolicy.validate(
+                    memoryClass = MemoryClass.DURABLE_FACT,
+                    type = type,
+                    scope = MemoryScope.GENERAL,
+                    source = MemorySource.ASSISTANT_INFERRED,
+                    recallState = MemoryRecallState.CORE,
+                    longTermWrite = true
+                )
+            }
+            assertEquals("assistant_inferred_core_forbidden", error.message)
         }
-
-        assertEquals("assistant_inferred_core_forbidden", error.message)
     }
 }

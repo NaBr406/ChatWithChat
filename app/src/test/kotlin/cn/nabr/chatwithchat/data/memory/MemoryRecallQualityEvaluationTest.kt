@@ -9,6 +9,40 @@ class MemoryRecallQualityEvaluationTest {
     private val chunker = MemoryChunker()
 
     @Test
+    fun `migration output removes cross scope project duplicate from query candidates`() {
+        val nowSeconds = 1_790_306_209L
+        val legacy = entry(
+            id = "legacy_project",
+            text = "ChatWithChat Android project legacy description.",
+            type = "project_context",
+            canonicalKey = "project.gptmobile_ai_app",
+            scope = "project:gptmobile-ai-app",
+            recallState = MemoryRecallState.QUERY,
+            updatedAt = nowSeconds
+        )
+        val verified = entry(
+            id = "verified_project",
+            text = "ChatWithChat Android project verified description.",
+            type = "project_context",
+            source = MemorySource.USER_CONFIRMED,
+            canonicalKey = "project.chatwithchat",
+            scope = "project:chatwithchat",
+            recallState = MemoryRecallState.QUERY,
+            updatedAt = nowSeconds
+        )
+        val oldMarkdown = codec.renderLongTerm(listOf(legacy, verified))
+        val migrated = MemoryMigrationPlanner.propose(oldMarkdown, nowSeconds + 1L)
+        val oldCandidates = queryProjectCandidates(oldMarkdown, nowSeconds)
+        val migratedCandidates = queryProjectCandidates(migrated.targetMarkdown, nowSeconds)
+
+        println("memory-migration-recall-ab|before=${oldCandidates.size}|after=${migratedCandidates.size}")
+        assertEquals(2, oldCandidates.size)
+        assertEquals(1, migratedCandidates.size)
+        assertEquals(verified.text, migratedCandidates.single())
+        assertTrue(migrated.afterAudit.isHealthy)
+    }
+
+    @Test
     fun `optimized corpus improves recall safety without losing stable usefulness`() {
         val oldEntries = listOf(
             entry(
@@ -114,6 +148,36 @@ class MemoryRecallQualityEvaluationTest {
             privateLeakageCount = privateLeakageCount,
             usefulStableRecallCount = if (core.any { it.type == "stable_profile" }) 1 else 0
         )
+    }
+
+    private fun queryProjectCandidates(markdown: String, nowSeconds: Long): List<String> {
+        val chunks = chunker.chunksFor(
+            MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+            markdown,
+            MemoryProjectionPolicy.CHAT_ACTIVE_ONLY
+        ).chunks
+        val snapshot = MemoryCorpusSnapshot(
+            corpus = MemoryCorpus.CHAT_RECALL_LONG_TERM,
+            sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
+            canonicalSourceHash = markdown.sha256Utf8(),
+            generation = 1L,
+            chunks = chunks
+        )
+        val unusedSource = object : MemoryCorpusSnapshotSource {
+            override suspend fun snapshots(corpus: MemoryCorpus): Result<List<MemoryCorpusSnapshot>> =
+                error("ranking uses the supplied snapshot")
+
+            override suspend fun isCurrent(snapshots: List<MemoryCorpusSnapshot>): Result<Boolean> =
+                error("ranking uses the supplied snapshot")
+        }
+        val request = MemoryRetrievalRequest(
+            corpus = MemoryCorpus.CHAT_RECALL_LONG_TERM,
+            query = "ChatWithChat Android project",
+            strategy = MemoryRetrievalStrategy.LEXICAL
+        )
+        return MarkdownLexicalRetriever(unusedSource, nowMillis = { nowSeconds * 1_000L })
+            .rankCandidates(request, request.query, listOf(snapshot))
+            .map(MemoryRetrievalResult::text)
     }
 
     private fun entry(
