@@ -73,8 +73,8 @@ class MemoryCorpusQualityFixtureTest {
         assertEquals(MemoryRecallState.MAINTENANCE_ONLY, retired.recallState)
         assertEquals(diagnostic.text, retired.text)
         assertEquals(diagnostic.evidenceRefs, retired.evidenceRefs)
-        assertEquals(16, keptEntries)
-        assertEquals(2, mergedEntries)
+        assertEquals(15, keptEntries)
+        assertEquals(4, mergedEntries)
 
         val chunking = MemoryChunker(codec).chunksFor(
             sourcePath = MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME,
