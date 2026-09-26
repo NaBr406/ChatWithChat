@@ -43,6 +43,70 @@ class MemoryMigrationPlannerTest {
     }
 
     @Test
+    fun `real project alias scopes converge and replay without mutations`() {
+        val legacy = entry(
+            id = "mem_can_867dd03ca661b8273a6fce9c",
+            text = "The user maintains the Android chat project.",
+            canonicalKey = "project.gptmobile_ai_app",
+            scope = "project:gptmobile-ai-app"
+        )
+        val current = entry(
+            id = "mem_can_bb93370d6976079aa732d242",
+            text = "The user maintains ChatWithChat.",
+            canonicalKey = "project.chatwithchat",
+            scope = "project:chatwithchat",
+            source = MemorySource.USER_CONFIRMED,
+            updatedAt = 2L
+        )
+
+        val proposal = MemoryMigrationPlanner.propose(codec.renderLongTerm(listOf(legacy, current)), 100L)
+        val entries = codec.parse(proposal.targetMarkdown).entries
+        assertTrue(proposal.afterAudit.isHealthy)
+        assertEquals(1, entries.count { it.validity == MemoryValidity.CURRENT })
+        assertEquals("project:chatwithchat", entries.first { it.id == legacy.id }.scope)
+        val winner = entries.single { it.validity == MemoryValidity.CURRENT }
+        val retired = entries.single { it.validity == MemoryValidity.OBSOLETE }
+        assertEquals(current.text, winner.text)
+        assertEquals(winner.id, retired.supersededBy)
+        assertTrue(MemoryMigrationPlanner.propose(proposal.targetMarkdown, 101L).isNoOp)
+    }
+
+    @Test
+    fun `reviewed addressing bundle separates emoji boundary and preserves source`() {
+        val bundled = entry(
+            id = "import_0db7c068d4b81028079b91ca",
+            text = "用户希望以后被称呼为“大哥”；用户为 AI 取名为“小c”；用户不希望使用😅这个流汗黄豆表情。",
+            canonicalKey = "identity.preferred_address"
+        ).copy(
+            type = "communication_style",
+            source = MemorySource.USER_CONFIRMED,
+            evidenceRefs = listOf("chat:1:user:1", "chat:1:user:3", "chat:30:user:178")
+        )
+        val source = codec.renderLongTerm(listOf(bundled))
+        assertEquals(listOf(bundled.id), MemoryCanonicalCorpusAuditor.audit(listOf(bundled)).identityBundleIds)
+        val review = MemoryAddressingReview(
+            entryId = bundled.id,
+            sourceTextHash = bundled.text.sha256Utf8(),
+            addressingText = "用户希望被称呼为“大哥”，并将 AI 称为“小c”。",
+            boundaries = listOf(
+                MemoryReviewedBoundary(
+                    canonicalKey = "boundary.emoji_usage",
+                    text = "用户不希望使用😅表情。",
+                    evidenceRefs = listOf("chat:30:user:178")
+                )
+            )
+        )
+
+        val proposal = MemoryMigrationPlanner.propose(source, 100L, listOf(review))
+        val entries = codec.parse(proposal.targetMarkdown).entries
+        assertTrue(proposal.afterAudit.isHealthy)
+        assertEquals(1, entries.count { it.validity == MemoryValidity.CURRENT && it.canonicalKey == "boundary.emoji_usage" })
+        assertEquals(1, entries.count { it.validity == MemoryValidity.OBSOLETE && it.text == bundled.text })
+        assertEquals(review.addressingText, entries.first { it.id == bundled.id }.text)
+        assertTrue(MemoryMigrationPlanner.propose(proposal.targetMarkdown, 101L).isNoOp)
+    }
+
+    @Test
     fun `duplicate current identities converge and replay is a no op`() {
         val first = entry(
             id = "first",

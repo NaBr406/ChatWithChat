@@ -977,7 +977,10 @@ class MemoryBatchConsolidationService(
         turnsByKey: Map<String, MemoryCompletedTurnSnapshot>
     ): MemoryBatchOperation {
         val canonicalKey = checkNotNull(operation.canonicalKey) { "canonical_key_missing" }
-        val scope = checkNotNull(operation.scope) { "scope_missing" }
+        val scope = MemoryCanonicalIdentityPolicy.normalizeScope(
+            canonicalKey,
+            checkNotNull(operation.scope) { "scope_missing" }
+        )
         val normalizedCanonicalKey = MemoryCanonicalIdentityPolicy.normalizeCanonicalKey(canonicalKey, scope)
         val recallState = checkNotNull(operation.recallState) { "recall_state_missing" }
         // The cited turns own the evidence time. Whatever the model echoed back is discarded rather
@@ -1002,7 +1005,9 @@ class MemoryBatchConsolidationService(
                             toScope = scope
                         )
                 ) { "canonical_key_rebinding_forbidden" }
-                check(existing.canonicalKey == null || existing.scope == scope) { "target_scope_mismatch" }
+                check(existing.canonicalKey == null ||
+                    MemoryCanonicalIdentityPolicy.normalizeScope(existing.canonicalKey, existing.scope) == scope
+                ) { "target_scope_mismatch" }
             }
         val normalizedMemoryClass = MemoryGenerationPolicy.validate(
             memoryClass = operation.memoryClass,

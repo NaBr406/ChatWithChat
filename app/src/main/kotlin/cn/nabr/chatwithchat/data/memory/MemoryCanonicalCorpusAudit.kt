@@ -24,7 +24,7 @@ internal object MemoryCanonicalCorpusAuditor {
                 MemoryCanonicalIdentityPolicy.normalizeCanonicalKey(
                     checkNotNull(entry.canonicalKey),
                     entry.scope
-                ) to entry.scope
+                ) to MemoryCanonicalIdentityPolicy.normalizeScope(entry.canonicalKey, entry.scope)
             }
             .filterValues { it.size > 1 }
             .keys
@@ -35,6 +35,7 @@ internal object MemoryCanonicalCorpusAuditor {
                 entry.canonicalKey
                     ?.takeIf { key ->
                         MemoryCanonicalIdentityPolicy.normalizeCanonicalKey(key, entry.scope) != key
+                            || MemoryCanonicalIdentityPolicy.normalizeScope(key, entry.scope) != entry.scope
                     }
                     ?.let { key -> "${entry.id}:$key" }
             }
@@ -51,7 +52,7 @@ internal object MemoryCanonicalCorpusAuditor {
             .filter { entry ->
                 entry.canonicalKey?.let { key ->
                     MemoryCanonicalIdentityPolicy.isAddressingIdentity(key, entry.scope) &&
-                        entry.text.contains("boundary", ignoreCase = true)
+                        entry.extraMetadata[ADDRESSING_REVIEW_HASH] != entry.text.sha256Utf8()
                 } == true
             }
             .map(MarkdownMemoryEntry::id)
@@ -64,4 +65,6 @@ internal object MemoryCanonicalCorpusAuditor {
             identityBundleIds = identityBundle
         )
     }
+
+    const val ADDRESSING_REVIEW_HASH = "addressing_review_hash"
 }

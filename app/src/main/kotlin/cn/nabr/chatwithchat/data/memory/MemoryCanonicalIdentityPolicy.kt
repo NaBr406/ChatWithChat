@@ -20,6 +20,9 @@ internal object MemoryCanonicalIdentityPolicy {
         "project.gptmobile_ai_app" to "project.chatwithchat"
     )
 
+    private const val LEGACY_CHATWITHCHAT_SCOPE = "project:gptmobile-ai-app"
+    private const val CHATWITHCHAT_SCOPE = "project:chatwithchat"
+
     private val ADDRESSING_KEYS = setOf(
         PREFERRED_ADDRESS_KEY,
         ASSISTANT_NAME_KEY,
@@ -33,6 +36,11 @@ internal object MemoryCanonicalIdentityPolicy {
             canonicalKey in CANONICAL_ALIASES -> CANONICAL_ALIASES.getValue(canonicalKey)
             else -> canonicalKey
         }
+
+    fun normalizeScope(canonicalKey: String?, scope: String): String =
+        if (canonicalKey in setOf("project.gptmobile_ai_app", "project.chatwithchat") &&
+            scope == LEGACY_CHATWITHCHAT_SCOPE
+        ) CHATWITHCHAT_SCOPE else scope
 
     fun isAddressingKey(canonicalKey: String?): Boolean = canonicalKey in ADDRESSING_KEYS
 
@@ -48,8 +56,10 @@ internal object MemoryCanonicalIdentityPolicy {
         if (fromKey == null) return true
         val normalizedFromKey = normalizeCanonicalKey(fromKey, fromScope)
         val normalizedToKey = normalizeCanonicalKey(toKey, toScope)
-        if (normalizedFromKey == normalizedToKey && fromScope == toScope) return true
-        if (fromScope != toScope) return false
+        val normalizedFromScope = normalizeScope(fromKey, fromScope)
+        val normalizedToScope = normalizeScope(toKey, toScope)
+        if (normalizedFromKey == normalizedToKey && normalizedFromScope == normalizedToScope) return true
+        if (normalizedFromScope != normalizedToScope) return false
         if (
             LEGACY_REBINDINGS[fromKey] == toKey &&
             (fromKey != ASSISTANT_NAME_KEY || fromScope == MemoryScope.GENERAL)

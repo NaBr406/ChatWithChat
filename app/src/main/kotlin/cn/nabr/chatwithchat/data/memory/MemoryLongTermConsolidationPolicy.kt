@@ -242,7 +242,10 @@ internal class MemoryLongTermConsolidationPolicy {
                     .distinct()
                     .singleOrNull()
                     ?: "maintenance.retired.${memoryIds.joinToString("_").sha256Utf8().take(16)}"
-                val scope = decision.scope ?: entries.map(MemoryLongTermCandidateEntry::scope).distinct().single()
+                val scope = MemoryCanonicalIdentityPolicy.normalizeScope(
+                    requestedCanonicalKey,
+                    decision.scope ?: entries.map(MemoryLongTermCandidateEntry::scope).distinct().single()
+                )
                 val canonicalKey = MemoryCanonicalIdentityPolicy.normalizeCanonicalKey(requestedCanonicalKey, scope)
                 require(MarkdownMemoryMetadataPolicy.isCanonicalKey(canonicalKey)) {
                     "invalid retired memory canonical key"
@@ -261,7 +264,9 @@ internal class MemoryLongTermConsolidationPolicy {
                 ) {
                     "retirement changed canonical identity"
                 }
-                require(entries.all { entry -> entry.scope == scope }) {
+                require(entries.all { entry ->
+                    MemoryCanonicalIdentityPolicy.normalizeScope(entry.canonicalKey, entry.scope) == scope
+                }) {
                     "retirement crossed memory scopes"
                 }
                 require(decision.reason.isNotBlank()) { "retirement requires a quality reason" }
@@ -284,7 +289,7 @@ internal class MemoryLongTermConsolidationPolicy {
                 )
             }
             val requestedCanonicalKey = requireNotNull(decision.canonicalKey)
-            val scope = requireNotNull(decision.scope)
+            val scope = MemoryCanonicalIdentityPolicy.normalizeScope(requestedCanonicalKey, requireNotNull(decision.scope))
             val canonicalKey = MemoryCanonicalIdentityPolicy.normalizeCanonicalKey(requestedCanonicalKey, scope)
             val recallState = requireNotNull(decision.recallState)
             require(MarkdownMemoryMetadataPolicy.isCanonicalKey(canonicalKey)) { "invalid canonical memory key" }
@@ -305,7 +310,7 @@ internal class MemoryLongTermConsolidationPolicy {
             val reboundEntries = entries.filter { entry ->
                 entry.canonicalKey != null &&
                     (
-                        entry.scope != scope ||
+                        MemoryCanonicalIdentityPolicy.normalizeScope(entry.canonicalKey, entry.scope) != scope ||
                             MemoryCanonicalIdentityPolicy.normalizeCanonicalKey(entry.canonicalKey, entry.scope) != canonicalKey
                         )
             }
@@ -321,7 +326,9 @@ internal class MemoryLongTermConsolidationPolicy {
             ) { "decision changed unrelated canonical identity" }
             if (reboundEntries.isNotEmpty()) {
                 require(memoryIds.size >= 2) { "single canonical memory cannot be rebound" }
-                require(entries.map(MemoryLongTermCandidateEntry::scope).distinct() == listOf(scope)) {
+                require(entries.map { entry ->
+                    MemoryCanonicalIdentityPolicy.normalizeScope(entry.canonicalKey, entry.scope)
+                }.distinct() == listOf(scope)) {
                     "decision attempted to merge distinct memory scopes"
                 }
             }
@@ -364,7 +371,7 @@ internal class MemoryLongTermConsolidationPolicy {
                 MemoryCanonicalIdentityPolicy.normalizeCanonicalKey(
                     checkNotNull(entry.canonicalKey),
                     entry.scope
-                ) to entry.scope
+                ) to MemoryCanonicalIdentityPolicy.normalizeScope(entry.canonicalKey, entry.scope)
             }
             .toSortedMap(compareBy<Pair<String, String>> { pair -> pair.first }.thenBy { pair -> pair.second })
             .filterValues { identityEntries ->

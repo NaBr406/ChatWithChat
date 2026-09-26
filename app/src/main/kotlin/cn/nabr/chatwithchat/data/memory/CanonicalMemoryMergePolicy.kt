@@ -484,6 +484,7 @@ internal class CanonicalMemoryMergePolicy(
             canonicalKey = candidate.canonicalKey,
             scope = candidate.scope
         )
+        val scope = MemoryCanonicalIdentityPolicy.normalizeScope(candidate.canonicalKey, candidate.scope)
         require(MarkdownMemoryMetadataPolicy.isCanonicalKey(canonicalKey)) { "invalid canonical memory key" }
         require(candidate.evidenceAt >= 0L) { "invalid canonical evidence time" }
         require(candidate.recallState in ACTIVE_RECALL_STATES) { "invalid canonical recall state" }
@@ -506,7 +507,10 @@ internal class CanonicalMemoryMergePolicy(
                                 toScope = candidate.scope
                             )
                     ) { "canonical target key mismatch" }
-                    require(target.canonicalKey == null || target.scope == candidate.scope) {
+                    require(
+                        target.canonicalKey == null ||
+                            MemoryCanonicalIdentityPolicy.normalizeScope(target.canonicalKey, target.scope) == scope
+                    ) {
                         "canonical target scope mismatch"
                     }
                 } else {
@@ -524,6 +528,7 @@ internal class CanonicalMemoryMergePolicy(
         return candidate.copy(
             text = text,
             canonicalKey = canonicalKey,
+            scope = scope,
             evidenceRefs = evidenceRefs
         )
     }
@@ -832,14 +837,15 @@ internal class CanonicalMemoryMergePolicy(
 
     private fun MarkdownMemoryEntry.matchesIdentity(identity: CanonicalMemoryIdentity): Boolean {
         val key = canonicalKey ?: return false
-        return scope == identity.scope &&
+        return MemoryCanonicalIdentityPolicy.normalizeScope(key, scope) == identity.scope &&
             MemoryCanonicalIdentityPolicy.normalizeCanonicalKey(key, scope) == identity.canonicalKey
     }
 
     private fun MarkdownMemoryEntry.hasSameCanonicalIdentity(other: MarkdownMemoryEntry): Boolean {
         val leftKey = canonicalKey ?: return other.canonicalKey == null && scope == other.scope
         val rightKey = other.canonicalKey ?: return false
-        return scope == other.scope &&
+        return MemoryCanonicalIdentityPolicy.normalizeScope(leftKey, scope) ==
+            MemoryCanonicalIdentityPolicy.normalizeScope(rightKey, other.scope) &&
             MemoryCanonicalIdentityPolicy.normalizeCanonicalKey(leftKey, scope) ==
             MemoryCanonicalIdentityPolicy.normalizeCanonicalKey(rightKey, other.scope)
     }
