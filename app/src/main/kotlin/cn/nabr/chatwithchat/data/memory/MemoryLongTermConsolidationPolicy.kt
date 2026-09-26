@@ -216,6 +216,7 @@ internal class MemoryLongTermConsolidationPolicy {
                 require(decision.canonicalKey == null && decision.scope == null && decision.recallState == null) {
                     "ignore decision must not carry canonical metadata"
                 }
+                require(decision.memoryClass == null) { "ignore decision must not carry memory class" }
                 return@map decision.copy(reason = decision.reason.take(MAX_REASON_CHARS))
             }
             val memoryIds = decision.memoryIds.distinct().sorted()
@@ -264,12 +265,21 @@ internal class MemoryLongTermConsolidationPolicy {
                     "retirement crossed memory scopes"
                 }
                 require(decision.reason.isNotBlank()) { "retirement requires a quality reason" }
+            val memoryClass = MemoryGenerationPolicy.validate(
+                    memoryClass = decision.memoryClass ?: entries.first().memoryClass,
+                    type = entries.first().type,
+                    scope = scope,
+                    source = entries.first().source,
+                    recallState = MemoryRecallState.QUERY,
+                    longTermWrite = false
+                )
                 previouslyAssigned += memoryIds
                 return@map decision.copy(
                     memoryIds = memoryIds,
                     canonicalKey = canonicalKey,
                     scope = scope,
                     recallState = MemoryRecallState.MAINTENANCE_ONLY,
+                    memoryClass = memoryClass,
                     reason = decision.reason.trim().take(MAX_REASON_CHARS)
                 )
             }
@@ -280,6 +290,18 @@ internal class MemoryLongTermConsolidationPolicy {
             require(MarkdownMemoryMetadataPolicy.isCanonicalKey(canonicalKey)) { "invalid canonical memory key" }
             require(MarkdownMemoryMetadataPolicy.isScope(scope)) { "invalid canonical memory scope" }
             require(recallState in ACTIVE_RECALL_STATES) { "invalid canonical recall state" }
+            val memoryClass = MemoryGenerationPolicy.validate(
+                memoryClass = decision.memoryClass ?: entries.first().memoryClass,
+                type = entries.first().type,
+                scope = scope,
+                source = if (entries.all { entry -> entry.source == MemorySource.ASSISTANT_INFERRED }) {
+                    MemorySource.ASSISTANT_INFERRED
+                } else {
+                    entries.first().source
+                },
+                recallState = recallState,
+                longTermWrite = true
+            )
             val reboundEntries = entries.filter { entry ->
                 entry.canonicalKey != null &&
                     (
@@ -308,7 +330,17 @@ internal class MemoryLongTermConsolidationPolicy {
                 memoryIds = memoryIds,
                 canonicalKey = canonicalKey,
                 scope = scope,
-                recallState = consolidationRecallState(canonicalKey, scope, recallState),
+                recallState = consolidationRecallState(
+                    canonicalKey = canonicalKey,
+                    scope = scope,
+                    recallState = recallState,
+                    source = if (entries.all { entry -> entry.source == MemorySource.ASSISTANT_INFERRED }) {
+                        MemorySource.ASSISTANT_INFERRED
+                    } else {
+                        null
+                    }
+                ),
+                memoryClass = memoryClass,
                 reason = decision.reason.take(MAX_REASON_CHARS)
             )
         }
@@ -345,7 +377,8 @@ internal class MemoryLongTermConsolidationPolicy {
                     recallState = consolidationRecallState(
                         canonicalKey = checkNotNull(entry.canonicalKey),
                         scope = entry.scope,
-                        recallState = entry.recallState
+                        recallState = entry.recallState,
+                        source = entry.source
                     )
                 )
             }
@@ -411,7 +444,8 @@ internal class MemoryLongTermConsolidationPolicy {
                         recallState = consolidationRecallState(
                             canonicalKey = requireNotNull(decision.canonicalKey),
                             scope = requireNotNull(decision.scope),
-                            recallState = requireNotNull(decision.recallState)
+                            recallState = requireNotNull(decision.recallState),
+                            source = entry.source
                         )
                     )
                 }
@@ -487,8 +521,13 @@ internal class MemoryLongTermConsolidationPolicy {
     private fun consolidationRecallState(
         canonicalKey: String,
         scope: String,
-        recallState: String
+        recallState: String,
+        source: String? = null
     ): String = if (
+        source == MemorySource.ASSISTANT_INFERRED
+    ) {
+        MemoryRecallState.QUERY
+    } else if (
         canonicalKey in CORE_IDENTITY_CANONICAL_KEYS && scope == MemoryScope.GENERAL
     ) {
         MemoryRecallState.CORE
@@ -551,8 +590,20 @@ internal class MemoryLongTermConsolidationPolicy {
         canonicalKey = canonicalKey,
         scope = scope,
         lastObservedAt = lastObservedAt,
-        recallState = recallState
+        recallState = recallState,
+        memoryClass = if (type == "project_context" || scope.startsWith("project:")) {
+            MemoryClass.ACTIVE_PROJECT
+        } else {
+            MemoryClass.DURABLE_FACT
+        }
     )
+
+    private fun MarkdownMemoryEntry.inferredMemoryClass(): String = when {
+        durability == MemoryDurability.EPHEMERAL || freshness == MemoryFreshness.EXPIRES ->
+            MemoryClass.TEMPORARY_OBSERVATION
+        type == "project_context" || scope.startsWith("project:") -> MemoryClass.ACTIVE_PROJECT
+        else -> MemoryClass.DURABLE_FACT
+    }
 
     private fun MarkdownMemoryEntry.toCanonicalCandidate(
         canonicalKey: String = checkNotNull(this.canonicalKey),

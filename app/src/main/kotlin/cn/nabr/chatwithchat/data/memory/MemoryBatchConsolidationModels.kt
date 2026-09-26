@@ -66,6 +66,7 @@ data class MemoryBatchOperation(
     val scope: String? = null,
     val evidenceAt: Long? = null,
     val recallState: String? = null,
+    val memoryClass: String? = null,
     val reason: String = ""
 )
 
@@ -135,6 +136,7 @@ data class MemoryBatchProviderOperation(
     val scope: String? = null,
     val evidenceAt: Long? = null,
     val recallState: String? = null,
+    val memoryClass: String? = null,
     val reason: String = ""
 )
 

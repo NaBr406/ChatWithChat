@@ -869,6 +869,7 @@ class MemoryBatchConsolidationService(
                     check(operation.scope == null) { "ignore_scope_forbidden" }
                     check(operation.evidenceAt == null) { "ignore_evidence_at_forbidden" }
                     check(operation.recallState == null) { "ignore_recall_state_forbidden" }
+                    check(operation.memoryClass == null) { "ignore_memory_class_forbidden" }
                     operation.copy(reason = operation.reason.trim())
                 }
                 MemoryBatchAction.CREATE -> {
@@ -908,6 +909,7 @@ class MemoryBatchConsolidationService(
                     check(operation.scope == null) { "remove_scope_forbidden" }
                     check(operation.evidenceAt == null) { "remove_evidence_at_forbidden" }
                     check(operation.recallState == null) { "remove_recall_state_forbidden" }
+                    check(operation.memoryClass == null) { "remove_memory_class_forbidden" }
                     operation.copy(
                         targetMemoryId = targetId,
                         targetMemoryRef = null,
@@ -1002,6 +1004,23 @@ class MemoryBatchConsolidationService(
                 ) { "canonical_key_rebinding_forbidden" }
                 check(existing.canonicalKey == null || existing.scope == scope) { "target_scope_mismatch" }
             }
+        val normalizedMemoryClass = MemoryGenerationPolicy.validate(
+            memoryClass = operation.memoryClass,
+            type = operation.type,
+            scope = scope,
+            source = operation.source,
+            recallState = recallState,
+            destination = operation.destination
+        )
+        if (
+            operation.destination == MemoryBatchDestination.LONG_TERM &&
+            operation.source == MemorySource.ASSISTANT_INFERRED &&
+            operation.type in setOf("stable_profile", "interest")
+        ) {
+            check(hasCrossDayEvidence(operation.evidenceTurnKeys, turnsByKey)) {
+                "assistant_inferred_profile_requires_cross_day_evidence"
+            }
+        }
         return operation.copy(
             text = operation.text.trim(),
             evidenceTurnKeys = operation.evidenceTurnKeys.sorted(),
@@ -1009,6 +1028,7 @@ class MemoryBatchConsolidationService(
             scope = scope,
             evidenceAt = evidenceAt,
             recallState = recallState,
+            memoryClass = normalizedMemoryClass,
             reason = operation.reason.trim()
         )
     }
@@ -1330,7 +1350,23 @@ class MemoryBatchConsolidationService(
         scope = requireNotNull(scope),
         lastObservedAt = requireNotNull(evidenceAt),
         recallState = requireNotNull(recallState),
-        evidenceRefs = evidenceTurnKeys.sorted()
+        evidenceRefs = evidenceTurnKeys.sorted(),
+        durability = when (memoryClass) {
+            MemoryClass.ACTIVE_PROJECT -> MemoryDurability.ACTIVE
+            MemoryClass.TEMPORARY_OBSERVATION -> MemoryDurability.EPHEMERAL
+            else -> MemoryDurability.DURABLE
+        },
+        freshness = when (memoryClass) {
+            MemoryClass.ACTIVE_PROJECT -> MemoryFreshness.REFRESHABLE
+            MemoryClass.TEMPORARY_OBSERVATION -> MemoryFreshness.EXPIRES
+            else -> MemoryFreshness.STABLE
+        },
+        lifecycleState = MemoryLifecycleState.ACTIVE,
+        refreshAfterDays = when (memoryClass) {
+            MemoryClass.ACTIVE_PROJECT -> 30
+            MemoryClass.TEMPORARY_OBSERVATION -> 7
+            else -> null
+        }
     )
 
     private fun MemoryBatchOperation.toCanonicalCandidate(chatId: Int): CanonicalMemoryCandidate =

@@ -33,7 +33,8 @@ data class MemoryLongTermCandidateEntry(
     val canonicalKey: String? = null,
     val scope: String,
     val lastObservedAt: Long,
-    val recallState: String
+    val recallState: String,
+    val memoryClass: String = MemoryClass.DURABLE_FACT
 )
 
 @Serializable
@@ -48,6 +49,7 @@ data class MemoryLongTermCanonicalDecision(
     val canonicalKey: String? = null,
     val scope: String? = null,
     val recallState: String? = null,
+    val memoryClass: String? = null,
     val reason: String = ""
 )
 

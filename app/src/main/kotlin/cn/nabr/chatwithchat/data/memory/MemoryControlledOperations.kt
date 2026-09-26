@@ -81,6 +81,7 @@ class MemoryDailyDistillationOperationController(
                     require(operation.scope == null)
                     require(operation.evidenceAt == null)
                     require(operation.recallState == null)
+                    require(operation.memoryClass == null)
                     operation.copy(reason = operation.reason.trim())
                 }
                 MemoryDailyDistillationAction.CREATE,
@@ -112,6 +113,14 @@ class MemoryDailyDistillationOperationController(
                     // local validator remains the sole source of truth.
                     require(operation.evidenceAt == null || operation.evidenceAt == evidenceAt)
                     require(recallState in ACTIVE_RECALL_STATES)
+                    val normalizedMemoryClass = MemoryGenerationPolicy.validate(
+                        memoryClass = operation.memoryClass,
+                        type = operation.type,
+                        scope = scope,
+                        source = derivedSource(evidence),
+                        recallState = recallState,
+                        longTermWrite = true
+                    )
                     target?.let { existing ->
                         if (existing.validity != MemoryValidity.OBSOLETE) {
                             require(existing.type == operation.type)
@@ -137,6 +146,7 @@ class MemoryDailyDistillationOperationController(
                         scope = scope,
                         evidenceAt = evidenceAt,
                         recallState = recallState,
+                        memoryClass = normalizedMemoryClass,
                         reason = operation.reason.trim()
                     )
                 }
