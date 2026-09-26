@@ -23,7 +23,11 @@ internal object MarkdownMemoryMetadataPolicy {
         "validity",
         "superseded_by",
         "recall",
-        "evidence"
+        "evidence",
+        "durability",
+        "freshness",
+        "state",
+        "refresh_after_days"
     )
 
     fun parseComment(commentLine: String): MarkdownMemoryMetadataParse {
@@ -84,6 +88,12 @@ internal object MarkdownMemoryMetadataPolicy {
         ) {
             return "invalid extra metadata"
         }
+        if (entry.durability != null && entry.durability !in MemoryDurability.VALUES) return "invalid durability"
+        if (entry.freshness != null && entry.freshness !in MemoryFreshness.VALUES) return "invalid freshness"
+        if (entry.lifecycleState != null && entry.lifecycleState !in MemoryLifecycleState.VALUES) {
+            return "invalid lifecycle state"
+        }
+        if (entry.refreshAfterDays != null && entry.refreshAfterDays < 0) return "invalid refresh interval"
         return validateLifecycle(entry)
     }
 

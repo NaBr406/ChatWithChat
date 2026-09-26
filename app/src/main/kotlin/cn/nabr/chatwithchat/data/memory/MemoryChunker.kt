@@ -70,7 +70,11 @@ class MemoryChunker(
                     lastObservedAt = entry.lastObservedAt,
                     supersededBy = entry.supersededBy,
                     evidenceRefs = entry.evidenceRefs,
-                    extraMetadata = entry.extraMetadata
+                    extraMetadata = entry.extraMetadata,
+                    durability = entry.durability,
+                    freshness = entry.freshness,
+                    lifecycleState = entry.lifecycleState,
+                    refreshAfterDays = entry.refreshAfterDays
                 )
             }
         }
@@ -177,7 +181,11 @@ class MemoryChunker(
         lastObservedAt: Long,
         supersededBy: String?,
         evidenceRefs: List<String>,
-        extraMetadata: Map<String, String>
+        extraMetadata: Map<String, String>,
+        durability: String? = null,
+        freshness: String? = null,
+        lifecycleState: String? = null,
+        refreshAfterDays: Int? = null
     ): MemoryCorpusChunk {
         val embeddingText = text.normalizedNaturalLanguage()
         val embeddingContentHash = embeddingText.sha256Utf8()
@@ -214,6 +222,10 @@ class MemoryChunker(
             supersededBy = supersededBy,
             evidenceRefs = evidenceRefs,
             extraMetadata = extraMetadata,
+            durability = durability,
+            freshness = freshness,
+            lifecycleState = lifecycleState,
+            refreshAfterDays = refreshAfterDays,
             embeddingText = embeddingText,
             embeddingContentHash = embeddingContentHash,
             rankingHash = rankingHash

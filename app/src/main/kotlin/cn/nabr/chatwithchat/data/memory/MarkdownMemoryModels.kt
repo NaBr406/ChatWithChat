@@ -17,7 +17,11 @@ data class MarkdownMemoryEntry(
     val supersededBy: String? = null,
     val recallState: String = MemoryRecallState.QUERY,
     val evidenceRefs: List<String> = emptyList(),
-    val extraMetadata: Map<String, String> = emptyMap()
+    val extraMetadata: Map<String, String> = emptyMap(),
+    val durability: String? = null,
+    val freshness: String? = null,
+    val lifecycleState: String? = null,
+    val refreshAfterDays: Int? = null
 )
 
 data class MarkdownMemoryParseResult(
@@ -71,4 +75,24 @@ object MemoryRecallState {
     const val MAINTENANCE_ONLY = "maintenance_only"
 
     val VALUES = setOf(CORE, QUERY, MAINTENANCE_ONLY)
+}
+
+object MemoryDurability {
+    const val DURABLE = "durable"
+    const val ACTIVE = "active"
+    const val EPHEMERAL = "ephemeral"
+    val VALUES = setOf(DURABLE, ACTIVE, EPHEMERAL)
+}
+
+object MemoryFreshness {
+    const val STABLE = "stable"
+    const val REFRESHABLE = "refreshable"
+    const val EXPIRES = "expires"
+    val VALUES = setOf(STABLE, REFRESHABLE, EXPIRES)
+}
+
+object MemoryLifecycleState {
+    const val ACTIVE = "active"
+    const val COMPLETED = "completed"
+    val VALUES = setOf(ACTIVE, COMPLETED)
 }

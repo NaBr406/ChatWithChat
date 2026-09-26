@@ -437,6 +437,10 @@ class MarkdownMemoryCodec {
             if (entry.evidenceRefs.isNotEmpty()) {
                 append(" evidence=").append(MarkdownMemoryMetadataPolicy.encodeEvidenceRefs(entry.evidenceRefs))
             }
+            entry.durability?.let { append(" durability=").append(it) }
+            entry.freshness?.let { append(" freshness=").append(it) }
+            entry.lifecycleState?.let { append(" state=").append(it) }
+            entry.refreshAfterDays?.let { append(" refresh_after_days=").append(it) }
             entry.extraMetadata.toSortedMap().forEach { (key, value) ->
                 append(' ').append(key).append('=').append(value)
             }
@@ -686,6 +690,10 @@ class MarkdownMemoryCodec {
         if (observedAt.error != null) return EntryBuildResult(error = observedAt.error)
         val evidenceRefs = MarkdownMemoryMetadataPolicy.decodeEvidenceRefs(metadata["evidence"])
             ?: return EntryBuildResult(error = "invalid evidence")
+        val refreshAfterDays = metadata.optionalParsed("refresh_after_days") { value ->
+            value?.takeIf { it.isNotEmpty() && it.all(Char::isDigit) }?.toIntOrNull()
+        }
+        if (refreshAfterDays.error != null) return EntryBuildResult(error = refreshAfterDays.error)
         val created = createdAt.value ?: 0L
         val updated = updatedAt.value ?: 0L
         val entry = MarkdownMemoryEntry(
@@ -705,7 +713,11 @@ class MarkdownMemoryCodec {
             supersededBy = metadata["superseded_by"],
             recallState = metadata["recall"] ?: MemoryRecallState.QUERY,
             evidenceRefs = evidenceRefs,
-            extraMetadata = metadata.filterKeys { key -> key !in MarkdownMemoryMetadataPolicy.KNOWN_KEYS }
+            extraMetadata = metadata.filterKeys { key -> key !in MarkdownMemoryMetadataPolicy.KNOWN_KEYS },
+            durability = metadata["durability"],
+            freshness = metadata["freshness"],
+            lifecycleState = metadata["state"],
+            refreshAfterDays = refreshAfterDays.value
         )
         val validationError = MarkdownMemoryMetadataPolicy.validateEntry(entry)
         return EntryBuildResult(

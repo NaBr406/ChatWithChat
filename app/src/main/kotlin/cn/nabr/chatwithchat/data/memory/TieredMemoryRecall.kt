@@ -70,6 +70,7 @@ internal fun MemoryCorpusSnapshot.selectCoreResults(includePrivate: Boolean): Li
         .filter { chunk -> chunk.sourcePath == MemoryFilePaths.LONG_TERM_MEMORY_FILE_NAME }
         .filter { chunk -> chunk.validity == MemoryValidity.CURRENT }
         .filter { chunk -> chunk.recallState == MemoryRecallState.CORE }
+        .filter { chunk -> chunk.allowsCoreFreshness() }
         .filter { chunk -> includePrivate || !chunk.isPrivateOrSensitive() }
         .filter { chunk -> chunk.text.toModelVisibleMemoryFactOrNull() != null }
         .sortedWith(coreChunkComparator())
@@ -77,6 +78,31 @@ internal fun MemoryCorpusSnapshot.selectCoreResults(includePrivate: Boolean): Li
         .map(MemoryCorpusChunk::toCoreRetrievalResult)
         .toList()
 }
+
+private fun MemoryCorpusChunk.allowsCoreFreshness(): Boolean = MemoryFreshnessPolicy.allowsCore(
+    MarkdownMemoryEntry(
+        id = entryId ?: "core",
+        text = text,
+        type = type ?: "stable_profile",
+        sensitivity = sensitivity ?: MemorySensitivity.NORMAL,
+        source = source ?: MemorySource.EXPLICIT_USER_STATEMENT,
+        chatId = chatId,
+        createdAt = createdAt,
+        updatedAt = updatedAt,
+        canonicalKey = canonicalKey,
+        scope = scope ?: MemoryScope.GENERAL,
+        lastObservedAt = lastObservedAt,
+        validity = validity ?: MemoryValidity.CURRENT,
+        supersededBy = supersededBy,
+        recallState = recallState ?: MemoryRecallState.CORE,
+        evidenceRefs = evidenceRefs,
+        extraMetadata = extraMetadata,
+        durability = durability,
+        freshness = freshness,
+        lifecycleState = lifecycleState,
+        refreshAfterDays = refreshAfterDays
+    )
+)
 
 private fun MemoryCorpusChunk.isPrivateOrSensitive(): Boolean =
     sensitivity in setOf(MemorySensitivity.PRIVATE, MemorySensitivity.SENSITIVE)
