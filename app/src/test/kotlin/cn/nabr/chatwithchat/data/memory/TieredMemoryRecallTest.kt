@@ -7,7 +7,7 @@ import org.junit.Test
 class TieredMemoryRecallTest {
 
     @Test
-    fun `core selector keeps every eligible current core fact without key or scope filters`() {
+    fun `core selector excludes inferred and project facts from core`() {
         val snapshot = snapshot(
             listOf(
                 coreChunk(
@@ -40,10 +40,10 @@ class TieredMemoryRecallTest {
 
         val core = snapshot.selectCoreResults(includePrivate = true)
 
-        assertEquals(8, core.size)
-        assertTrue(core.any { result -> result.entryId == "unsupported" })
-        assertTrue(core.any { result -> result.entryId == "work_address" })
-        assertTrue(core.any { result -> result.entryId == "address_inferred" })
+        assertEquals(6, core.size)
+        assertTrue(core.none { result -> result.entryId == "unsupported" })
+        assertTrue(core.none { result -> result.entryId == "address_inferred" })
+        assertTrue(core.any { result -> result.entryId == "address_confirmed" })
     }
 
     @Test

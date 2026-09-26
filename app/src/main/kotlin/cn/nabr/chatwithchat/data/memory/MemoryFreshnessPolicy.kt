@@ -47,6 +47,7 @@ internal object MemoryFreshnessPolicy {
                 volatileKeySegments.any { marker -> segment == marker || segment.startsWith(marker + "_") }
             }
         return !projectOrVolatile &&
+            entry.source != MemorySource.ASSISTANT_INFERRED &&
             profile.durability == MemoryDurability.DURABLE &&
             profile.freshness == MemoryFreshness.STABLE &&
             profile.lifecycleState == MemoryLifecycleState.ACTIVE &&

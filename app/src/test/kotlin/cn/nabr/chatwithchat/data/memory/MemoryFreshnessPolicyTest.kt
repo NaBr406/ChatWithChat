@@ -75,6 +75,23 @@ class MemoryFreshnessPolicyTest {
     }
 
     @Test
+    fun `assistant inferred facts cannot become core`() {
+        val entry = MarkdownMemoryEntry(
+            id = "mem_inferred",
+            text = "The user may prefer robotics topics.",
+            type = "interest",
+            sensitivity = MemorySensitivity.NORMAL,
+            source = MemorySource.ASSISTANT_INFERRED,
+            createdAt = 1L,
+            updatedAt = 1L,
+            canonicalKey = "interest.robotics",
+            recallState = MemoryRecallState.CORE
+        )
+
+        assertFalse(MemoryFreshnessPolicy.allowsCore(entry))
+    }
+
+    @Test
     fun `malformed refresh interval is rejected instead of silently dropped`() {
         val markdown = """
             # ChatWithChat Memory
