@@ -36,7 +36,12 @@ internal object MemoryFreshnessPolicy {
         require(nowMillis >= 0L) { "invalid freshness clock" }
         val days = resolve(entry).refreshAfterDays ?: return false
         if (entry.updatedAt <= 0L) return false
-        return nowMillis / 1_000L - entry.updatedAt >= Duration.ofDays(days.toLong()).seconds
+        val updatedAtSeconds = if (entry.updatedAt >= MILLIS_EPOCH_THRESHOLD) {
+            entry.updatedAt / 1_000L
+        } else {
+            entry.updatedAt
+        }
+        return nowMillis / 1_000L - updatedAtSeconds >= Duration.ofDays(days.toLong()).seconds
     }
 
     fun allowsQuery(entry: MarkdownMemoryEntry, nowMillis: Long): Boolean {
@@ -60,4 +65,6 @@ internal object MemoryFreshnessPolicy {
             profile.lifecycleState == MemoryLifecycleState.ACTIVE &&
             !isStale(entry, nowMillis)
     }
+
+    private const val MILLIS_EPOCH_THRESHOLD = 100_000_000_000L
 }

@@ -33,8 +33,9 @@ class MemoryMutationCoordinatorTest {
 
     @Test
     fun `real export migration commits on a temporary copy and replays cleanly`() = runBlocking {
-        val exportPath = System.getenv("CHATWITHCHAT_REAL_MEMORY_EXPORT") ?: return@runBlocking
-        val export = File(exportPath)
+        val exportPath = System.getenv("CHATWITHCHAT_REAL_MEMORY_EXPORT")
+        org.junit.Assume.assumeNotNull("Real export path required", exportPath)
+        val export = File(checkNotNull(exportPath))
         val originalBytes = export.readBytes()
         val fixture = Fixture()
         fixture.fileStore.replaceLongTermMemory(originalBytes.toString(Charsets.UTF_8)).getOrThrow()
@@ -58,22 +59,34 @@ class MemoryMutationCoordinatorTest {
                         )
                     )
                 )
-            )
+            ),
+            projectReviews = listOf(MemoryRealExportReviews.projectReview(base))
         )
         assertTrue(proposal.afterAudit.isHealthy)
         assertTrue(proposal.materialMutationCount > 0)
 
         val prepared = fixture.coordinator.prepareLocalMutation(
             operationKey = "reviewed-real-export-migration",
-            targets = listOf(fixture.longTermTarget(base, proposal.targetMarkdown).copy(
-                materialMutationCount = proposal.materialMutationCount
-            ))
+            targets = listOf(
+                fixture.longTermTarget(base, proposal.targetMarkdown).copy(
+                    materialMutationCount = proposal.materialMutationCount
+                )
+            )
         )
         assertTrue(fixture.coordinator.reconcile(prepared) is MemoryMutationCommitResult.CanonicalCommitted)
         val committed = fixture.fileStore.readLongTermMemory().getOrThrow()
         assertEquals(proposal.targetMarkdown.trimEnd(), committed.trimEnd())
         assertTrue(MemoryMigrationPlanner.propose(committed, 1_790_306_211L).isNoOp)
         assertTrue(originalBytes.contentEquals(export.readBytes()))
+        val backup = fixture.paths.backupDirectory.listFiles().orEmpty().single { it.readText() == base }
+        val rollback = fixture.coordinator.prepareLocalMutation(
+            operationKey = "reviewed-real-export-rollback",
+            targets = listOf(fixture.longTermTarget(committed, backup.readText()))
+        )
+        assertTrue(fixture.coordinator.reconcile(rollback) is MemoryMutationCommitResult.CanonicalCommitted)
+        assertEquals(base, fixture.fileStore.readLongTermMemory().getOrThrow())
+        assertTrue(fixture.coordinator.reconcile(rollback) is MemoryMutationCommitResult.CanonicalCommitted)
+        assertEquals(base, fixture.fileStore.readLongTermMemory().getOrThrow())
 
         val conflictFixture = Fixture()
         conflictFixture.fileStore.replaceLongTermMemory(base).getOrThrow()

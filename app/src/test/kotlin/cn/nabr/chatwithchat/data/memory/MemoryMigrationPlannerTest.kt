@@ -11,6 +11,41 @@ class MemoryMigrationPlannerTest {
     private val codec = MarkdownMemoryCodec()
 
     @Test
+    fun `reviewed project removes mixed details and preserves recoverable history`() {
+        val original = entry(
+            id = "project_bundle",
+            text = "The user maintains ChatWithChat, version 1.2, with MEMORY.md as its fact source.",
+            canonicalKey = "project.chatwithchat",
+            scope = "project:chatwithchat",
+            source = MemorySource.USER_CONFIRMED
+        )
+        val source = codec.renderLongTerm(listOf(original))
+        val review = MemoryProjectReview(original.id, original.text.sha256Utf8(), "The user maintains the ChatWithChat Android chat app.")
+        val proposal = MemoryMigrationPlanner.propose(source, 100L, projectReviews = listOf(review))
+        val entries = codec.parse(proposal.targetMarkdown).entries
+        val current = entries.single { it.validity == MemoryValidity.CURRENT }
+        val history = entries.single { it.validity == MemoryValidity.OBSOLETE }
+
+        assertEquals(review.projectText, current.text)
+        assertEquals(original.text, history.text)
+        assertEquals(current.id, history.supersededBy)
+        assertEquals(MemoryRecallState.MAINTENANCE_ONLY, history.recallState)
+        assertTrue(current.text.toModelVisibleMemoryFactOrNull() != null)
+        assertTrue(MemoryMigrationPlanner.propose(proposal.targetMarkdown, 101L, projectReviews = listOf(review)).isNoOp)
+        assertTrue(MemoryMigrationPlanner.propose(proposal.targetMarkdown, 101L).isNoOp)
+        assertTrue(
+            runCatching {
+                MemoryMigrationPlanner.propose(proposal.targetMarkdown, 101L, projectReviews = listOf(review.copy(projectText = "A different review.")))
+            }.exceptionOrNull() is IllegalArgumentException
+        )
+        assertTrue(
+            runCatching {
+                MemoryMigrationPlanner.propose(source, 100L, projectReviews = listOf(review.copy(sourceTextHash = "changed")))
+            }.exceptionOrNull() is IllegalArgumentException
+        )
+    }
+
+    @Test
     fun `proposal normalizes aliases and isolates obsolete entries`() {
         val legacy = entry(
             id = "legacy_project",

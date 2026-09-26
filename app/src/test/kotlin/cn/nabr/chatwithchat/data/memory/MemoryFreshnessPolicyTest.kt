@@ -94,6 +94,25 @@ class MemoryFreshnessPolicyTest {
     }
 
     @Test
+    fun `legacy millisecond timestamps use the same expiration window`() {
+        val updatedAtSeconds = 1_787_726_073L
+        val entry = MarkdownMemoryEntry(
+            id = "legacy_project",
+            text = "An older project status.",
+            type = "project_context",
+            sensitivity = MemorySensitivity.NORMAL,
+            source = MemorySource.USER_CONFIRMED,
+            createdAt = updatedAtSeconds,
+            updatedAt = updatedAtSeconds * 1_000L + 44L,
+            canonicalKey = "project.cross_session_retrieval",
+            scope = "project:cross-session-retrieval"
+        )
+
+        assertFalse(MemoryFreshnessPolicy.isStale(entry, (updatedAtSeconds + 29L * 86_400L) * 1_000L))
+        assertTrue(MemoryFreshnessPolicy.isStale(entry, (updatedAtSeconds + 31L * 86_400L) * 1_000L))
+    }
+
+    @Test
     fun `assistant inferred facts cannot become core`() {
         val entry = MarkdownMemoryEntry(
             id = "mem_inferred",

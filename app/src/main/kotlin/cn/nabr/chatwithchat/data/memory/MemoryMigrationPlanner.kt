@@ -32,6 +32,12 @@ internal data class MemoryReviewedBoundary(
     val evidenceRefs: List<String>
 )
 
+internal data class MemoryProjectReview(
+    val entryId: String,
+    val sourceTextHash: String,
+    val projectText: String
+)
+
 internal object MemoryMigrationPlanner {
     private val codec = MarkdownMemoryCodec()
     private val mergePolicy = CanonicalMemoryMergePolicy(codec)
@@ -39,7 +45,8 @@ internal object MemoryMigrationPlanner {
     fun propose(
         markdown: String,
         mutationAt: Long,
-        addressingReviews: List<MemoryAddressingReview> = emptyList()
+        addressingReviews: List<MemoryAddressingReview> = emptyList(),
+        projectReviews: List<MemoryProjectReview> = emptyList()
     ): MemoryMigrationProposal {
         if (mutationAt < 0L) {
             throw MemoryMigrationPlanningException("invalid migration timestamp")
@@ -57,13 +64,17 @@ internal object MemoryMigrationPlanner {
         require(addressingReviews.map { it.entryId }.distinct().size == addressingReviews.size) {
             "duplicate addressing review"
         }
+        require(projectReviews.map { it.entryId }.distinct().size == projectReviews.size) {
+            "duplicate project review"
+        }
         val reviewedEntries = parsed.entries.toMutableList()
         addressingReviews.forEach { review ->
             val index = reviewedEntries.indexOfFirst { it.id == review.entryId }
             require(index >= 0) { "addressing review target missing" }
             val original = reviewedEntries[index]
-            require(original.validity == MemoryValidity.CURRENT &&
-                MemoryCanonicalIdentityPolicy.isAddressingIdentity(original.canonicalKey, original.scope)
+            require(
+                original.validity == MemoryValidity.CURRENT &&
+                    MemoryCanonicalIdentityPolicy.isAddressingIdentity(original.canonicalKey, original.scope)
             ) { "addressing review target invalid" }
             if (original.extraMetadata[MemoryCanonicalCorpusAuditor.ADDRESSING_REVIEW_HASH] == original.text.sha256Utf8()) {
                 return@forEach
@@ -72,8 +83,9 @@ internal object MemoryMigrationPlanner {
             validateReviewedText(review.addressingText)
             review.boundaries.forEach { boundary ->
                 validateReviewedText(boundary.text)
-                require(boundary.canonicalKey.startsWith("boundary.") &&
-                    MarkdownMemoryMetadataPolicy.isCanonicalKey(boundary.canonicalKey)
+                require(
+                    boundary.canonicalKey.startsWith("boundary.") &&
+                        MarkdownMemoryMetadataPolicy.isCanonicalKey(boundary.canonicalKey)
                 ) { "addressing boundary key invalid" }
                 require(boundary.evidenceRefs.isNotEmpty() && boundary.evidenceRefs.all(original.evidenceRefs::contains)) {
                     "addressing boundary requires original evidence"
@@ -87,7 +99,9 @@ internal object MemoryMigrationPlanner {
                     canonicalKey = boundary.canonicalKey,
                     recallState = if (original.source == MemorySource.ASSISTANT_INFERRED) {
                         MemoryRecallState.QUERY
-                    } else original.recallState,
+                    } else {
+                        original.recallState
+                    },
                     evidenceRefs = boundary.evidenceRefs.distinct().sorted(),
                     durability = MemoryDurability.DURABLE,
                     freshness = MemoryFreshness.STABLE,
@@ -117,6 +131,40 @@ internal object MemoryMigrationPlanner {
                 extraMetadata = original.extraMetadata +
                     (MemoryCanonicalCorpusAuditor.ADDRESSING_REVIEW_HASH to review.addressingText.sha256Utf8())
             )
+        }
+        projectReviews.forEach { review ->
+            val historyId = "mem_hist_${"project-review|${review.entryId}|${review.sourceTextHash}".sha256Utf8().take(24)}"
+            val history = reviewedEntries.firstOrNull { it.id == historyId }
+            if (history?.validity == MemoryValidity.OBSOLETE &&
+                history.text.sha256Utf8() == review.sourceTextHash &&
+                reviewedEntries.any { it.id == history.supersededBy && it.validity == MemoryValidity.CURRENT && it.text == review.projectText }
+            ) {
+                return@forEach
+            }
+            val index = reviewedEntries.indexOfFirst { it.id == review.entryId }
+            require(index >= 0) { "project review target missing" }
+            val original = reviewedEntries[index]
+            require(original.validity == MemoryValidity.CURRENT && original.type == "project_context") {
+                "project review target invalid"
+            }
+            require(original.text.sha256Utf8() == review.sourceTextHash) { "project review source changed" }
+            validateReviewedText(review.projectText)
+            require(review.projectText != original.text) { "project review must change the text" }
+            require(reviewedEntries.none { it.id == historyId }) { "project history id conflict" }
+            reviewedEntries += original.copy(
+                id = historyId,
+                validity = MemoryValidity.OBSOLETE,
+                recallState = MemoryRecallState.MAINTENANCE_ONLY,
+                supersededBy = original.id,
+                updatedAt = mutationAt
+            )
+            reviewedEntries[index] = original.copy(
+                text = review.projectText,
+                updatedAt = mutationAt,
+                extraMetadata = original.extraMetadata + (PROJECT_REVIEW_HASH to review.projectText.sha256Utf8())
+            )
+            changedEntryCount++
+            materialMutationCount++
         }
         val normalizedEntries = reviewedEntries.map { entry -> normalizeEntry(entry) }
         val replacements = normalizedEntries.filterIndexed { index, entry ->
@@ -195,9 +243,11 @@ internal object MemoryMigrationPlanner {
     }
 
     private fun validateReviewedText(text: String) {
-        require(text.isNotBlank() && text == text.trim() &&
-            text.length <= MemoryControlledOperationPolicy.MAX_MEMORY_TEXT_CHARS &&
-            text.toModelVisibleMemoryFactOrNull() != null
+        require(
+            text.isNotBlank() &&
+                text == text.trim() &&
+                text.length <= MemoryControlledOperationPolicy.MAX_MEMORY_TEXT_CHARS &&
+                text.toModelVisibleMemoryFactOrNull() != null
         ) { "addressing review text invalid" }
     }
 
@@ -247,4 +297,6 @@ internal object MemoryMigrationPlanner {
         if (obsoleteVisibleIds.isNotEmpty()) add("obsolete_visible_entries")
         if (identityBundleIds.isNotEmpty()) add("identity_bundle_entries")
     }
+
+    private const val PROJECT_REVIEW_HASH = "project_review_hash"
 }
