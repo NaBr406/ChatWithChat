@@ -9,6 +9,10 @@ import java.util.Locale
 
 /** Uses the calendar year; uppercase `YYYY` is a week-based year and is wrong around New Year. */
 private val DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.ROOT)
+private val DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss", Locale.ROOT)
+
+internal fun formatEpochSecondsAsDateTime(epochSeconds: Long, zone: ZoneId = ZoneId.systemDefault()): String =
+    Instant.ofEpochSecond(epochSeconds).atZone(zone).format(DATE_TIME_FORMATTER)
 
 internal fun formatEpochSecondsAsDate(epochSeconds: Long, zone: ZoneId = ZoneId.systemDefault()): String =
     Instant.ofEpochSecond(epochSeconds).atZone(zone).format(DATE_FORMATTER)

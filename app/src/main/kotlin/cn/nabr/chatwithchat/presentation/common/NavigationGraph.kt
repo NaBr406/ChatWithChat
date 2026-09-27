@@ -31,7 +31,9 @@ import cn.nabr.chatwithchat.presentation.ui.debug.MemoryMaintenanceFailureRespon
 import cn.nabr.chatwithchat.presentation.ui.debug.VisualAssetDebugScreen
 import cn.nabr.chatwithchat.presentation.ui.debug.PromptTraceScreen
 import cn.nabr.chatwithchat.presentation.ui.main.MainLaunchDestination
+import cn.nabr.chatwithchat.presentation.ui.memory.MemoryExportScreen
 import cn.nabr.chatwithchat.presentation.ui.memory.MemoryScreen
+import cn.nabr.chatwithchat.presentation.ui.memory.MemoryViewModel
 import cn.nabr.chatwithchat.presentation.ui.migrate.MigrateScreen
 import cn.nabr.chatwithchat.presentation.ui.setting.AboutScreen
 import cn.nabr.chatwithchat.presentation.ui.setting.AddPlatformScreen
@@ -410,7 +412,20 @@ fun NavGraphBuilder.settingNavigation(navController: NavHostController) {
             VisualAssetDebugScreen(onNavigationClick = { navController.navigateUp() })
         }
         composable(Route.MEMORY) {
-            MemoryScreen(onNavigationClick = { navController.navigateUp() })
+            MemoryScreen(
+                onNavigationClick = { navController.navigateUp() },
+                onNavigateToExport = { navController.navigate(Route.MEMORY_EXPORT) }
+            )
+        }
+        composable(Route.MEMORY_EXPORT) { entry ->
+            val parentEntry = remember(entry) {
+                navController.getBackStackEntry(Route.MEMORY)
+            }
+            val memoryViewModel: MemoryViewModel = hiltViewModel(parentEntry)
+            MemoryExportScreen(
+                memoryViewModel = memoryViewModel,
+                onNavigationClick = { navController.navigateUp() }
+            )
         }
         composable(Route.STICKER_LIBRARY) {
             StickerLibraryScreen(onNavigationClick = { navController.navigateUp() })

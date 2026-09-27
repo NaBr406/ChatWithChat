@@ -119,6 +119,10 @@
     <string name="memory_empty">暂无记忆</string>
     <string name="memory_export">导出记忆</string>
     <string name="memory_export_title">记忆导出</string>
+    <string name="memory_export_description">以下内容来自最新的 MEMORY.md。点击保存后会打开系统文件界面，并优先定位到手机“文档”目录。</string>
+    <string name="memory_export_save_to_documents">保存 Markdown 到文档</string>
+    <string name="memory_export_saved">记忆已保存到所选文档</string>
+    <string name="memory_export_save_failed">记忆保存失败，请重试</string>
     <string name="memory_export_empty_markdown"># 用户记忆</string>
     <string name="memory_import">导入记忆</string>
     <string name="memory_import_title">选择记忆来源</string>

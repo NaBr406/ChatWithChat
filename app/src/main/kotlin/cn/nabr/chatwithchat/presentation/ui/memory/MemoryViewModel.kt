@@ -61,6 +61,7 @@ class MemoryViewModel @Inject constructor(
         val parseStatus: MemoryProjectionParseStatus = MemoryProjectionParseStatus.NOT_PARSED,
         val hasUnclassifiedContent: Boolean = false,
         val exportMarkdown: String? = null,
+        val isExportLoading: Boolean = false,
         val memoryEnabled: Boolean = false,
         val memoryModelPreference: MemoryModelPreference = MemoryModelPreference.Auto,
         val memoryModelOptions: List<MemoryModelOption> = emptyList(),
@@ -134,6 +135,7 @@ class MemoryViewModel @Inject constructor(
     }
 
     fun exportMarkdown() {
+        _uiState.update { it.copy(isExportLoading = true) }
         viewModelScope.launch {
             val markdown = memoryRepository.getLongTermMarkdown()
             val projected = withContext(Dispatchers.Default) { projectMarkdown(markdown) }
@@ -147,14 +149,11 @@ class MemoryViewModel @Inject constructor(
                     hiddenHistoryCount = projected.projection.hiddenHistoryCount,
                     parseStatus = projected.projection.parseStatus,
                     hasUnclassifiedContent = projected.projection.hasUnclassifiedContent,
-                    exportMarkdown = markdown
+                    exportMarkdown = markdown,
+                    isExportLoading = false
                 )
             }
         }
-    }
-
-    fun closeExport() {
-        _uiState.update { it.copy(exportMarkdown = null) }
     }
 
     fun editMemoryEntry(entryId: String, text: String) {

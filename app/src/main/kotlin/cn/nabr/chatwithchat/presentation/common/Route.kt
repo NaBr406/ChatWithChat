@@ -22,6 +22,7 @@ object Route {
     const val ABOUT_PAGE = "about"
     const val LICENSE = "license"
     const val MEMORY = "memory"
+    const val MEMORY_EXPORT = "memory_export"
     const val STICKER_LIBRARY = "sticker_library"
     const val SKILLS = "skills"
     const val MCP_SERVERS = "mcp_servers"

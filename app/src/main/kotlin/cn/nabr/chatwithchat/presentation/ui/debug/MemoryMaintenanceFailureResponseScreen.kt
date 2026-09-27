@@ -54,7 +54,7 @@ import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceFailureResponse
 import cn.nabr.chatwithchat.presentation.common.SettingsTopAppBar
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.common.settingsTextButtonColors
-import cn.nabr.chatwithchat.util.formatEpochSecondsAsDate
+import cn.nabr.chatwithchat.util.formatEpochSecondsAsDateTime
 import kotlinx.coroutines.launch
 
 @Composable
@@ -183,7 +183,7 @@ private fun MemoryMaintenanceJobListItem(job: MemoryMaintenanceJob) {
             Text(
                 text = stringResource(
                     R.string.memory_failure_job_updated,
-                    formatEpochSecondsAsDate(job.updatedAt)
+                    formatEpochSecondsAsDateTime(job.updatedAt)
                 ),
                 style = MaterialTheme.typography.labelMedium,
                 color = colors.secondaryLabel
@@ -219,7 +219,7 @@ private fun MemoryMaintenanceFailureResponseListItem(
             Text(
                 text = stringResource(
                     R.string.memory_failure_response_item,
-                    formatEpochSecondsAsDate(response.capturedAtEpochSeconds)
+                    formatEpochSecondsAsDateTime(response.capturedAtEpochSeconds)
                 ),
                 style = MaterialTheme.typography.labelMedium,
                 color = colors.secondaryLabel
@@ -248,7 +248,18 @@ private fun MemoryMaintenanceFailureResponseDetailDialog(
         titleContentColor = settingsMaterialColors().primaryLabel,
         textContentColor = settingsMaterialColors().secondaryLabel,
         onDismissRequest = onDismissRequest,
-        title = { Text(stringResource(R.string.memory_failure_response_detail_title)) },
+        title = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(stringResource(R.string.memory_failure_response_detail_title))
+                Text(
+                    text = stringResource(
+                        R.string.memory_failure_response_item,
+                        formatEpochSecondsAsDateTime(response.capturedAtEpochSeconds)
+                    ),
+                    style = MaterialTheme.typography.labelMedium
+                )
+            }
+        },
         text = {
             Box(
                 modifier = Modifier

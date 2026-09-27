@@ -22,15 +22,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.AutoFixHigh
 import androidx.compose.material.icons.outlined.Check
-import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FileDownload
@@ -79,7 +76,6 @@ import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -121,10 +117,10 @@ import kotlinx.coroutines.withContext
 @Composable
 fun MemoryScreen(
     memoryViewModel: MemoryViewModel = hiltViewModel(),
-    onNavigationClick: () -> Unit
+    onNavigationClick: () -> Unit,
+    onNavigateToExport: () -> Unit
 ) {
     val uiState by memoryViewModel.uiState.collectAsStateWithLifecycle()
-    val emptyMarkdownText = stringResource(R.string.memory_export_empty_markdown)
     var selectedTab by rememberSaveable { mutableIntStateOf(MEMORY_TAB) }
     var isActionsMenuOpen by remember { mutableStateOf(false) }
     var pendingImportSource by rememberSaveable { mutableStateOf<MemoryImportSource?>(null) }
@@ -325,7 +321,7 @@ fun MemoryScreen(
                                 },
                                 onClick = {
                                     isActionsMenuOpen = false
-                                    memoryViewModel.exportMarkdown()
+                                    onNavigateToExport()
                                 }
                             )
                         }
@@ -394,14 +390,6 @@ fun MemoryScreen(
                 MemoryActivityLogList(uiState.activityLogs)
             }
         }
-    }
-
-    uiState.exportMarkdown?.let { markdown ->
-        MemoryExportDialog(
-            markdown = markdown,
-            emptyMarkdownText = emptyMarkdownText,
-            onDismiss = memoryViewModel::closeExport
-        )
     }
 
     if (uiState.isMemoryModelPickerOpen) {
@@ -992,64 +980,6 @@ private fun memoryHistoryStatus(entry: MemoryProjectionEntry): String = when {
     entry.validity == MemoryValidity.CURRENT && entry.recallState in ACTIVE_RECALL_STATES ->
         stringResource(R.string.memory_status_active)
     else -> stringResource(R.string.memory_status_unknown)
-}
-
-@Composable
-private fun MemoryExportDialog(
-    markdown: String,
-    emptyMarkdownText: String,
-    onDismiss: () -> Unit
-) {
-    val materialColors = settingsMaterialColors()
-    MemoryDialogFrame(onDismissRequest = onDismiss) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 20.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                imageVector = Icons.Outlined.FileDownload,
-                contentDescription = null,
-                modifier = Modifier.size(22.dp),
-                tint = materialColors.primaryLabel
-            )
-            Spacer(modifier = Modifier.width(12.dp))
-            Text(
-                text = stringResource(R.string.memory_export_title),
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = materialColors.primaryLabel,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            IconButton(onClick = onDismiss) {
-                Icon(
-                    imageVector = Icons.Outlined.Close,
-                    contentDescription = stringResource(R.string.close),
-                    tint = materialColors.secondaryLabel
-                )
-            }
-        }
-        HorizontalDivider(thickness = 0.5.dp, color = materialColors.separatorStrong)
-        SelectionContainer {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 160.dp, max = 480.dp)
-                    .verticalScroll(rememberScrollState())
-                    .padding(20.dp)
-            ) {
-                Text(
-                    text = markdown.ifBlank { emptyMarkdownText },
-                    style = MaterialTheme.typography.bodySmall,
-                    fontFamily = FontFamily.Monospace,
-                    color = if (markdown.isBlank()) materialColors.secondaryLabel else materialColors.primaryLabel
-                )
-            }
-        }
-    }
 }
 
 @Composable
