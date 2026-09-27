@@ -78,4 +78,63 @@ class MemoryLongTermConsolidationOperationControllerTest {
         )
         assertTrue(replay.targets.isEmpty())
     }
+
+    @Test
+    fun `retirement and canonical rebinding preserve obsolete supersession relationships`() {
+        val active = MarkdownMemoryEntry(
+            id = "project_active",
+            text = "The project uses cross-session retrieval.",
+            type = "project_context",
+            sensitivity = MemorySensitivity.NORMAL,
+            source = MemorySource.EXPLICIT_USER_STATEMENT,
+            createdAt = 10L,
+            updatedAt = 12L,
+            canonicalKey = "project.old_retrieval",
+            scope = "project:cross-session-retrieval"
+        )
+        val history = (1..3).map { index ->
+            active.copy(
+                id = "project_history_$index",
+                text = "Historical retrieval direction $index.",
+                validity = MemoryValidity.OBSOLETE,
+                supersededBy = active.id,
+                recallState = MemoryRecallState.MAINTENANCE_ONLY
+            )
+        }
+        val retiring = active.copy(
+            id = "project_retiring",
+            text = "Temporary retrieval diagnostic.",
+            canonicalKey = "project.retrieval_diagnostic"
+        )
+        val entries = listOf(active, retiring) + history
+        val proposal = MemoryLongTermPersistedProposal(
+            decisions = listOf(
+                MemoryLongTermCanonicalDecision(
+                    action = MemoryLongTermDecisionAction.RETIRE,
+                    memoryIds = listOf(retiring.id),
+                    canonicalKey = retiring.canonicalKey,
+                    scope = retiring.scope,
+                    recallState = MemoryRecallState.MAINTENANCE_ONLY,
+                    reason = "Stale diagnostic"
+                ),
+                MemoryLongTermCanonicalDecision(
+                    action = MemoryLongTermDecisionAction.CANONICALIZE,
+                    memoryIds = listOf(active.id),
+                    canonicalKey = "project.cross_session_retrieval",
+                    scope = active.scope,
+                    recallState = MemoryRecallState.QUERY,
+                    reason = "Canonical project key"
+                )
+            )
+        )
+
+        val rendered = controller.render(codec.renderLongTerm(entries), entries, proposal, renderedAt = 30L)
+        val parsed = codec.parse(rendered.targets.single().targetContent)
+
+        assertTrue(parsed.skippedEntries.isEmpty())
+        assertEquals(5, rendered.operationCount)
+        assertEquals(MemoryValidity.OBSOLETE, parsed.entries.single { it.id == retiring.id }.validity)
+        assertTrue(parsed.entries.filter { it.id in history.map(MarkdownMemoryEntry::id) }
+            .all { it.canonicalKey == "project.cross_session_retrieval" && it.supersededBy == active.id })
+    }
 }

@@ -357,20 +357,19 @@ internal class CanonicalMemoryMergePolicy(
                     identityRequiresIndexSync = true
                 }
 
-                if (!survivorWasReactivated) {
-                    identityEntries
-                        .filter { entry ->
-                            entry.validity == MemoryValidity.OBSOLETE &&
-                                !entry.matchesIdentity(identity) &&
-                                currentSuccessor(entry, entriesById)?.matchesIdentity(identity) == true
-                        }
-                        .forEach { obsolete ->
-                            identityReplacements[obsolete.id] = obsolete.copy(
-                                canonicalKey = identity.canonicalKey,
-                                scope = identity.scope
-                            )
-                        }
-                }
+                parsed.entries
+                    .filter { entry ->
+                        entry.validity == MemoryValidity.OBSOLETE &&
+                            entry.supersededBy in (losingCurrentIds + activeId) &&
+                            (entry.canonicalKey != identity.canonicalKey || entry.scope != identity.scope)
+                    }
+                    .forEach { obsolete ->
+                        identityReplacements[obsolete.id] = obsolete.copy(
+                            canonicalKey = identity.canonicalKey,
+                            scope = identity.scope,
+                            supersededBy = activeId
+                        )
+                    }
 
                 if (identityReplacements.isNotEmpty() && identityMaterialMutationCount == 0) {
                     identityMaterialMutationCount = 1
@@ -654,13 +653,27 @@ internal class CanonicalMemoryMergePolicy(
         val historyAppends = effectiveAppends
             .filterKeys { id -> id != plan.activeId }
             .toSortedMap()
+        val activeDependentIds = originalEntries
+            .asSequence()
+            .filter { entry ->
+                entry.validity == MemoryValidity.OBSOLETE &&
+                    entry.supersededBy == plan.activeId &&
+                    entry.id in effectiveReplacements
+            }
+            .map(MarkdownMemoryEntry::id)
+            .sorted()
+            .toList()
         val activeBundleSize =
-            listOfNotNull(activeReplacement, activeAppend, activeObservationUpdate).size + historyAppends.size
+            listOfNotNull(activeReplacement, activeAppend, activeObservationUpdate).size +
+                historyAppends.size + activeDependentIds.size
         if (activeBundleSize > remaining) return selection(isComplete = false)
         activeReplacement?.let { replacement -> selectedReplacements[plan.activeId] = replacement }
         activeAppend?.let { append -> selectedAppends[plan.activeId] = append }
         activeObservationUpdate?.let { update -> selectedObservationUpdates[plan.activeId] = update }
         selectedAppends.putAll(historyAppends)
+        activeDependentIds.forEach { dependentId ->
+            selectedReplacements[dependentId] = checkNotNull(effectiveReplacements[dependentId])
+        }
         remaining -= activeBundleSize
 
         plan.losingCurrentIds.sorted().forEach { loserId ->
@@ -784,7 +797,11 @@ internal class CanonicalMemoryMergePolicy(
 
     private fun parseEntriesOrThrow(markdown: String): MarkdownMemoryParseResult = markdownMemoryCodec
         .parse(markdown)
-        .also { parsed -> require(parsed.skippedEntries.isEmpty()) { "unsafe_memory_metadata" } }
+        .also { parsed ->
+            require(parsed.skippedEntries.isEmpty()) {
+                unsafeMemoryMetadataDiagnostic(parsed.skippedEntries)
+            }
+        }
 
     private fun exactTextCounts(markdown: String): Map<String, Int> = parseEntriesOrThrow(markdown)
         .entries

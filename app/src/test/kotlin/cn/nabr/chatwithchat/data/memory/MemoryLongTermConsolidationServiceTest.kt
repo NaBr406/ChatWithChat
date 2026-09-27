@@ -281,6 +281,56 @@ class MemoryLongTermConsolidationServiceTest {
     }
 
     @Test
+    fun `invalid frozen metadata exposes line and parser reason in retry diagnostic`() = runBlocking {
+        val fixture = fixture(
+            entries = listOf(entry(id = "valid", text = "A valid frozen entry.")),
+            intelligence = RecordingLongTermMemoryIntelligence()
+        )
+        val malformedMarkdown = """
+            # ChatWithChat Memory
+
+            ## Stable Preferences
+
+            <!-- memory:id=mem_missing_source type=communication_style sensitivity=normal -->
+            - User likes concise answers.
+        """.trimIndent() + "\n"
+        fixture.fileStore.replaceLongTermMemory(malformedMarkdown).getOrThrow()
+        val checkpoint = checkNotNull(fixture.checkpointDao.getByJobId(fixture.claimedJob.jobId))
+        fixture.checkpointDao.replace(
+            checkpoint.copy(
+                baseSourceHash = malformedMarkdown.toByteArray(Charsets.UTF_8).sha256Hex()
+            )
+        )
+        fixture.jobDao.forceUpdate(
+            fixture.claimedJob.copy(
+                payloadJson = fixture.claimedJob.payloadJson.replace(
+                    checkpoint.baseSourceHash,
+                    malformedMarkdown.toByteArray(Charsets.UTF_8).sha256Hex()
+                )
+            )
+        )
+
+        val result = fixture.service().process(checkNotNull(fixture.jobDao.getById(fixture.claimedJob.jobId)))
+
+        assertTrue(
+            result.status in setOf(
+                MemoryLongTermProcessResult.STATUS_RETRYABLE,
+                MemoryLongTermProcessResult.STATUS_TERMINAL
+            )
+        )
+        assertTrue("reason=${result.reason}", result.reason?.contains("unsafe_memory_metadata:line=5:") == true)
+        assertTrue("reason=${result.reason}", result.reason?.contains("source") == true)
+        assertEquals(result.reason, fixture.checkpointDao.getByJobId(fixture.claimedJob.jobId)?.lastError)
+        assertEquals(0, fixture.intelligence.requests.size)
+        assertTrue(
+            fixture.jobDao.getById(fixture.claimedJob.jobId)?.status in setOf(
+                MemoryMaintenanceJobStatus.FAILED_RETRYABLE,
+                MemoryMaintenanceJobStatus.FAILED_TERMINAL
+            )
+        )
+    }
+
+    @Test
     fun `retry keeps the frozen model when catalog ordering changes`() = runBlocking {
         var providerCalls = 0
         val intelligence = RecordingLongTermMemoryIntelligence { request ->
@@ -1152,6 +1202,12 @@ private class InMemoryServiceLongTermConsolidationDao : MemoryLongTermConsolidat
 
     override suspend fun getByJobId(jobId: String): MemoryLongTermConsolidationCheckpoint? =
         checkpoints.firstOrNull { checkpoint -> checkpoint.jobId == jobId }
+
+    fun replace(checkpoint: MemoryLongTermConsolidationCheckpoint) {
+        val index = checkpoints.indexOfFirst { current -> current.checkpointId == checkpoint.checkpointId }
+        check(index >= 0)
+        checkpoints[index] = checkpoint
+    }
 
     override suspend fun getActive(
         activeKey: String,

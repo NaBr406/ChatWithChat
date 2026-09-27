@@ -1429,7 +1429,8 @@ class MemoryBatchConsolidationServiceTest {
         val result = fixture.service.process(job)
 
         assertEquals(MemoryBatchProcessResult.STATUS_RETRYABLE, result.status)
-        assertEquals("memory_render_failed:unsafe_memory_metadata", result.reason)
+        assertTrue(result.reason?.startsWith("memory_render_failed:unsafe_memory_metadata:line=") == true)
+        assertTrue(result.reason?.contains("duplicate metadata key") == true)
         assertEquals(before, fixture.fileStore.readLongTermMemory().getOrThrow())
         assertEquals(0, fixture.turnDao.getCheckpoint(CHAT_ID)!!.lastProcessedUserMessageId)
         assertEquals(5, fixture.turnDao.getTurnsClaimedByJob(job.jobId).size)

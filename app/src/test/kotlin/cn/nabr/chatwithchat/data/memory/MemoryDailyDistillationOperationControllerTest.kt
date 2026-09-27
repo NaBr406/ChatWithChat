@@ -178,7 +178,8 @@ class MemoryDailyDistillationOperationControllerTest {
             controller.render(fixture.input, fixture.baseMarkdown, operations)
         }.exceptionOrNull()
 
-        assertEquals("unsafe_memory_metadata", failure?.message)
+        assertTrue(failure?.message?.startsWith("unsafe_memory_metadata:line=") == true)
+        assertTrue(failure?.message?.contains("duplicate metadata key") == true)
     }
 
     @Test

@@ -236,6 +236,52 @@ class MemoryLongTermConsolidationPolicyTest {
     }
 
     @Test
+    fun `unrelated teaching identities are rejected with the offending id`() {
+        val entries = listOf(
+            entry(
+                id = "teaching_method",
+                text = "Teach the computer foundations before data structures.",
+                type = "project_context",
+                canonicalKey = "project.teaching-method-foundation-first",
+                scope = "project:cs-teaching"
+            ),
+            entry(
+                id = "exam_goal",
+                text = "The student is preparing for the 408 exam.",
+                type = "project_context",
+                canonicalKey = "project.teaching-408-foundation",
+                scope = "project:cs-teaching"
+            )
+        )
+        val partition = policy.nextPartition(entries, cursor = 0)
+        val request = MemoryLongTermConsolidationPartitionRequest(
+            checkpointId = "checkpoint",
+            partitionStart = partition.start,
+            partitionEndExclusive = partition.endExclusive,
+            candidateGroups = policy.candidateGroups(entries, partition, emptySet(), forceReview = true)
+        )
+        val proposal = MemoryLongTermConsolidationProposal(
+            decisions = listOf(
+                MemoryLongTermCanonicalDecision(
+                    action = MemoryLongTermDecisionAction.CANONICALIZE,
+                    memoryIds = entries.map(MarkdownMemoryEntry::id),
+                    canonicalKey = "project.cs-teaching.foundation-first",
+                    scope = "project:cs-teaching",
+                    recallState = MemoryRecallState.QUERY,
+                    memoryClass = MemoryClass.ACTIVE_PROJECT
+                )
+            )
+        )
+
+        val failure = assertThrows(IllegalArgumentException::class.java) {
+            policy.validateAndMergeProposal(MemoryLongTermPersistedProposal(), request, proposal)
+        }
+
+        assertTrue(failure.message.orEmpty().contains("exam_goal"))
+        assertTrue(failure.message.orEmpty().contains("project.cs-teaching.foundation-first"))
+    }
+
+    @Test
     fun `preferred address and assistant name share one addressing bucket`() {
         val entries = listOf(
             entry(

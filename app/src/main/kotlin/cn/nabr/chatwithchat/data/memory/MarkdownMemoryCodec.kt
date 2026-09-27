@@ -905,3 +905,24 @@ internal data class MarkdownMemoryReplacementResult(
     val markdown: String,
     val replacedCount: Int = 0
 )
+
+internal fun unsafeMemoryMetadataDiagnostic(
+    skippedEntries: List<SkippedMarkdownMemoryEntry>
+): String {
+    if (skippedEntries.isEmpty()) return "unsafe_memory_metadata:repair_unavailable"
+    val displayed = skippedEntries
+        .take(MAX_UNSAFE_METADATA_DIAGNOSTIC_ENTRIES)
+        .joinToString(";") { skipped ->
+            "line=${skipped.lineNumber}:${skipped.reason.take(MAX_UNSAFE_METADATA_REASON_LENGTH)}"
+        }
+    val remaining = skippedEntries.size -
+        minOf(skippedEntries.size, MAX_UNSAFE_METADATA_DIAGNOSTIC_ENTRIES)
+    return if (remaining > 0) {
+        "unsafe_memory_metadata:$displayed;more=$remaining"
+    } else {
+        "unsafe_memory_metadata:$displayed"
+    }
+}
+
+private const val MAX_UNSAFE_METADATA_DIAGNOSTIC_ENTRIES = 8
+private const val MAX_UNSAFE_METADATA_REASON_LENGTH = 160

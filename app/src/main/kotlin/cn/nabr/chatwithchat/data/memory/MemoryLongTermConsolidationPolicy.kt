@@ -314,16 +314,18 @@ internal class MemoryLongTermConsolidationPolicy {
                             MemoryCanonicalIdentityPolicy.normalizeCanonicalKey(entry.canonicalKey, entry.scope) != canonicalKey
                         )
             }
-            require(
-                reboundEntries.all { entry ->
-                    MemoryCanonicalIdentityPolicy.allowsRebinding(
-                        fromKey = entry.canonicalKey,
-                        fromScope = entry.scope,
-                        toKey = canonicalKey,
-                        toScope = scope
-                    )
-                }
-            ) { "decision changed unrelated canonical identity" }
+            val unrelatedEntry = reboundEntries.firstOrNull { entry ->
+                !MemoryCanonicalIdentityPolicy.allowsRebinding(
+                    fromKey = entry.canonicalKey,
+                    fromScope = entry.scope,
+                    toKey = canonicalKey,
+                    toScope = scope
+                )
+            }
+            require(unrelatedEntry == null) {
+                "decision changed unrelated canonical identity: ${unrelatedEntry?.memoryId} " +
+                    "${unrelatedEntry?.canonicalKey} -> $canonicalKey"
+            }
             if (reboundEntries.isNotEmpty()) {
                 require(memoryIds.size >= 2) { "single canonical memory cannot be rebound" }
                 require(entries.map { entry ->

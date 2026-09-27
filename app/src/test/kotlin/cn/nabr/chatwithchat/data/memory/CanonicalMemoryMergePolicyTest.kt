@@ -322,6 +322,81 @@ class CanonicalMemoryMergePolicyTest {
     }
 
     @Test
+    fun `rebinding a current entry updates all obsolete predecessors`() {
+        val active = canonicalEntry(
+            id = "project_active",
+            text = "The project uses cross-session retrieval.",
+            type = "project_context",
+            canonicalKey = "project.old_retrieval"
+        )
+        val history = (1..3).map { index ->
+            canonicalEntry(
+                id = "project_history_$index",
+                text = "Historical retrieval direction $index.",
+                type = "project_context",
+                canonicalKey = active.canonicalKey,
+                validity = MemoryValidity.OBSOLETE,
+                supersededBy = active.id,
+                recallState = MemoryRecallState.MAINTENANCE_ONLY
+            )
+        }
+        val base = codec.renderLongTerm(listOf(active) + history)
+        val proposal = candidate(
+            text = active.text,
+            type = active.type,
+            canonicalKey = "project.cross_session_retrieval",
+            targetMemoryId = active.id
+        )
+
+        val result = policy.merge(base, listOf(proposal), mutationAt = 30, allowCanonicalRebinding = true)
+        val parsed = codec.parse(result.markdown)
+
+        assertTrue(parsed.skippedEntries.isEmpty())
+        assertEquals(4, result.changedEntryCount)
+        assertEquals(4, parsed.entries.count { it.canonicalKey == proposal.canonicalKey })
+        assertTrue(parsed.entries.filter { it.validity == MemoryValidity.OBSOLETE }
+            .all { it.supersededBy == active.id })
+    }
+
+    @Test
+    fun `bounded rebinding leaves active and predecessors unchanged when bundle does not fit`() {
+        val active = canonicalEntry(
+            id = "project_active",
+            text = "The project uses cross-session retrieval.",
+            type = "project_context",
+            canonicalKey = "project.old_retrieval"
+        )
+        val history = (1..3).map { index ->
+            canonicalEntry(
+                id = "project_history_$index",
+                text = "Historical retrieval direction $index.",
+                type = "project_context",
+                canonicalKey = active.canonicalKey,
+                validity = MemoryValidity.OBSOLETE,
+                supersededBy = active.id,
+                recallState = MemoryRecallState.MAINTENANCE_ONLY
+            )
+        }
+        val base = codec.renderLongTerm(listOf(active) + history)
+
+        val result = policy.merge(
+            baseMarkdown = base,
+            candidates = listOf(candidate(
+                text = active.text,
+                type = active.type,
+                canonicalKey = "project.cross_session_retrieval",
+                targetMemoryId = active.id
+            )),
+            mutationAt = 30,
+            allowCanonicalRebinding = true,
+            maxEntryMutations = 3
+        )
+
+        assertEquals(base, result.markdown)
+        assertTrue(result.hasMoreMutations)
+    }
+
+    @Test
     fun `different canonical keys and scopes coexist`() {
         val candidates = listOf(
             candidate(
@@ -772,6 +847,106 @@ class CanonicalMemoryMergePolicyTest {
         val replay = policy.merge(first.markdown, listOf(candidate), mutationAt = 31)
         assertEquals(first.markdown, replay.markdown)
         assertEquals(0, replay.materialMutationCount)
+    }
+
+    @Test
+    fun `project alias rebinding updates obsolete predecessors with exact successor identity`() {
+        val legacy = canonicalEntry(
+            id = "legacy_project",
+            text = "ChatWithChat is an Android app.",
+            type = "project_context",
+            canonicalKey = "project.gptmobile_ai_app",
+            scope = "project:gptmobile-ai-app"
+        )
+        val history = (1..2).map { index ->
+            legacy.copy(
+                id = "legacy_history_$index",
+                text = "Earlier project description $index.",
+                validity = MemoryValidity.OBSOLETE,
+                supersededBy = legacy.id,
+                recallState = MemoryRecallState.MAINTENANCE_ONLY
+            )
+        }
+        val candidate = candidate(
+            text = legacy.text,
+            type = legacy.type,
+            canonicalKey = "project.gptmobile_ai_app",
+            scope = legacy.scope,
+            targetMemoryId = legacy.id
+        )
+
+        val result = policy.merge(
+            baseMarkdown = codec.renderLongTerm(listOf(legacy) + history),
+            candidates = listOf(candidate),
+            mutationAt = 30,
+            maxEntryMutations = MemoryControlledOperationPolicy.MAX_OPERATIONS
+        )
+        val parsed = codec.parse(result.markdown)
+        val successor = parsed.entries.single { it.id == legacy.id }
+
+        assertTrue(parsed.skippedEntries.isEmpty())
+        assertEquals("project.chatwithchat", successor.canonicalKey)
+        assertEquals("project:chatwithchat", successor.scope)
+        assertTrue(parsed.entries.filter { it.id in history.map(MarkdownMemoryEntry::id) }
+            .all { it.canonicalKey == successor.canonicalKey && it.scope == successor.scope })
+    }
+
+    @Test
+    fun `merging project alias and canonical entries preserves both histories`() {
+        val legacy = canonicalEntry(
+            id = "legacy_project",
+            text = "Earlier ChatWithChat project description.",
+            type = "project_context",
+            canonicalKey = "project.gptmobile_ai_app",
+            scope = "project:gptmobile-ai-app"
+        )
+        val canonical = legacy.copy(
+            id = "canonical_project",
+            text = "Current ChatWithChat project description.",
+            canonicalKey = "project.chatwithchat",
+            scope = "project:chatwithchat"
+        )
+        val legacyHistory = legacy.copy(
+            id = "legacy_history",
+            text = "Older project description.",
+            validity = MemoryValidity.OBSOLETE,
+            supersededBy = legacy.id,
+            recallState = MemoryRecallState.MAINTENANCE_ONLY
+        )
+        val canonicalHistory = canonical.copy(
+            id = "canonical_history",
+            text = "Previous canonical description.",
+            validity = MemoryValidity.OBSOLETE,
+            supersededBy = canonical.id,
+            recallState = MemoryRecallState.MAINTENANCE_ONLY
+        )
+        val candidates = listOf(legacy, canonical).map { entry ->
+            candidate(
+                text = entry.text,
+                type = entry.type,
+                canonicalKey = entry.canonicalKey!!,
+                scope = entry.scope,
+                targetMemoryId = entry.id
+            )
+        }
+
+        val result = policy.merge(
+            baseMarkdown = codec.renderLongTerm(listOf(legacy, canonical, legacyHistory, canonicalHistory)),
+            candidates = candidates,
+            mutationAt = 30,
+            maxEntryMutations = MemoryControlledOperationPolicy.MAX_OPERATIONS
+        )
+        val parsed = codec.parse(result.markdown)
+        val entriesById = parsed.entries.associateBy(MarkdownMemoryEntry::id)
+
+        assertTrue(parsed.skippedEntries.isEmpty())
+        assertEquals(1, parsed.entries.count { it.validity == MemoryValidity.CURRENT })
+        listOf(legacyHistory.id, canonicalHistory.id).forEach { historyId ->
+            val history = checkNotNull(entriesById[historyId])
+            val successor = checkNotNull(entriesById[history.supersededBy])
+            assertEquals(successor.canonicalKey, history.canonicalKey)
+            assertEquals(successor.scope, history.scope)
+        }
     }
 
     @Test

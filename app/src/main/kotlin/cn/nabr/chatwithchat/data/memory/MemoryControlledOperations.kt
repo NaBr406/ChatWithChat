@@ -249,7 +249,9 @@ class MemoryDailyDistillationOperationController(
     private fun parseEntriesOrThrow(markdown: String): MarkdownMemoryParseResult = markdownMemoryCodec
         .parse(markdown)
         .also { parsed ->
-            require(parsed.skippedEntries.isEmpty()) { "unsafe_memory_metadata" }
+            require(parsed.skippedEntries.isEmpty()) {
+                unsafeMemoryMetadataDiagnostic(parsed.skippedEntries)
+            }
         }
 
     private fun normalizeWriteText(text: String): String {

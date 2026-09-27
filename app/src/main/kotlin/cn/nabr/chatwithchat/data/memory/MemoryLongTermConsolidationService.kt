@@ -138,7 +138,28 @@ class MemoryLongTermConsolidationService(
             return terminal(job, "long_term_checkpoint_missing_prepared_mutation")
         }
 
-        val snapshot = readFrozenSnapshot(checkpoint) ?: run {
+        val snapshot = try {
+            readFrozenSnapshot(checkpoint)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (throwable: Throwable) {
+            rethrowInterruption(throwable)
+            val detail = boundedDiagnostic(throwable)
+            activityLogger.finishRunSafely(
+                activityRunId,
+                MemoryActivityStatus.FAILED,
+                checkpoint.activityData(
+                    errorCode = "long_term_snapshot_invalid",
+                    errorDetail = detail
+                ),
+                expectedPhase = MemoryActivityPhase.MODEL_RESOLUTION
+            )
+            return retryable(
+                job,
+                checkpoint,
+                detail
+            )
+        } ?: run {
             activityLogger.finishRunSafely(
                 activityRunId,
                 MemoryActivityStatus.SKIPPED,
@@ -300,7 +321,8 @@ class MemoryLongTermConsolidationService(
                                 binding.platform.toMemoryActivityData(
                                     inputCount = checkpoint.entryCount,
                                     cursor = checkpoint.partitionCursor,
-                                    errorCode = "invalid_long_term_proposal"
+                                    errorCode = "invalid_long_term_proposal",
+                                    errorDetail = throwable.message
                                 ),
                                 expectedPhase = MemoryActivityPhase.GENERATION
                             )
@@ -374,20 +396,22 @@ class MemoryLongTermConsolidationService(
             )
         }.getOrElse { throwable ->
             rethrowInterruption(throwable)
+            val detail = renderFailureDiagnostic(throwable, snapshot.workingMarkdown)
             activityLogger.finishRunSafely(
                 activityRunId,
                 MemoryActivityStatus.FAILED,
                 activityPlatform.activityData(
                     inputCount = checkpoint.entryCount,
                     cursor = checkpoint.partitionCursor,
-                    errorCode = "long_term_render_failed"
+                    errorCode = "long_term_render_failed",
+                    errorDetail = detail
                 ),
                 expectedPhase = MemoryActivityPhase.ORGANIZATION
             )
             return retryable(
                 currentJob,
                 checkpoint,
-                "long_term_consolidation_render_failed:${throwable.message}",
+                "long_term_consolidation_render_failed:$detail",
                 rawResponseJsons
             )
         }
@@ -676,8 +700,9 @@ class MemoryLongTermConsolidationService(
     private fun readFrozenSnapshot(checkpoint: MemoryLongTermConsolidationCheckpoint): FrozenSnapshot? {
         val markdown = memoryFileStore.readLongTermMemory().getOrNull() ?: return null
         if (markdown.toByteArray(Charsets.UTF_8).sha256Hex() != checkpoint.baseSourceHash) return null
+        val parsed = markdownMemoryCodec.parse(markdown)
         val repaired = requireNotNull(markdownMemoryCodec.repairStructuralRelationships(markdown)) {
-            "unsafe_memory_metadata"
+            "unsafe_memory_metadata:${formatSkippedEntries(parsed.skippedEntries)}"
         }
         val orderedIds = json.decodeFromString<List<String>>(checkpoint.orderedEntryIdsJson)
         require(orderedIds.size == checkpoint.entryCount) { "long-term entry count mismatch" }
@@ -700,6 +725,30 @@ class MemoryLongTermConsolidationService(
             structuralRepairCount = repaired.repairedCount,
             entries = repaired.entries
         )
+    }
+
+    private fun formatSkippedEntries(skippedEntries: List<SkippedMarkdownMemoryEntry>): String {
+        if (skippedEntries.isEmpty()) return "repair_unavailable"
+        val displayed = skippedEntries
+            .take(MAX_DIAGNOSTIC_ENTRIES)
+            .joinToString(";") { skipped ->
+                "line=${skipped.lineNumber}:${skipped.reason}"
+            }
+        val remaining = skippedEntries.size - minOf(skippedEntries.size, MAX_DIAGNOSTIC_ENTRIES)
+        return if (remaining > 0) "$displayed;more=$remaining" else displayed
+    }
+
+    private fun boundedDiagnostic(throwable: Throwable): String = (
+        throwable.message?.takeIf(String::isNotBlank)
+            ?: throwable.javaClass.simpleName
+        )
+        .filterNot(Char::isISOControl)
+        .take(MAX_ERROR_LENGTH)
+
+    private fun renderFailureDiagnostic(throwable: Throwable, markdown: String): String {
+        val detail = boundedDiagnostic(throwable)
+        if (detail != "unsafe_memory_metadata") return detail
+        return "unsafe_memory_metadata:${formatSkippedEntries(markdownMemoryCodec.parse(markdown).skippedEntries)}"
     }
 
     private fun decodePersistedProposal(
@@ -1070,22 +1119,26 @@ class MemoryLongTermConsolidationService(
         inputCount: Int? = null,
         operationCount: Int? = null,
         cursor: Int? = null,
-        errorCode: String? = null
+        errorCode: String? = null,
+        errorDetail: String? = null
     ): MemoryActivityRunData = this?.toMemoryActivityData(
         inputCount = inputCount,
         operationCount = operationCount,
         cursor = cursor,
-        errorCode = errorCode
+        errorCode = errorCode,
+        errorDetail = errorDetail
     ) ?: MemoryActivityRunData(
         inputCount = inputCount,
         operationCount = operationCount,
         cursor = cursor,
-        errorCode = errorCode
+        errorCode = errorCode,
+        errorDetail = errorDetail
     )
 
     private fun MemoryLongTermConsolidationCheckpoint.activityData(
         operationCount: Int? = null,
-        errorCode: String? = null
+        errorCode: String? = null,
+        errorDetail: String? = null
     ): MemoryActivityRunData = MemoryActivityRunData(
         platformUid = resolvedPlatformUid,
         modelId = resolvedModelId,
@@ -1093,7 +1146,8 @@ class MemoryLongTermConsolidationService(
         inputCount = entryCount,
         operationCount = operationCount,
         cursor = partitionCursor,
-        errorCode = errorCode
+        errorCode = errorCode,
+        errorDetail = errorDetail
     )
 
     private fun now(): Long = clock.instant().epochSecond
@@ -1122,6 +1176,7 @@ class MemoryLongTermConsolidationService(
             MemoryLongTermConsolidationPolicy.MAX_PERSISTED_DECISIONS -
                 MemoryLongTermConsolidationPolicy.MAX_DECISIONS_PER_PARTITION
         const val MAX_ERROR_LENGTH = 500
+        const val MAX_DIAGNOSTIC_ENTRIES = 8
         const val REASON_MEMORY_DISABLED = "memory_disabled"
         const val REASON_STALE_SOURCE = "stale_long_term_source"
         const val REASON_CLEAN_NO_OP = "clean_no_op"

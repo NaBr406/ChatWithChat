@@ -1408,7 +1408,9 @@ class MemoryBatchConsolidationService(
     private fun parseEntriesOrThrow(markdown: String): MarkdownMemoryParseResult = markdownMemoryCodec
         .parse(markdown)
         .also { parsed ->
-            check(parsed.skippedEntries.isEmpty()) { "unsafe_memory_metadata" }
+            check(parsed.skippedEntries.isEmpty()) {
+                unsafeMemoryMetadataDiagnostic(parsed.skippedEntries)
+            }
         }
 
     private fun pathForDestination(destination: String, todayPath: String): String =
