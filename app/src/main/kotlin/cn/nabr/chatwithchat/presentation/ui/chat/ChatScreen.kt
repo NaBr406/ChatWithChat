@@ -458,17 +458,16 @@ private fun ChatContent(
         ?.getOrNull(activeMetadataPlatformIndex)
     val activeTokenUsage = activeMetadataAssistant?.effectiveTokenUsage()
     val activeSourceMetadata = activeMetadataAssistant?.sourceMetadata.orEmpty()
-    val activeSessionTokenUsages = remember(
-        groupedMessages.assistantMessages,
-        activeMetadataAssistant?.platformType,
-        activeTokenUsage?.model
-    ) {
-        sessionTokenUsagesFor(
-            allAssistantMessages = groupedMessages.assistantMessages,
-            platformUid = activeMetadataAssistant?.platformType.orEmpty(),
-            model = activeTokenUsage?.model.orEmpty()
-        )
+    // Build the session usage index once per message snapshot. Message rows must not each
+    // flatten and scan the complete conversation while the active response is streaming.
+    val sessionTokenUsageIndex = remember(groupedMessages.assistantMessages) {
+        buildSessionTokenUsageIndex(groupedMessages.assistantMessages)
     }
+    val activeSessionTokenUsages = sessionTokenUsagesFor(
+        index = sessionTokenUsageIndex,
+        platformUid = activeMetadataAssistant?.platformType.orEmpty(),
+        model = activeTokenUsage?.model.orEmpty()
+    )
     val showStreamingMetadataFooter =
         !isIdle && (activeTokenUsage != null || activeSourceMetadata.isNotEmpty())
     val scope = rememberCoroutineScope()
@@ -690,7 +689,11 @@ private fun ChatContent(
                             messageIndex = index,
                             message = groupedMessages.userMessages[index],
                             assistantMessages = groupedMessages.assistantMessages.getOrNull(index) ?: emptyList(),
-                            allAssistantMessages = groupedMessages.assistantMessages,
+                            sessionTokenUsages = sessionTokenUsagesFor(
+                                index = sessionTokenUsageIndex,
+                                assistantMessages = groupedMessages.assistantMessages.getOrNull(index) ?: emptyList(),
+                                platformIndex = indexStates.getOrElse(index) { 0 }
+                            ),
                             platformIndexState = indexStates.getOrElse(index) { 0 },
                             loadingStates = loadingStates,
                             toolProgressStates = toolProgressStates,
@@ -719,7 +722,11 @@ private fun ChatContent(
                                 messageIndex = lastMessageIndex,
                                 message = groupedMessages.userMessages[lastMessageIndex],
                                 assistantMessages = groupedMessages.assistantMessages.getOrNull(lastMessageIndex) ?: emptyList(),
-                                allAssistantMessages = groupedMessages.assistantMessages,
+                                sessionTokenUsages = sessionTokenUsagesFor(
+                                    index = sessionTokenUsageIndex,
+                                    assistantMessages = groupedMessages.assistantMessages.getOrNull(lastMessageIndex) ?: emptyList(),
+                                    platformIndex = indexStates.getOrElse(lastMessageIndex) { 0 }
+                                ),
                                 platformIndexState = indexStates.getOrElse(lastMessageIndex) { 0 },
                                 loadingStates = loadingStates,
                                 toolProgressStates = toolProgressStates,
@@ -872,7 +879,7 @@ private fun ChatMessagePair(
     messageIndex: Int,
     message: MessageV2,
     assistantMessages: List<MessageV2>,
-    allAssistantMessages: List<List<MessageV2>>,
+    sessionTokenUsages: List<TokenUsageRecord>,
     platformIndexState: Int,
     loadingStates: List<ChatViewModel.LoadingState>,
     toolProgressStates: Map<String, List<ChatViewModel.ToolProgressState>>,
@@ -920,14 +927,6 @@ private fun ChatMessagePair(
             } ?: false
             )
     val selectedPlatformUid = selectedAssistantMessage?.platformType.orEmpty()
-    val selectedPlatformModel = selectedAssistantMessage?.effectiveTokenUsage()?.model.orEmpty()
-    val sessionTokenUsages = remember(allAssistantMessages, selectedPlatformUid, selectedPlatformModel) {
-        sessionTokenUsagesFor(
-            allAssistantMessages = allAssistantMessages,
-            platformUid = selectedPlatformUid,
-            model = selectedPlatformModel
-        )
-    }
     val selectedToolProgressStates = toolProgressStates[ChatViewModel.toolProgressKey(messageIndex, platformIndexState)].orEmpty()
     val isCurrentPlatformLoading =
         loadingStates.getOrElse(platformIndexState) { ChatViewModel.LoadingState.Idle } == ChatViewModel.LoadingState.Loading
@@ -1084,22 +1083,44 @@ private fun ChatMessagePair(
     }
 }
 
-private fun sessionTokenUsagesFor(
-    allAssistantMessages: List<List<MessageV2>>,
+internal data class SessionTokenUsageKey(
+    val platformUid: String,
+    val model: String
+)
+
+internal fun buildSessionTokenUsageIndex(
+    allAssistantMessages: List<List<MessageV2>>
+): Map<SessionTokenUsageKey, List<TokenUsageRecord>> {
+    val grouped = linkedMapOf<SessionTokenUsageKey, MutableList<TokenUsageRecord>>()
+    allAssistantMessages.asSequence()
+        .flatten()
+        .mapNotNull { assistantMessage -> assistantMessage.effectiveTokenUsage() }
+        .filter { usage -> usage.platformUid.isNotBlank() && usage.model.isNotBlank() }
+        .forEach { usage ->
+            grouped.getOrPut(SessionTokenUsageKey(usage.platformUid, usage.model)) { mutableListOf() }
+                .add(usage)
+        }
+    return grouped.mapValues { (_, usages) -> usages.toList() }
+}
+
+internal fun sessionTokenUsagesFor(
+    index: Map<SessionTokenUsageKey, List<TokenUsageRecord>>,
     platformUid: String,
     model: String
+): List<TokenUsageRecord> = if (platformUid.isBlank() || model.isBlank()) {
+    emptyList()
+} else {
+    index[SessionTokenUsageKey(platformUid, model)].orEmpty()
+}
+
+internal fun sessionTokenUsagesFor(
+    index: Map<SessionTokenUsageKey, List<TokenUsageRecord>>,
+    assistantMessages: List<MessageV2>,
+    platformIndex: Int
 ): List<TokenUsageRecord> {
-    if (platformUid.isBlank() || model.isBlank()) return emptyList()
-    return allAssistantMessages.asSequence()
-        .flatten()
-        .mapNotNull { assistantMessage ->
-            assistantMessage.effectiveTokenUsage()
-                ?.takeIf { usage ->
-                    usage.platformUid == platformUid &&
-                        usage.model == model
-                }
-        }
-        .toList()
+    val assistantMessage = assistantMessages.getOrNull(platformIndex) ?: return emptyList()
+    val usage = assistantMessage.effectiveTokenUsage() ?: return emptyList()
+    return sessionTokenUsagesFor(index, usage.platformUid, usage.model)
 }
 
 @Composable

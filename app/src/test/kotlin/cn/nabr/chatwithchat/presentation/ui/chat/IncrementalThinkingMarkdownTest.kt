@@ -95,6 +95,41 @@ class IncrementalThinkingMarkdownTest {
     }
 
     @Test
+    fun tableTail_staysPendingUntilParagraphBoundary() {
+        val accumulator = ThinkingMarkdownAccumulator()
+
+        val snapshot = accumulator.update(
+            text = "| a | b |\n|---|---|\n| 1 | 2 |\n\n\nnext",
+            forceFlush = false
+        )
+
+        assertEquals(listOf("| a | b |\n|---|---|\n| 1 | 2 |"), snapshot.blocks.map { it.content })
+        assertEquals("next", snapshot.pendingText)
+    }
+
+    @Test
+    fun unclosedFence_staysInPendingTailUntilClosingFenceArrives() {
+        val accumulator = ThinkingMarkdownAccumulator()
+
+        val pending = accumulator.update(
+            text = "before\n\n```kotlin\nval value = 1\n",
+            forceFlush = false
+        )
+        val completed = accumulator.update(
+            text = "before\n\n```kotlin\nval value = 1\n```\n\nafter",
+            forceFlush = false
+        )
+
+        assertEquals(listOf("before"), pending.blocks.map { it.content })
+        assertEquals("```kotlin\nval value = 1\n", pending.pendingText)
+        assertEquals(
+            listOf("before", "```kotlin\nval value = 1\n```"),
+            completed.blocks.map { it.content }
+        )
+        assertEquals("after", completed.pendingText)
+    }
+
+    @Test
     fun pendingPreview_keepsOnlyLatestWindow() {
         val content = "old reasoning ".repeat(2_000) + "latest reasoning"
 

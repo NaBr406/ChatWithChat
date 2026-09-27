@@ -184,13 +184,26 @@ fun OpponentChatBubble(
                     ResponseLoadingIndicator()
                 }
                 displayText.isNotBlank() || !isLoading -> {
-                    ChatMarkdown(
-                        content = appendStreamingTextTail(displayText, isTextAnimating),
-                        contentIdentity = contentIdentity,
-                        renderMath = true,
-                        useMathJax = !isTextAnimating,
-                        modifier = Modifier.padding(vertical = 6.dp)
-                    )
+                    if (isTextAnimating) {
+                        IncrementalChatMarkdown(
+                            content = displayText,
+                            isStreaming = true,
+                            isPendingAnimating = true,
+                            contentIdentity = contentIdentity,
+                            useMathJax = false,
+                            contentColor = MaterialTheme.colorScheme.onBackground,
+                            style = ChatMarkdownStyle.ANSWER,
+                            modifier = Modifier.padding(vertical = 6.dp)
+                        )
+                    } else {
+                        ChatMarkdown(
+                            content = appendStreamingTextTail(displayText, false),
+                            contentIdentity = contentIdentity,
+                            renderMath = true,
+                            useMathJax = true,
+                            modifier = Modifier.padding(vertical = 6.dp)
+                        )
+                    }
                 }
             }
 

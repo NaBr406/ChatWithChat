@@ -281,22 +281,25 @@ internal fun pendingThinkingPreview(
     return THINKING_PENDING_PREVIEW_PREFIX + text.substring(safeStart)
 }
 
+/**
+ * Renders stable Markdown blocks once and keeps the unfinished tail cheap while text streams.
+ * The same accumulator is used for thoughts and answers so fences, lists, and blank-line
+ * boundaries are handled consistently.
+ */
 @Composable
-internal fun IncrementalThinkingMarkdown(
-    thoughts: String,
+internal fun IncrementalChatMarkdown(
+    content: String,
     isStreaming: Boolean,
     isPendingAnimating: Boolean,
     contentIdentity: Any,
     useMathJax: Boolean,
     contentColor: Color,
+    style: ChatMarkdownStyle,
     modifier: Modifier = Modifier
 ) {
     val accumulator = remember(contentIdentity) { ThinkingMarkdownAccumulator() }
-    val snapshot = remember(contentIdentity, thoughts, isStreaming) {
-        accumulator.update(
-            text = thoughts,
-            forceFlush = !isStreaming
-        )
+    val snapshot = remember(contentIdentity, content, isStreaming) {
+        accumulator.update(content, forceFlush = !isStreaming)
     }
 
     Column(modifier = modifier) {
@@ -308,7 +311,7 @@ internal fun IncrementalThinkingMarkdown(
                     renderMath = true,
                     useMathJax = useMathJax,
                     contentColor = contentColor,
-                    style = ChatMarkdownStyle.THINKING,
+                    style = style,
                     modifier = Modifier.fillMaxWidth()
                 )
             }
@@ -317,22 +320,38 @@ internal fun IncrementalThinkingMarkdown(
         if (snapshot.pendingText.isNotBlank()) {
             val preview = pendingThinkingPreview(snapshot.pendingText)
             Text(
-                text = if (isPendingAnimating && preview.isNotBlank()) {
-                    preview + "●"
-                } else {
-                    preview
-                },
+                text = if (isPendingAnimating && preview.isNotBlank()) preview + "●" else preview,
                 style = MaterialTheme.typography.bodyMedium.copy(
-                    fontSize = 14.sp,
-                    lineHeight = 22.sp,
+                    fontSize = if (style == ChatMarkdownStyle.THINKING) 14.sp else 16.sp,
+                    lineHeight = if (style == ChatMarkdownStyle.THINKING) 22.sp else 24.sp,
                     fontWeight = FontWeight.Normal,
                     letterSpacing = 0.sp
                 ),
                 color = contentColor,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 6.dp)
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
             )
         }
     }
+}
+
+@Composable
+internal fun IncrementalThinkingMarkdown(
+    thoughts: String,
+    isStreaming: Boolean,
+    isPendingAnimating: Boolean,
+    contentIdentity: Any,
+    useMathJax: Boolean,
+    contentColor: Color,
+    modifier: Modifier = Modifier
+) {
+    IncrementalChatMarkdown(
+        content = thoughts,
+        isStreaming = isStreaming,
+        isPendingAnimating = isPendingAnimating,
+        contentIdentity = contentIdentity,
+        useMathJax = useMathJax,
+        contentColor = contentColor,
+        style = ChatMarkdownStyle.THINKING,
+        modifier = modifier
+    )
 }
