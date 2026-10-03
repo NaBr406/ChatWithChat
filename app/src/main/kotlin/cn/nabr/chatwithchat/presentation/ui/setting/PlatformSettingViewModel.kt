@@ -143,9 +143,9 @@ class PlatformSettingViewModel @Inject constructor(
         }
     }
 
-    fun updateApiUrl(url: String) {
+    fun updateApiUrl(url: String, isFullApiUrl: Boolean) {
         _platformState.value?.let { platform ->
-            updatePlatform(platform.copy(apiUrl = url.trim()))
+            updatePlatform(platform.copy(apiUrl = url.trim(), isFullApiUrl = isFullApiUrl))
             closeApiUrlDialog()
         }
     }
@@ -154,6 +154,12 @@ class PlatformSettingViewModel @Inject constructor(
         _platformState.value?.let { platform ->
             updatePlatform(platform.copy(token = token.trim().takeIf { it.isNotEmpty() }))
             closeApiTokenDialog()
+        }
+    }
+
+    fun updateCustomHeaders(headers: String) {
+        _platformState.value?.let { platform ->
+            updatePlatform(platform.copy(customHeaders = headers.trim()))
         }
     }
 

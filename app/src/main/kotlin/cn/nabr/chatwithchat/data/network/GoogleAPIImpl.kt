@@ -15,6 +15,7 @@ import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
+import io.ktor.http.Url
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import java.io.File
@@ -36,8 +37,9 @@ class GoogleAPIImpl @Inject constructor(
         endpoint: ProviderEndpoint
     ): UploadedProviderFile {
         val file = File(filePath)
-        val startEndpoint = joinApiEndpoint(endpoint.apiUrl, "upload/v1beta/files")
+        val startEndpoint = joinApiEndpoint(endpoint.baseApiUrl(), "upload/v1beta/files")
         val uploadUrl = networkClient().preparePost(startEndpoint) {
+                applyEndpointHeaders(endpoint)
             parameter("key", endpoint.token ?: "")
             contentType(ContentType.Application.Json)
             header("X-Goog-Upload-Protocol", "resumable")
@@ -59,6 +61,7 @@ class GoogleAPIImpl @Inject constructor(
         } ?: throw IllegalStateException("获取 Google 上传 URL 失败")
 
         val responseBody = networkClient().preparePost(uploadUrl) {
+                applyEndpointHeaders(endpoint)
             header("X-Goog-Upload-Offset", "0")
             header("X-Goog-Upload-Command", "upload, finalize")
             header(HttpHeaders.ContentLength, file.length().toString())
@@ -87,9 +90,10 @@ class GoogleAPIImpl @Inject constructor(
     }
 
     override suspend fun isFileAvailable(fileName: String, endpoint: ProviderEndpoint): Boolean {
-        val url = joinApiEndpoint(endpoint.apiUrl, "v1beta/$fileName")
+        val url = joinApiEndpoint(endpoint.baseApiUrl(), "v1beta/$fileName")
         return try {
             networkClient().prepareGet(url) {
+                applyEndpointHeaders(endpoint)
                 parameter("key", endpoint.token ?: "")
             }.execute { response ->
                 if (!response.status.isSuccess()) {
@@ -111,12 +115,18 @@ class GoogleAPIImpl @Inject constructor(
         endpoint: ProviderEndpoint
     ): Flow<GenerateContentResponse> = flow {
         try {
-            val url = joinApiEndpoint(endpoint.apiUrl, "v1beta/models/$model:streamGenerateContent")
+            val url = endpoint.chatUrl("v1beta/models/$model:streamGenerateContent")
+            val queryParameters = Url(url).parameters
 
             networkClient().preparePost(url) {
+                applyEndpointHeaders(endpoint)
                 applyPlatformStreamingTimeout(timeoutSeconds)
-                parameter("key", endpoint.token ?: "")
-                parameter("alt", "sse")
+                if (!queryParameters.contains("key")) {
+                    parameter("key", endpoint.token ?: "")
+                }
+                if (!queryParameters.contains("alt")) {
+                    parameter("alt", "sse")
+                }
                 contentType(ContentType.Application.Json)
                 setBody(NetworkClient.json.encodeToString(request).withoutUnpairedSurrogates())
             }.execute { response ->

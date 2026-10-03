@@ -168,7 +168,9 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 ChatDatabaseV2Migrations.MIGRATION_23_24,
                 ChatDatabaseV2Migrations.MIGRATION_24_25,
                 ChatDatabaseV2Migrations.MIGRATION_25_26,
-                ChatDatabaseV2Migrations.MIGRATION_26_27
+                ChatDatabaseV2Migrations.MIGRATION_26_27,
+                ChatDatabaseV2Migrations.MIGRATION_27_28,
+                ChatDatabaseV2Migrations.MIGRATION_28_29
             )
             .addCallback(ChatHistoryDatabaseCallback())
             .build()
@@ -293,7 +295,9 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 ChatDatabaseV2Migrations.MIGRATION_23_24,
                 ChatDatabaseV2Migrations.MIGRATION_24_25,
                 ChatDatabaseV2Migrations.MIGRATION_25_26,
-                ChatDatabaseV2Migrations.MIGRATION_26_27
+                ChatDatabaseV2Migrations.MIGRATION_26_27,
+                ChatDatabaseV2Migrations.MIGRATION_27_28,
+                ChatDatabaseV2Migrations.MIGRATION_28_29
             )
             .addCallback(ChatHistoryDatabaseCallback())
             .build()
@@ -491,7 +495,9 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 ChatDatabaseV2Migrations.MIGRATION_23_24,
                 ChatDatabaseV2Migrations.MIGRATION_24_25,
                 ChatDatabaseV2Migrations.MIGRATION_25_26,
-                ChatDatabaseV2Migrations.MIGRATION_26_27
+                ChatDatabaseV2Migrations.MIGRATION_26_27,
+                ChatDatabaseV2Migrations.MIGRATION_27_28,
+                ChatDatabaseV2Migrations.MIGRATION_28_29
             )
             .addCallback(ChatHistoryDatabaseCallback())
             .build()
@@ -774,7 +780,9 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 ChatDatabaseV2Migrations.MIGRATION_23_24,
                 ChatDatabaseV2Migrations.MIGRATION_24_25,
                 ChatDatabaseV2Migrations.MIGRATION_25_26,
-                ChatDatabaseV2Migrations.MIGRATION_26_27
+                ChatDatabaseV2Migrations.MIGRATION_26_27,
+                ChatDatabaseV2Migrations.MIGRATION_27_28,
+                ChatDatabaseV2Migrations.MIGRATION_28_29
             )
             .build()
         try {
@@ -927,7 +935,9 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 ChatDatabaseV2Migrations.MIGRATION_23_24,
                 ChatDatabaseV2Migrations.MIGRATION_24_25,
                 ChatDatabaseV2Migrations.MIGRATION_25_26,
-                ChatDatabaseV2Migrations.MIGRATION_26_27
+                ChatDatabaseV2Migrations.MIGRATION_26_27,
+                ChatDatabaseV2Migrations.MIGRATION_27_28,
+                ChatDatabaseV2Migrations.MIGRATION_28_29
             )
             .addCallback(ChatHistoryDatabaseCallback())
             .build()
@@ -1070,7 +1080,7 @@ class ChatDatabaseV2MigrationInstrumentedTest {
     }
 
     @Test
-    fun freshSchema27_opensAndReopensWithCurrentState() {
+    fun freshSchema29_opensAndReopensWithCurrentState() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val freshDatabase = Room.databaseBuilder(context, ChatDatabaseV2::class.java, TEST_DATABASE)
             .addCallback(ChatHistoryDatabaseCallback())
@@ -1080,7 +1090,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
             val sqliteDatabase = database.openHelper.writableDatabase
             assertEquals(SCHEMA_27_TABLES, sqliteDatabase.userTableNames())
             assertLegacySemanticTablesAbsent(sqliteDatabase)
-            assertEquals(27L, sqliteDatabase.singleLong("PRAGMA user_version"))
+            assertEquals(29L, sqliteDatabase.singleLong("PRAGMA user_version"))
+            assertTrue(sqliteDatabase.hasColumn("platform_v2", "custom_headers"))
             sqliteDatabase.query("PRAGMA foreign_key_check").use { cursor ->
                 assertEquals(0, cursor.count)
             }
@@ -1097,7 +1108,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
             val sqliteDatabase = database.openHelper.writableDatabase
             assertEquals(SCHEMA_27_TABLES, sqliteDatabase.userTableNames())
             assertLegacySemanticTablesAbsent(sqliteDatabase)
-            assertEquals(27L, sqliteDatabase.singleLong("PRAGMA user_version"))
+            assertEquals(29L, sqliteDatabase.singleLong("PRAGMA user_version"))
+            assertTrue(sqliteDatabase.hasColumn("platform_v2", "custom_headers"))
             assertEquals("ok", sqliteDatabase.singleString("PRAGMA integrity_check"))
             runBlocking {
                 assertTrue(database.chatRoomDao().getChatRooms().isEmpty())
@@ -1150,6 +1162,45 @@ class ChatDatabaseV2MigrationInstrumentedTest {
             assertEquals(0L, database.singleLong("SELECT COUNT(*) FROM visual_asset_provider_ref"))
             database.query("PRAGMA foreign_key_check").use { cursor -> assertEquals(0, cursor.count) }
             assertEquals("ok", database.singleString("PRAGMA integrity_check"))
+        }
+    }
+
+    @Test
+    fun migration27To28_preservesPlatformsAndDefaultsToBaseUrl() {
+        migrationHelper.createDatabase(TEST_DATABASE, 27).apply {
+            execSQL(
+                """
+                INSERT INTO platform_v2 (
+                    uid, name, compatible_type, enabled, api_url, model,
+                    stream, reasoning, timeout, model_refresh_status
+                ) VALUES (
+                    'provider-full-url', 'Provider', 'OPENAI', 1,
+                    'https://api.example.com/', 'test-model', 1, 0, 30, 'not_loaded'
+                )
+                """.trimIndent()
+            )
+            close()
+        }
+        migrationHelper.runMigrationsAndValidate(
+            TEST_DATABASE,
+            29,
+            true,
+            ChatDatabaseV2Migrations.MIGRATION_27_28,
+            ChatDatabaseV2Migrations.MIGRATION_28_29
+        ).use { database ->
+            assertEquals(0L, database.singleLong("SELECT is_full_api_url FROM platform_v2 WHERE uid = 'provider-full-url'"))
+            assertEquals("", database.singleString("SELECT custom_headers FROM platform_v2 WHERE uid = 'provider-full-url'"))
+            assertEquals("https://api.example.com/", database.singleString("SELECT api_url FROM platform_v2 WHERE uid = 'provider-full-url'"))
+            database.execSQL("UPDATE platform_v2 SET is_full_api_url = 1 WHERE uid = 'provider-full-url'")
+        }
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val roomDatabase = Room.databaseBuilder(context, ChatDatabaseV2::class.java, TEST_DATABASE).build()
+        try {
+            runBlocking {
+                assertTrue(roomDatabase.platformDao().getPlatforms().single().isFullApiUrl)
+            }
+        } finally {
+            roomDatabase.close()
         }
     }
 
@@ -1968,6 +2019,16 @@ class ChatDatabaseV2MigrationInstrumentedTest {
         buildSet {
             while (cursor.moveToNext()) add(cursor.getString(0))
         }
+    }
+
+    private fun SupportSQLiteDatabase.hasColumn(tableName: String, columnName: String): Boolean = query(
+        "PRAGMA table_info(`$tableName`)"
+    ).use { cursor ->
+        val nameIndex = cursor.getColumnIndex("name")
+        while (cursor.moveToNext()) {
+            if (cursor.getString(nameIndex) == columnName) return@use true
+        }
+        false
     }
 
     private fun SupportSQLiteDatabase.snapshotRows(tableName: String): List<List<String>> = query(

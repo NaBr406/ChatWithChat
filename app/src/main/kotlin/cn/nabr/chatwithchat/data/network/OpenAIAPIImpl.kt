@@ -48,8 +48,9 @@ class OpenAIAPIImpl @Inject constructor(
         mimeType: String,
         endpoint: ProviderEndpoint
     ): UploadedProviderFile {
-        val url = joinApiEndpoint(endpoint.apiUrl, endpoint.apiPath("files"))
+        val url = joinApiEndpoint(endpoint.baseApiUrl(), endpoint.apiPath("files"))
         val responseBody = networkClient().preparePost(url) {
+                applyEndpointHeaders(endpoint)
             endpoint.token?.let { bearerAuth(it) }
             setBody(
                 MultiPartFormDataContent(
@@ -88,9 +89,10 @@ class OpenAIAPIImpl @Inject constructor(
     }
 
     override suspend fun isFileAvailable(fileId: String, endpoint: ProviderEndpoint): Boolean {
-        val url = joinApiEndpoint(endpoint.apiUrl, endpoint.apiPath("files/$fileId"))
+        val url = joinApiEndpoint(endpoint.baseApiUrl(), endpoint.apiPath("files/$fileId"))
         return try {
             networkClient().prepareGet(url) {
+                applyEndpointHeaders(endpoint)
                 endpoint.token?.let { bearerAuth(it) }
             }.execute { response ->
                 response.status.isSuccess()
@@ -106,9 +108,10 @@ class OpenAIAPIImpl @Inject constructor(
         endpoint: ProviderEndpoint
     ): Flow<ChatCompletionChunk> = flow {
         try {
-            val url = joinApiEndpoint(endpoint.apiUrl, endpoint.apiPath("chat/completions"))
+            val url = endpoint.chatUrl(endpoint.apiPath("chat/completions"))
 
             networkClient().preparePost(url) {
+                applyEndpointHeaders(endpoint)
                 applyPlatformStreamingTimeout(timeoutSeconds)
                 contentType(ContentType.Application.Json)
                 setBody(NetworkClient.openAIJson.encodeToString(request).withoutUnpairedSurrogates())
@@ -193,9 +196,10 @@ class OpenAIAPIImpl @Inject constructor(
         endpoint: ProviderEndpoint
     ): Flow<ResponsesStreamEvent> = flow {
         try {
-            val url = joinApiEndpoint(endpoint.apiUrl, "v1/responses")
+            val url = endpoint.chatUrl("v1/responses")
 
             networkClient().preparePost(url) {
+                applyEndpointHeaders(endpoint)
                 applyPlatformStreamingTimeout(timeoutSeconds)
                 contentType(ContentType.Application.Json)
                 setBody(NetworkClient.openAIJson.encodeToString(request).withoutUnpairedSurrogates())
@@ -260,9 +264,10 @@ class OpenAIAPIImpl @Inject constructor(
         timeoutSeconds: Int,
         endpoint: ProviderEndpoint
     ): ResponsesCompactResult = withContext(Dispatchers.IO) {
-        val url = joinApiEndpoint(endpoint.apiUrl, "v1/responses/compact")
+        val url = joinApiEndpoint(endpoint.baseApiUrl(), "v1/responses/compact")
 
         val responseBody = networkClient().preparePost(url) {
+                applyEndpointHeaders(endpoint)
             applyPlatformStreamingTimeout(timeoutSeconds)
             contentType(ContentType.Application.Json)
             setBody(NetworkClient.openAIJson.encodeToString(request).withoutUnpairedSurrogates())

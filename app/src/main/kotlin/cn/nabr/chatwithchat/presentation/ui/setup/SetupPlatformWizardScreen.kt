@@ -47,6 +47,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.model.ClientType
+import cn.nabr.chatwithchat.presentation.common.FullApiUrlCheckbox
 import cn.nabr.chatwithchat.presentation.ui.setup.SetupViewModelV2.Companion.WIZARD_STEP_API_KEY
 import cn.nabr.chatwithchat.presentation.ui.setup.SetupViewModelV2.Companion.WIZARD_STEP_BASICS
 import cn.nabr.chatwithchat.presentation.ui.setup.SetupViewModelV2.Companion.WIZARD_TOTAL_STEPS
@@ -161,12 +162,18 @@ fun SetupPlatformWizardScreen(
                         // Collect states directly inside AnimatedContent for proper state updates
                         val currentPlatformName by setupViewModel.platformName.collectAsStateWithLifecycle()
                         val currentApiUrl by setupViewModel.apiUrl.collectAsStateWithLifecycle()
+                        val isFullApiUrl by setupViewModel.isFullApiUrl.collectAsStateWithLifecycle()
+                        val customHeaders by setupViewModel.customHeaders.collectAsStateWithLifecycle()
                         BasicsStep(
                             clientType = selectedClientType,
                             platformName = currentPlatformName,
                             onPlatformNameChange = setupViewModel::updatePlatformName,
                             apiUrl = currentApiUrl,
-                            onApiUrlChange = setupViewModel::updateApiUrl
+                            onApiUrlChange = setupViewModel::updateApiUrl,
+                            isFullApiUrl = isFullApiUrl,
+                            onIsFullApiUrlChange = setupViewModel::updateIsFullApiUrl,
+                            customHeaders = customHeaders,
+                            onCustomHeadersChange = setupViewModel::updateCustomHeaders
                         )
                     }
 
@@ -305,6 +312,10 @@ private fun BasicsStep(
     onPlatformNameChange: (String) -> Unit,
     apiUrl: String,
     onApiUrlChange: (String) -> Unit,
+    isFullApiUrl: Boolean,
+    onIsFullApiUrlChange: (Boolean) -> Unit,
+    customHeaders: String,
+    onCustomHeadersChange: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -352,14 +363,29 @@ private fun BasicsStep(
             placeholder = { Text(stringResource(R.string.api_url_hint)) },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
-            enabled = clientType != ClientType.GOOGLE,
+            enabled = clientType != ClientType.GOOGLE || isFullApiUrl,
             supportingText = {
-                if (clientType == ClientType.GOOGLE) {
+                if (!isFullApiUrl && clientType == ClientType.GOOGLE) {
                     Text(stringResource(R.string.client_type_google_desc))
-                } else {
+                } else if (!isFullApiUrl) {
                     Text(stringResource(R.string.api_url_cautions))
                 }
             }
+        )
+        FullApiUrlCheckbox(
+            checked = isFullApiUrl,
+            onCheckedChange = onIsFullApiUrlChange
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        OutlinedTextField(
+            value = customHeaders,
+            onValueChange = onCustomHeadersChange,
+            label = { Text(stringResource(R.string.simulated_request_headers)) },
+            placeholder = { Text(stringResource(R.string.simulated_request_headers_hint)) },
+            modifier = Modifier.fillMaxWidth(),
+            minLines = 3,
+            maxLines = 6,
+            supportingText = { Text(stringResource(R.string.simulated_request_headers_supporting)) }
         )
     }
 }

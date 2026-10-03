@@ -21,6 +21,8 @@ import cn.nabr.chatwithchat.data.model.LastSelectedModel
 import cn.nabr.chatwithchat.data.model.ModelRefreshResult
 import cn.nabr.chatwithchat.data.model.ReasoningMode
 import cn.nabr.chatwithchat.data.model.ThemeMode
+import cn.nabr.chatwithchat.data.network.baseApiUrl
+import cn.nabr.chatwithchat.data.network.providerEndpoint
 import cn.nabr.chatwithchat.data.model.defaultReasoningMode
 import cn.nabr.chatwithchat.data.tool.ToolCallingMode
 import cn.nabr.chatwithchat.data.tool.ToolEnablementOverrides
@@ -306,7 +308,7 @@ class SettingRepositoryImpl @Inject constructor(
         val result = runCatching {
             val fetchedModels = modelDiscoveryRepository.fetchModels(
                 clientType = platform.compatibleType,
-                apiUrl = platform.apiUrl,
+                apiUrl = platform.providerEndpoint().baseApiUrl(),
                 token = platform.token
             )
             val savedModels = mergeFetchedModels(

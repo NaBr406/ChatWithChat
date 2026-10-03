@@ -45,6 +45,7 @@ import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.ModelConstants
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.model.ClientType
+import cn.nabr.chatwithchat.presentation.common.FullApiUrlCheckbox
 import cn.nabr.chatwithchat.presentation.common.SettingsMaterialGroup
 import cn.nabr.chatwithchat.presentation.common.SettingsTopAppBar
 import cn.nabr.chatwithchat.presentation.common.settingsCanvasBackground
@@ -63,6 +64,8 @@ fun AddPlatformScreen(
     var selectedClientType by remember { mutableStateOf(ClientType.OPENAI) }
     var clientTypeExpanded by remember { mutableStateOf(false) }
     var apiUrl by remember { mutableStateOf("") }
+    var isFullApiUrl by remember { mutableStateOf(false) }
+    var customHeaders by remember { mutableStateOf("") }
     var apiKey by remember { mutableStateOf("") }
     val saveState by settingViewModel.addPlatformSaveState.collectAsStateWithLifecycle()
     val isBusy = saveState is SettingViewModelV2.AddPlatformSaveState.Saving ||
@@ -184,6 +187,7 @@ fun AddPlatformScreen(
                                     },
                                     onClick = {
                                         selectedClientType = clientType
+                                        isFullApiUrl = false
                                         // Set default API URL based on client type
                                         apiUrl = when (clientType) {
                                             ClientType.OPENAI -> ModelConstants.OPENAI_API_URL
@@ -215,6 +219,26 @@ fun AddPlatformScreen(
                         singleLine = true,
                         shape = RoundedCornerShape(10.dp),
                         colors = settingsTextFieldColors()
+                    )
+
+                    FullApiUrlCheckbox(
+                        checked = isFullApiUrl,
+                        onCheckedChange = { isFullApiUrl = it },
+                        enabled = !isBusy && !platformSaved
+                    )
+
+                    OutlinedTextField(
+                        value = customHeaders,
+                        onValueChange = { customHeaders = it },
+                        label = { Text(stringResource(R.string.simulated_request_headers)) },
+                        placeholder = { Text(stringResource(R.string.simulated_request_headers_hint)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !isBusy && !platformSaved,
+                        minLines = 3,
+                        maxLines = 6,
+                        shape = RoundedCornerShape(10.dp),
+                        colors = settingsTextFieldColors(),
+                        supportingText = { Text(stringResource(R.string.simulated_request_headers_supporting)) }
                     )
 
                     Spacer(modifier = Modifier.height(24.dp))
@@ -288,6 +312,8 @@ fun AddPlatformScreen(
                         AddPlatformActionButtons(
                             platformName = platformName,
                             apiUrl = apiUrl,
+                            isFullApiUrl = isFullApiUrl,
+                            customHeaders = customHeaders,
                             selectedClientType = selectedClientType,
                             apiKey = apiKey,
                             enabled = !isBusy,
@@ -302,6 +328,8 @@ fun AddPlatformScreen(
                     AddPlatformActionButtons(
                         platformName = platformName,
                         apiUrl = apiUrl,
+                        isFullApiUrl = isFullApiUrl,
+                        customHeaders = customHeaders,
                         selectedClientType = selectedClientType,
                         apiKey = apiKey,
                         enabled = false,
@@ -314,6 +342,8 @@ fun AddPlatformScreen(
                     AddPlatformActionButtons(
                         platformName = platformName,
                         apiUrl = apiUrl,
+                        isFullApiUrl = isFullApiUrl,
+                        customHeaders = customHeaders,
                         selectedClientType = selectedClientType,
                         apiKey = apiKey,
                         enabled = true,
@@ -332,6 +362,8 @@ fun AddPlatformScreen(
 private fun AddPlatformActionButtons(
     platformName: String,
     apiUrl: String,
+    isFullApiUrl: Boolean,
+    customHeaders: String,
     selectedClientType: ClientType,
     apiKey: String,
     enabled: Boolean,
@@ -345,6 +377,8 @@ private fun AddPlatformActionButtons(
                 compatibleType = selectedClientType,
                 enabled = true,
                 apiUrl = apiUrl.trim(),
+                isFullApiUrl = isFullApiUrl,
+                customHeaders = customHeaders.trim(),
                 token = apiKey.trim().takeIf { it.isNotEmpty() },
                 model = "",
                 temperature = 1.0f,

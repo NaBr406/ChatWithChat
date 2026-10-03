@@ -104,7 +104,7 @@ import cn.nabr.chatwithchat.data.database.entity.VisualAssetProviderRefEntity
         MessageVisualRefEntity::class,
         VisualAssetProviderRefEntity::class
     ],
-    version = 27,
+    version = 29,
     exportSchema = true
 )
 @TypeConverters(

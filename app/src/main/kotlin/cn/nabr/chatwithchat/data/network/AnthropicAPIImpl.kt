@@ -47,8 +47,9 @@ class AnthropicAPIImpl @Inject constructor(
         mimeType: String,
         endpoint: ProviderEndpoint
     ): UploadedProviderFile {
-        val url = joinApiEndpoint(endpoint.apiUrl, "v1/files")
+        val url = joinApiEndpoint(endpoint.baseApiUrl(), "v1/files")
         val responseBody = networkClient().preparePost(url) {
+                applyEndpointHeaders(endpoint)
             setBody(
                 MultiPartFormDataContent(
                     formData {
@@ -90,9 +91,10 @@ class AnthropicAPIImpl @Inject constructor(
     }
 
     override suspend fun isFileAvailable(fileId: String, endpoint: ProviderEndpoint): Boolean {
-        val url = joinApiEndpoint(endpoint.apiUrl, "v1/files/$fileId")
+        val url = joinApiEndpoint(endpoint.baseApiUrl(), "v1/files/$fileId")
         return try {
             networkClient().prepareGet(url) {
+                applyEndpointHeaders(endpoint)
                 headers {
                     append(API_KEY_HEADER, endpoint.token ?: "")
                     append(VERSION_HEADER, ANTHROPIC_VERSION)
@@ -112,9 +114,10 @@ class AnthropicAPIImpl @Inject constructor(
         endpoint: ProviderEndpoint
     ): Flow<MessageResponseChunk> = flow {
         try {
-            val url = joinApiEndpoint(endpoint.apiUrl, "v1/messages")
+            val url = endpoint.chatUrl("v1/messages")
 
             networkClient().preparePost(url) {
+                applyEndpointHeaders(endpoint)
                 applyPlatformStreamingTimeout(timeoutSeconds)
                 contentType(ContentType.Application.Json)
                 setBody(json.encodeToString(messageRequest).withoutUnpairedSurrogates())

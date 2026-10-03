@@ -31,6 +31,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import cn.nabr.chatwithchat.R
+import cn.nabr.chatwithchat.presentation.common.FullApiUrlCheckbox
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.common.settingsSliderColors
 import cn.nabr.chatwithchat.presentation.common.settingsTextButtonColors
@@ -59,14 +60,16 @@ fun PlatformNameDialog(
 fun APIUrlDialog(
     dialogState: PlatformSettingViewModel.DialogState,
     initialValue: String,
-    settingViewModel: PlatformSettingViewModel
+    settingViewModel: PlatformSettingViewModel,
+    initialIsFullApiUrl: Boolean = false
 ) {
     if (dialogState.isApiUrlDialogOpen) {
         APIUrlDialog(
             initialValue = initialValue,
+            initialIsFullApiUrl = initialIsFullApiUrl,
             onDismissRequest = settingViewModel::closeApiUrlDialog,
-            onConfirmRequest = { apiUrl ->
-                settingViewModel.updateApiUrl(apiUrl)
+            onConfirmRequest = { apiUrl, isFullApiUrl ->
+                settingViewModel.updateApiUrl(apiUrl, isFullApiUrl)
             }
         )
     }
@@ -205,10 +208,12 @@ private fun PlatformNameDialog(
 @Composable
 private fun APIUrlDialog(
     initialValue: String,
+    initialIsFullApiUrl: Boolean,
     onDismissRequest: () -> Unit,
-    onConfirmRequest: (url: String) -> Unit
+    onConfirmRequest: (url: String, isFullApiUrl: Boolean) -> Unit
 ) {
     var apiUrl by remember { mutableStateOf(initialValue) }
+    var isFullApiUrl by remember { mutableStateOf(initialIsFullApiUrl) }
     val configuration = LocalWindowInfo.current
     val screenWidth = with(LocalDensity.current) { configuration.containerSize.width.toDp() }
     val screenHeight = with(LocalDensity.current) { configuration.containerSize.height.toDp() }
@@ -225,7 +230,7 @@ private fun APIUrlDialog(
         text = {
             Column {
                 Text(
-                    text = stringResource(R.string.api_url_cautions)
+                    text = stringResource(if (isFullApiUrl) R.string.use_full_api_url_supporting else R.string.api_url_cautions)
                 )
                 OutlinedTextField(
                     modifier = Modifier
@@ -246,13 +251,17 @@ private fun APIUrlDialog(
                         }
                     }
                 )
+                FullApiUrlCheckbox(
+                    checked = isFullApiUrl,
+                    onCheckedChange = { isFullApiUrl = it }
+                )
             }
         },
         onDismissRequest = onDismissRequest,
         confirmButton = {
             TextButton(
-                enabled = apiUrl.isNotBlank() && apiUrl.isValidUrl() && apiUrl.endsWith("/"),
-                onClick = { onConfirmRequest(apiUrl) },
+                enabled = apiUrl.isNotBlank() && apiUrl.isValidUrl() && (isFullApiUrl || apiUrl.endsWith("/")),
+                onClick = { onConfirmRequest(apiUrl, isFullApiUrl) },
                 colors = settingsTextButtonColors()
             ) {
                 Text(stringResource(R.string.confirm))

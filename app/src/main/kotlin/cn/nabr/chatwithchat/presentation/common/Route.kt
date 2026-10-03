@@ -19,6 +19,7 @@ object Route {
     const val ADD_PLATFORM = "add_platform"
     const val PLATFORM_SETTINGS = "platform_settings/{platformUid}"
     const val CONTEXT_STRATEGY_SETTINGS = "context_strategy_settings/{platformUid}"
+    const val PLATFORM_HEADERS = "platform_headers/{platformUid}"
     const val ABOUT_PAGE = "about"
     const val LICENSE = "license"
     const val MEMORY = "memory"

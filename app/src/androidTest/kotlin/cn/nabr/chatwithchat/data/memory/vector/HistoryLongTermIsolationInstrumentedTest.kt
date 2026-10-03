@@ -84,7 +84,9 @@ class HistoryLongTermIsolationInstrumentedTest {
                 ChatDatabaseV2Migrations.MIGRATION_23_24,
                 ChatDatabaseV2Migrations.MIGRATION_24_25,
                 ChatDatabaseV2Migrations.MIGRATION_25_26,
-                ChatDatabaseV2Migrations.MIGRATION_26_27
+                ChatDatabaseV2Migrations.MIGRATION_26_27,
+                ChatDatabaseV2Migrations.MIGRATION_27_28,
+                ChatDatabaseV2Migrations.MIGRATION_28_29
             )
             .addCallback(ChatHistoryDatabaseCallback())
             .build()
@@ -278,3 +280,5 @@ private class HistoryIsolationEmbeddingProvider : MemoryEmbeddingProvider {
     override suspend fun embedQuery(text: String): Result<FloatArray> =
         Result.success(floatArrayOf(1f, 0f, 0f, 0f))
 }
+
+

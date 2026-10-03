@@ -44,6 +44,11 @@ class SetupViewModelV2 @Inject constructor(
     private val _apiUrl = MutableStateFlow("")
     val apiUrl: StateFlow<String> = _apiUrl.asStateFlow()
 
+    private val _isFullApiUrl = MutableStateFlow(false)
+    val isFullApiUrl: StateFlow<Boolean> = _isFullApiUrl.asStateFlow()
+    private val _customHeaders = MutableStateFlow("")
+    val customHeaders: StateFlow<String> = _customHeaders.asStateFlow()
+
     private val _apiKey = MutableStateFlow("")
     val apiKey: StateFlow<String> = _apiKey.asStateFlow()
 
@@ -71,6 +76,8 @@ class SetupViewModelV2 @Inject constructor(
         _selectedClientType.value = clientType
         _platformName.value = getDefaultPlatformName(clientType)
         _apiUrl.value = getDefaultApiUrl(clientType)
+        _isFullApiUrl.value = false
+        _customHeaders.value = ""
         _apiKey.value = ""
         _wizardStep.value = 0
     }
@@ -81,6 +88,14 @@ class SetupViewModelV2 @Inject constructor(
 
     fun updateApiUrl(url: String) {
         _apiUrl.value = url
+    }
+
+    fun updateIsFullApiUrl(isFullApiUrl: Boolean) {
+        _isFullApiUrl.value = isFullApiUrl
+    }
+
+    fun updateCustomHeaders(headers: String) {
+        _customHeaders.value = headers
     }
 
     fun updateApiKey(key: String) {
@@ -100,6 +115,8 @@ class SetupViewModelV2 @Inject constructor(
         _selectedClientType.value = null
         _platformName.value = ""
         _apiUrl.value = ""
+        _isFullApiUrl.value = false
+        _customHeaders.value = ""
         _apiKey.value = ""
     }
 
@@ -115,6 +132,8 @@ class SetupViewModelV2 @Inject constructor(
                     compatibleType = clientType,
                     enabled = true,
                     apiUrl = _apiUrl.value.trim(),
+                    isFullApiUrl = _isFullApiUrl.value,
+                    customHeaders = _customHeaders.value.trim(),
                     token = _apiKey.value.trim().takeIf { it.isNotEmpty() },
                     model = "",
                     temperature = 1.0f,

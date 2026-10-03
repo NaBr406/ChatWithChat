@@ -40,6 +40,7 @@ import cn.nabr.chatwithchat.presentation.ui.setting.AddPlatformScreen
 import cn.nabr.chatwithchat.presentation.ui.setting.ContextStrategyScreen
 import cn.nabr.chatwithchat.presentation.ui.setting.LicenseScreen
 import cn.nabr.chatwithchat.presentation.ui.setting.ModelManagementScreen
+import cn.nabr.chatwithchat.presentation.ui.setting.PlatformHeadersScreen
 import cn.nabr.chatwithchat.presentation.ui.setting.PlatformSettingScreen
 import cn.nabr.chatwithchat.presentation.ui.setting.SettingScreen
 import cn.nabr.chatwithchat.presentation.ui.setting.SettingViewModelV2
@@ -364,7 +365,27 @@ fun NavGraphBuilder.settingNavigation(navController: NavHostController) {
                     navController.navigate(
                         Route.CONTEXT_STRATEGY_SETTINGS.replace("{platformUid}", platformUid)
                     )
+                },
+                onNavigateToHeaders = { platformUid ->
+                    navController.navigate(
+                        Route.PLATFORM_HEADERS.replace("{platformUid}", platformUid)
+                    )
                 }
+            )
+        }
+        composable(
+            Route.PLATFORM_HEADERS,
+            arguments = listOf(navArgument("platformUid") { type = NavType.StringType })
+        ) { entry ->
+            val platformUid = entry.arguments?.getString("platformUid").orEmpty()
+            val parentEntry = remember(entry) {
+                navController.getBackStackEntry(
+                    Route.PLATFORM_SETTINGS.replace("{platformUid}", platformUid)
+                )
+            }
+            PlatformHeadersScreen(
+                settingViewModel = hiltViewModel(parentEntry),
+                onNavigationClick = { navController.navigateUp() }
             )
         }
         composable(

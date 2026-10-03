@@ -72,7 +72,13 @@ data class PlatformV2(
      * Non-null with a default so every existing row migrates to AUTO_COMPACT without a backfill pass.
      */
     @ColumnInfo(name = "context_strategy", defaultValue = "AUTO_COMPACT")
-    val contextStrategy: String = "AUTO_COMPACT"
+    val contextStrategy: String = "AUTO_COMPACT",
+
+    @ColumnInfo(name = "is_full_api_url", defaultValue = "0")
+    val isFullApiUrl: Boolean = false,
+
+    @ColumnInfo(name = "custom_headers", defaultValue = "")
+    val customHeaders: String = ""
 )
 
 object PlatformModelRefreshStatus {

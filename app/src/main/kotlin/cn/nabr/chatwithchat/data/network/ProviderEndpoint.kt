@@ -2,6 +2,9 @@ package cn.nabr.chatwithchat.data.network
 
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.model.ClientType
+import io.ktor.client.request.HttpRequestBuilder
+import io.ktor.client.request.header
+import java.net.URI
 
 /**
  * Where a request goes and which key it carries, passed per call.
@@ -27,14 +30,57 @@ data class ProviderEndpoint(
     val token: String?,
     val apiUrl: String,
     /** Path prefix used by OpenAI-compatible endpoints, e.g. `v1` or GLM's empty prefix. */
-    val apiPathPrefix: String = "v1"
+    val apiPathPrefix: String = "v1",
+    val isFullApiUrl: Boolean = false,
+    val customHeaders: String = ""
 )
 
 fun PlatformV2.providerEndpoint(): ProviderEndpoint = ProviderEndpoint(
     token = token,
     apiUrl = apiUrl,
-    apiPathPrefix = "v1".takeUnless { compatibleType == ClientType.GLM }.orEmpty()
+    apiPathPrefix = "v1".takeUnless { compatibleType == ClientType.GLM }.orEmpty(),
+    isFullApiUrl = isFullApiUrl,
+    customHeaders = customHeaders
 )
+
+fun HttpRequestBuilder.applyCustomHeaders(serializedHeaders: String) {
+    serializedHeaders.lineSequence().forEach { line ->
+        val separator = line.indexOf(':')
+        if (separator <= 0) return@forEach
+        val name = line.substring(0, separator).trim()
+        val value = line.substring(separator + 1).trim()
+        val normalizedName = name.lowercase()
+        val isManagedHeader = normalizedName in setOf(
+            "authorization",
+            "content-length",
+            "content-type",
+            "host"
+        ) || normalizedName.startsWith("x-goog-upload-")
+        if (name.isNotBlank() && value.isNotBlank() && !isManagedHeader) header(name, value)
+    }
+}
+
+fun HttpRequestBuilder.applyEndpointHeaders(endpoint: ProviderEndpoint) {
+    applyCustomHeaders(endpoint.customHeaders)
+}
+
+fun ProviderEndpoint.chatUrl(path: String): String = if (isFullApiUrl) {
+    apiUrl.trim()
+} else {
+    joinApiEndpoint(apiUrl, path)
+}
+
+fun ProviderEndpoint.baseApiUrl(): String {
+    if (!isFullApiUrl) return apiUrl
+    val uri = URI(apiUrl.trim())
+    val path = uri.path.orEmpty().trimEnd('/')
+    val basePath = when {
+        path.endsWith("/chat/completions") -> path.removeSuffix("/chat/completions")
+        path.contains("/models/") -> path.substringBeforeLast("/models/").removeSuffix("/v1beta")
+        else -> path.substringBeforeLast('/', "")
+    }
+    return URI(uri.scheme, uri.authority, basePath, null, null).toString()
+}
 
 fun ProviderEndpoint.apiPath(path: String): String = listOf(apiPathPrefix.trim('/'), path.trim('/'))
     .filter { it.isNotBlank() }

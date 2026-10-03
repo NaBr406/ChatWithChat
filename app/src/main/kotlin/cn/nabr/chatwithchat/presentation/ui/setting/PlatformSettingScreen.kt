@@ -19,7 +19,7 @@ import androidx.compose.material.icons.automirrored.outlined.Label
 import androidx.compose.material.icons.automirrored.outlined.ShowChart
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Link
-import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Thermostat
 import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material.icons.outlined.Tune
@@ -64,7 +64,8 @@ fun PlatformSettingScreen(
     modifier: Modifier = Modifier,
     settingViewModel: PlatformSettingViewModel = hiltViewModel(),
     onNavigationClick: () -> Unit,
-    onNavigateToContextStrategy: (platformUid: String) -> Unit
+    onNavigateToContextStrategy: (platformUid: String) -> Unit,
+    onNavigateToHeaders: (platformUid: String) -> Unit
 ) {
     val scrollState = rememberScrollState()
     val platform by settingViewModel.platformState.collectAsStateWithLifecycle()
@@ -84,7 +85,8 @@ fun PlatformSettingScreen(
                 PlatformTopAppBar(
                     title = platformData.name,
                     onNavigationClick = onNavigationClick,
-                    onDeleteClick = settingViewModel::openDeleteDialog
+                    onDeleteClick = settingViewModel::openDeleteDialog,
+                    onNavigateToHeaders = { onNavigateToHeaders(platformData.uid) }
                 )
             },
             containerColor = Color.Transparent
@@ -237,7 +239,7 @@ fun PlatformSettingScreen(
                 }
 
                 PlatformNameDialog(dialogState, platformData.name, settingViewModel)
-                APIUrlDialog(dialogState, platformData.apiUrl, settingViewModel)
+                APIUrlDialog(dialogState, platformData.apiUrl, settingViewModel, platformData.isFullApiUrl)
                 APIKeyDialog(dialogState, settingViewModel)
                 TemperatureDialog(dialogState, platformData.temperature, settingViewModel)
                 TopPDialog(dialogState, platformData.topP, settingViewModel)
@@ -254,7 +256,8 @@ fun PlatformSettingScreen(
 fun PlatformTopAppBar(
     title: String,
     onNavigationClick: () -> Unit,
-    onDeleteClick: () -> Unit
+    onDeleteClick: () -> Unit,
+    onNavigateToHeaders: () -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
 
@@ -264,7 +267,7 @@ fun PlatformTopAppBar(
         actions = {
             IconButton(onClick = { showMenu = true }) {
                 Icon(
-                    imageVector = Icons.Outlined.MoreVert,
+                    imageVector = Icons.Outlined.Menu,
                     contentDescription = stringResource(R.string.more_options)
                 )
             }
@@ -277,6 +280,14 @@ fun PlatformTopAppBar(
                 shadowElevation = 8.dp,
                 border = BorderStroke(0.5.dp, settingsMaterialColors().separatorStrong)
             ) {
+                DropdownMenuItem(
+                    colors = settingsDropdownMenuItemColors(),
+                    text = { Text(stringResource(R.string.simulated_request_headers)) },
+                    onClick = {
+                        showMenu = false
+                        onNavigateToHeaders()
+                    }
+                )
                 DropdownMenuItem(
                     colors = settingsDropdownMenuItemColors(),
                     text = { Text(stringResource(R.string.delete_platform)) },

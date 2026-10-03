@@ -396,6 +396,16 @@
     <string name="reset">重置</string>
     <string name="ollama_api_key">Ollama API 密钥</string>
     <string name="api_url_cautions">URL 必须以 / 结尾。</string>
+    <string name="use_full_api_url">Use full URL (optional)</string>
+    <string name="use_full_api_url_supporting">Use the exact endpoint URL without appending a path. Match the selected provider protocol: /v1/responses for OpenAI, /v1/chat/completions for compatible providers.</string>
+    <string name="header_presets">Header presets</string>
+    <string name="header_preset_codex">Codex</string>
+    <string name="header_preset_claude_code">Claude Code</string>
+    <string name="header_preset_hermes">Hermes</string>
+    <string name="simulated_request_headers">Simulated request headers (optional)</string>
+    <string name="simulated_request_headers_hint">User-Agent: Mozilla/5.0
+Referer: https://example.com</string>
+    <string name="simulated_request_headers_supporting">One header per line, formatted as Header-Name: Value. Authorization and provider upload headers remain managed by the app.</string>
     <string name="bug_report">问题反馈</string>
     <string name="bug_report_description">有功能无法正常工作？</string>
     <string name="bug_report_icon">问题反馈图标</string>
@@ -632,7 +642,7 @@
     <string name="tool_permission_chat_description">此工具需要访问受保护的系统资源来完成当前请求。下一步将显示系统权限选项。</string>
     <string name="tool_permission_denied_settings_description">尚未授予所需权限；工具保持关闭，点按可重试授权</string>
     <string name="grant_permission">授权</string>
-    <string name="tool_permission_required">需要系统权限</string>
+    <string name="tool_permission_required">需要系统权限，点此继续</string>
     <string name="tool_permission_granted_retry">权限已授予，请重新生成回复</string>
     <string name="tool_permission_grant_action">授权</string>
     <string name="tool_approval_dialog_title">允许“%1$s”执行操作？</string>
