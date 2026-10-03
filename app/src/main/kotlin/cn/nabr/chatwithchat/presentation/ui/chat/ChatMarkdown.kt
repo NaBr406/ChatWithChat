@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material.icons.Icons
@@ -67,6 +66,7 @@ import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.presentation.common.AppleGreen
 import cn.nabr.chatwithchat.presentation.common.isSettingsDarkTheme
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
+import com.mikepenz.markdown.annotator.AnnotatorSettings
 import com.mikepenz.markdown.annotator.annotatorSettings
 import com.mikepenz.markdown.compose.LocalMarkdownTypography
 import com.mikepenz.markdown.compose.LocalReferenceLinkHandler
@@ -98,6 +98,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.intellij.markdown.IElementType
 import org.intellij.markdown.MarkdownTokenTypes
+import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
+import org.intellij.markdown.parser.MarkdownParser
 
 private const val CLIPBOARD_LABEL_CODE = "code"
 private const val DISPLAY_MATH_PLACEHOLDER_PREFIX = "CHAT_MATH_DISPLAY_"
@@ -277,8 +279,7 @@ fun ChatMarkdown(
                 ChatMarkdownTable(
                     rawTable = extractNodeText(model.content, model.node),
                     style = model.typography.paragraph,
-                    inlineContent = inlineMathContent,
-                    inlineMathByPlaceholder = inlineMathByPlaceholder,
+                    annotatorSettings = chatMarkdownAnnotatorSettings(annotator),
                     contentColor = contentColor
                 )
             },
@@ -647,8 +648,7 @@ private data class ParsedMarkdownTable(
 private fun ChatMarkdownTable(
     rawTable: String,
     style: TextStyle,
-    inlineContent: Map<String, InlineTextContent>,
-    inlineMathByPlaceholder: Map<String, InlineMathToken>,
+    annotatorSettings: AnnotatorSettings,
     contentColor: Color
 ) {
     val table = remember(rawTable) { parseMarkdownTable(rawTable) }
@@ -691,8 +691,7 @@ private fun ChatMarkdownTable(
                     cells = table.header,
                     columnWidths = columnWidths,
                     style = style,
-                    inlineContent = inlineContent,
-                    inlineMathByPlaceholder = inlineMathByPlaceholder,
+                    annotatorSettings = annotatorSettings,
                     backgroundColor = materialColors.grouped,
                     contentColor = contentColor,
                     isHeader = true
@@ -708,8 +707,7 @@ private fun ChatMarkdownTable(
                         cells = row,
                         columnWidths = columnWidths,
                         style = style,
-                        inlineContent = inlineContent,
-                        inlineMathByPlaceholder = inlineMathByPlaceholder,
+                        annotatorSettings = annotatorSettings,
                         backgroundColor = materialColors.field,
                         contentColor = contentColor,
                         isHeader = false
@@ -731,8 +729,7 @@ private fun ChatMarkdownTableRow(
     cells: List<String>,
     columnWidths: List<Dp>,
     style: TextStyle,
-    inlineContent: Map<String, InlineTextContent>,
-    inlineMathByPlaceholder: Map<String, InlineMathToken>,
+    annotatorSettings: AnnotatorSettings,
     backgroundColor: Color,
     contentColor: Color,
     isHeader: Boolean
@@ -740,33 +737,33 @@ private fun ChatMarkdownTableRow(
     Row(modifier = Modifier.background(backgroundColor)) {
         columnWidths.forEachIndexed { index, width ->
             val cellText = cells.getOrElse(index) { "" }
-            val annotatedCell = remember(cellText, inlineMathByPlaceholder) {
-                buildInlineMathAnnotatedString(cellText, inlineMathByPlaceholder)
+            val cellStyle = style.copy(
+                color = contentColor,
+                fontWeight = if (isHeader) FontWeight.SemiBold else style.fontWeight
+            )
+            // The custom table shell bypasses the library table cell renderer, so parse inline Markdown here.
+            val cellNode = remember(cellText) {
+                MarkdownParser(GFMFlavourDescriptor()).buildMarkdownTreeFromString(cellText)
             }
             CompositionLocalProvider(LocalContentColor provides contentColor) {
-                BasicText(
-                    text = annotatedCell,
+                Box(
                     modifier = Modifier
                         .width(width)
                         .defaultMinSize(minHeight = 48.dp)
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    style = style.copy(
-                        color = contentColor,
-                        fontWeight = if (isHeader) FontWeight.SemiBold else style.fontWeight
-                    ),
-                    inlineContent = inlineContent
-                )
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                ) {
+                    MarkdownParagraph(
+                        cellText,
+                        cellNode,
+                        Modifier,
+                        cellStyle,
+                        annotatorSettings
+                    )
+                }
             }
         }
     }
 }
-
-private fun buildInlineMathAnnotatedString(
-    text: String,
-    inlineMathByPlaceholder: Map<String, InlineMathToken>
-): AnnotatedString = AnnotatedString.Builder().apply {
-    appendTextWithInlineMath(this, text, inlineMathByPlaceholder)
-}.toAnnotatedString()
 
 private fun parseMarkdownTable(rawTable: String): ParsedMarkdownTable? {
     val lines = rawTable
@@ -1016,16 +1013,19 @@ private fun DefaultParagraph(
         node,
         Modifier,
         style,
-        annotatorSettings(
-            LocalMarkdownTypography.current.textLink,
-            LocalMarkdownTypography.current.inlineCode.toSpanStyle(),
-            annotator,
-            LocalReferenceLinkHandler.current,
-            LocalUriHandler.current,
-            null
-        )
+        chatMarkdownAnnotatorSettings(annotator)
     )
 }
+
+@Composable
+private fun chatMarkdownAnnotatorSettings(annotator: MarkdownAnnotator): AnnotatorSettings = annotatorSettings(
+    LocalMarkdownTypography.current.textLink,
+    LocalMarkdownTypography.current.inlineCode.toSpanStyle(),
+    annotator,
+    LocalReferenceLinkHandler.current,
+    LocalUriHandler.current,
+    null
+)
 
 private fun extractNodeText(
     content: String,

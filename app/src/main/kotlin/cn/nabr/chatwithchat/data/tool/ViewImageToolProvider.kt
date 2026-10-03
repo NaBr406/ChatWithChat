@@ -13,6 +13,7 @@ class ViewImageToolProvider(
     override val definition: ToolDefinition = ToolDefinition.ViewImage
 
     override val settingsMetadata: ToolSettingsMetadata = ToolSettingsMetadata(
+        userVisible = false,
         category = ToolCategory.Utility,
         defaultEnabled = true,
         isSensitive = false,

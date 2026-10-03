@@ -1532,8 +1532,8 @@ class ChatRepositoryImplTest {
     /**
      * Disabling every built-in cannot switch the tool protocol off. `propose_memory_change` is
      * `userOverrideAllowed = false`, so it stays active and keeps the catalog non-empty — the request
-     * still carries the JSON envelope contract, and only `discover_tools` is advertised because the
-     * proposal tool is not user-visible.
+     * still carries the JSON envelope contract. It is also resident, so it is the one signature that
+     * stays advertised; with no on-demand tool left there is nothing for `discover_tools` to add.
      */
     @Test
     fun `disabling every built-in keeps the tool protocol for the internal proposal tool`() = runBlocking {
@@ -1565,11 +1565,13 @@ class ChatRepositoryImplTest {
         val systemText = openAIAPI.chatCompletionRequests.single().allSystemText()
         assertTrue(systemText.contains("""{"type":"final_answer","content":"answer text"}"""))
         assertTrue(systemText.contains("Enabled tool signatures:"))
-        assertTrue(systemText.contains(ToolDefinition.DiscoverTools.name))
-        assertFalse(systemText.contains(ToolDefinition.ProposeMemoryChange.name))
-        ToolDefinition.BuiltIns.forEach { definition ->
-            assertFalse(systemText.contains("${definition.name}("))
-        }
+        assertTrue(systemText.contains(ToolDefinition.ProposeMemoryChange.name))
+        assertFalse(systemText.contains(ToolDefinition.DiscoverTools.name))
+        ToolDefinition.BuiltIns
+            .filterNot { definition -> definition.name == ToolDefinition.ProposeMemoryChange.name }
+            .forEach { definition ->
+                assertFalse(systemText.contains("${definition.name}("))
+            }
     }
 
     @Test
@@ -1789,6 +1791,7 @@ class ChatRepositoryImplTest {
         assertEquals(
             listOf(
                 ToolDefinition.DiscoverTools.name,
+                ToolDefinition.ProposeMemoryChange.name,
                 ToolDefinition.AskUserQuestion.name,
                 ToolDefinition.CurrentDateTime.name
             ),

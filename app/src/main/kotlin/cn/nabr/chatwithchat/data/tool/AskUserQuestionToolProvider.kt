@@ -11,6 +11,7 @@ class AskUserQuestionToolProvider(
     override val definition: ToolDefinition = ToolDefinition.AskUserQuestion
 
     override val settingsMetadata: ToolSettingsMetadata = ToolSettingsMetadata(
+        userVisible = false,
         category = ToolCategory.Utility,
         defaultEnabled = true,
         isSensitive = false,

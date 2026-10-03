@@ -1,40 +1,13 @@
 package cn.nabr.chatwithchat.presentation.ui.chat
 
 import android.net.Uri
-import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Alarm
-import androidx.compose.material.icons.rounded.Check
-import androidx.compose.material.icons.rounded.ChevronRight
-import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.Event
-import androidx.compose.material.icons.rounded.Extension
-import androidx.compose.material.icons.rounded.Language
-import androidx.compose.material.icons.rounded.LocationOn
-import androidx.compose.material.icons.rounded.Schedule
-import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -42,12 +15,9 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -55,9 +25,6 @@ import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.tool.TOOL_ARGUMENTS_TOO_LARGE
 import cn.nabr.chatwithchat.data.tool.TOOL_BUDGET_EXCEEDED_PREFIX
 import cn.nabr.chatwithchat.presentation.common.AppleGreen
-import cn.nabr.chatwithchat.presentation.common.AppleIndigo
-import cn.nabr.chatwithchat.presentation.common.AppleOrange
-import cn.nabr.chatwithchat.presentation.common.ApplePurple
 import cn.nabr.chatwithchat.presentation.common.AppleRed
 import cn.nabr.chatwithchat.presentation.common.HigActionDialog
 import cn.nabr.chatwithchat.presentation.common.LocalToolPermissionRequester
@@ -86,32 +53,17 @@ fun ToolActivityBlock(
             .latestVisibleStates()
     }
     if (visibleStates.isEmpty()) return
-    val materialColors = settingsMaterialColors()
 
-    Surface(
+    Column(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        color = materialColors.grouped,
-        contentColor = materialColors.primaryLabel,
-        border = BorderStroke(0.5.dp, materialColors.separatorStrong),
-        tonalElevation = 0.dp,
-        shadowElevation = 0.dp
+        verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
-        Column {
-            visibleStates.forEachIndexed { index, state ->
-                key(state.toolName, state.label) {
-                    ToolActivityRow(
-                        state = state,
-                        onRetryAfterPermission = onRetryAfterPermission
-                    )
-                }
-                if (index < visibleStates.lastIndex) {
-                    HorizontalDivider(
-                        modifier = Modifier.padding(start = 52.dp),
-                        thickness = 0.5.dp,
-                        color = materialColors.separator
-                    )
-                }
+        visibleStates.forEach { state ->
+            key(state.toolName, state.label) {
+                ToolActivityLine(
+                    state = state,
+                    onRetryAfterPermission = onRetryAfterPermission
+                )
             }
         }
     }
@@ -121,16 +73,15 @@ internal fun List<ChatViewModel.ToolProgressState>.withoutStickerToolProgress():
     filterNot { state -> state.toolName.isStickerToolName() }
 
 @Composable
-private fun ToolActivityRow(
+private fun ToolActivityLine(
     state: ChatViewModel.ToolProgressState,
     onRetryAfterPermission: () -> Unit
 ) {
-    val materialColors = settingsMaterialColors()
     val toolPermissionRequester = LocalToolPermissionRequester.current
     var showPermissionRationale by remember(state.toolName, state.label) { mutableStateOf(false) }
     var isPermissionGranted by remember(state.toolName, state.label, state.errorCode) { mutableStateOf(false) }
     val isPermissionFailure = state.errorCode == TOOL_PERMISSION_DENIED
-    val detail = state.secondaryText(isPermissionGranted)
+    val canOpenPermissionRationale = isPermissionFailure && !isPermissionGranted
 
     LaunchedEffect(state.toolName, state.label, state.errorCode) {
         if (isPermissionFailure &&
@@ -143,57 +94,17 @@ private fun ToolActivityRow(
         }
     }
 
-    Row(
+    Text(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 56.dp)
-            .padding(start = 10.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        ToolIcon(toolName = state.toolName)
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(2.dp)
-        ) {
-            Text(
-                text = state.primaryText(),
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
-                color = materialColors.primaryLabel,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            detail?.let {
-                Text(
-                    text = it,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (isPermissionGranted) AppleGreen else materialColors.secondaryLabel,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
-        if (isPermissionFailure && !isPermissionGranted) {
-            TextButton(
-                modifier = Modifier.defaultMinSize(minWidth = 0.dp, minHeight = 44.dp),
-                contentPadding = PaddingValues(horizontal = 8.dp),
-                onClick = { showPermissionRationale = true }
-            ) {
-                Text(
-                    text = stringResource(R.string.next),
-                    fontWeight = FontWeight.SemiBold
-                )
-                Icon(
-                    imageVector = Icons.Rounded.ChevronRight,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-        } else {
-            ToolStatusIndicator(status = state.status)
-        }
-    }
+            .clickable(enabled = canOpenPermissionRationale) { showPermissionRationale = true }
+            .padding(vertical = 2.dp),
+        text = state.annotationText(isPermissionGranted),
+        style = MaterialTheme.typography.labelSmall,
+        color = state.annotationColor(isPermissionGranted),
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis
+    )
 
     if (showPermissionRationale) {
         HigActionDialog(
@@ -217,55 +128,17 @@ private fun ToolActivityRow(
 }
 
 @Composable
-private fun ToolIcon(toolName: String) {
-    val (icon, tint) = toolName.toolVisual()
-    Box(
-        modifier = Modifier
-            .size(32.dp)
-            .background(tint.copy(alpha = 0.12f), CircleShape),
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = tint,
-            modifier = Modifier.size(18.dp)
-        )
-    }
+private fun ChatViewModel.ToolProgressState.annotationText(isPermissionGranted: Boolean): String {
+    val primary = primaryText()
+    val detail = secondaryText(isPermissionGranted)
+    return if (detail.isNullOrBlank()) primary else "$primary · $detail"
 }
 
 @Composable
-private fun ToolStatusIndicator(status: ChatViewModel.ToolProgressStatus) {
-    val materialColors = settingsMaterialColors()
-    Box(
-        modifier = Modifier.size(28.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Crossfade(
-            targetState = status,
-            animationSpec = tween(durationMillis = 160),
-            label = "toolStatus"
-        ) { currentStatus ->
-            when (currentStatus) {
-                ChatViewModel.ToolProgressStatus.Running -> CircularProgressIndicator(
-                    modifier = Modifier.size(16.dp),
-                    strokeWidth = 2.dp,
-                    color = materialColors.primaryLabel
-                )
-                ChatViewModel.ToolProgressStatus.Finished,
-                ChatViewModel.ToolProgressStatus.Failed -> Icon(
-                    imageVector = if (currentStatus == ChatViewModel.ToolProgressStatus.Finished) {
-                        Icons.Rounded.Check
-                    } else {
-                        Icons.Rounded.Close
-                    },
-                    contentDescription = null,
-                    tint = currentStatus.statusColor(),
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-        }
-    }
+private fun ChatViewModel.ToolProgressState.annotationColor(isPermissionGranted: Boolean): Color = when {
+    isPermissionGranted -> AppleGreen
+    status == ChatViewModel.ToolProgressStatus.Failed -> AppleRed
+    else -> settingsMaterialColors().tertiaryLabel
 }
 
 @Composable
@@ -328,24 +201,6 @@ private fun ChatViewModel.ToolProgressState.toolDisplayName(): String = when (to
     ADD_SCHEDULE_TOOL -> stringResource(R.string.tool_add_schedule_title)
     SET_ALARM_TOOL -> stringResource(R.string.tool_set_alarm_title)
     else -> toolName.replace('_', ' ')
-}
-
-@Composable
-private fun String.toolVisual(): Pair<ImageVector, Color> = when (this) {
-    WEB_SEARCH_TOOL -> Icons.Rounded.Search to settingsMaterialColors().primaryLabel
-    FETCH_URL_TOOL -> Icons.Rounded.Language to AppleIndigo
-    CURRENT_DATETIME_TOOL -> Icons.Rounded.Schedule to AppleOrange
-    DEVICE_LOCATION_TOOL -> Icons.Rounded.LocationOn to AppleGreen
-    ADD_SCHEDULE_TOOL -> Icons.Rounded.Event to settingsMaterialColors().primaryLabel
-    SET_ALARM_TOOL -> Icons.Rounded.Alarm to AppleRed
-    else -> Icons.Rounded.Extension to ApplePurple
-}
-
-@Composable
-private fun ChatViewModel.ToolProgressStatus.statusColor(): Color = when (this) {
-    ChatViewModel.ToolProgressStatus.Running -> settingsMaterialColors().primaryLabel
-    ChatViewModel.ToolProgressStatus.Finished -> AppleGreen
-    ChatViewModel.ToolProgressStatus.Failed -> AppleRed
 }
 
 private fun List<ChatViewModel.ToolProgressState>.latestVisibleStates(): List<ChatViewModel.ToolProgressState> {

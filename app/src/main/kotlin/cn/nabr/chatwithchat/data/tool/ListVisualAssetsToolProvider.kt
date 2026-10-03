@@ -19,6 +19,7 @@ class ListVisualAssetsToolProvider(
     override val definition: ToolDefinition = ToolDefinition.ListVisualAssets
 
     override val settingsMetadata: ToolSettingsMetadata = ToolSettingsMetadata(
+        userVisible = false,
         category = ToolCategory.Utility,
         defaultEnabled = true,
         isSensitive = false,

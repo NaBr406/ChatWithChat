@@ -23,6 +23,21 @@ class ProposeMemoryChangeToolProvider(
         isSensitive = false
     )
 
+    /**
+     * Resident, because the memory contract cannot depend on intent matching.
+     *
+     * As an on-demand tool it was effectively invisible: the only way in was `discover_tools`, which the
+     * model has no reason to call unless it already suspects a memory tool exists — while the memory prompt
+     * already tells it to call `propose_memory_change` by name. That left the model naming a tool that was
+     * not in the request, so the call came back `tool_unavailable`. The tool is default-enabled and
+     * `userOverrideAllowed = false`, so residency only spends a few hundred schema characters; the proposal
+     * is still stored as evidence and never writes memory directly.
+     */
+    override val discoveryMetadata: ToolDiscoveryMetadata = ToolDiscoveryMetadata(
+        exposure = ToolExposure.Resident,
+        priority = 50
+    )
+
     override val securityPolicy = ToolSecurityPolicy(
         effect = ToolEffect.INTERNAL_STATE,
         approvalPolicy = ToolApprovalPolicy.NOT_REQUIRED

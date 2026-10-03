@@ -1008,7 +1008,7 @@ private fun ChatMessagePair(
             if (selectedToolProgressStates.isNotEmpty()) {
                 ToolActivityBlock(
                     progressStates = selectedToolProgressStates,
-                    modifier = Modifier.padding(bottom = 8.dp),
+                    modifier = Modifier.padding(bottom = 4.dp),
                     onRetryAfterPermission = { onRetry(messageIndex, platformIndexState) }
                 )
             }
