@@ -36,6 +36,7 @@ room = "2.8.4"
 work = "2.11.0"
 
 [libraries]
+backdrop = { group = "io.github.kyant0", name = "backdrop", version = "1.0.6" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }

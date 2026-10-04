@@ -19,7 +19,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -48,11 +47,11 @@ import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.PhotoCamera
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -73,12 +72,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.layout.positionOnScreen
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
@@ -100,12 +102,12 @@ import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.textskill.SelectedTextSkill
 import cn.nabr.chatwithchat.data.textskill.TextSkillSelectionScope
 import cn.nabr.chatwithchat.presentation.common.LocalAttachmentPreviewLauncher
-import cn.nabr.chatwithchat.presentation.common.settingsCanvasBackground
 import cn.nabr.chatwithchat.presentation.common.settingsDropdownMenuItemColors
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.theme.ChatWithChatTheme
 import cn.nabr.chatwithchat.util.AttachmentNaming
 import cn.nabr.chatwithchat.util.FileUtils
+import com.kyant.backdrop.Backdrop
 import java.io.File
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
@@ -120,6 +122,8 @@ import kotlinx.coroutines.withContext
 
 @Composable
 fun ChatComposer(
+    modifier: Modifier = Modifier,
+    backdrop: Backdrop? = null,
     inputState: TextFieldState = rememberTextFieldState(),
     chatEnabled: Boolean = true,
     sendButtonEnabled: Boolean = true,
@@ -157,7 +161,8 @@ fun ChatComposer(
     val hasUnreadyAttachment = selectedAttachments.any { it.status != ChatAttachmentDraft.Status.Ready }
     var isAttachmentMenuExpanded by remember { mutableStateOf(false) }
     var isAttachmentMenuMounted by remember { mutableStateOf(false) }
-    var inputFieldBounds by remember { mutableStateOf(Rect.Zero) }
+    var attachmentButtonBounds by remember { mutableStateOf(Rect.Zero) }
+    var composerWindowOrigin by remember { mutableStateOf(Offset.Zero) }
     var isCopyingPickedAttachments by remember { mutableStateOf(false) }
     var pendingCameraPhotoPath by rememberSaveable { mutableStateOf<String?>(null) }
     var isTextSkillSheetOpen by remember { mutableStateOf(false) }
@@ -269,11 +274,10 @@ fun ChatComposer(
     }
 
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .settingsCanvasBackground()
+            .padding(horizontal = 6.dp, vertical = 8.dp)
     ) {
-        HorizontalDivider(thickness = 0.5.dp, color = materialColors.separator)
         if (selectedAttachments.isNotEmpty()) {
             FileThumbnailRow(
                 selectedAttachments = selectedAttachments,
@@ -283,164 +287,165 @@ fun ChatComposer(
         if (selectedTextSkills.isNotEmpty()) {
             TextSkillDraftRow(selectedTextSkills, onTextSkillRemoved)
         }
-        BasicTextField(
-            state = inputState,
+        Row(
             modifier = Modifier.fillMaxWidth(),
-            enabled = chatEnabled,
-            textStyle = mergedStyle,
-            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-            lineLimits = chatInputLineLimits,
-            decorator = { innerTextField ->
-                Surface(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.Bottom
+        ) {
+            if (showAttachmentButton) {
+                Box(
                     modifier = Modifier
-                        .padding(horizontal = 12.dp, vertical = 8.dp)
-                        .fillMaxWidth()
-                        .onGloballyPositioned { coordinates ->
-                            inputFieldBounds = coordinates.boundsInWindow()
-                        },
-                    shape = RoundedCornerShape(22.dp),
-                    color = materialColors.grouped,
-                    contentColor = materialColors.primaryLabel,
-                    border = BorderStroke(
-                        width = 0.5.dp,
-                        color = materialColors.separatorStrong
-                    ),
-                    tonalElevation = 0.dp,
-                    shadowElevation = 0.dp
+                        .size(60.dp)
+                        .onGloballyPositioned {
+                            attachmentButtonBounds = it.boundsInWindow()
+                            composerWindowOrigin = it.positionOnScreen() - it.positionInWindow()
+                        }
+                        .composerGlass(backdrop, CircleShape),
+                    contentAlignment = Alignment.Center
                 ) {
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .background(attachmentButtonColor, CircleShape)
+                    )
+                    IconButton(
+                        modifier = Modifier.size(60.dp),
+                        enabled = chatEnabled && !isAttachmentBusy,
+                        onClick = {
+                            isAttachmentMenuMounted = true
+                            isAttachmentMenuExpanded = true
+                        },
+                        colors = IconButtonDefaults.iconButtonColors(
+                            contentColor = if (isAttachmentMenuExpanded) materialColors.primaryLabel else materialColors.secondaryLabel,
+                            disabledContentColor = materialColors.tertiaryLabel
+                        )
+                    ) {
+                        Icon(
+                            modifier = Modifier.size(28.dp),
+                            imageVector = Icons.Rounded.Add,
+                            contentDescription = stringResource(R.string.attach_file)
+                        )
+                    }
+                    if (isAttachmentMenuMounted) {
+                        ComposerActionMenu(
+                            backdrop = backdrop,
+                            composerWindowOrigin = composerWindowOrigin,
+                            expanded = isAttachmentMenuExpanded,
+                            anchorBounds = attachmentButtonBounds,
+                            onDismissRequest = { isAttachmentMenuExpanded = false },
+                            onExitFinished = { isAttachmentMenuMounted = false }
+                        ) {
+                            DropdownMenuItem(
+                                colors = settingsDropdownMenuItemColors(),
+                                modifier = Modifier.heightIn(min = 48.dp),
+                                text = {
+                                    Text(
+                                        text = stringResource(R.string.choose_image),
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Image,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp),
+                                        tint = materialColors.secondaryLabel
+                                    )
+                                },
+                                contentPadding = PaddingValues(horizontal = 14.dp),
+                                onClick = {
+                                    isAttachmentMenuExpanded = false
+                                    launchImagePicker()
+                                }
+                            )
+                            DropdownMenuItem(
+                                colors = settingsDropdownMenuItemColors(),
+                                modifier = Modifier.heightIn(min = 48.dp),
+                                text = {
+                                    Text(
+                                        text = stringResource(R.string.choose_document),
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Description,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp),
+                                        tint = materialColors.secondaryLabel
+                                    )
+                                },
+                                contentPadding = PaddingValues(horizontal = 14.dp),
+                                onClick = {
+                                    isAttachmentMenuExpanded = false
+                                    launchDocumentPicker()
+                                }
+                            )
+                            DropdownMenuItem(
+                                colors = settingsDropdownMenuItemColors(),
+                                modifier = Modifier.heightIn(min = 48.dp),
+                                text = { Text(stringResource(R.string.invoke_skill), style = MaterialTheme.typography.bodyMedium) },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Extension,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp),
+                                        tint = materialColors.secondaryLabel
+                                    )
+                                },
+                                contentPadding = PaddingValues(horizontal = 14.dp),
+                                onClick = {
+                                    isAttachmentMenuExpanded = false
+                                    isTextSkillSheetOpen = true
+                                }
+                            )
+                            DropdownMenuItem(
+                                colors = settingsDropdownMenuItemColors(),
+                                modifier = Modifier.heightIn(min = 48.dp),
+                                text = {
+                                    Text(
+                                        text = stringResource(R.string.take_photo),
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Outlined.PhotoCamera,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp),
+                                        tint = materialColors.secondaryLabel
+                                    )
+                                },
+                                contentPadding = PaddingValues(horizontal = 14.dp),
+                                onClick = {
+                                    isAttachmentMenuExpanded = false
+                                    launchCameraCapture()
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+            BasicTextField(
+                state = inputState,
+                modifier = Modifier.weight(1f),
+                enabled = chatEnabled,
+                textStyle = mergedStyle.copy(color = materialColors.primaryLabel),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                lineLimits = chatInputLineLimits,
+                decorator = { innerTextField ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(min = 48.dp)
-                            .padding(start = if (showAttachmentButton) 2.dp else 14.dp, end = 2.dp),
+                            .composerGlass(backdrop, RoundedCornerShape(30.dp))
+                            .heightIn(min = 60.dp)
+                            .padding(start = 12.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        if (showAttachmentButton) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(30.dp)
-                                        .background(attachmentButtonColor, CircleShape)
-                                )
-                                IconButton(
-                                    enabled = chatEnabled && !isAttachmentBusy,
-                                    onClick = {
-                                        isAttachmentMenuMounted = true
-                                        isAttachmentMenuExpanded = true
-                                    },
-                                    colors = IconButtonDefaults.iconButtonColors(
-                                        contentColor = if (isAttachmentMenuExpanded) materialColors.primaryLabel else materialColors.secondaryLabel,
-                                        disabledContentColor = materialColors.tertiaryLabel
-                                    )
-                                ) {
-                                    Icon(
-                                        modifier = Modifier.size(20.dp),
-                                        imageVector = ImageVector.vectorResource(R.drawable.ic_attach_file),
-                                        contentDescription = stringResource(R.string.attach_file)
-                                    )
-                                }
-                                if (isAttachmentMenuMounted) {
-                                    ComposerActionMenu(
-                                        expanded = isAttachmentMenuExpanded,
-                                        anchorBounds = inputFieldBounds,
-                                        onDismissRequest = { isAttachmentMenuExpanded = false },
-                                        onExitFinished = { isAttachmentMenuMounted = false }
-                                    ) {
-                                        DropdownMenuItem(
-                                            colors = settingsDropdownMenuItemColors(),
-                                            modifier = Modifier.heightIn(min = 48.dp),
-                                            text = {
-                                                Text(
-                                                    text = stringResource(R.string.choose_image),
-                                                    style = MaterialTheme.typography.bodyMedium
-                                                )
-                                            },
-                                            leadingIcon = {
-                                                Icon(
-                                                    imageVector = Icons.Outlined.Image,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(20.dp),
-                                                    tint = materialColors.secondaryLabel
-                                                )
-                                            },
-                                            contentPadding = PaddingValues(horizontal = 14.dp),
-                                            onClick = {
-                                                isAttachmentMenuExpanded = false
-                                                launchImagePicker()
-                                            }
-                                        )
-                                        DropdownMenuItem(
-                                            colors = settingsDropdownMenuItemColors(),
-                                            modifier = Modifier.heightIn(min = 48.dp),
-                                            text = {
-                                                Text(
-                                                    text = stringResource(R.string.choose_document),
-                                                    style = MaterialTheme.typography.bodyMedium
-                                                )
-                                            },
-                                            leadingIcon = {
-                                                Icon(
-                                                    imageVector = Icons.Outlined.Description,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(20.dp),
-                                                    tint = materialColors.secondaryLabel
-                                                )
-                                            },
-                                            contentPadding = PaddingValues(horizontal = 14.dp),
-                                            onClick = {
-                                                isAttachmentMenuExpanded = false
-                                                launchDocumentPicker()
-                                            }
-                                        )
-                                        DropdownMenuItem(
-                                            colors = settingsDropdownMenuItemColors(),
-                                            modifier = Modifier.heightIn(min = 48.dp),
-                                            text = { Text(stringResource(R.string.invoke_skill), style = MaterialTheme.typography.bodyMedium) },
-                                            leadingIcon = {
-                                                Icon(
-                                                    imageVector = Icons.Outlined.Extension,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(20.dp),
-                                                    tint = materialColors.secondaryLabel
-                                                )
-                                            },
-                                            contentPadding = PaddingValues(horizontal = 14.dp),
-                                            onClick = {
-                                                isAttachmentMenuExpanded = false
-                                                isTextSkillSheetOpen = true
-                                            }
-                                        )
-                                        DropdownMenuItem(
-                                            colors = settingsDropdownMenuItemColors(),
-                                            modifier = Modifier.heightIn(min = 48.dp),
-                                            text = {
-                                                Text(
-                                                    text = stringResource(R.string.take_photo),
-                                                    style = MaterialTheme.typography.bodyMedium
-                                                )
-                                            },
-                                            leadingIcon = {
-                                                Icon(
-                                                    imageVector = Icons.Outlined.PhotoCamera,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(20.dp),
-                                                    tint = materialColors.secondaryLabel
-                                                )
-                                            },
-                                            contentPadding = PaddingValues(horizontal = 14.dp),
-                                            onClick = {
-                                                isAttachmentMenuExpanded = false
-                                                launchCameraCapture()
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                        }
                         Box(
                             modifier = Modifier
                                 .weight(1f)
-                                .padding(horizontal = 6.dp)
+                                .padding(horizontal = 6.dp, vertical = 10.dp)
                         ) {
                             if (inputState.text.isEmpty()) {
                                 Text(
@@ -490,8 +495,8 @@ fun ChatComposer(
                         }
                     }
                 }
-            }
-        )
+            )
+        }
     }
     if (isTextSkillSheetOpen) {
         TextSkillSelectionSheet(
@@ -567,7 +572,7 @@ private fun TextSkillSelectionSheet(
 ) {
     var selected by remember { mutableStateOf(emptyList<SelectedTextSkill>()) }
     var scope by remember { mutableStateOf(TextSkillSelectionScope.ONE_SHOT) }
-    androidx.compose.material3.ModalBottomSheet(onDismissRequest = onDismiss) {
+    ChatGlassSelectionSheet(onDismissRequest = onDismiss) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp)) {
             Text(stringResource(R.string.invoke_skill), style = MaterialTheme.typography.titleMedium)
             if (skills.isEmpty()) {
@@ -575,6 +580,7 @@ private fun TextSkillSelectionSheet(
             } else {
                 skills.forEach { skill ->
                     androidx.compose.material3.ListItem(
+                        colors = androidx.compose.material3.ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
                         headlineContent = { Text(skill.displayName) },
                         modifier = Modifier.clickable {
                             selected = if (skill in selected) selected - skill else selected + skill
@@ -617,17 +623,21 @@ private fun TextSkillSelectionSheet(
  * Material 3's [androidx.compose.material3.DropdownMenu] cannot be used here: it validates every
  * candidate position against a 48dp window margin, so a menu anchored to a button that sits inside
  * the input bubble always flips to "above the anchor" and leaves a large gap above the navigation
- * bar. This popup instead pins its own bottom edge to the bottom edge of the input bubble.
+ * bar. This popup instead places the menu immediately above the attachment button.
  */
 @Composable
 private fun ComposerActionMenu(
+    backdrop: Backdrop?,
+    composerWindowOrigin: Offset,
     expanded: Boolean,
     anchorBounds: Rect,
     onDismissRequest: () -> Unit,
     onExitFinished: () -> Unit,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    val materialColors = settingsMaterialColors()
+    val popupBackdrop = remember(backdrop, composerWindowOrigin) {
+        backdrop?.let { WindowAlignedBackdrop(it, composerWindowOrigin) }
+    }
     val windowMarginPx = with(LocalDensity.current) { ATTACHMENT_MENU_WINDOW_MARGIN_DP.dp.roundToPx() }
     val positionProvider = remember(anchorBounds, windowMarginPx) {
         ComposerBottomAnchoredPositionProvider(anchorBounds, windowMarginPx)
@@ -654,28 +664,20 @@ private fun ComposerActionMenu(
                 transformOrigin = TransformOrigin(0f, 1f)
             ) + fadeOut(animationSpec = tween(durationMillis = 90))
         ) {
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = materialColors.navigation,
-                tonalElevation = 0.dp,
-                shadowElevation = 6.dp,
-                border = BorderStroke(0.5.dp, materialColors.separator)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .width(ATTACHMENT_MENU_WIDTH_DP.dp)
-                        .padding(vertical = 8.dp),
-                    content = content
-                )
-            }
+            Column(
+                modifier = Modifier
+                    .width(ATTACHMENT_MENU_WIDTH_DP.dp)
+                    .composerGlass(popupBackdrop, RoundedCornerShape(12.dp))
+                    .clip(RoundedCornerShape(12.dp))
+                    .padding(vertical = 8.dp),
+                content = content
+            )
         }
     }
 }
 
 /**
- * Places the popup so its bottom edge lines up with the bottom edge of [menuBounds] (the composer's
- * input bubble) and its start edge with that bubble's start edge, clamped to a small window margin.
- * Falls back to the anchor view's own bounds until the bubble has been measured.
+ * Places the popup above the attachment button, aligned to its start edge and clamped to the window.
  */
 private class ComposerBottomAnchoredPositionProvider(
     private val menuBounds: Rect,
@@ -690,13 +692,13 @@ private class ComposerBottomAnchoredPositionProvider(
         val isMeasured = menuBounds.width > 0f && menuBounds.height > 0f
         val left = if (isMeasured) menuBounds.left.roundToInt() else anchorBounds.left
         val right = if (isMeasured) menuBounds.right.roundToInt() else anchorBounds.right
-        val bottom = if (isMeasured) menuBounds.bottom.roundToInt() else anchorBounds.bottom
+        val top = if (isMeasured) menuBounds.top.roundToInt() else anchorBounds.top
         val x = if (layoutDirection == LayoutDirection.Ltr) left else right - popupContentSize.width
         val maxX = (windowSize.width - popupContentSize.width - windowMarginPx).coerceAtLeast(windowMarginPx)
         val maxY = (windowSize.height - popupContentSize.height - windowMarginPx).coerceAtLeast(windowMarginPx)
         return IntOffset(
             x = x.coerceIn(windowMarginPx, maxX),
-            y = (bottom - popupContentSize.height).coerceIn(windowMarginPx, maxY)
+            y = (top - windowMarginPx - popupContentSize.height).coerceIn(windowMarginPx, maxY)
         )
     }
 }
@@ -1078,7 +1080,7 @@ private val DOCUMENT_MIME_EXTENSIONS = mapOf(
 
 private const val MAX_ATTACHMENT_EXTENSION_LENGTH = 12
 private const val CAMERA_PENDING_PREFIX = "camera_pending_"
-private const val ATTACHMENT_MENU_WIDTH_DP = 184
+private const val ATTACHMENT_MENU_WIDTH_DP = 200
 private const val ATTACHMENT_MENU_WINDOW_MARGIN_DP = 8
 
 /**

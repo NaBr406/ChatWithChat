@@ -1,7 +1,6 @@
 package cn.nabr.chatwithchat.presentation.ui.chat
 
 import android.graphics.drawable.GradientDrawable
-import android.os.Build
 import android.view.Gravity
 import android.view.WindowManager
 import androidx.compose.animation.AnimatedVisibility
@@ -16,7 +15,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -78,7 +76,6 @@ import cn.nabr.chatwithchat.data.model.ReasoningCapability
 import cn.nabr.chatwithchat.data.model.ReasoningCapabilityProfile
 import cn.nabr.chatwithchat.data.model.ReasoningMode
 import cn.nabr.chatwithchat.data.model.reasoningCapabilityForModel
-import cn.nabr.chatwithchat.presentation.common.isSettingsDarkTheme
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import kotlin.math.roundToInt
 
@@ -121,10 +118,6 @@ fun ModelSelectionMenu(
     val configuration = LocalConfiguration.current
     val popupWidth = modelSelectionPopupWidthDp(configuration.screenWidthDp).dp
     val popupMaxHeight = minOf(configuration.screenHeightDp.dp * 0.66f, 460.dp)
-    val isLightTheme = !isSettingsDarkTheme()
-    val popupMaterialColors = settingsMaterialColors()
-    val popupContainerColor = popupMaterialColors.grouped.copy(alpha = if (isLightTheme) 0.96f else 0.94f)
-    val popupBorderColor = popupMaterialColors.separatorStrong
     val menuStateDescription = stringResource(if (expanded) R.string.collapse else R.string.expand)
 
     Box(modifier = modifier) {
@@ -169,8 +162,6 @@ fun ModelSelectionMenu(
                 popupWidth = popupWidth,
                 popupMaxHeight = popupMaxHeight,
                 anchorBottomPx = anchorBottomPx,
-                containerColor = popupContainerColor,
-                borderColor = popupBorderColor,
                 options = options,
                 selectedOption = selectedOption,
                 selectedReasoningMode = selectedReasoningMode,
@@ -192,8 +183,6 @@ private fun ModelSelectionDialog(
     popupWidth: Dp,
     popupMaxHeight: Dp,
     anchorBottomPx: Int,
-    containerColor: Color,
-    borderColor: Color,
     options: List<ModelSelectionOption>,
     selectedOption: ModelSelectionOption?,
     selectedReasoningMode: ReasoningMode,
@@ -226,7 +215,7 @@ private fun ModelSelectionDialog(
             decorFitsSystemWindows = false
         )
     ) {
-        FrostedGlassDialogWindow(
+        ModelSelectionDialogWindow(
             anchorBottomPx = anchorBottomPx,
             popupWidth = popupWidth
         )
@@ -251,12 +240,12 @@ private fun ModelSelectionDialog(
             Surface(
                 modifier = Modifier
                     .width(popupWidth)
-                    .heightIn(max = popupMaxHeight),
+                    .heightIn(max = popupMaxHeight)
+                    .chatSelectionGlass(shape),
                 shape = shape,
-                color = containerColor,
+                color = Color.Transparent,
                 tonalElevation = 0.dp,
-                shadowElevation = 0.dp,
-                border = BorderStroke(1.dp, borderColor)
+                shadowElevation = 0.dp
             ) {
                 Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                     ModelSelectionPopup(
@@ -521,7 +510,7 @@ private fun reasoningCapabilitySummary(capability: ReasoningCapability): String 
     }
 
 @Composable
-private fun FrostedGlassDialogWindow(
+private fun ModelSelectionDialogWindow(
     anchorBottomPx: Int,
     popupWidth: Dp
 ) {
@@ -530,7 +519,6 @@ private fun FrostedGlassDialogWindow(
     val density = LocalDensity.current
     val popupWidthPx = with(density) { popupWidth.roundToPx() }
     val cornerRadiusPx = with(density) { MODEL_SELECTION_CORNER_RADIUS_DP.dp.toPx() }
-    val blurRadiusPx = with(density) { MODEL_SELECTION_BLUR_RADIUS_DP.dp.roundToPx() }
     val verticalOffsetPx = with(density) { MODEL_SELECTION_VERTICAL_OFFSET_DP.dp.roundToPx() }
     val elevationPx = with(density) { 8.dp.toPx() }
     val background = remember(cornerRadiusPx) {
@@ -541,7 +529,7 @@ private fun FrostedGlassDialogWindow(
         }
     }
 
-    DisposableEffect(window, popupWidthPx, anchorBottomPx, background, blurRadiusPx) {
+    DisposableEffect(window, popupWidthPx, anchorBottomPx, background) {
         window.setWindowAnimations(0)
         window.setBackgroundDrawable(background)
         window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
@@ -556,15 +544,7 @@ private fun FrostedGlassDialogWindow(
             height = WindowManager.LayoutParams.WRAP_CONTENT
             y = anchorBottomPx + verticalOffsetPx
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            window.setBackgroundBlurRadius(blurRadiusPx)
-        }
-
-        onDispose {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                window.setBackgroundBlurRadius(0)
-            }
-        }
+        onDispose { }
     }
 }
 
@@ -654,6 +634,5 @@ internal fun modelSelectionPopupWidthDp(screenWidthDp: Int): Int =
 private const val MODEL_SELECTION_HORIZONTAL_MARGIN_DP = 96
 private const val MODEL_SELECTION_MIN_WIDTH_DP = 208
 private const val MODEL_SELECTION_MAX_WIDTH_DP = 264
-private const val MODEL_SELECTION_BLUR_RADIUS_DP = 20
 private const val MODEL_SELECTION_CORNER_RADIUS_DP = 16
 private const val MODEL_SELECTION_VERTICAL_OFFSET_DP = 4

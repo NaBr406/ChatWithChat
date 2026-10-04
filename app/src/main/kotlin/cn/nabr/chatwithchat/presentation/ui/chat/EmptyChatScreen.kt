@@ -2,6 +2,7 @@ package cn.nabr.chatwithchat.presentation.ui.chat
 
 import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,7 +20,6 @@ import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -34,7 +34,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -48,6 +50,8 @@ import cn.nabr.chatwithchat.presentation.ui.home.canStartChat
 import cn.nabr.chatwithchat.presentation.ui.home.modelsOrEmpty
 import cn.nabr.chatwithchat.presentation.ui.home.shouldShowAddProvider
 import cn.nabr.chatwithchat.util.FileUtils
+import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -74,6 +78,9 @@ fun EmptyChatScreen(
         ?: stringResource(R.string.chat_models)
     val currentReasoningMode = lastSelectedModel?.reasoningMode ?: ReasoningMode.AUTO
     val inputState = rememberTextFieldState()
+    val composerBackdrop = rememberLayerBackdrop()
+    val composerDensity = LocalDensity.current
+    var composerHeight by remember { mutableStateOf(68.dp) }
     val context = LocalContext.current
     var selectedAttachments by remember { mutableStateOf(listOf<ChatAttachmentDraft>()) }
     var pendingTextSkills by remember { mutableStateOf(listOf<PendingTextSkillSelection>()) }
@@ -91,161 +98,173 @@ fun EmptyChatScreen(
         }
     }
 
-    Scaffold(
-        modifier = Modifier.settingsCanvasBackground(),
-        contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        containerColor = Color.Transparent,
-        contentColor = MaterialTheme.colorScheme.onSurface,
-        topBar = {
-            CenterAlignedTopAppBar(
-                modifier = Modifier.settingsCanvasBackground(),
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                    scrolledContainerColor = Color.Transparent,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface
-                ),
-                title = {
-                    when {
-                        canChat -> {
-                            ModelSelectionMenu(
-                                label = currentModelLabel,
-                                options = currentModelOptions,
-                                selectedReasoningMode = currentReasoningMode,
-                                enabled = true,
-                                onOptionSelected = { option ->
-                                    homeViewModel.updateLastSelectedModel(option.platformUid, option.model, currentReasoningMode)
-                                },
-                                onReasoningModeSelected = homeViewModel::updateLastSelectedReasoningMode
-                            )
-                        }
-
-                        homeModelsState.shouldShowAddProvider() -> {
-                            Text(
-                                text = stringResource(R.string.empty_chat_no_platforms),
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        else -> Unit
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onOpenDrawer) {
-                        Icon(
-                            imageVector = Icons.Rounded.Menu,
-                            contentDescription = stringResource(R.string.open_chat_history)
-                        )
-                    }
-                }
-            )
-        }
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .navigationBarsPadding()
-                .imePadding()
-        ) {
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                if (homeModelsState is HomeModelsState.Loading) {
-                    CircularProgressIndicator()
-                } else {
-                    Text(
-                        text = stringResource(R.string.empty_chat_title),
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                    )
-                }
-            }
-
-            if (canChat) {
-                ChatComposer(
-                    inputState = inputState,
-                    chatEnabled = true,
-                    sendButtonEnabled = true,
-                    selectedAttachments = selectedAttachments,
-                    selectedTextSkills = pendingTextSkills.map(PendingTextSkillSelection::skill),
-                    availableTextSkills = availableTextSkills,
-                    onFilesSelected = { filePaths, copyFailureCount ->
-                        val current = selectedAttachments
-                        val existingCandidates = current.map { attachment ->
-                            attachment.sourceFilePath.toEmptyChatAdmissionCandidate(context)
-                        }
-                        val candidates = filePaths.map { filePath ->
-                            filePath.toEmptyChatAdmissionCandidate(context)
-                        }
-                        val admission = admitAttachmentBatch(
-                            existingIdentities = existingCandidates.mapTo(mutableSetOf()) { it.identity },
-                            existingBytes = existingCandidates.sumOf { it.sizeBytes.coerceAtLeast(0L) },
-                            candidates = candidates,
-                            maxBytes = FileUtils.MAX_UPLOAD_SIZE_BYTES
-                        )
-
-                        val existingPaths = current.mapTo(mutableSetOf()) { it.sourceFilePath }
-                        attachmentPathsToDiscard(existingPaths, candidates, admission).forEach { filePath ->
-                            File(filePath).delete()
-                        }
-
-                        selectedAttachments = current + admission.accepted.map { candidate ->
-                            ChatAttachmentDraft(
-                                sourceFilePath = candidate.path,
-                                status = ChatAttachmentDraft.Status.Ready,
-                                cleanupOnDiscard = true
-                            )
-                        }
-                        val totalRejectedCount = admission.totalRejectedCount(copyFailureCount)
-                        if (totalRejectedCount > 0) {
-                            Toast.makeText(
-                                context,
-                                context.getString(R.string.attachment_batch_rejected, totalRejectedCount),
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        }
-                    },
-                    onFileRemoved = { filePath ->
-                        selectedAttachments = selectedAttachments.filter { it.sourceFilePath != filePath }
-                        File(filePath).delete()
-                    },
-                    onTextSkillsSelected = { skills, scope ->
-                        pendingTextSkills = mergeTextSkillSelection(pendingTextSkills, skills, scope)
-                    },
-                    onTextSkillRemoved = { skill ->
-                        pendingTextSkills = pendingTextSkills.removeTextSkillSelection(skill)
-                    },
-                    onSendButtonClick = {
-                        val prompt = inputState.text.toString().trim()
-                        val attachmentPaths = selectedAttachments.map { it.sourceFilePath }
-                        if (prompt.isNotEmpty() || attachmentPaths.isNotEmpty()) {
-                            if (onStartChat(prompt, attachmentPaths, pendingTextSkills)) {
-                                attachmentsTransferred.value = true
-                                selectedAttachments = emptyList()
-                                pendingTextSkills = emptyList()
-                                inputState.clearText()
+    ChatGlassScope(backdrop = composerBackdrop) {
+        Scaffold(
+            modifier = Modifier.settingsCanvasBackground(),
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
+            containerColor = Color.Transparent,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            topBar = {
+                CenterAlignedTopAppBar(
+                    modifier = Modifier.chatTopBarBackground(),
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent,
+                        scrolledContainerColor = Color.Transparent,
+                        navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+                        titleContentColor = MaterialTheme.colorScheme.onSurface
+                    ),
+                    title = {
+                        when {
+                            canChat -> {
+                                ModelSelectionMenu(
+                                    label = currentModelLabel,
+                                    options = currentModelOptions,
+                                    selectedReasoningMode = currentReasoningMode,
+                                    enabled = true,
+                                    onOptionSelected = { option ->
+                                        homeViewModel.updateLastSelectedModel(option.platformUid, option.model, currentReasoningMode)
+                                    },
+                                    onReasoningModeSelected = homeViewModel::updateLastSelectedReasoningMode
+                                )
                             }
+
+                            homeModelsState.shouldShowAddProvider() -> {
+                                Text(
+                                    text = stringResource(R.string.empty_chat_no_platforms),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            else -> Unit
+                        }
+                    },
+                    navigationIcon = {
+                        ChatGlassIconButton(onClick = onOpenDrawer) {
+                            Icon(
+                                imageVector = Icons.Rounded.Menu,
+                                contentDescription = stringResource(R.string.open_chat_history)
+                            )
                         }
                     }
                 )
-            } else if (homeModelsState.shouldShowAddProvider()) {
-                Button(
+            }
+        ) { innerPadding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .navigationBarsPadding()
+                    .imePadding()
+            ) {
+                Column(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 24.dp, vertical = 16.dp)
-                        .height(56.dp),
-                    shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp),
-                    onClick = onAddProvider
+                        .fillMaxSize()
+                        .layerBackdrop(composerBackdrop)
+                        .settingsCanvasBackground()
+                        .padding(
+                            start = 24.dp,
+                            top = innerPadding.calculateTopPadding(),
+                            end = 24.dp,
+                            bottom = composerHeight + 32.dp
+                        ),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
                 ) {
-                    Text(text = stringResource(R.string.add_platform))
+                    if (homeModelsState is HomeModelsState.Loading) {
+                        CircularProgressIndicator()
+                    } else {
+                        Text(
+                            text = stringResource(R.string.empty_chat_title),
+                            style = MaterialTheme.typography.headlineMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
+                }
+
+                if (canChat) {
+                    ChatComposer(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .onSizeChanged { composerHeight = with(composerDensity) { it.height.toDp() } },
+                        backdrop = composerBackdrop,
+                        inputState = inputState,
+                        chatEnabled = true,
+                        sendButtonEnabled = true,
+                        selectedAttachments = selectedAttachments,
+                        selectedTextSkills = pendingTextSkills.map(PendingTextSkillSelection::skill),
+                        availableTextSkills = availableTextSkills,
+                        onFilesSelected = { filePaths, copyFailureCount ->
+                            val current = selectedAttachments
+                            val existingCandidates = current.map { attachment ->
+                                attachment.sourceFilePath.toEmptyChatAdmissionCandidate(context)
+                            }
+                            val candidates = filePaths.map { filePath ->
+                                filePath.toEmptyChatAdmissionCandidate(context)
+                            }
+                            val admission = admitAttachmentBatch(
+                                existingIdentities = existingCandidates.mapTo(mutableSetOf()) { it.identity },
+                                existingBytes = existingCandidates.sumOf { it.sizeBytes.coerceAtLeast(0L) },
+                                candidates = candidates,
+                                maxBytes = FileUtils.MAX_UPLOAD_SIZE_BYTES
+                            )
+
+                            val existingPaths = current.mapTo(mutableSetOf()) { it.sourceFilePath }
+                            attachmentPathsToDiscard(existingPaths, candidates, admission).forEach { filePath ->
+                                File(filePath).delete()
+                            }
+
+                            selectedAttachments = current + admission.accepted.map { candidate ->
+                                ChatAttachmentDraft(
+                                    sourceFilePath = candidate.path,
+                                    status = ChatAttachmentDraft.Status.Ready,
+                                    cleanupOnDiscard = true
+                                )
+                            }
+                            val totalRejectedCount = admission.totalRejectedCount(copyFailureCount)
+                            if (totalRejectedCount > 0) {
+                                Toast.makeText(
+                                    context,
+                                    context.getString(R.string.attachment_batch_rejected, totalRejectedCount),
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        },
+                        onFileRemoved = { filePath ->
+                            selectedAttachments = selectedAttachments.filter { it.sourceFilePath != filePath }
+                            File(filePath).delete()
+                        },
+                        onTextSkillsSelected = { skills, scope ->
+                            pendingTextSkills = mergeTextSkillSelection(pendingTextSkills, skills, scope)
+                        },
+                        onTextSkillRemoved = { skill ->
+                            pendingTextSkills = pendingTextSkills.removeTextSkillSelection(skill)
+                        },
+                        onSendButtonClick = {
+                            val prompt = inputState.text.toString().trim()
+                            val attachmentPaths = selectedAttachments.map { it.sourceFilePath }
+                            if (prompt.isNotEmpty() || attachmentPaths.isNotEmpty()) {
+                                if (onStartChat(prompt, attachmentPaths, pendingTextSkills)) {
+                                    attachmentsTransferred.value = true
+                                    selectedAttachments = emptyList()
+                                    pendingTextSkills = emptyList()
+                                    inputState.clearText()
+                                }
+                            }
+                        }
+                    )
+                } else if (homeModelsState.shouldShowAddProvider()) {
+                    Button(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .padding(horizontal = 24.dp, vertical = 16.dp)
+                            .height(56.dp),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp),
+                        onClick = onAddProvider
+                    ) {
+                        Text(text = stringResource(R.string.add_platform))
+                    }
                 }
             }
         }

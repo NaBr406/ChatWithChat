@@ -1,7 +1,6 @@
 package cn.nabr.chatwithchat.presentation.ui.chat
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -175,15 +174,15 @@ fun RoundNavigatorOverlay(
                 .widthIn(max = 420.dp)
                 .fillMaxWidth(0.94f)
                 .heightIn(max = maxHeight)
+                .chatSelectionGlass(RoundedCornerShape(14.dp))
                 .pointerInput(Unit) {
                     detectTapGestures(onTap = {})
                 },
             shape = RoundedCornerShape(14.dp),
-            color = materialColors.grouped,
+            color = androidx.compose.ui.graphics.Color.Transparent,
             contentColor = materialColors.primaryLabel,
-            border = BorderStroke(0.5.dp, materialColors.separatorStrong),
             tonalElevation = 0.dp,
-            shadowElevation = 14.dp
+            shadowElevation = 0.dp
         ) {
             Column(
                 modifier = Modifier
