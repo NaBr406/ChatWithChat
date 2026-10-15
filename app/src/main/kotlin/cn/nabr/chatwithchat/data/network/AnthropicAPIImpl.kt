@@ -4,6 +4,7 @@ import cn.nabr.chatwithchat.data.dto.anthropic.request.MessageRequest
 import cn.nabr.chatwithchat.data.dto.anthropic.response.ErrorDetail
 import cn.nabr.chatwithchat.data.dto.anthropic.response.ErrorResponseChunk
 import cn.nabr.chatwithchat.data.dto.anthropic.response.MessageResponseChunk
+import cn.nabr.chatwithchat.data.dto.anthropic.response.MessageStopResponseChunk
 import cn.nabr.chatwithchat.util.applyPlatformStreamingTimeout
 import cn.nabr.chatwithchat.util.withoutUnpairedSurrogates
 import io.ktor.client.call.body
@@ -49,7 +50,7 @@ class AnthropicAPIImpl @Inject constructor(
     ): UploadedProviderFile {
         val url = joinApiEndpoint(endpoint.baseApiUrl(), "v1/files")
         val responseBody = networkClient().preparePost(url) {
-                applyEndpointHeaders(endpoint)
+            applyEndpointHeaders(endpoint)
             setBody(
                 MultiPartFormDataContent(
                     formData {
@@ -145,6 +146,7 @@ class AnthropicAPIImpl @Inject constructor(
                 }
 
                 val channel = response.bodyAsChannel()
+                var completed = false
                 while (true) {
                     val line = channel.readSseLineOrNull() ?: break
 
@@ -152,14 +154,17 @@ class AnthropicAPIImpl @Inject constructor(
                         val data = line.removePrefix("data:").trim()
                         try {
                             val chunk = json.decodeFromString<MessageResponseChunk>(data)
+                            completed = completed || chunk is MessageStopResponseChunk || chunk is ErrorResponseChunk
                             emit(chunk)
-                        } catch (_: Exception) {
+                        } catch (_: kotlinx.serialization.SerializationException) {
                             // Skip malformed chunks
                         }
                     }
                 }
+                if (!completed) throw java.io.EOFException("Chat stream disconnected before completion")
             }
         } catch (e: Exception) {
+            e.throwIfChatNetworkFailure()
             val errorMessage = when (e) {
                 is java.net.UnknownHostException -> "网络错误：无法解析主机。"
                 is java.nio.channels.UnresolvedAddressException -> "网络错误：无法解析地址，请检查网络连接。"

@@ -6,7 +6,10 @@ import cn.nabr.chatwithchat.data.dto.openai.request.ResponsesRequest
 import cn.nabr.chatwithchat.data.dto.openai.response.ChatCompletionChunk
 import cn.nabr.chatwithchat.data.dto.openai.response.ErrorDetail
 import cn.nabr.chatwithchat.data.dto.openai.response.OutputItemSerializer
+import cn.nabr.chatwithchat.data.dto.openai.response.ResponseCompletedEvent
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponseErrorEvent
+import cn.nabr.chatwithchat.data.dto.openai.response.ResponseFailedEvent
+import cn.nabr.chatwithchat.data.dto.openai.response.ResponseIncompleteEvent
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponsesCompactResponse
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponsesCompactResult
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponsesStreamEvent
@@ -50,7 +53,7 @@ class OpenAIAPIImpl @Inject constructor(
     ): UploadedProviderFile {
         val url = joinApiEndpoint(endpoint.baseApiUrl(), endpoint.apiPath("files"))
         val responseBody = networkClient().preparePost(url) {
-                applyEndpointHeaders(endpoint)
+            applyEndpointHeaders(endpoint)
             endpoint.token?.let { bearerAuth(it) }
             setBody(
                 MultiPartFormDataContent(
@@ -152,24 +155,31 @@ class OpenAIAPIImpl @Inject constructor(
 
                 // Success - read SSE stream
                 val channel = response.bodyAsChannel()
+                var completed = false
                 while (true) {
                     val line = channel.readSseLineOrNull() ?: break
 
                     if (line.startsWith("data:")) {
                         val data = line.removePrefix("data:").trim()
                         // OpenAI sends "[DONE]" as final message
-                        if (data == "[DONE]") break
+                        if (data == "[DONE]") {
+                            completed = true
+                            break
+                        }
 
                         try {
                             val chunk = NetworkClient.openAIJson.decodeFromString<ChatCompletionChunk>(data)
+                            completed = completed || chunk.error != null || chunk.choices.orEmpty().any { it.finishReason != null }
                             emit(chunk)
-                        } catch (_: Exception) {
+                        } catch (_: kotlinx.serialization.SerializationException) {
                             // Skip malformed chunks
                         }
                     }
                 }
+                if (!completed) throw java.io.EOFException("Chat stream disconnected before completion")
             }
         } catch (e: Exception) {
+            e.throwIfChatNetworkFailure()
             val errorMessage = when (e) {
                 is java.net.UnknownHostException -> "网络错误：无法解析主机。"
                 is java.nio.channels.UnresolvedAddressException -> "网络错误：无法解析地址，请检查网络连接。"
@@ -224,23 +234,34 @@ class OpenAIAPIImpl @Inject constructor(
 
                 // Success - read SSE stream
                 val channel = response.bodyAsChannel()
+                var completed = false
                 while (true) {
                     val line = channel.readSseLineOrNull() ?: break
 
                     if (line.startsWith("data:")) {
                         val data = line.removePrefix("data:").trim()
-                        if (data == "[DONE]") break
+                        if (data == "[DONE]") {
+                            completed = true
+                            break
+                        }
 
                         try {
                             val streamEvent = NetworkClient.openAIJson.decodeFromString<ResponsesStreamEvent>(data)
+                            completed = completed ||
+                                streamEvent is ResponseCompletedEvent ||
+                                streamEvent is ResponseFailedEvent ||
+                                streamEvent is ResponseIncompleteEvent ||
+                                streamEvent is ResponseErrorEvent
                             emit(streamEvent)
-                        } catch (_: Exception) {
+                        } catch (_: kotlinx.serialization.SerializationException) {
                             emit(UnknownEvent)
                         }
                     }
                 }
+                if (!completed) throw java.io.EOFException("Chat stream disconnected before completion")
             }
         } catch (e: Exception) {
+            e.throwIfChatNetworkFailure()
             val errorMessage = when (e) {
                 is java.net.UnknownHostException -> "网络错误：无法解析主机。"
                 is java.nio.channels.UnresolvedAddressException -> "网络错误：无法解析地址，请检查网络连接。"
@@ -267,7 +288,7 @@ class OpenAIAPIImpl @Inject constructor(
         val url = joinApiEndpoint(endpoint.baseApiUrl(), "v1/responses/compact")
 
         val responseBody = networkClient().preparePost(url) {
-                applyEndpointHeaders(endpoint)
+            applyEndpointHeaders(endpoint)
             applyPlatformStreamingTimeout(timeoutSeconds)
             contentType(ContentType.Application.Json)
             setBody(NetworkClient.openAIJson.encodeToString(request).withoutUnpairedSurrogates())

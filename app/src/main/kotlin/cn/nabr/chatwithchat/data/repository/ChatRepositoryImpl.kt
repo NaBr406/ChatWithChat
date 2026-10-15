@@ -32,10 +32,10 @@ import cn.nabr.chatwithchat.data.database.entity.ChatRoom
 import cn.nabr.chatwithchat.data.database.entity.ChatRoomV2
 import cn.nabr.chatwithchat.data.database.entity.Message
 import cn.nabr.chatwithchat.data.database.entity.MessageSourceMetadata
-import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.MessageTextSkillInvocation
-import cn.nabr.chatwithchat.data.database.entity.SessionTextSkillBinding
+import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
+import cn.nabr.chatwithchat.data.database.entity.SessionTextSkillBinding
 import cn.nabr.chatwithchat.data.database.entity.effectiveContent
 import cn.nabr.chatwithchat.data.database.entity.effectiveStickerRefs
 import cn.nabr.chatwithchat.data.database.entity.effectiveTokenUsage
@@ -119,10 +119,13 @@ import cn.nabr.chatwithchat.data.network.GoogleAPI
 import cn.nabr.chatwithchat.data.network.GroqAPI
 import cn.nabr.chatwithchat.data.network.NetworkClient
 import cn.nabr.chatwithchat.data.network.OpenAIAPI
+import cn.nabr.chatwithchat.data.network.isChatNetworkFailure
 import cn.nabr.chatwithchat.data.network.providerEndpoint
 import cn.nabr.chatwithchat.data.prompt.CoreSystemPrompt
 import cn.nabr.chatwithchat.data.sticker.StickerPresentationArtifact
 import cn.nabr.chatwithchat.data.sticker.toMessageStickerRef
+import cn.nabr.chatwithchat.data.textskill.ChatRequestContext
+import cn.nabr.chatwithchat.data.textskill.TextSkillInvocationSnapshot
 import cn.nabr.chatwithchat.data.token.TokenCacheStatus
 import cn.nabr.chatwithchat.data.token.TokenUsageEstimator
 import cn.nabr.chatwithchat.data.token.TokenUsageRecord
@@ -161,8 +164,6 @@ import cn.nabr.chatwithchat.data.tool.toolProtocolJson
 import cn.nabr.chatwithchat.data.tool.toolSelectionPriorityRules
 import cn.nabr.chatwithchat.data.visual.VisualAssetGarbageCollector
 import cn.nabr.chatwithchat.data.visual.VisualAssetRepository
-import cn.nabr.chatwithchat.data.textskill.ChatRequestContext
-import cn.nabr.chatwithchat.data.textskill.TextSkillInvocationSnapshot
 import cn.nabr.chatwithchat.data.websearch.SearchDecision
 import cn.nabr.chatwithchat.data.websearch.SearchDecisionService
 import cn.nabr.chatwithchat.data.websearch.WebSearchMode
@@ -638,6 +639,7 @@ class ChatRepositoryImpl @Inject constructor(
                     ),
                     maxChars = config.maxToolProtocolResponseChars(),
                     onThinking = { thinkingChunk -> emit(ApiState.Thinking(thinkingChunk)) },
+                    onStreamControl = { state -> emit(state) },
                     onUsage = { usage -> toolUsageRecords += usage }
                 )
             },
@@ -954,16 +956,33 @@ class ChatRepositoryImpl @Inject constructor(
         states: Flow<ApiState>,
         maxChars: Int = Int.MAX_VALUE,
         onThinking: suspend (String) -> Unit = {},
+        onStreamControl: suspend (ApiState) -> Unit = {},
         onUsage: (TokenUsageRecord) -> Unit = {}
     ): Result<String> =
         try {
             val text = StringBuilder()
+            val checkpoints = mutableMapOf<String, Int>()
             var errorMessage: String? = null
             states.collect { state ->
                 when (state) {
+                    is ApiState.StreamCheckpoint -> {
+                        checkpoints[state.requestId] = text.length
+                        onStreamControl(state)
+                    }
+                    is ApiState.StreamRollback -> {
+                        checkpoints[state.requestId]?.let { text.setLength(it) }
+                        onStreamControl(state)
+                    }
+                    is ApiState.StreamCheckpointReleased -> {
+                        checkpoints.remove(state.requestId)
+                        onStreamControl(state)
+                    }
                     is ApiState.Thinking -> onThinking(state.thinkingChunk)
                     is ApiState.Success -> text.appendToolProtocolFragment(state.textChunk, maxChars)
-                    is ApiState.Error -> errorMessage = errorMessage ?: state.message
+                    is ApiState.Error -> {
+                        state.cause?.takeIf { it.isChatNetworkFailure() }?.let { throw it }
+                        errorMessage = errorMessage ?: state.message
+                    }
                     is ApiState.UsageUpdated -> onUsage(state.usage)
                     else -> {}
                 }
@@ -973,6 +992,7 @@ class ChatRepositoryImpl @Inject constructor(
         } catch (error: CancellationException) {
             throw error
         } catch (error: Throwable) {
+            if (error.isChatNetworkFailure()) throw error
             Result.failure(error)
         }
 
@@ -1130,7 +1150,7 @@ class ChatRepositoryImpl @Inject constructor(
             hasToolInteraction = hasToolInteraction || openAIResponsesToolAdapter.hasToolCallIntent(round.events)
             if (round.errorMessage != null) {
                 nativeExchange.abandon()
-                if (!hasToolInteraction) {
+                if (!hasToolInteraction && !round.networkFailure) {
                     val fallback = completeChatWithOpenAIResponses(
                         userMessages,
                         assistantMessages,
@@ -1295,6 +1315,19 @@ class ChatRepositoryImpl @Inject constructor(
         traceContext: PromptTraceContext,
         traceStage: String,
         config: ToolLoopConfig
+    ): OpenAIResponsesNativeRound = withChatNetworkReconnect { isFinalAttempt ->
+        collectOpenAIResponsesNativeRoundAttempt(request, timeoutSeconds, platform, label, traceContext, traceStage, config, isFinalAttempt)
+    }
+
+    private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.collectOpenAIResponsesNativeRoundAttempt(
+        request: ResponsesRequest,
+        timeoutSeconds: Int,
+        platform: PlatformV2,
+        label: String,
+        traceContext: PromptTraceContext,
+        traceStage: String,
+        config: ToolLoopConfig,
+        isFinalAttempt: Boolean
     ): OpenAIResponsesNativeRound {
         val events = mutableListOf<ResponsesStreamEvent>()
         val argumentLimiter = ToolArgumentStreamLimiter(
@@ -1303,6 +1336,7 @@ class ChatRepositoryImpl @Inject constructor(
         )
         var errorMessage: String? = null
         var emittedOutputTextDelta = false
+        var networkFailure = false
         val outputText = StringBuilder()
         val markupFilter = LeakedToolCallMarkupFilter()
         recordSystemPrompt(traceContext, traceStage, request.instructions)
@@ -1357,12 +1391,15 @@ class ChatRepositoryImpl @Inject constructor(
         } catch (error: IllegalArgumentException) {
             errorMessage = error.message?.toolLimitErrorCodeOrNull() ?: throw error
         } catch (error: IOException) {
+            if (!isFinalAttempt) throw error
             errorMessage = error.message ?: "provider_stream_failed"
+            networkFailure = true
         }
 
         flushToolRoundMarkupFilter(markupFilter, outputText)
 
         return OpenAIResponsesNativeRound(
+            networkFailure = networkFailure,
             events = events,
             errorMessage = errorMessage,
             droppedToolCallCount = argumentLimiter.droppedIdentityCount,
@@ -1528,7 +1565,7 @@ class ChatRepositoryImpl @Inject constructor(
             round.usage?.let { toolUsageRecords += it }
             hasToolInteraction = hasToolInteraction || openAIChatCompletionsToolAdapter.hasToolCallIntent(round.chunks)
             if (round.errorMessage != null) {
-                if (!hasToolInteraction) {
+                if (!hasToolInteraction && !round.networkFailure) {
                     val fallback = if (
                         fallbackToJsonToolLoop &&
                         round.errorMessage.isNativeToolRequestRejected()
@@ -1697,8 +1734,22 @@ class ChatRepositoryImpl @Inject constructor(
         traceContext: PromptTraceContext,
         traceStage: String,
         config: ToolLoopConfig
+    ): OpenAIChatCompletionsNativeRound = withChatNetworkReconnect { isFinalAttempt ->
+        collectOpenAIChatCompletionsNativeRoundAttempt(request, timeoutSeconds, platform, label, traceContext, traceStage, config, isFinalAttempt)
+    }
+
+    private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.collectOpenAIChatCompletionsNativeRoundAttempt(
+        request: ChatCompletionRequest,
+        timeoutSeconds: Int,
+        platform: PlatformV2,
+        label: String,
+        traceContext: PromptTraceContext,
+        traceStage: String,
+        config: ToolLoopConfig,
+        isFinalAttempt: Boolean
     ): OpenAIChatCompletionsNativeRound {
         val chunks = mutableListOf<ChatCompletionChunk>()
+        var networkFailure = false
         val argumentLimiter = ToolArgumentStreamLimiter(
             maxArgumentChars = config.maxToolArgumentChars,
             maxCallIdentities = config.maxToolCallsPerRound
@@ -1744,13 +1795,16 @@ class ChatRepositoryImpl @Inject constructor(
         } catch (error: IllegalArgumentException) {
             errorMessage = error.message?.toolLimitErrorCodeOrNull() ?: throw error
         } catch (error: IOException) {
+            if (!isFinalAttempt) throw error
             errorMessage = error.message ?: "provider_stream_failed"
+            networkFailure = true
         }
 
         emitToolRoundStates(reasoningParser.flush(), markupFilter, outputText)
         flushToolRoundMarkupFilter(markupFilter, outputText)
 
         return OpenAIChatCompletionsNativeRound(
+            networkFailure = networkFailure,
             chunks = chunks,
             errorMessage = errorMessage,
             reasoningContent = chunks.toolContinuationReasoning(),
@@ -1967,7 +2021,7 @@ class ChatRepositoryImpl @Inject constructor(
             round.usage?.let { toolUsageRecords += it }
             hasToolInteraction = hasToolInteraction || anthropicNativeToolAdapter.hasToolCallIntent(round.chunks)
             if (round.errorMessage != null) {
-                if (!hasToolInteraction) {
+                if (!hasToolInteraction && !round.networkFailure) {
                     val fallback = completeChatWithAnthropic(
                         userMessages,
                         assistantMessages,
@@ -2111,8 +2165,22 @@ class ChatRepositoryImpl @Inject constructor(
         traceContext: PromptTraceContext,
         traceStage: String,
         config: ToolLoopConfig
+    ): AnthropicNativeRound = withChatNetworkReconnect { isFinalAttempt ->
+        collectAnthropicNativeRoundAttempt(request, timeoutSeconds, platform, label, traceContext, traceStage, config, isFinalAttempt)
+    }
+
+    private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.collectAnthropicNativeRoundAttempt(
+        request: MessageRequest,
+        timeoutSeconds: Int,
+        platform: PlatformV2,
+        label: String,
+        traceContext: PromptTraceContext,
+        traceStage: String,
+        config: ToolLoopConfig,
+        isFinalAttempt: Boolean
     ): AnthropicNativeRound {
         val chunks = mutableListOf<MessageResponseChunk>()
+        var networkFailure = false
         val argumentLimiter = ToolArgumentStreamLimiter(
             maxArgumentChars = config.maxToolArgumentChars,
             maxCallIdentities = config.maxToolCallsPerRound
@@ -2169,12 +2237,15 @@ class ChatRepositoryImpl @Inject constructor(
         } catch (error: IllegalArgumentException) {
             errorMessage = error.message?.toolLimitErrorCodeOrNull() ?: throw error
         } catch (error: IOException) {
+            if (!isFinalAttempt) throw error
             errorMessage = error.message ?: "provider_stream_failed"
+            networkFailure = true
         }
 
         flushToolRoundMarkupFilter(markupFilter, outputText)
 
         return AnthropicNativeRound(
+            networkFailure = networkFailure,
             chunks = chunks,
             errorMessage = errorMessage,
             droppedToolCallCount = argumentLimiter.droppedIdentityCount,
@@ -2338,7 +2409,7 @@ class ChatRepositoryImpl @Inject constructor(
             round.usage?.let { toolUsageRecords += it }
             hasToolInteraction = hasToolInteraction || googleNativeToolAdapter.hasToolCallIntent(round.responses)
             if (round.errorMessage != null) {
-                if (!hasToolInteraction) {
+                if (!hasToolInteraction && !round.networkFailure) {
                     val fallback = completeChatWithGoogle(
                         userMessages,
                         assistantMessages,
@@ -2484,8 +2555,23 @@ class ChatRepositoryImpl @Inject constructor(
         traceContext: PromptTraceContext,
         traceStage: String,
         config: ToolLoopConfig
+    ): GoogleNativeRound = withChatNetworkReconnect { isFinalAttempt ->
+        collectGoogleNativeRoundAttempt(request, model, timeoutSeconds, platform, label, traceContext, traceStage, config, isFinalAttempt)
+    }
+
+    private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.collectGoogleNativeRoundAttempt(
+        request: GenerateContentRequest,
+        model: String,
+        timeoutSeconds: Int,
+        platform: PlatformV2,
+        label: String,
+        traceContext: PromptTraceContext,
+        traceStage: String,
+        config: ToolLoopConfig,
+        isFinalAttempt: Boolean
     ): GoogleNativeRound {
         val responses = mutableListOf<GenerateContentResponse>()
+        var networkFailure = false
         val argumentLimiter = ToolArgumentStreamLimiter(
             maxArgumentChars = config.maxToolArgumentChars,
             maxCallIdentities = config.maxToolCallsPerRound
@@ -2533,12 +2619,15 @@ class ChatRepositoryImpl @Inject constructor(
         } catch (error: IllegalArgumentException) {
             errorMessage = error.message?.toolLimitErrorCodeOrNull() ?: throw error
         } catch (error: IOException) {
+            if (!isFinalAttempt) throw error
             errorMessage = error.message ?: "provider_stream_failed"
+            networkFailure = true
         }
 
         flushToolRoundMarkupFilter(markupFilter, outputText)
 
         return GoogleNativeRound(
+            networkFailure = networkFailure,
             responses = responses,
             errorMessage = errorMessage,
             droppedToolCallCount = argumentLimiter.droppedIdentityCount,
@@ -2679,9 +2768,10 @@ class ChatRepositoryImpl @Inject constructor(
             },
             sourceMetadata = { it.sources }
         ).catch { e ->
-            emit(ApiState.Error(e.message ?: "未知错误"))
-        }.onCompletion {
-            emit(ApiState.Done)
+            if (e is CancellationException) throw e
+            emit(ApiState.Error(e.message ?: "未知错误", cause = e.takeIf { it.isChatNetworkFailure() }))
+        }.onCompletion { cause ->
+            if (cause == null) emit(ApiState.Done)
         }
     } catch (e: Exception) {
         flowOf(ApiState.Error(e.message ?: "完成会话失败"))
@@ -2776,9 +2866,10 @@ class ChatRepositoryImpl @Inject constructor(
             },
             sourceMetadata = { it.sources }
         ).catch { e ->
-            emit(ApiState.Error(e.message ?: "未知错误"))
-        }.onCompletion {
-            emit(ApiState.Done)
+            if (e is CancellationException) throw e
+            emit(ApiState.Error(e.message ?: "未知错误", cause = e.takeIf { it.isChatNetworkFailure() }))
+        }.onCompletion { cause ->
+            if (cause == null) emit(ApiState.Done)
         }
     } catch (e: Exception) {
         flowOf(ApiState.Error(e.message ?: "完成会话失败"))
@@ -2890,9 +2981,10 @@ class ChatRepositoryImpl @Inject constructor(
             },
             sourceMetadata = { it.sources }
         ).catch { e ->
-            emit(ApiState.Error(e.message ?: "未知错误"))
-        }.onCompletion {
-            emit(ApiState.Done)
+            if (e is CancellationException) throw e
+            emit(ApiState.Error(e.message ?: "未知错误", cause = e.takeIf { it.isChatNetworkFailure() }))
+        }.onCompletion { cause ->
+            if (cause == null) emit(ApiState.Done)
         }
     } catch (e: Exception) {
         flowOf(ApiState.Error(e.message ?: "完成会话失败"))
@@ -3430,9 +3522,10 @@ class ChatRepositoryImpl @Inject constructor(
             },
             sourceMetadata = { it.sources }
         ).catch { e ->
-            emit(ApiState.Error(e.message ?: "未知错误"))
-        }.onCompletion {
-            emit(ApiState.Done)
+            if (e is CancellationException) throw e
+            emit(ApiState.Error(e.message ?: "未知错误", cause = e.takeIf { it.isChatNetworkFailure() }))
+        }.onCompletion { cause ->
+            if (cause == null) emit(ApiState.Done)
         }
     } catch (e: Exception) {
         flowOf(ApiState.Error(e.message ?: "完成会话失败"))
@@ -3573,9 +3666,10 @@ class ChatRepositoryImpl @Inject constructor(
             },
             sourceMetadata = { it.sources }
         ).catch { e ->
-            emit(ApiState.Error(e.message ?: "未知错误"))
-        }.onCompletion {
-            emit(ApiState.Done)
+            if (e is CancellationException) throw e
+            emit(ApiState.Error(e.message ?: "未知错误", cause = e.takeIf { it.isChatNetworkFailure() }))
+        }.onCompletion { cause ->
+            if (cause == null) emit(ApiState.Done)
         }
     } catch (e: Exception) {
         flowOf(ApiState.Error(e.message ?: "完成会话失败"))
@@ -3824,7 +3918,7 @@ class ChatRepositoryImpl @Inject constructor(
                 chatRoomV2Dao.editChatRoom(savedChatRoom)
 
                 savedChatRoom
-        }
+            }
             indexVisualAssetsForChat(savedChat.id)
             enqueueHistoryReconciliation(savedChat.id)
             return savedChat
@@ -4071,6 +4165,7 @@ private const val OPENAI_NATIVE_WEB_SEARCH_INSTRUCTION =
         "query 应简洁，并加入有用的实体、主题、时间范围、地区、来源范围和一手来源词。" +
         "查询区域事实时优先使用用户的语言；不要用 web_search 查询本地日期、时间、时区、设备状态或应用设置。" +
         "回答采用网页信息时引用来源 URL。"
+
 /**
  * Ends with the rule the native paths were missing.
  *
@@ -4185,6 +4280,7 @@ private fun List<ResponseInputItem>.currentUserMessageTail(): List<ResponseInput
 }
 
 private data class OpenAIResponsesNativeRound(
+    val networkFailure: Boolean,
     val events: List<ResponsesStreamEvent>,
     val errorMessage: String?,
     val droppedToolCallCount: Int,
@@ -4244,6 +4340,7 @@ private data class OpenAIChatCompletionsNativeToolRequest(
 }
 
 private data class OpenAIChatCompletionsNativeRound(
+    val networkFailure: Boolean,
     val chunks: List<ChatCompletionChunk>,
     val errorMessage: String?,
     val reasoningContent: String,
@@ -4318,6 +4415,7 @@ private data class AnthropicNativeToolRequest(
 }
 
 private data class AnthropicNativeRound(
+    val networkFailure: Boolean,
     val chunks: List<MessageResponseChunk>,
     val errorMessage: String?,
     val droppedToolCallCount: Int,
@@ -4364,6 +4462,7 @@ private data class GoogleNativeToolRequest(
 }
 
 private data class GoogleNativeRound(
+    val networkFailure: Boolean,
     val responses: List<GenerateContentResponse>,
     val errorMessage: String?,
     val droppedToolCallCount: Int,
@@ -4708,7 +4807,9 @@ internal fun <T> streamPreparedApiState(
     sourceMetadata(preparedRequest).dedupeMessageSources().takeIf { it.isNotEmpty() }?.let { sources ->
         emit(ApiState.SourcesUpdated(sources))
     }
-    emitAll(stream(preparedRequest))
+    withChatNetworkReconnect {
+        emitAll(stream(preparedRequest))
+    }
 }
 
 private fun usageFromProviderOrEstimate(

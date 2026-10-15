@@ -85,21 +85,29 @@ class GroqAPIImpl @Inject constructor(
                 }
 
                 val channel = response.bodyAsChannel()
+                var completed = false
                 while (true) {
                     val line = channel.readSseLineOrNull() ?: break
                     if (!line.startsWith("data:")) continue
 
                     val data = line.removePrefix("data:").trim()
-                    if (data == "[DONE]") break
+                    if (data == "[DONE]") {
+                        completed = true
+                        break
+                    }
 
                     try {
-                        emit(NetworkClient.openAIJson.decodeFromString<GroqChatCompletionChunk>(data))
-                    } catch (e: Exception) {
+                        val chunk = NetworkClient.openAIJson.decodeFromString<GroqChatCompletionChunk>(data)
+                        completed = completed || chunk.error != null || chunk.choices.orEmpty().any { it.finishReason != null }
+                        emit(chunk)
+                    } catch (e: kotlinx.serialization.SerializationException) {
                         Log.w("GroqAPI", "Skipping malformed Groq chunk: $data", e)
                     }
                 }
+                if (!completed) throw java.io.EOFException("Chat stream disconnected before completion")
             }
         } catch (e: Exception) {
+            e.throwIfChatNetworkFailure()
             val errorMessage = when (e) {
                 is java.net.UnknownHostException -> "网络错误：无法解析主机。"
                 is java.nio.channels.UnresolvedAddressException -> "网络错误：无法解析地址，请检查网络连接。"

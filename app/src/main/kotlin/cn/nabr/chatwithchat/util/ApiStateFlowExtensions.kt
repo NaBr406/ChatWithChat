@@ -68,6 +68,12 @@ suspend fun Flow<ApiState>.handleStates(
     try {
         collect { chunk ->
             when (chunk) {
+                is ApiState.StreamCheckpoint -> buffer.checkpoint(chunk.requestId)
+                is ApiState.StreamRollback -> {
+                    buffer.rollback(chunk.requestId)
+                    buffer.publishPending(messageFlow, turnIndex, platformIdx)
+                }
+                is ApiState.StreamCheckpointReleased -> buffer.releaseCheckpoint(chunk.requestId)
                 is ApiState.Thinking -> {
                     when (buffer.appendThought(chunk.thinkingChunk)) {
                         AppendResult.FIRST -> buffer.publishPending(messageFlow, turnIndex, platformIdx)
@@ -208,6 +214,31 @@ private class StreamingMessageBuffer {
     private var publishedContentLength = 0
     private var contentNeedsParagraphBreak = false
     private var thoughtsNeedParagraphBreak = false
+    private val checkpoints = mutableMapOf<String, StreamBufferCheckpoint>()
+
+    fun checkpoint(requestId: String) = synchronized(lock) {
+        checkpoints[requestId] = StreamBufferCheckpoint(
+            content.length,
+            thoughts.length,
+            contentNeedsParagraphBreak,
+            thoughtsNeedParagraphBreak
+        )
+    }
+
+    fun rollback(requestId: String) = synchronized(lock) {
+        val checkpoint = checkpoints[requestId] ?: return@synchronized
+        content.setLength(checkpoint.contentLength)
+        thoughts.setLength(checkpoint.thoughtLength)
+        contentNeedsParagraphBreak = checkpoint.contentNeedsParagraphBreak
+        thoughtsNeedParagraphBreak = checkpoint.thoughtsNeedParagraphBreak
+        publishedContentLength = -1
+        publishedThoughtLength = -1
+    }
+
+    fun releaseCheckpoint(requestId: String) = synchronized(lock) {
+        checkpoints.remove(requestId)
+        Unit
+    }
 
     /**
      * 一轮工具调用结束，下一轮的叙述和推理都属于新的段落。裸拼接会让两轮挤成一句
@@ -277,6 +308,13 @@ private class StreamingMessageBuffer {
 
     private fun hasPendingChanges(): Boolean = content.length != publishedContentLength || thoughts.length != publishedThoughtLength
 }
+
+private data class StreamBufferCheckpoint(
+    val contentLength: Int,
+    val thoughtLength: Int,
+    val contentNeedsParagraphBreak: Boolean,
+    val thoughtsNeedParagraphBreak: Boolean
+)
 
 /** 补到恰好隔一个空行。模型自己已经带的换行照算，不重复堆。 */
 private fun paragraphBreak(buffered: StringBuilder, chunk: String): String {

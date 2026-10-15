@@ -8,6 +8,9 @@ sealed class ApiState {
     data object Loading : ApiState()
     data class Thinking(val thinkingChunk: String) : ApiState()
     data class Success(val textChunk: String) : ApiState()
+    data class StreamCheckpoint(val requestId: String) : ApiState()
+    data class StreamRollback(val requestId: String) : ApiState()
+    data class StreamCheckpointReleased(val requestId: String) : ApiState()
     data class SourcesUpdated(val sources: List<MessageSourceMetadata>) : ApiState()
     data class StickerAdded(val sticker: MessageStickerRef) : ApiState()
     data class UsageUpdated(val usage: TokenUsageRecord) : ApiState()
@@ -18,6 +21,6 @@ sealed class ApiState {
         val message: String,
         val errorCode: String? = null
     ) : ApiState()
-    data class Error(val message: String) : ApiState()
+    data class Error(val message: String, val cause: Throwable? = null) : ApiState()
     data object Done : ApiState()
 }

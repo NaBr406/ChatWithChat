@@ -39,7 +39,7 @@ class GoogleAPIImpl @Inject constructor(
         val file = File(filePath)
         val startEndpoint = joinApiEndpoint(endpoint.baseApiUrl(), "upload/v1beta/files")
         val uploadUrl = networkClient().preparePost(startEndpoint) {
-                applyEndpointHeaders(endpoint)
+            applyEndpointHeaders(endpoint)
             parameter("key", endpoint.token ?: "")
             contentType(ContentType.Application.Json)
             header("X-Goog-Upload-Protocol", "resumable")
@@ -61,7 +61,7 @@ class GoogleAPIImpl @Inject constructor(
         } ?: throw IllegalStateException("获取 Google 上传 URL 失败")
 
         val responseBody = networkClient().preparePost(uploadUrl) {
-                applyEndpointHeaders(endpoint)
+            applyEndpointHeaders(endpoint)
             header("X-Goog-Upload-Offset", "0")
             header("X-Goog-Upload-Command", "upload, finalize")
             header(HttpHeaders.ContentLength, file.length().toString())
@@ -164,6 +164,7 @@ class GoogleAPIImpl @Inject constructor(
 
                 // Success - read SSE stream
                 val channel = response.bodyAsChannel()
+                var completed = false
                 while (true) {
                     val line = channel.readSseLineOrNull() ?: break
 
@@ -171,14 +172,20 @@ class GoogleAPIImpl @Inject constructor(
                         val data = line.removePrefix("data:").trim()
                         try {
                             val chunk = NetworkClient.json.decodeFromString<GenerateContentResponse>(data)
+                            completed = completed ||
+                                chunk.error != null ||
+                                chunk.promptFeedback?.blockReason != null ||
+                                chunk.candidates.orEmpty().any { it.finishReason != null }
                             emit(chunk)
-                        } catch (_: Exception) {
+                        } catch (_: kotlinx.serialization.SerializationException) {
                             // Skip malformed chunks
                         }
                     }
                 }
+                if (!completed) throw java.io.EOFException("Chat stream disconnected before completion")
             }
         } catch (e: Exception) {
+            e.throwIfChatNetworkFailure()
             val errorMessage = when (e) {
                 is java.net.UnknownHostException -> "网络错误：无法解析主机。"
                 is java.nio.channels.UnresolvedAddressException -> "网络错误：无法解析地址，请检查网络连接。"
@@ -200,18 +207,16 @@ class GoogleAPIImpl @Inject constructor(
         }
     }.flowOn(Dispatchers.IO)
 
-    private fun parseGoogleErrorMessage(errorBody: String): String? {
-        return try {
-            NetworkClient.json.decodeFromString<List<GoogleErrorResponse>>(errorBody)
-                .firstOrNull()
-                ?.error
-                ?.message
+    private fun parseGoogleErrorMessage(errorBody: String): String? = try {
+        NetworkClient.json.decodeFromString<List<GoogleErrorResponse>>(errorBody)
+            .firstOrNull()
+            ?.error
+            ?.message
+    } catch (_: Exception) {
+        try {
+            NetworkClient.json.decodeFromString<GoogleErrorResponse>(errorBody).error.message
         } catch (_: Exception) {
-            try {
-                NetworkClient.json.decodeFromString<GoogleErrorResponse>(errorBody).error.message
-            } catch (_: Exception) {
-                null
-            }
+            null
         }
     }
 

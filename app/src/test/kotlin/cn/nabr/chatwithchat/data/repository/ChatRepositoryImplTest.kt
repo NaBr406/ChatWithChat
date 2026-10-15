@@ -78,7 +78,6 @@ import cn.nabr.chatwithchat.data.memory.MemoryTurnBatchScheduler
 import cn.nabr.chatwithchat.data.model.ChatAttachment
 import cn.nabr.chatwithchat.data.model.ClientType
 import cn.nabr.chatwithchat.data.model.ReasoningMode
-import cn.nabr.chatwithchat.data.prompt.CoreSystemPrompt
 import cn.nabr.chatwithchat.data.network.AnthropicAPI
 import cn.nabr.chatwithchat.data.network.GoogleAPI
 import cn.nabr.chatwithchat.data.network.GroqAPI
@@ -86,6 +85,7 @@ import cn.nabr.chatwithchat.data.network.NetworkClient
 import cn.nabr.chatwithchat.data.network.OpenAIAPI
 import cn.nabr.chatwithchat.data.network.ProviderEndpoint
 import cn.nabr.chatwithchat.data.network.UploadedProviderFile
+import cn.nabr.chatwithchat.data.prompt.CoreSystemPrompt
 import cn.nabr.chatwithchat.data.sticker.StickerCatalogItem
 import cn.nabr.chatwithchat.data.sticker.StickerImportBatchResult
 import cn.nabr.chatwithchat.data.sticker.StickerItemMetadata
@@ -1312,7 +1312,7 @@ class ChatRepositoryImplTest {
             platform = customPlatform
         ).toList()
 
-        assertEquals(listOf(ApiState.Loading, ApiState.Done), states)
+        assertEquals(listOf(ApiState.Loading, ApiState.Done), states.withoutUsageUpdates())
         assertEquals(1, openAIAPI.streamChatCompletionCalls)
     }
 
@@ -1923,7 +1923,6 @@ class ChatRepositoryImplTest {
             "every native path shares this instruction, so the rule must hold without stickers too",
             noStickerInstruction.contains("不要把调用写进正文")
         )
-
     }
 
     @Test
@@ -3127,9 +3126,8 @@ class ChatRepositoryImplTest {
                 repository = createRepository(
                     openAIAPI = RecordingOpenAIAPI(
                         responsesResponses = mutableListOf(
-                            responseToolCallFlow(firstUsage),
-                            flow { throw IOException("native transport failure") }
-                        )
+                            responseToolCallFlow(firstUsage)
+                        ).apply { repeat(6) { add(flow { throw IOException("native transport failure") }) } }
                     ),
                     settingRepository = settings
                 ),
@@ -3140,9 +3138,8 @@ class ChatRepositoryImplTest {
                 repository = createRepository(
                     openAIAPI = RecordingOpenAIAPI(
                         chatCompletionResponses = mutableListOf(
-                            chatToolCallFlow("call_1", ToolDefinition.CurrentDateTime.name, "{}", firstUsage),
-                            flow { throw IOException("native transport failure") }
-                        )
+                            chatToolCallFlow("call_1", ToolDefinition.CurrentDateTime.name, "{}", firstUsage)
+                        ).apply { repeat(6) { add(flow { throw IOException("native transport failure") }) } }
                     ),
                     settingRepository = settings
                 ),
@@ -3159,9 +3156,8 @@ class ChatRepositoryImplTest {
                                 cacheReadInputTokens = 1,
                                 outputTokens = 5,
                                 includeProviderUsage = true
-                            ),
-                            flow { throw IOException("native transport failure") }
-                        )
+                            )
+                        ).apply { repeat(6) { add(flow { throw IOException("native transport failure") }) } }
                     ),
                     settingRepository = settings
                 ),
@@ -3178,9 +3174,8 @@ class ChatRepositoryImplTest {
                                     candidatesTokenCount = 2,
                                     totalTokenCount = 12
                                 )
-                            ),
-                            flow { throw IOException("native transport failure") }
-                        )
+                            )
+                        ).apply { repeat(6) { add(flow { throw IOException("native transport failure") }) } }
                     ),
                     settingRepository = settings
                 ),
@@ -3214,6 +3209,59 @@ class ChatRepositoryImplTest {
                 usage.toolTotalTokens > usage.details.first().totalTokens
             )
         }
+    }
+
+    @Test
+    fun `fallback transport exhaustion does not start another model request`() = runBlocking {
+        val api = RecordingOpenAIAPI(
+            chatCompletionResponses = MutableList(6) {
+                flow { throw IOException("disconnected") }
+            }
+        )
+        val repository = createRepository(
+            openAIAPI = api,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Off,
+                toolCallingMode = ToolCallingMode.Auto
+            )
+        )
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "What time is it?", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform()
+        ).toList()
+        assertEquals(6, api.streamChatCompletionCalls)
+        assertTrue(states.filterIsInstance<ApiState.Error>().any { it.message == "disconnected" })
+    }
+
+    @Test
+    fun `native reconnect replays only failed round after completed tool execution`() = runBlocking {
+        val api = RecordingOpenAIAPI(
+            responsesResponses = mutableListOf(
+                responseToolCallFlow(ProviderUsage(promptTokens = 10, completionTokens = 5, totalTokens = 15)),
+                flow { throw IOException("disconnected") },
+                responseTextFlow("Recovered", ProviderUsage(promptTokens = 20, completionTokens = 5, totalTokens = 25))
+            )
+        )
+        val repository = createRepository(
+            openAIAPI = api,
+            settingRepository = settingRepository(
+                webSearchMode = WebSearchMode.Off,
+                toolCallingMode = ToolCallingMode.Auto
+            )
+        )
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(chatId = 73, content = "What time is it?", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = openAIPlatform()
+        ).toList()
+        assertEquals(3, api.streamResponsesCalls)
+        assertEquals(1, api.endpoints.map { it.sessionId }.toSet().size)
+        assertTrue(api.endpoints.all { it.sessionId != null })
+        assertEquals(api.responsesRequests[1], api.responsesRequests[2])
+        assertEquals(1, states.filterIsInstance<ApiState.ToolFinished>().size)
+        assertEquals("Recovered", states.filterIsInstance<ApiState.Success>().joinToString("") { it.textChunk })
+        assertTrue(states.none { it is ApiState.Error })
     }
 
     @Test
@@ -4027,7 +4075,7 @@ class ChatRepositoryImplTest {
         assertEquals(listOf(messageChat.id, titleChat.id), repository.searchChatsV2("release").map { it.id })
         assertEquals(
             listOf(titleChat.id, messageChat.id),
-            repository.searchChatsV2("" ).map { it.id }
+            repository.searchChatsV2("").map { it.id }
         )
     }
 
@@ -4753,6 +4801,7 @@ class ChatRepositoryImplTest {
             "ollama_json" to 12_650,
             "groq_json" to 12_700
         )
+
         /**
          * Raised three times, each for a change that was measured before it was accepted. Running total is
          * roughly 420 estimated tokens per native tool turn:
@@ -4777,7 +4826,12 @@ class ChatRepositoryImplTest {
     }
 
     private fun List<ApiState>.withoutUsageUpdates(): List<ApiState> =
-        filterNot { it is ApiState.UsageUpdated }
+        filterNot {
+            it is ApiState.UsageUpdated ||
+                it is ApiState.StreamCheckpoint ||
+                it is ApiState.StreamRollback ||
+                it is ApiState.StreamCheckpointReleased
+        }
 
     private fun groqPlatform(reasoning: Boolean, model: String) = PlatformV2(
         uid = "groq-platform",
