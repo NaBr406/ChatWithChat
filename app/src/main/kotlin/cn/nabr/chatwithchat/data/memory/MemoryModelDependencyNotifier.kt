@@ -13,10 +13,16 @@ fun interface MemoryModelDependencyNotifier {
 
 class SchedulerMemoryModelDependencyNotifier(
     private val schedulerProvider: Provider<MemoryMaintenanceScheduler>,
-    private val workEnqueuer: MemoryMaintenanceWorkEnqueuer
+    private val workEnqueuer: MemoryMaintenanceWorkEnqueuer,
+    private val modelResolverProvider: Provider<MemoryModelResolver>
 ) : MemoryModelDependencyNotifier {
     override suspend fun onDependenciesChanged() {
         runCatching {
+            // Settings can change while the selected model is still unavailable. Leave those jobs
+            // blocked instead of consuming another retry cycle just to fail model resolution again.
+            if (modelResolverProvider.get().resolveCurrentPreference() !is MemoryModelResolution.Resolved) {
+                return@runCatching
+            }
             val reopenedCount = schedulerProvider.get().reopenMemoryModelBlockedJobs()
             if (reopenedCount > 0) {
                 workEnqueuer.enqueueWork(MemoryMaintenanceJobFamily.SEMANTIC)

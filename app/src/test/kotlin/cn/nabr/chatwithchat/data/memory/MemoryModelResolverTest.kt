@@ -12,6 +12,25 @@ import org.junit.Test
 
 class MemoryModelResolverTest {
     @Test
+    fun `fixed memory model rereads corrected provider settings`() = runBlocking {
+        val original = platform(uid = "opencode", model = "deepseek-v4.1-flash", compatibleType = ClientType.CUSTOM)
+            .copy(apiUrl = "https://opencode.ai/zen/go/v1/responses", isFullApiUrl = true)
+        val platforms = mutableListOf(original)
+        val resolver = resolver(platforms, listOf(model(original.uid, original.model)))
+        val preference = MemoryModelPreference.Fixed(original.uid, original.model)
+        assertEquals(original, resolver.resolvePreference(preference).resolvedPlatform())
+
+        val corrected = original.copy(
+            apiUrl = "https://opencode.ai/zen/go/v1",
+            isFullApiUrl = false,
+            customHeaders = "x-opencode-session: {session_id}"
+        )
+        platforms[0] = corrected
+
+        assertEquals(corrected, resolver.resolvePreference(preference).resolvedPlatform())
+    }
+
+    @Test
     fun `fixed preference resolves its exact platform and model pair`() = runBlocking {
         val first = platform(uid = "first", model = "shared-model")
         val second = platform(uid = "second", model = "second-current")

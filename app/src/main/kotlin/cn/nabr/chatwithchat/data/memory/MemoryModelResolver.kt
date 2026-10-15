@@ -8,6 +8,9 @@ import cn.nabr.chatwithchat.data.repository.SettingRepository
 class MemoryModelResolver(
     private val settingRepository: SettingRepository
 ) {
+    suspend fun resolveCurrentPreference(): MemoryModelResolution =
+        resolvePreference(settingRepository.fetchMemoryModelPreference())
+
     suspend fun resolvePreference(preference: MemoryModelPreference): MemoryModelResolution = when (preference) {
         MemoryModelPreference.Auto -> resolveAuto()
         is MemoryModelPreference.Fixed -> resolveFrozen(preference.platformUid, preference.modelId)

@@ -7,6 +7,7 @@ import cn.nabr.chatwithchat.data.datastore.SettingDataSource
 import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceScheduler
 import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceWorkEnqueuer
 import cn.nabr.chatwithchat.data.memory.MemoryModelDependencyNotifier
+import cn.nabr.chatwithchat.data.memory.MemoryModelResolver
 import cn.nabr.chatwithchat.data.memory.SchedulerMemoryModelDependencyNotifier
 import cn.nabr.chatwithchat.data.network.NetworkClient
 import cn.nabr.chatwithchat.data.repository.ModelDiscoveryRepository
@@ -46,10 +47,12 @@ object SettingRepositoryModule {
     @Singleton
     fun provideMemoryModelDependencyNotifier(
         memoryMaintenanceScheduler: Provider<MemoryMaintenanceScheduler>,
-        memoryMaintenanceWorkEnqueuer: MemoryMaintenanceWorkEnqueuer
+        memoryMaintenanceWorkEnqueuer: MemoryMaintenanceWorkEnqueuer,
+        memoryModelResolver: Provider<MemoryModelResolver>
     ): MemoryModelDependencyNotifier = SchedulerMemoryModelDependencyNotifier(
         schedulerProvider = memoryMaintenanceScheduler,
-        workEnqueuer = memoryMaintenanceWorkEnqueuer
+        workEnqueuer = memoryMaintenanceWorkEnqueuer,
+        modelResolverProvider = memoryModelResolver
     )
 
     @Provides
