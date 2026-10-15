@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -274,18 +275,69 @@ class LlmMemoryIntelligenceTest {
     }
 
     @Test
-    fun `reasoning-only blank response records bounded generation diagnostics`() = runBlocking {
+    fun `opencode deepseek memory requests disable reasoning on base and full urls`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(chatChunks = chatChunks(EMPTY_LONG_TERM_PROPOSAL_JSON))
+        val intelligence = intelligence(openAIAPI = openAIAPI)
+        val endpoints = listOf(
+            "https://opencode.ai/zen/go/v1" to false,
+            "https://opencode.ai/zen/v1" to false,
+            "https://OPENCODE.AI/zen/go/v1/chat/completions" to true
+        )
+
+        for ((apiUrl, isFullApiUrl) in endpoints) {
+            val result = intelligence.consolidateLongTermMemory(
+                longTermRequest(),
+                platform(ClientType.CUSTOM, "deepseek-v4.1-flash", reasoning = true).copy(
+                    apiUrl = apiUrl,
+                    isFullApiUrl = isFullApiUrl
+                )
+            )
+
+            assertEquals(0, result?.decisions?.size)
+            assertEquals("none", openAIAPI.lastChatRequest?.reasoningEffort)
+            assertNull(openAIAPI.lastChatRequest?.thinking)
+            assertNull(openAIAPI.lastChatRequest?.maxCompletionTokens)
+            assertEquals(2000, openAIAPI.lastChatRequest?.maxTokens)
+        }
+        assertEquals(endpoints.size, openAIAPI.streamChatCompletionCalls)
+    }
+
+    @Test
+    fun `opencode reasoning override does not apply to other hosts or models`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(chatChunks = chatChunks(EMPTY_PROPOSAL_JSON))
+        val intelligence = intelligence(openAIAPI = openAIAPI)
+        val platforms = listOf(
+            "https://opencode.ai.example.com/zen/go/v1" to "deepseek-v4.1-flash",
+            "https://example.com/opencode.ai/zen/go/v1" to "deepseek-v4.1-flash",
+            "https://opencode.ai@example.com/zen/go/v1" to "deepseek-v4.1-flash",
+            "https://example.com/v1" to "deepseek-v4.1-flash",
+            "https://opencode.ai/zen/go/v1" to "another-model"
+        )
+
+        for ((apiUrl, model) in platforms) {
+            intelligence.consolidateMemoryBatch(
+                batchRequest(),
+                platform(ClientType.CUSTOM, model).copy(apiUrl = apiUrl)
+            )
+
+            assertNull(openAIAPI.lastChatRequest?.reasoningEffort)
+            assertNull(openAIAPI.lastChatRequest?.thinking)
+        }
+    }
+
+    @Test
+    fun `reasoning-only long term response at token cap is truncated with bounded diagnostics`() = runBlocking {
         val openAIAPI = RecordingOpenAIAPI(
             chatChunks = flowOf(
                 ChatCompletionChunk(
                     choices = listOf(
                         Choice(
                             index = 0,
-                            delta = Delta(reasoningContent = "plan"),
+                            delta = Delta(reasoningContent = "x".repeat(9084)),
                             finishReason = "length"
                         )
                     ),
-                    usage = ProviderUsage(completionTokens = 1200)
+                    usage = ProviderUsage(completionTokens = 2000)
                 )
             )
         )
@@ -293,12 +345,53 @@ class LlmMemoryIntelligenceTest {
         val intelligence = intelligence(openAIAPI = openAIAPI, activityLogger = activityLogger)
         val activityRunId = activityLogger.startSemanticAttempt()
 
-        assertNull(intelligence.consolidateMemoryBatch(batchRequest(), platform(ClientType.OPENROUTER, "model"), activityRunId))
+        val response = intelligence.consolidateLongTermMemoryWithRawResponse(
+            longTermRequest(),
+            platform(ClientType.CUSTOM, "deepseek-v4.1-flash").copy(apiUrl = "https://opencode.ai/zen/go/v1"),
+            activityRunId
+        )
 
-        val detail = activityLogger.run(activityRunId).data.errorDetail
+        assertNull(response.proposal)
+        assertTrue(response.truncated)
+        assertEquals("", response.rawResponseJson)
+        assertEquals(1, openAIAPI.streamChatCompletionCalls)
+        val run = activityLogger.run(activityRunId)
+        assertEquals("response_truncated", run.data.errorCode)
+        assertEquals(MemoryActivityStatus.FAILED, run.status)
+        val detail = run.data.errorDetail
         assertTrue(detail?.contains("finish_reason=length") == true)
-        assertTrue(detail?.contains("reasoning_chars=4") == true)
-        assertTrue(detail?.contains("completion_tokens=1200") == true)
+        assertTrue(detail?.contains("reasoning_chars=9084") == true)
+        assertTrue(detail?.contains("completion_tokens=2000") == true)
+        assertTrue(detail?.contains("2000 output token cap") == true)
+        assertTrue(detail!!.length <= 500)
+        assertFalse(detail.contains("x".repeat(20)))
+    }
+
+    @Test
+    fun `blank response without length stop remains a model call failure`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatChunks = flowOf(
+                ChatCompletionChunk(
+                    choices = listOf(Choice(index = 0, delta = Delta(reasoning = "plan"), finishReason = "stop"))
+                )
+            )
+        )
+        val activityLogger = RecordingMemoryActivityLogger()
+        val intelligence = intelligence(openAIAPI = openAIAPI, activityLogger = activityLogger)
+        val activityRunId = activityLogger.startSemanticAttempt()
+
+        val response = intelligence.consolidateMemoryBatchWithRawResponse(
+            batchRequest(),
+            platform(ClientType.CUSTOM, "model"),
+            activityRunId
+        )
+
+        assertNull(response.proposal)
+        assertFalse(response.truncated)
+        assertEquals(1, openAIAPI.streamChatCompletionCalls)
+        val run = activityLogger.run(activityRunId)
+        assertEquals("model_call_failed", run.data.errorCode)
+        assertTrue(run.data.errorDetail?.contains("reasoning_chars=4") == true)
     }
 
     @Test
@@ -319,6 +412,7 @@ class LlmMemoryIntelligenceTest {
 
         assertEquals(0, result?.operations?.size)
         assertEquals(2, openAIAPI.streamChatCompletionCalls)
+        assertTrue(openAIAPI.chatEndpoints[0] === openAIAPI.chatEndpoints[1])
     }
 
     @Test
@@ -807,9 +901,11 @@ private class RecordingOpenAIAPI(
     var lastSystemPrompt: String? = null
     var lastChatTimeoutSeconds: Int? = null
     var lastResponsesTimeoutSeconds: Int? = null
+    val chatEndpoints = mutableListOf<ProviderEndpoint>()
 
     override fun streamChatCompletion(request: ChatCompletionRequest, timeoutSeconds: Int, endpoint: ProviderEndpoint): Flow<ChatCompletionChunk> {
         streamChatCompletionCalls += 1
+        chatEndpoints += endpoint
         lastChatRequest = request
         lastSystemPrompt = request.messages.firstOrNull()?.content?.filterIsInstance<OpenAiTextContent>()
             ?.firstOrNull()

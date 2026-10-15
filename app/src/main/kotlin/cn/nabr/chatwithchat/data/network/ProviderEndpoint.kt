@@ -1,10 +1,16 @@
 package cn.nabr.chatwithchat.data.network
 
+import cn.nabr.chatwithchat.BuildConfig
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.model.ClientType
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.header
+import io.ktor.http.HttpHeaders
 import java.net.URI
+import java.util.UUID
+
+private const val OPENCODE_SESSION_HEADER = "x-opencode-session"
+private const val SESSION_ID_PLACEHOLDER = "{session_id}"
 
 /**
  * Where a request goes and which key it carries, passed per call.
@@ -32,36 +38,57 @@ data class ProviderEndpoint(
     /** Path prefix used by OpenAI-compatible endpoints, e.g. `v1` or GLM's empty prefix. */
     val apiPathPrefix: String = "v1",
     val isFullApiUrl: Boolean = false,
-    val customHeaders: String = ""
-)
+    val customHeaders: String = "",
+    val sessionId: String? = null
+) {
+    // Keep the fallback on this request value, never on the shared HTTP client or provider config.
+    internal val requestSessionId: String = sessionId ?: UUID.randomUUID().toString()
+}
 
-fun PlatformV2.providerEndpoint(): ProviderEndpoint = ProviderEndpoint(
+fun PlatformV2.providerEndpoint(chatId: Int? = null): ProviderEndpoint = ProviderEndpoint(
     token = token,
     apiUrl = apiUrl,
     apiPathPrefix = "v1".takeUnless { compatibleType == ClientType.GLM }.orEmpty(),
     isFullApiUrl = isFullApiUrl,
-    customHeaders = customHeaders
+    customHeaders = customHeaders,
+    // Platform UUIDs already survive restarts and isolate independently configured installations.
+    sessionId = if (chatId != null && chatId > 0) {
+        UUID.nameUUIDFromBytes("ChatWithChat:$uid:chat:$chatId".toByteArray(Charsets.UTF_8)).toString()
+    } else {
+        null
+    }
 )
 
-fun HttpRequestBuilder.applyCustomHeaders(serializedHeaders: String) {
+fun HttpRequestBuilder.applyCustomHeaders(serializedHeaders: String, sessionId: String? = null) {
     serializedHeaders.lineSequence().forEach { line ->
         val separator = line.indexOf(':')
         if (separator <= 0) return@forEach
         val name = line.substring(0, separator).trim()
-        val value = line.substring(separator + 1).trim()
+        val rawValue = line.substring(separator + 1).trim()
+        val value = sessionId?.let { rawValue.replace(SESSION_ID_PLACEHOLDER, it) } ?: rawValue
         val normalizedName = name.lowercase()
         val isManagedHeader = normalizedName in setOf(
             "authorization",
             "content-length",
             "content-type",
             "host"
-        ) || normalizedName.startsWith("x-goog-upload-")
+        ) ||
+            normalizedName.startsWith("x-goog-upload-")
         if (name.isNotBlank() && value.isNotBlank() && !isManagedHeader) header(name, value)
     }
 }
 
 fun HttpRequestBuilder.applyEndpointHeaders(endpoint: ProviderEndpoint) {
-    applyCustomHeaders(endpoint.customHeaders)
+    applyCustomHeaders(endpoint.customHeaders, endpoint.requestSessionId)
+    // Only the official host is detected automatically. Proxies can opt in with a custom header.
+    val isOpenCode = runCatching { URI(endpoint.apiUrl.trim()).host.equals("opencode.ai", ignoreCase = true) }
+        .getOrDefault(false)
+    if (isOpenCode && !headers.contains(OPENCODE_SESSION_HEADER)) {
+        header(OPENCODE_SESSION_HEADER, endpoint.requestSessionId)
+    }
+    if ((isOpenCode || headers.contains(OPENCODE_SESSION_HEADER)) && !headers.contains(HttpHeaders.UserAgent)) {
+        header(HttpHeaders.UserAgent, "ChatWithChat/${BuildConfig.VERSION_NAME}")
+    }
 }
 
 fun ProviderEndpoint.chatUrl(path: String): String = if (isFullApiUrl) {

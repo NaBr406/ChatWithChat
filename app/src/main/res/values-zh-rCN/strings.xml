@@ -405,7 +405,7 @@
     <string name="simulated_request_headers">模拟请求头（选填）</string>
     <string name="simulated_request_headers_hint">User-Agent: Mozilla/5.0
 Referer: https://example.com</string>
-    <string name="simulated_request_headers_supporting">每行一个请求头，格式为“请求头名称: 值”。Authorization 和供应商上传请求头仍由应用自动管理。</string>
+    <string name="simulated_request_headers_supporting">每行一个请求头，格式为“请求头名称: 值”。{session_id} 会替换为当前聊天的稳定会话 ID。直连 OpenCode 会自动携带会话头；代理地址可填写 x-opencode-session: {session_id}。Authorization 和供应商上传请求头仍由应用自动管理。</string>
     <string name="bug_report">问题反馈</string>
     <string name="bug_report_description">有功能无法正常工作？</string>
     <string name="bug_report_icon">问题反馈图标</string>

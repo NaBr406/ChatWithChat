@@ -148,6 +148,27 @@ import org.junit.Test
 
 class ChatRepositoryImplTest {
 
+    @Test
+    fun `chat sessions stay stable across turns and isolate other chats for both openai protocols`() = runBlocking {
+        listOf(customPlatform(), openAIPlatform()).forEach { configuredPlatform ->
+            val api = RecordingOpenAIAPI()
+            val repository = createRepository(openAIAPI = api)
+            val platform = configuredPlatform.copy(apiUrl = "https://opencode.ai/zen/go/v1")
+            listOf(73, 73, 74).forEach { chatId ->
+                repository.completeChat(
+                    userMessages = listOf(MessageV2(chatId = chatId, content = "hello", platformType = null)),
+                    assistantMessages = emptyList(),
+                    platform = platform
+                ).toList()
+            }
+
+            assertEquals(3, api.endpoints.size)
+            assertEquals(api.endpoints[0].sessionId, api.endpoints[1].sessionId)
+            assertTrue(api.endpoints[0].sessionId != null)
+            assertTrue(api.endpoints[0].sessionId != api.endpoints[2].sessionId)
+        }
+    }
+
     @Test(expected = IllegalStateException::class)
     fun `blank response input without encodable parts throws`() {
         validateResponseInputPartsOrThrow("", 0, 42)
@@ -6006,11 +6027,13 @@ class ChatRepositoryImplTest {
         var lastResponsesRequest: ResponsesRequest? = null
         val chatCompletionRequests = mutableListOf<ChatCompletionRequest>()
         val responsesRequests = mutableListOf<ResponsesRequest>()
+        val endpoints = mutableListOf<ProviderEndpoint>()
 
         override fun streamChatCompletion(request: ChatCompletionRequest, timeoutSeconds: Int, endpoint: ProviderEndpoint): Flow<ChatCompletionChunk> {
             streamChatCompletionCalls += 1
             lastChatCompletionRequest = request
             chatCompletionRequests += request
+            endpoints += endpoint
             return if (chatCompletionResponses.isNotEmpty()) {
                 chatCompletionResponses.removeAt(0)
             } else {
@@ -6022,6 +6045,7 @@ class ChatRepositoryImplTest {
             streamResponsesCalls += 1
             lastResponsesRequest = request
             responsesRequests += request
+            endpoints += endpoint
             return if (responsesResponses.isNotEmpty()) {
                 responsesResponses.removeAt(0)
             } else {

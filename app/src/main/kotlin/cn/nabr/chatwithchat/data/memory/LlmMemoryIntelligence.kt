@@ -42,6 +42,7 @@ import cn.nabr.chatwithchat.data.network.OpenAIAPI
 import cn.nabr.chatwithchat.data.network.providerEndpoint
 import cn.nabr.chatwithchat.util.formatCurrentDate
 import cn.nabr.chatwithchat.util.formatEpochSecondsAsDate
+import java.net.URI
 import java.time.Clock
 import javax.inject.Inject
 import kotlinx.coroutines.delay
@@ -465,6 +466,8 @@ class LlmMemoryIntelligence @Inject constructor(
         val useOpenAiReasoningParameters = platform.reasoning && platform.compatibleType == ClientType.OPENAI
         val thinking = ChatCompletionThinkingConfig(type = "disabled")
             .takeIf { platform.usesOfficialDeepSeekApi() }
+        // OpenCode accepts reasoning_effort=none; its gateway can ignore DeepSeek's thinking field.
+        val disableOpenCodeReasoning = platform.usesOpenCodeDeepSeekV4Api()
         val startedAt = System.currentTimeMillis()
         logRequestStart(operation, platform, timeoutSeconds)
         val request = ChatCompletionRequest(
@@ -480,17 +483,23 @@ class LlmMemoryIntelligence @Inject constructor(
                 )
             ),
             stream = true,
-            temperature = if (useOpenAiReasoningParameters || thinking != null) null else 0f,
-            topP = if (useOpenAiReasoningParameters || thinking != null) null else 1f,
+            temperature = if (useOpenAiReasoningParameters || thinking != null || disableOpenCodeReasoning) null else 0f,
+            topP = if (useOpenAiReasoningParameters || thinking != null || disableOpenCodeReasoning) null else 1f,
             maxTokens = if (useOpenAiReasoningParameters) null else memoryMaxOutputTokens(operation),
             maxCompletionTokens = if (useOpenAiReasoningParameters) memoryMaxOutputTokens(operation) else null,
-            reasoningEffort = if (useOpenAiReasoningParameters) "low" else null,
+            reasoningEffort = when {
+                disableOpenCodeReasoning -> "none"
+                useOpenAiReasoningParameters -> "low"
+                else -> null
+            },
             thinking = thinking
         )
+        // Retries belong to this one-shot memory call and must retain its provider session.
+        val endpoint = platform.providerEndpoint()
         var chunks = emptyList<ChatCompletionChunk>()
         for (attempt in 0 until MEMORY_NETWORK_ATTEMPTS) {
             chunks = runCatching {
-                openAIAPI.streamChatCompletion(request, timeoutSeconds, platform.providerEndpoint()).toList()
+                openAIAPI.streamChatCompletion(request, timeoutSeconds, endpoint).toList()
             }.onSuccess {
                 logRequestSuccess(operation, platform, timeoutSeconds, startedAt)
             }.onFailure { throwable ->
@@ -516,15 +525,20 @@ class LlmMemoryIntelligence @Inject constructor(
         }
 
         val content = collectContent(chunks)
+        if (chunks.hitChatOutputTokenCap()) {
+            logWarning("Memory $operation response stopped on the output token cap")
+            val detail = if (content.isBlank()) {
+                "${truncationDetail(platform, operation)}; ${blankChatResponseDetail(platform, chunks)}"
+            } else {
+                truncationDetail(platform, operation)
+            }
+            return MemoryModelCallResponse.truncated(content, detail)
+        }
         if (content.isBlank()) {
             return MemoryModelCallResponse.failure(
                 "blank_response",
                 blankChatResponseDetail(platform, chunks)
             )
-        }
-        if (chunks.hitChatOutputTokenCap()) {
-            logWarning("Memory $operation response stopped on the output token cap")
-            return MemoryModelCallResponse.truncated(content, truncationDetail(platform, operation))
         }
         return MemoryModelCallResponse.success(content)
     }
@@ -810,6 +824,12 @@ class LlmMemoryIntelligence @Inject constructor(
     }
 
     private fun PlatformV2.requiresToken(): Boolean = compatibleType != ClientType.OLLAMA
+
+    private fun PlatformV2.usesOpenCodeDeepSeekV4Api(): Boolean {
+        if (compatibleType != ClientType.CUSTOM || !model.startsWith("deepseek-v4", ignoreCase = true)) return false
+        return runCatching { URI(apiUrl.trim()).host.equals("opencode.ai", ignoreCase = true) }
+            .getOrDefault(false)
+    }
 
     private fun PlatformV2.memoryTimeoutSeconds(operation: String): Int {
         if (timeout == 0) return 0

@@ -405,7 +405,7 @@
     <string name="simulated_request_headers">Simulated request headers (optional)</string>
     <string name="simulated_request_headers_hint">User-Agent: Mozilla/5.0
 Referer: https://example.com</string>
-    <string name="simulated_request_headers_supporting">One header per line, formatted as Header-Name: Value. Authorization and provider upload headers remain managed by the app.</string>
+    <string name="simulated_request_headers_supporting">One header per line, formatted as Header-Name: Value. Use {session_id} for a session ID that stays stable within each chat. OpenCode requests include session headers automatically; for proxies, add x-opencode-session: {session_id}. Authorization and provider upload headers remain managed by the app.</string>
     <string name="bug_report">问题反馈</string>
     <string name="bug_report_description">有功能无法正常工作？</string>
     <string name="bug_report_icon">问题反馈图标</string>

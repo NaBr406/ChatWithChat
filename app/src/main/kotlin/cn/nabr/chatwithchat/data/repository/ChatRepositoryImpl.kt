@@ -1308,7 +1308,7 @@ class ChatRepositoryImpl @Inject constructor(
         recordSystemPrompt(traceContext, traceStage, request.instructions)
 
         try {
-            openAIAPI.streamResponses(request, timeoutSeconds, platform.providerEndpoint()).collect { event ->
+            openAIAPI.streamResponses(request, timeoutSeconds, platform.providerEndpoint(traceContext.chatId)).collect { event ->
                 events += event
                 when (event) {
                     is FunctionCallArgumentsDeltaEvent -> argumentLimiter.append(event.outputIndex, event.delta)
@@ -1710,7 +1710,7 @@ class ChatRepositoryImpl @Inject constructor(
         recordSystemPrompt(traceContext, traceStage, request.systemPromptText())
 
         try {
-            openAIAPI.streamChatCompletion(request, timeoutSeconds, platform.providerEndpoint()).collect { chunk ->
+            openAIAPI.streamChatCompletion(request, timeoutSeconds, platform.providerEndpoint(traceContext.chatId)).collect { chunk ->
                 chunks += chunk
                 chunk.choices.orEmpty().forEach { choice ->
                     choice.delta.toolCalls.orEmpty().forEachIndexed { position, call ->
@@ -2123,7 +2123,7 @@ class ChatRepositoryImpl @Inject constructor(
         recordSystemPrompt(traceContext, traceStage, request.systemPrompt)
 
         try {
-            anthropicAPI.streamChatMessage(request, timeoutSeconds, platform.providerEndpoint()).collect { chunk ->
+            anthropicAPI.streamChatMessage(request, timeoutSeconds, platform.providerEndpoint(traceContext.chatId)).collect { chunk ->
                 chunks += chunk
                 when (chunk) {
                     is ContentStartResponseChunk -> if (chunk.contentBlock.type == ContentBlockType.TOOL_USE) {
@@ -2497,7 +2497,7 @@ class ChatRepositoryImpl @Inject constructor(
         recordSystemPrompt(traceContext, traceStage, request.systemInstructionText())
 
         try {
-            googleAPI.streamGenerateContent(request, model, timeoutSeconds, platform.providerEndpoint()).collect { response ->
+            googleAPI.streamGenerateContent(request, model, timeoutSeconds, platform.providerEndpoint(traceContext.chatId)).collect { response ->
                 responses += response
                 response.candidates.orEmpty().forEach { candidate ->
                     candidate.content.parts.forEach { part ->
@@ -2626,7 +2626,7 @@ class ChatRepositoryImpl @Inject constructor(
                     val outputText = StringBuilder()
                     var emittedOutputTextDelta = false
                     var streamFailed = false
-                    openAIAPI.streamResponses(prepared.request, platform.timeout, platform.providerEndpoint()).collect { event ->
+                    openAIAPI.streamResponses(prepared.request, platform.timeout, platform.providerEndpoint(traceContext.chatId)).collect { event ->
                         events += event
                         when (event) {
                             is ReasoningSummaryTextDeltaEvent -> emit(ApiState.Thinking(event.delta))
@@ -2733,7 +2733,7 @@ class ChatRepositoryImpl @Inject constructor(
                     groqAPI.streamChatCompletion(
                         request = prepared.request,
                         timeoutSeconds = platform.timeout,
-                        endpoint = platform.providerEndpoint()
+                        endpoint = platform.providerEndpoint(traceContext.chatId)
                     ).collect { chunk ->
                         chunks += chunk
                         when {
@@ -2847,7 +2847,7 @@ class ChatRepositoryImpl @Inject constructor(
                     val chunks = mutableListOf<ChatCompletionChunk>()
                     val outputText = StringBuilder()
                     val reasoningParser = ReasoningStreamParser()
-                    openAIAPI.streamChatCompletion(prepared.request, platform.timeout, platform.providerEndpoint()).collect { chunk ->
+                    openAIAPI.streamChatCompletion(prepared.request, platform.timeout, platform.providerEndpoint(traceContext.chatId)).collect { chunk ->
                         chunks += chunk
                         when {
                             chunk.error != null -> {
@@ -3389,7 +3389,7 @@ class ChatRepositoryImpl @Inject constructor(
                     )
                     val chunks = mutableListOf<MessageResponseChunk>()
                     val outputText = StringBuilder()
-                    anthropicAPI.streamChatMessage(prepared.request, platform.timeout, platform.providerEndpoint()).collect { chunk ->
+                    anthropicAPI.streamChatMessage(prepared.request, platform.timeout, platform.providerEndpoint(traceContext.chatId)).collect { chunk ->
                         chunks += chunk
                         when (chunk) {
                             is cn.nabr.chatwithchat.data.dto.anthropic.response.ContentDeltaResponseChunk -> {
@@ -3537,7 +3537,7 @@ class ChatRepositoryImpl @Inject constructor(
                     )
                     val responses = mutableListOf<GenerateContentResponse>()
                     val outputText = StringBuilder()
-                    googleAPI.streamGenerateContent(prepared.request, platform.model, platform.timeout, platform.providerEndpoint()).collect { response ->
+                    googleAPI.streamGenerateContent(prepared.request, platform.model, platform.timeout, platform.providerEndpoint(traceContext.chatId)).collect { response ->
                         responses += response
                         when {
                             response.error != null -> {
