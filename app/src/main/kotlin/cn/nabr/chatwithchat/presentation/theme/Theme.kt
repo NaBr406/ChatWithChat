@@ -434,7 +434,7 @@ fun ChatWithChatTheme(
     val colorScheme = settingsColorScheme(baseColorScheme, useDarkTheme).animateOnThemeChange()
     val settingsColors = (if (useDarkTheme) SettingsMaterialColorsDark else SettingsMaterialColorsLight)
         .animateOnThemeChange()
-    // 状态栏图标跟着插值中的画布亮度翻，而不是跟着目标值：t=0 就翻会让图标贴在还没变亮的
+    // 系统栏图标跟着插值中的画布亮度翻，而不是跟着目标值：t=0 就翻会让图标贴在还没变亮的
     // 背景上将近三百毫秒，等于短暂消失。跨过中点再翻，过渡前后两侧都有对比度。
     val isCanvasLight = colorScheme.background.luminance() > 0.5f
     val view = LocalView.current
@@ -442,7 +442,10 @@ fun ChatWithChatTheme(
         SideEffect {
             val window = (view.context as Activity).window
             WindowCompat.setDecorFitsSystemWindows(window, false)
-            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = isCanvasLight
+            WindowCompat.getInsetsController(window, view).apply {
+                isAppearanceLightStatusBars = isCanvasLight
+                isAppearanceLightNavigationBars = isCanvasLight
+            }
         }
     }
 

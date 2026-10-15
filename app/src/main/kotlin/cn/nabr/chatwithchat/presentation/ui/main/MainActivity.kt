@@ -5,6 +5,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -25,7 +27,6 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
-import dagger.hilt.android.AndroidEntryPoint
 import cn.nabr.chatwithchat.data.tool.ToolRegistry
 import cn.nabr.chatwithchat.presentation.common.LocalDynamicTheme
 import cn.nabr.chatwithchat.presentation.common.LocalNotificationPermissionRequester
@@ -38,6 +39,7 @@ import cn.nabr.chatwithchat.presentation.common.ThemeSettingProvider
 import cn.nabr.chatwithchat.presentation.common.ToolPermissionRequester
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.theme.ChatWithChatTheme
+import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -64,6 +66,7 @@ class MainActivity : ComponentActivity() {
         }
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        configureHyperOsNavigationBar()
         toolPermissionLauncher = registerForActivityResult(
             ActivityResultContracts.RequestMultiplePermissions()
         ) {
@@ -115,6 +118,36 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Reapply after returning from system settings, where navigation mode can change.
+        configureHyperOsNavigationBar()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun configureHyperOsNavigationBar() {
+        val isXiaomiDevice = Build.MANUFACTURER.equals("Xiaomi", ignoreCase = true) ||
+            Build.BRAND.equals("Redmi", ignoreCase = true) ||
+            Build.BRAND.equals("POCO", ignoreCase = true)
+        if (!isXiaomiDevice) return
+
+        val navigationMode = runCatching {
+            Settings.Global.getInt(contentResolver, "force_fsg_nav_bar", -1)
+        }.getOrNull() ?: return
+        // Custom ROMs without Xiaomi's navigation setting keep standard edge-to-edge behavior.
+        if (navigationMode < 0) return
+
+        val isGestureNavigation = navigationMode != 0
+        // HyperOS requires this legacy flag for a transparent gesture bar:
+        // https://dev.mi.com/xiaomihyperos/documentation/detail?pId=2043
+        if (isGestureNavigation) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION)
+        }
+        window.isNavigationBarContrastEnforced = !isGestureNavigation
     }
 
     override fun onNewIntent(intent: Intent) {

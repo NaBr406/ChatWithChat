@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -141,9 +142,11 @@ fun SettingScreen(
     ) { innerPadding ->
         Column(
             modifier = Modifier
-                .padding(innerPadding)
                 .fillMaxWidth()
                 .verticalScroll(scrollState)
+                // Keep safe spacing inside the scroll content; the viewport reaches the system bars.
+                .padding(innerPadding)
+                .consumeWindowInsets(innerPadding)
                 .padding(horizontal = 16.dp)
         ) {
             SettingsSection(title = stringResource(R.string.settings_section_models_providers)) {
@@ -294,9 +297,10 @@ fun ToolSettingsScreen(
     ) { innerPadding ->
         Column(
             modifier = Modifier
-                .padding(innerPadding)
                 .fillMaxWidth()
                 .verticalScroll(scrollState)
+                .padding(innerPadding)
+                .consumeWindowInsets(innerPadding)
                 .padding(horizontal = 16.dp)
         ) {
             SettingsSection(title = stringResource(R.string.settings_section_tool_calling)) {
