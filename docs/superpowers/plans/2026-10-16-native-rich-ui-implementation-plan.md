@@ -1,11 +1,11 @@
 # 原生富内容 UI v1 执行计划
 
 日期：2026-10-16。基线：`main` / `878f383c`。
-状态：尚未开始实现。用户已决定 B 标签、L2 交互、全局默认开启；其余默认行为见[设计文档](../specs/2026-10-16-native-rich-ui-design.md)。
+状态：首轮实施已落地到 P0、P1 核心和 P2 静态渲染/prompt 接入；全局设置、L1/L2 交互、语义入口审计、设备和真实模型验收仍未完成。用户已决定 B 标签、L2 交互、全局默认开启；其余默认行为见[设计文档](../specs/2026-10-16-native-rich-ui-design.md)。
 
 ## 工作边界
 
-本轮只调查和写规划，未修改生产代码。调查时 tracked 工作区干净，`.codex-remote-attachments/` 与 `outputs/` 为现有未跟踪目录，保持原样。实施前重新检查分支和差异，不假定基线不变。
+本分支包含首轮生产代码实施。`.codex-remote-attachments/` 与 `outputs/` 为现有未跟踪目录，保持原样；后续阶段仍需重新检查分支和差异，不假定基线不变。
 
 不新增 JS 引擎、网络请求型 UI 组件、Room 状态表、图表或 HTML 沙箱。不把所有工作塞进 ChatBubble/ChatRepositoryImpl；用纯 Kotlin 树、解析、投影、状态逻辑支撑 Compose。
 

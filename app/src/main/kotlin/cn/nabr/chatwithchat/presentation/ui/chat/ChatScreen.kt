@@ -1046,6 +1046,7 @@ private fun ChatMessagePair(
                     emptyList()
                 },
                 contentIdentity = "$messageIndex:$selectedPlatformUid:$selectedAssistantRevisionIndex",
+                renderRichContent = !isInterruptedInitialRequest && displayedAssistantContent.contains("<ui-"),
                 onVisibleContentChanged = onStreamingContentDisplayed,
                 revisionIndexLabel = selectedAssistantMessage?.takeUnless { isInterruptedInitialRequest }?.let { assistantMessage ->
                     val totalRevisions = assistantMessage.revisions.size + 1

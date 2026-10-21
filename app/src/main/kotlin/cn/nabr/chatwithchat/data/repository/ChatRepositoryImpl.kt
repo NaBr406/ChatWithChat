@@ -122,6 +122,7 @@ import cn.nabr.chatwithchat.data.network.OpenAIAPI
 import cn.nabr.chatwithchat.data.network.isChatNetworkFailure
 import cn.nabr.chatwithchat.data.network.providerEndpoint
 import cn.nabr.chatwithchat.data.prompt.CoreSystemPrompt
+import cn.nabr.chatwithchat.data.richcontent.RichContentPromptBuilder
 import cn.nabr.chatwithchat.data.sticker.StickerPresentationArtifact
 import cn.nabr.chatwithchat.data.sticker.toMessageStickerRef
 import cn.nabr.chatwithchat.data.textskill.ChatRequestContext
@@ -484,7 +485,8 @@ class ChatRepositoryImpl @Inject constructor(
         reasoningMode: ReasoningMode,
         extraPrompt: String? = null,
         emitEstimatedUsageWithoutOutput: Boolean = false,
-        conversationSnapshot: ProviderConversationSnapshot? = null
+        conversationSnapshot: ProviderConversationSnapshot? = null,
+        includeRichContentPrompt: Boolean = true
     ): Flow<ApiState> = when (platform.compatibleType) {
         ClientType.OPENAI -> {
             // Use Responses API for OpenAI (supports reasoning/thinking)
@@ -496,7 +498,8 @@ class ChatRepositoryImpl @Inject constructor(
                 reasoningMode,
                 extraPrompt,
                 emitEstimatedUsageWithoutOutput,
-                conversationSnapshot
+                conversationSnapshot,
+                includeRichContentPrompt
             )
         }
 
@@ -509,7 +512,8 @@ class ChatRepositoryImpl @Inject constructor(
                 reasoningMode,
                 extraPrompt,
                 emitEstimatedUsageWithoutOutput,
-                conversationSnapshot
+                conversationSnapshot,
+                includeRichContentPrompt
             )
         }
 
@@ -523,7 +527,8 @@ class ChatRepositoryImpl @Inject constructor(
                 reasoningMode,
                 extraPrompt,
                 emitEstimatedUsageWithoutOutput,
-                conversationSnapshot
+                conversationSnapshot,
+                includeRichContentPrompt
             )
         }
 
@@ -536,7 +541,8 @@ class ChatRepositoryImpl @Inject constructor(
                 reasoningMode,
                 extraPrompt,
                 emitEstimatedUsageWithoutOutput,
-                conversationSnapshot
+                conversationSnapshot,
+                includeRichContentPrompt
             )
         }
 
@@ -549,7 +555,8 @@ class ChatRepositoryImpl @Inject constructor(
                 reasoningMode,
                 extraPrompt,
                 emitEstimatedUsageWithoutOutput,
-                conversationSnapshot
+                conversationSnapshot,
+                includeRichContentPrompt
             )
         }
     }
@@ -635,7 +642,8 @@ class ChatRepositoryImpl @Inject constructor(
                         reasoningMode = reasoningPolicy.resolve(reasoningMode),
                         extraPrompt = toolPrompt,
                         emitEstimatedUsageWithoutOutput = true,
-                        conversationSnapshot = frozenConversationSnapshot.takeIf { visualMessages == null }
+                        conversationSnapshot = frozenConversationSnapshot.takeIf { visualMessages == null },
+                        includeRichContentPrompt = false
                     ),
                     maxChars = config.maxToolProtocolResponseChars(),
                     onThinking = { thinkingChunk -> emit(ApiState.Thinking(thinkingChunk)) },
@@ -1274,7 +1282,10 @@ class ChatRepositoryImpl @Inject constructor(
                     .takeIf { definitions -> definitions.isNotEmpty() }
                     ?.let { definitions -> openAIResponsesToolAdapter.toResponseTools(definitions) },
                 toolChoice = ResponseToolChoice.None.takeIf { finalToolDefinitions.isNotEmpty() },
-                extraInstruction = nativeFinalToolInstruction(allResults),
+                extraInstruction = mergePromptSections(
+                    nativeFinalToolInstruction(allResults),
+                    RichContentPromptBuilder().build()
+                ),
                 nativePrefixItems = nativeExchange.replayItems,
                 contextManagement = nativeExchange.contextManagement,
                 assembledInputSuperseded = nativeExchange.supersedesAssembledInput
@@ -1702,7 +1713,10 @@ class ChatRepositoryImpl @Inject constructor(
                 toolChoice = ChatCompletionToolChoice.None.takeIf {
                     platform.compatibleType != ClientType.GLM && finalToolDefinitions.isNotEmpty()
                 },
-                extraInstruction = nativeFinalToolInstruction(allResults)
+                extraInstruction = mergePromptSections(
+                    nativeFinalToolInstruction(allResults),
+                    RichContentPromptBuilder().build()
+                )
             ),
             timeoutSeconds = platform.timeout,
             platform = platform,
@@ -2133,7 +2147,10 @@ class ChatRepositoryImpl @Inject constructor(
                     .takeIf { definitions -> definitions.isNotEmpty() }
                     ?.let { definitions -> anthropicNativeToolAdapter.toAnthropicTools(definitions) },
                 toolChoice = AnthropicToolChoice.None.takeIf { finalToolDefinitions.isNotEmpty() },
-                extraInstruction = nativeFinalToolInstruction(allResults)
+                extraInstruction = mergePromptSections(
+                    nativeFinalToolInstruction(allResults),
+                    RichContentPromptBuilder().build()
+                )
             ),
             timeoutSeconds = platform.timeout,
             platform = platform,
@@ -2521,7 +2538,10 @@ class ChatRepositoryImpl @Inject constructor(
                     .takeIf { definitions -> definitions.isNotEmpty() }
                     ?.let { definitions -> googleNativeToolAdapter.toGoogleTools(definitions) },
                 toolConfig = GoogleToolConfig.None.takeIf { finalToolDefinitions.isNotEmpty() },
-                extraInstruction = nativeFinalToolInstruction(allResults)
+                extraInstruction = mergePromptSections(
+                    nativeFinalToolInstruction(allResults),
+                    RichContentPromptBuilder().build()
+                )
             ),
             model = platform.model,
             timeoutSeconds = platform.timeout,
@@ -2657,7 +2677,8 @@ class ChatRepositoryImpl @Inject constructor(
         reasoningMode: ReasoningMode,
         extraPrompt: String? = null,
         emitEstimatedUsageWithoutOutput: Boolean = false,
-        conversationSnapshot: ProviderConversationSnapshot? = null
+        conversationSnapshot: ProviderConversationSnapshot? = null,
+        includeRichContentPrompt: Boolean = true
     ): Flow<ApiState> = try {
         val traceContext = promptTraceContext(userMessages, platform)
         // Captured by `prepare` and read back by `stream`. `streamPreparedApiState` runs the two in
@@ -2688,7 +2709,8 @@ class ChatRepositoryImpl @Inject constructor(
                             frozenConversation.runtimeContextPrompt,
                             memoryPrompt,
                             conversationContext.summary,
-                            extraPrompt
+                            extraPrompt,
+                            includeRichContentPrompt = includeRichContentPrompt
                         ),
                         temperature = if (reasoningParameters.hasExplicitReasoning) null else platform.temperature,
                         topP = if (reasoningParameters.hasExplicitReasoning) null else platform.topP,
@@ -2785,7 +2807,8 @@ class ChatRepositoryImpl @Inject constructor(
         reasoningMode: ReasoningMode,
         extraPrompt: String? = null,
         emitEstimatedUsageWithoutOutput: Boolean = false,
-        conversationSnapshot: ProviderConversationSnapshot? = null
+        conversationSnapshot: ProviderConversationSnapshot? = null,
+        includeRichContentPrompt: Boolean = true
     ): Flow<ApiState> = try {
         val traceContext = promptTraceContext(userMessages, platform)
         streamPreparedApiState(
@@ -2801,7 +2824,8 @@ class ChatRepositoryImpl @Inject constructor(
                         frozenConversation.runtimeContextPrompt,
                         memoryPrompt,
                         conversationContext.summary,
-                        extraPrompt
+                        extraPrompt,
+                        includeRichContentPrompt = includeRichContentPrompt
                     )
                 )
 
@@ -2883,7 +2907,8 @@ class ChatRepositoryImpl @Inject constructor(
         reasoningMode: ReasoningMode,
         extraPrompt: String? = null,
         emitEstimatedUsageWithoutOutput: Boolean = false,
-        conversationSnapshot: ProviderConversationSnapshot? = null
+        conversationSnapshot: ProviderConversationSnapshot? = null,
+        includeRichContentPrompt: Boolean = true
     ): Flow<ApiState> = try {
         val traceContext = promptTraceContext(userMessages, platform)
 
@@ -2901,7 +2926,8 @@ class ChatRepositoryImpl @Inject constructor(
                         frozenConversation.runtimeContextPrompt,
                         memoryPrompt,
                         conversationContext.summary,
-                        extraPrompt
+                        extraPrompt,
+                        includeRichContentPrompt = includeRichContentPrompt
                     )
                 )
 
@@ -3435,7 +3461,8 @@ class ChatRepositoryImpl @Inject constructor(
         reasoningMode: ReasoningMode,
         extraPrompt: String? = null,
         emitEstimatedUsageWithoutOutput: Boolean = false,
-        conversationSnapshot: ProviderConversationSnapshot? = null
+        conversationSnapshot: ProviderConversationSnapshot? = null,
+        includeRichContentPrompt: Boolean = true
     ): Flow<ApiState> = try {
         val traceContext = promptTraceContext(userMessages, platform)
 
@@ -3458,7 +3485,8 @@ class ChatRepositoryImpl @Inject constructor(
                             frozenConversation.runtimeContextPrompt,
                             memoryPrompt,
                             conversationContext.summary,
-                            extraPrompt
+                            extraPrompt,
+                            includeRichContentPrompt = includeRichContentPrompt
                         ),
                         temperature = if (reasoningParameters.hasExplicitReasoning) null else platform.temperature,
                         topP = if (reasoningParameters.hasExplicitReasoning) null else platform.topP,
@@ -3581,7 +3609,8 @@ class ChatRepositoryImpl @Inject constructor(
         reasoningMode: ReasoningMode,
         extraPrompt: String? = null,
         emitEstimatedUsageWithoutOutput: Boolean = false,
-        conversationSnapshot: ProviderConversationSnapshot? = null
+        conversationSnapshot: ProviderConversationSnapshot? = null,
+        includeRichContentPrompt: Boolean = true
     ): Flow<ApiState> = try {
         val traceContext = promptTraceContext(userMessages, platform)
 
@@ -3611,7 +3640,8 @@ class ChatRepositoryImpl @Inject constructor(
                             frozenConversation.runtimeContextPrompt,
                             memoryPrompt,
                             conversationContext.summary,
-                            extraPrompt
+                            extraPrompt,
+                            includeRichContentPrompt = includeRichContentPrompt
                         )?.let {
                             Content(
                                 parts = listOf(Part.text(it))
@@ -4546,7 +4576,8 @@ private fun chatSystemPrompt(
     runtimeContextPrompt: String?,
     memoryPrompt: String?,
     contextSummary: String?,
-    extraPrompt: String? = null
+    extraPrompt: String? = null,
+    includeRichContentPrompt: Boolean = false
 ): String? = mergePromptSections(
     CoreSystemPrompt.TEXT,
     mergePromptSections(
@@ -4554,7 +4585,8 @@ private fun chatSystemPrompt(
         runtimeContextPrompt,
         memoryPrompt,
         contextSummary,
-        extraPrompt
+        extraPrompt,
+        if (includeRichContentPrompt) RichContentPromptBuilder().build() else null
     )
 )
 

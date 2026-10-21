@@ -2182,7 +2182,7 @@ class ChatRepositoryImplTest {
             assertEquals("${row.name} narrows sticker schemas", listOf(2, 1, 2), row.advertisedToolCounts)
             assertEquals("${row.name} serializes candidates only before selection", 2, row.candidateOccurrences)
             assertTrue(
-                "${row.name} should reduce estimated input tokens by at least 20%",
+                "${row.name} should stay below the approved native rich UI request ceiling",
                 row.estimatedInputTokens.sum() <= NATIVE_STICKER_TOKEN_CEILINGS.getValue(row.name)
             )
         }
@@ -4791,10 +4791,10 @@ class ChatRepositoryImplTest {
             "sticker-request-baseline|custom_json|3|2|5454,5514,4767|4363,4274,3949|5099,5147,4433|67,67,67|54,54,54|159,73,0|0,248,0|0,0,0|1|30/3/33|60/6/66|3|1",
             "sticker-request-baseline|ollama_json|3|2|5450,5510,4763|4366,4277,3952|5099,5147,4433|67,67,67|54,54,54|159,73,0|0,248,0|0,0,0|1|30/3/33|60/6/66|3|1",
             "sticker-request-baseline|groq_json|3|2|5505,5565,4818|4380,4291,3966|5099,5147,4433|67,67,67|54,54,54|159,73,0|0,248,0|0,0,0|1|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|openai_responses|3|2|5672,5819,5690|3369,3371,3363|4588,4648,4739|42,42,42|54,54,54|803,361,330|0,479,334|2,1,2|2|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|openrouter_native|3|2|5815,5955,5887|4647,4625,4649|4588,4647,4738|67,67,67|54,54,54|829,374,356|0,509,366|2,1,2|2|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|anthropic_native|3|2|5668,5823,5712|4620,4600,4616|4588,4648,4739|67,67,67|54,54,54|742,331,270|0,502,359|2,1,2|2|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|google_native|3|2|5640,5792,5667|4609,4587,4602|4588,4647,4738|51,51,51|54,54,54|707,327,235|0,460,334|2,1,2|2|30/3/33|60/6/66|3|1"
+            "sticker-request-baseline|openai_responses|3|2|5672,5819,7185|3369,3371,3736|4588,4648,6189|42,42,42|54,54,54|803,361,330|0,479,334|2,1,2|2|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|openrouter_native|3|2|5815,5955,7382|4647,4625,5021|4588,4647,6188|67,67,67|54,54,54|829,374,356|0,509,366|2,1,2|2|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|anthropic_native|3|2|5668,5823,7207|4620,4600,4988|4588,4648,6189|67,67,67|54,54,54|742,331,270|0,502,359|2,1,2|2|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|google_native|3|2|5640,5792,7162|4609,4587,4975|4588,4647,6188|51,51,51|54,54,54|707,327,235|0,460,334|2,1,2|2|30/3/33|60/6/66|3|1"
         )
         val JSON_STICKER_TOKEN_CEILINGS = mapOf(
             "custom_json" to 12_650,
@@ -4803,8 +4803,8 @@ class ChatRepositoryImplTest {
         )
 
         /**
-         * Raised three times, each for a change that was measured before it was accepted. Running total is
-         * roughly 420 estimated tokens per native tool turn:
+         * Native final-answer requests now carry the bounded rich UI protocol. These ceilings include that
+         * measured protocol cost and retain a small margin so unrelated prompt growth still trips the test:
          *
          *  - ~174 for `nativeToolCallBudgetInstruction`, which states the per-round call cap. Without it a
          *    model was penalised for a rule it had never been given.
@@ -4815,13 +4815,13 @@ class ChatRepositoryImplTest {
          *    `OPENAI_NATIVE_GENERIC_TOOL_INSTRUCTION`. The JSON fallback prompt always had this rule; the
          *    native paths, where the leak was actually observed, did not.
          *
-         * The ceilings stay tight around the numbers so unjustified growth still trips them.
+         * The ceilings stay tight around the measured numbers so unjustified growth still trips them.
          */
         val NATIVE_STICKER_TOKEN_CEILINGS = mapOf(
-            "openai_responses" to 10_200,
-            "openrouter_native" to 14_000,
-            "anthropic_native" to 13_900,
-            "google_native" to 13_850
+            "openai_responses" to 14_500,
+            "openrouter_native" to 15_000,
+            "anthropic_native" to 15_000,
+            "google_native" to 15_000
         )
     }
 

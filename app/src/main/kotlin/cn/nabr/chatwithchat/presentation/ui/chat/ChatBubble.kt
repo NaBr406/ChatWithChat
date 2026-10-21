@@ -71,6 +71,7 @@ import cn.nabr.chatwithchat.data.database.entity.safeNavigationTarget
 import cn.nabr.chatwithchat.presentation.common.LocalAttachmentPreviewLauncher
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.theme.ChatWithChatTheme
+import cn.nabr.chatwithchat.presentation.ui.chat.richcontent.RichChatContent
 import cn.nabr.chatwithchat.util.AttachmentNaming
 import java.io.File
 
@@ -132,6 +133,7 @@ fun OpponentChatBubble(
     canShowPreviousRevision: Boolean = false,
     canShowNextRevision: Boolean = false,
     canShowActions: Boolean = true,
+    renderRichContent: Boolean = false,
     onCopyClick: () -> Unit = {},
     onSelectClick: () -> Unit = {},
     onRetryClick: () -> Unit = {},
@@ -184,11 +186,19 @@ fun OpponentChatBubble(
                     ResponseLoadingIndicator()
                 }
                 displayText.isNotBlank() || !isLoading -> {
-                    if (isTextAnimating) {
+                    if (renderRichContent) {
+                        RichChatContent(
+                            content = displayText,
+                            isStreaming = isLoading,
+                            contentIdentity = contentIdentity,
+                            contentColor = MaterialTheme.colorScheme.onBackground,
+                            modifier = Modifier.padding(vertical = 6.dp)
+                        )
+                    } else if (isLoading || isTextAnimating) {
                         IncrementalChatMarkdown(
                             content = displayText,
-                            isStreaming = true,
-                            isPendingAnimating = true,
+                            isStreaming = isLoading,
+                            isPendingAnimating = isTextAnimating,
                             contentIdentity = contentIdentity,
                             useMathJax = false,
                             contentColor = MaterialTheme.colorScheme.onBackground,
