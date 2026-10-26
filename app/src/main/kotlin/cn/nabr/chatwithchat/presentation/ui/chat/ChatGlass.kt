@@ -54,6 +54,7 @@ internal fun Modifier.chatTopBarBackground(): Modifier {
 @Composable
 internal fun ChatGlassScope(
     backdrop: LayerBackdrop = rememberLayerBackdrop(),
+    enabled: Boolean = true,
     content: @Composable () -> Unit
 ) {
     var windowOrigin by remember { mutableStateOf(Offset.Zero) }
@@ -62,7 +63,7 @@ internal fun ChatGlassScope(
             windowOrigin = it.positionOnScreen() - it.positionInWindow()
         }
     ) {
-        CompositionLocalProvider(LocalChatGlass provides ChatGlassContext(backdrop, windowOrigin)) {
+        CompositionLocalProvider(LocalChatGlass provides if (enabled) ChatGlassContext(backdrop, windowOrigin) else null) {
             content()
         }
     }

@@ -116,7 +116,6 @@ import cn.nabr.chatwithchat.presentation.common.settingsCanvasBackground
 import cn.nabr.chatwithchat.presentation.common.settingsDropdownMenuItemColors
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import com.kyant.backdrop.backdrops.layerBackdrop
-import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import java.io.File
 import kotlin.math.abs
 import kotlinx.coroutines.CancellationException
@@ -190,7 +189,10 @@ fun ChatScreen(
         }
     }
 
-    ChatGlassScope {
+    val glassPolicy = remember(chatViewModel) { ChatGlassPolicy() }
+    // Resolve before composing any child WebView, including one in an older turn.
+    val glassEnabled = glassPolicy.isEnabled(groupedMessages.assistantMessages, indexStates)
+    ChatGlassScope(enabled = glassEnabled) {
         ChatContent(
             title = chatRoom.title,
             currentModelLabel = currentModelLabel,
@@ -416,7 +418,7 @@ internal fun ChatContent(
     val maximumUserChatBubbleWidth = ((screenWidthDp - systemChatMargin) * 0.78F).coerceAtMost(560.dp)
     val maximumOpponentChatBubbleWidth = screenWidthDp - systemChatMargin
     val listState = rememberLazyListState()
-    val composerBackdrop = LocalChatGlass.current?.backdrop ?: rememberLayerBackdrop()
+    val composerBackdrop = LocalChatGlass.current?.backdrop
     val composerDensity = LocalDensity.current
     var composerHeight by remember { mutableStateOf(68.dp) }
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
@@ -709,7 +711,7 @@ internal fun ChatContent(
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
-                        .layerBackdrop(composerBackdrop)
+                        .then(if (composerBackdrop != null) Modifier.layerBackdrop(composerBackdrop) else Modifier)
                         .settingsCanvasBackground(),
                     state = listState,
                     contentPadding = PaddingValues(
