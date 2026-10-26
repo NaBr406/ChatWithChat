@@ -86,6 +86,9 @@ import cn.nabr.chatwithchat.data.network.OpenAIAPI
 import cn.nabr.chatwithchat.data.network.ProviderEndpoint
 import cn.nabr.chatwithchat.data.network.UploadedProviderFile
 import cn.nabr.chatwithchat.data.prompt.CoreSystemPrompt
+import cn.nabr.chatwithchat.data.richcontent.RichContentParser
+import cn.nabr.chatwithchat.data.richcontent.RichContentPromptBuilder
+import cn.nabr.chatwithchat.data.richcontent.RichNode
 import cn.nabr.chatwithchat.data.sticker.StickerCatalogItem
 import cn.nabr.chatwithchat.data.sticker.StickerImportBatchResult
 import cn.nabr.chatwithchat.data.sticker.StickerItemMetadata
@@ -127,7 +130,9 @@ import java.lang.reflect.InvocationHandler
 import java.lang.reflect.Proxy
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
@@ -524,6 +529,7 @@ class ChatRepositoryImplTest {
         assertNull(request.topP)
         assertEquals(ChatCompletionToolChoice.Auto, request.toolChoice)
         assertTrue(request.systemText().contains("运行时上下文"))
+        assertRichAnswerGuidanceOnce(request.systemText())
         assertTrue(request.systemText().contains("除非工具定义明确允许用于自主表达"))
         val discoveryTool = request.tools.orEmpty().single { tool ->
             tool.function.name == ToolDefinition.DiscoverTools.name
@@ -582,6 +588,8 @@ class ChatRepositoryImplTest {
         assertEquals(ChatCompletionToolChoice.Auto, toolRound.toolChoice)
 
         val finalRound = openAIAPI.chatCompletionRequests.last()
+        assertRichAnswerGuidanceOnce(toolRound.systemText())
+        assertRichAnswerGuidanceOnce(finalRound.systemText())
         assertEquals(listOf(usedTool.name), finalRound.tools.orEmpty().map { tool -> tool.function.name })
         assertEquals(ChatCompletionToolChoice.None, finalRound.toolChoice)
         assertTrue(
@@ -1009,6 +1017,10 @@ class ChatRepositoryImplTest {
         assertTrue(fallbackRequest.systemText().contains("\"type\":\"final_answer\""))
         assertTrue(fallbackRequest.systemText().contains("search_stickers(query:string!, limit:integer)"))
         assertTrue(fallbackRequest.systemText().contains("send_sticker(sticker_id:string!)"))
+        assertRichAnswerGuidanceOnce(nativeRequest.systemText())
+        assertRichAnswerGuidanceOnce(fallbackRequest.systemText())
+        assertTrue(fallbackRequest.systemText().contains("ONLY to the decoded final_answer.content string"))
+        assertTrue(fallbackRequest.systemText().contains("Return one valid JSON object"))
         assertFalse(fallbackRequest.systemText().contains("\"类型\""))
     }
 
@@ -1162,6 +1174,7 @@ class ChatRepositoryImplTest {
             states.withoutUsageUpdates()
         )
         assertEquals(2, openAIAPI.chatCompletionRequests.size)
+        openAIAPI.chatCompletionRequests.forEach { request -> assertRichAnswerGuidanceOnce(request.systemText()) }
         assertTrue(openAIAPI.chatCompletionRequests.all { request -> request.thinking == null })
         assertTrue(openAIAPI.chatCompletionRequests.all { request -> request.temperature == null && request.topP == null })
         assertTrue(
@@ -1437,6 +1450,9 @@ class ChatRepositoryImplTest {
         assertTrue(openAIAPI.chatCompletionRequests[1].systemText().contains("https://example.com/source"))
         assertTrue(openAIAPI.chatCompletionRequests[2].systemText().contains("已有针对用户最新请求的工具结果"))
         assertTrue(openAIAPI.chatCompletionRequests[2].systemText().contains("Draft searched answer"))
+        openAIAPI.chatCompletionRequests.forEach { request -> assertRichAnswerGuidanceOnce(request.systemText()) }
+        assertTrue(openAIAPI.chatCompletionRequests[0].systemText().contains("ONLY to the decoded final_answer.content string"))
+        assertFalse(openAIAPI.chatCompletionRequests[2].systemText().contains("Answer formatting within the tool JSON protocol"))
     }
 
     @Test
@@ -1475,6 +1491,230 @@ class ChatRepositoryImplTest {
         assertTrue(webSearchRepository.queries.isEmpty())
         assertEquals(1, openAIAPI.streamChatCompletionCalls)
         assertFalse(openAIAPI.chatCompletionRequests.single().systemText().contains("Enabled tool signatures:"))
+        assertRichAnswerGuidanceOnce(openAIAPI.chatCompletionRequests.single().systemText())
+    }
+
+    @Test
+    fun `json direct answer decodes rich content without changing the tool envelope or adding a request`() = runBlocking {
+        val content = """
+            <ui-card title="迁移计划">
+            先保留现状，再验证新版本。
+            <ui-steps>
+            <ui-step title="备份">
+            保存当前配置。
+            </ui-step>
+            <ui-step title="验证">
+            用备份恢复后检查结果。
+            </ui-step>
+            </ui-steps>
+            <ui-callout tone="info" title="验收">
+            恢复验证通过后再迁移。
+            </ui-callout>
+            </ui-card>
+        """.trimIndent()
+        val envelope = buildJsonObject {
+            put("type", JsonPrimitive("final_answer"))
+            put("content", JsonPrimitive(content))
+        }.toString()
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(chatCompletionFlow(envelope))
+        )
+        val states = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(WebSearchMode.Off, ToolCallingMode.Auto)
+        ).completeChat(
+            userMessages = listOf(MessageV2(content = "帮我制定迁移计划", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform()
+        ).toList()
+
+        assertEquals(content, states.filterIsInstance<ApiState.Success>().joinToString("") { it.textChunk })
+        val request = openAIAPI.chatCompletionRequests.single()
+        assertNull(request.tools)
+        assertNull(request.toolChoice)
+        assertTrue(request.systemText().contains("Enabled tool signatures:"))
+        assertTrue(request.systemText().contains("ONLY to the decoded final_answer.content string"))
+        assertRichAnswerGuidanceOnce(request.systemText())
+        val document = RichContentParser().parse(content)
+        assertTrue(document.diagnostics.toString(), document.diagnostics.isEmpty())
+        assertEquals("ui-card", (document.nodes.single() as RichNode.Component).name)
+    }
+
+    @Test
+    fun `opencode deepseek json answer streams decoded content before provider finishes`() = runBlocking {
+        val firstBodyReceived = CompletableDeferred<Unit>()
+        var providerFinished = false
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                flow {
+                    emit(ChatCompletionChunk(choices = listOf(Choice(index = 0, delta = Delta(reasoningContent = "Plan")))))
+                    emit(ChatCompletionChunk(choices = listOf(Choice(index = 0, delta = Delta(content = """{"type":"final_answer","content":"First""")))))
+                    firstBodyReceived.await()
+                    emit(ChatCompletionChunk(choices = listOf(Choice(index = 0, delta = Delta(content = "\\nSecond")))))
+                    emit(ChatCompletionChunk(choices = listOf(Choice(index = 0, delta = Delta(content = "\"}")))))
+                    providerFinished = true
+                }
+            )
+        )
+        val states = mutableListOf<ApiState>()
+        withTimeout(3_000) {
+            createRepository(
+                openAIAPI = openAIAPI,
+                settingRepository = settingRepository(WebSearchMode.Off, ToolCallingMode.Auto)
+            ).completeChat(
+                userMessages = listOf(MessageV2(content = "Explain", platformType = null)),
+                assistantMessages = emptyList(),
+                platform = customPlatform().copy(apiUrl = "https://opencode.ai/zen/go/v1", model = "deepseek-v4-pro")
+            ).collect { state ->
+                states += state
+                if (state is ApiState.Success && !firstBodyReceived.isCompleted) {
+                    assertEquals("First", state.textChunk)
+                    assertFalse(providerFinished)
+                    firstBodyReceived.complete(Unit)
+                }
+            }
+        }
+        assertTrue(providerFinished)
+        assertEquals("First\nSecond", states.filterIsInstance<ApiState.Success>().joinToString("") { it.textChunk })
+        assertEquals(1, openAIAPI.streamChatCompletionCalls)
+        assertEquals(ApiState.Done, states.last())
+    }
+
+    @Test
+    fun `json preview rolls back malformed and duplicate key content before final display`() = runBlocking {
+        listOf(
+            """{"type":"final_answer","content":"Preview""" to listOf("Recovered"),
+            """{"type":"final_answer","content":"Preview","content":"Correct"}""" to emptyList()
+        ).forEach { (envelope, fallbackAnswers) ->
+            val openAIAPI = RecordingOpenAIAPI(
+                chatCompletionResponses = (listOf(chatCompletionFlow(envelope)) + fallbackAnswers.map { chatCompletionFlow(it) }).toMutableList()
+            )
+            val states = createRepository(
+                openAIAPI = openAIAPI,
+                settingRepository = settingRepository(WebSearchMode.Off, ToolCallingMode.Auto)
+            ).completeChat(
+                userMessages = listOf(MessageV2(content = "Explain", platformType = null)),
+                assistantMessages = emptyList(),
+                platform = customPlatform()
+            ).toList()
+            assertTrue(states.any { it is ApiState.Success && it.textChunk == "Preview" })
+            val rollbackIndex = states.indexOfFirst { it is ApiState.StreamRollback }
+            assertTrue(rollbackIndex >= 0)
+            assertTrue(rollbackIndex < states.indexOfLast { it is ApiState.Success })
+            assertEquals(fallbackAnswers.singleOrNull() ?: "Correct", states.visibleBodyAfterStreamControls())
+            assertEquals(1 + fallbackAnswers.size, openAIAPI.streamChatCompletionCalls)
+        }
+    }
+
+    @Test
+    fun `json content before type stays buffered and is emitted once after validation`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(chatCompletionFlow("""{"content":"Final","type":"final_answer"}"""))
+        )
+        val states = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(WebSearchMode.Off, ToolCallingMode.Auto)
+        ).completeChat(
+            userMessages = listOf(MessageV2(content = "Explain", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform()
+        ).toList()
+        assertEquals(listOf(ApiState.Success("Final")), states.filterIsInstance<ApiState.Success>())
+        assertEquals(1, openAIAPI.streamChatCompletionCalls)
+    }
+
+    @Test
+    fun `json preview is reverted before a validated tool call executes and drafts stay private`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatCompletionFlow("""{"type":"final_answer","content":"Discard preview","type":"tool_calls","tool_calls":[{"id":"call_1","name":"current_datetime","arguments":{}}]}"""),
+                chatCompletionFlow("""{"type":"final_answer","content":"Private draft"}"""),
+                chatCompletionFlow("Final answer")
+            )
+        )
+        val states = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(WebSearchMode.Off, ToolCallingMode.Auto)
+        ).completeChat(
+            userMessages = listOf(MessageV2(content = "What time is it?", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform()
+        ).toList()
+        val rollbackIndex = states.indexOfFirst { it is ApiState.StreamRollback }
+        val toolIndex = states.indexOfFirst { it is ApiState.ToolStarted }
+        assertTrue(rollbackIndex >= 0 && toolIndex > rollbackIndex)
+        assertEquals("Final answer", states.visibleBodyAfterStreamControls())
+        assertFalse(states.filterIsInstance<ApiState.Success>().any { it.textChunk.contains("Private draft") || it.textChunk.contains("arguments") })
+        assertEquals(3, openAIAPI.streamChatCompletionCalls)
+    }
+
+    @Test
+    fun `json final answer whitespace survives preview and final validation without duplication`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(chatCompletionFlow("""{"type":"final_answer","content":" \nAnswer\t "}"""))
+        )
+        val states = createRepository(
+            openAIAPI = openAIAPI,
+            settingRepository = settingRepository(WebSearchMode.Off, ToolCallingMode.Auto)
+        ).completeChat(
+            userMessages = listOf(MessageV2(content = "Explain", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform()
+        ).toList()
+        assertEquals(" \nAnswer\t ", states.filterIsInstance<ApiState.Success>().joinToString("") { it.textChunk })
+        assertFalse(states.any { it is ApiState.StreamRollback })
+    }
+
+    @Test
+    fun `json network retry rolls back preview and decodes the replacement without duplicates`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                flow {
+                    emit(ChatCompletionChunk(choices = listOf(Choice(index = 0, delta = Delta(content = """{"type":"final_answer","content":"Discarded""")))))
+                    throw IOException("disconnected")
+                },
+                chatCompletionFlow("""{"type":"final_answer","content":"Replacement"}""")
+            )
+        )
+        val states = withTimeout(5_000) {
+            createRepository(
+                openAIAPI = openAIAPI,
+                settingRepository = settingRepository(WebSearchMode.Off, ToolCallingMode.Auto)
+            ).completeChat(
+                userMessages = listOf(MessageV2(content = "Explain", platformType = null)),
+                assistantMessages = emptyList(),
+                platform = customPlatform()
+            ).toList()
+        }
+        assertTrue(states.any { it is ApiState.Success && it.textChunk == "Discarded" })
+        assertTrue(states.any { it is ApiState.StreamRollback })
+        assertEquals("Replacement", states.visibleBodyAfterStreamControls())
+        assertEquals(2, openAIAPI.streamChatCompletionCalls)
+    }
+
+    @Test
+    fun `stopping a json answer retains its visible partial content`() = runBlocking {
+        val openAIAPI = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(chatCompletionFlow("""{"type":"final_answer","content":"Partial"""))
+        )
+        val states = mutableListOf<ApiState>()
+        try {
+            createRepository(
+                openAIAPI = openAIAPI,
+                settingRepository = settingRepository(WebSearchMode.Off, ToolCallingMode.Auto)
+            ).completeChat(
+                userMessages = listOf(MessageV2(content = "Explain", platformType = null)),
+                assistantMessages = emptyList(),
+                platform = customPlatform()
+            ).collect { state ->
+                states += state
+                if (state is ApiState.Success) throw CancellationException("User stopped")
+            }
+        } catch (_: CancellationException) {
+            // Same cancellation signal used by the UI's stop action.
+        }
+        assertEquals("Partial", states.visibleBodyAfterStreamControls())
+        assertFalse(states.any { it is ApiState.StreamRollback })
     }
 
     @Test
@@ -2169,7 +2409,7 @@ class ChatRepositoryImplTest {
             assertTrue(row.advertisedToolCounts.all { count -> count == 0 })
             assertEquals("${row.name} candidate projection", 1, row.candidateOccurrences)
             assertTrue(
-                "${row.name} should reduce estimated input tokens by at least 30%",
+                "${row.name} should stay within the full answer-capable JSON request budget",
                 row.estimatedInputTokens.sum() <= JSON_STICKER_TOKEN_CEILINGS.getValue(row.name)
             )
         }
@@ -2182,7 +2422,7 @@ class ChatRepositoryImplTest {
             assertEquals("${row.name} narrows sticker schemas", listOf(2, 1, 2), row.advertisedToolCounts)
             assertEquals("${row.name} serializes candidates only before selection", 2, row.candidateOccurrences)
             assertTrue(
-                "${row.name} should stay below the approved native rich UI request ceiling",
+                "${row.name} should stay within the full answer-capable native request budget",
                 row.estimatedInputTokens.sum() <= NATIVE_STICKER_TOKEN_CEILINGS.getValue(row.name)
             )
         }
@@ -4785,43 +5025,35 @@ class ChatRepositoryImplTest {
         val OPT_IN_BUILT_IN_TOOL_NAMES = setOf(ToolDefinition.DeviceLocation.name)
         val BASELINE_RUNTIME_DATE_TIME_REGEX = Regex("\\d{4}-\\d{2}-\\d{2} 星期.（[^）]*）")
         val EXPECTED_STICKER_BASELINE_ROWS = listOf(
-            // These baselines include the shared core system prompt on every provider request. The core
-            // prompt is intentionally provider- and tool-agnostic; concrete tool names still come only
-            // from the active tool definitions, so disabled tools never leak into the system prompt.
-            "sticker-request-baseline|custom_json|3|2|5454,5514,4767|4363,4274,3949|5099,5147,4433|67,67,67|54,54,54|159,73,0|0,248,0|0,0,0|1|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|ollama_json|3|2|5450,5510,4763|4366,4277,3952|5099,5147,4433|67,67,67|54,54,54|159,73,0|0,248,0|0,0,0|1|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|groq_json|3|2|5505,5565,4818|4380,4291,3966|5099,5147,4433|67,67,67|54,54,54|159,73,0|0,248,0|0,0,0|1|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|openai_responses|3|2|5672,5819,7185|3369,3371,3736|4588,4648,6189|42,42,42|54,54,54|803,361,330|0,479,334|2,1,2|2|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|openrouter_native|3|2|5815,5955,7382|4647,4625,5021|4588,4647,6188|67,67,67|54,54,54|829,374,356|0,509,366|2,1,2|2|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|anthropic_native|3|2|5668,5823,7207|4620,4600,4988|4588,4648,6189|67,67,67|54,54,54|742,331,270|0,502,359|2,1,2|2|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|google_native|3|2|5640,5792,7162|4609,4587,4975|4588,4647,6188|51,51,51|54,54,54|707,327,235|0,460,334|2,1,2|2|30/3/33|60/6/66|3|1"
-        )
-        val JSON_STICKER_TOKEN_CEILINGS = mapOf(
-            "custom_json" to 12_650,
-            "ollama_json" to 12_650,
-            "groq_json" to 12_700
+            // Raw serialized requests include the core prompt and the rich catalog in every round that
+            // can answer the user, with content-scoped JSON instructions in the fallback protocol.
+            "sticker-request-baseline|custom_json|3|2|42508,42568,41821|14631,14542,14217|40979,41027,40313|67,67,67|54,54,54|159,73,0|0,248,0|0,0,0|1|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|ollama_json|3|2|42504,42564,41817|14634,14545,14220|40979,41027,40313|67,67,67|54,54,54|159,73,0|0,248,0|0,0,0|1|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|groq_json|3|2|42559,42619,41872|14648,14559,14234|40979,41027,40313|67,67,67|54,54,54|159,73,0|0,248,0|0,0,0|1|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|openai_responses|3|2|42256,42403,42274|13521,13524,13516|40019,40079,40170|42,42,42|54,54,54|803,361,330|0,479,334|2,1,2|2|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|openrouter_native|3|2|42399,42539,42471|14806,14784,14808|40019,40078,40169|67,67,67|54,54,54|829,374,356|0,509,366|2,1,2|2|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|anthropic_native|3|2|42252,42407,42296|14779,14760,14776|40019,40079,40170|67,67,67|54,54,54|742,331,270|0,502,359|2,1,2|2|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|google_native|3|2|42224,42376,42251|14768,14746,14761|40019,40078,40169|51,51,51|54,54,54|707,327,235|0,460,334|2,1,2|2|30/3/33|60/6/66|3|1"
         )
 
         /**
-         * Native final-answer requests now carry the bounded rich UI protocol. These ceilings include that
-         * measured protocol cost and retain a small margin so unrelated prompt growth still trips the test:
-         *
-         *  - ~174 for `nativeToolCallBudgetInstruction`, which states the per-round call cap. Without it a
-         *    model was penalised for a rule it had never been given.
-         *  - ~120 for `declaredForFinalAnswer`. Declaring the tools that ran with their real schemas cost
-         *    350; the name-only stubs brought it down, since `tool_choice` forbids calling and no schema can
-         *    be consumed.
-         *  - ~126 for the "never write a call into the answer text" clause on
-         *    `OPENAI_NATIVE_GENERIC_TOOL_INSTRUCTION`. The JSON fallback prompt always had this rule; the
-         *    native paths, where the leak was actually observed, did not.
-         *
-         * The ceilings stay tight around the measured numbers so unjustified growth still trips them.
+         * Measured full requests, including rich formatting in all answer-capable rounds. The earlier
+         * JSON 30% savings ceiling and native final-only protocol ceiling describe different prompts and
+         * cannot serve as comparisons for this feature. Request counts, narrowed schemas, and candidate
+         * duplication remain checked above; these raw token budgets allow only 48-55 tokens of margin
+         * over the measured totals so unrelated prompt growth still fails.
          */
+        val JSON_STICKER_TOKEN_CEILINGS = mapOf(
+            "custom_json" to 43_439,
+            "ollama_json" to 43_449,
+            "groq_json" to 43_489
+        )
+
         val NATIVE_STICKER_TOKEN_CEILINGS = mapOf(
-            "openai_responses" to 14_500,
-            "openrouter_native" to 15_000,
-            "anthropic_native" to 15_000,
-            "google_native" to 15_000
+            "openai_responses" to 40_613,
+            "openrouter_native" to 44_448,
+            "anthropic_native" to 44_370,
+            "google_native" to 44_328
         )
     }
 
@@ -4832,6 +5064,21 @@ class ChatRepositoryImplTest {
                 it is ApiState.StreamRollback ||
                 it is ApiState.StreamCheckpointReleased
         }
+
+    private fun List<ApiState>.visibleBodyAfterStreamControls(): String {
+        val content = StringBuilder()
+        val checkpoints = mutableMapOf<String, Int>()
+        forEach { state ->
+            when (state) {
+                is ApiState.Success -> content.append(state.textChunk)
+                is ApiState.StreamCheckpoint -> checkpoints[state.requestId] = content.length
+                is ApiState.StreamRollback -> checkpoints[state.requestId]?.let { content.setLength(it) }
+                is ApiState.StreamCheckpointReleased -> checkpoints.remove(state.requestId)
+                else -> Unit
+            }
+        }
+        return content.toString()
+    }
 
     private fun groqPlatform(reasoning: Boolean, model: String) = PlatformV2(
         uid = "groq-platform",
@@ -4940,6 +5187,10 @@ class ChatRepositoryImplTest {
         ).toList()
 
         assertEquals("Baseline draft", states.filterIsInstance<ApiState.Success>().joinToString("") { it.textChunk })
+        openAIAPI.chatCompletionRequests.forEach { request ->
+            assertRichAnswerGuidanceOnce(request.systemText())
+            assertTrue(request.systemText().contains("ONLY to the decoded final_answer.content string"))
+        }
 
         return toolRequestBaselineRow(
             name = name,
@@ -5434,12 +5685,13 @@ class ChatRepositoryImplTest {
                 message.contentText ?: message.content.filterIsInstance<OpenAITextContent>().joinToString("\n") { content -> content.text }
             }
         )
-        val fallbackSchemaChars = systemText
+        val fallbackProtocol = systemText.substringBefore("Answer formatting within the tool JSON protocol:")
+        val fallbackSchemaChars = fallbackProtocol
             .substringAfter(FALLBACK_TOOL_SCHEMA_MARKER, missingDelimiterValue = "")
             .substringBefore(FALLBACK_TOOL_SCRATCHPAD_MARKER)
             .trim()
             .length
-        val fallbackToolResultChars = systemText
+        val fallbackToolResultChars = fallbackProtocol
             .substringAfter(FALLBACK_TOOL_SCRATCHPAD_MARKER, missingDelimiterValue = "")
             .trim()
             .length
@@ -5554,6 +5806,12 @@ class ChatRepositoryImplTest {
     private fun systemText(openAIAPI: RecordingOpenAIAPI): String = openAIAPI.lastChatCompletionRequest
         ?.systemText()
         .orEmpty()
+
+    private fun assertRichAnswerGuidanceOnce(systemPrompt: String) {
+        assertEquals("each user-answer-capable request needs one rich catalog", 1, systemPrompt.split(RichContentPromptBuilder().build().trim()).size - 1)
+        assertFalse("interactive components must not be advertised", systemPrompt.contains("<ui-button"))
+        assertFalse("interactive components must not be advertised", systemPrompt.contains("<ui-slider"))
+    }
 
     private fun ChatCompletionRequest.systemText(): String = messages
         .firstOrNull()

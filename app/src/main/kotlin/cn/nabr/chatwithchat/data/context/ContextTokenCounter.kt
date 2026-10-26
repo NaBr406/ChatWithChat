@@ -23,8 +23,8 @@ internal class ContextTokenCounter private constructor(
 
     fun estimateTurn(turn: ConversationTurn): Int =
         TURN_OVERHEAD_TOKENS +
-            estimateMessage(turn.userMessage) +
-            (turn.assistantMessage?.let(::estimateMessage) ?: 0)
+            estimateMessage(turn.userMessage, isAssistant = false) +
+            (turn.assistantMessage?.let { estimateMessage(it, isAssistant = true) } ?: 0)
 
     fun estimateText(text: String): Int {
         if (text.isBlank()) return 0
@@ -59,9 +59,9 @@ internal class ContextTokenCounter private constructor(
         return compactText.take(best).trimEnd() + suffix
     }
 
-    fun estimateMessage(message: MessageV2): Int =
+    fun estimateMessage(message: MessageV2, isAssistant: Boolean = message.platformType != null): Int =
         MESSAGE_OVERHEAD_TOKENS +
-            estimateText(message.semanticAssistantContent()) +
+            estimateText(if (isAssistant) message.semanticAssistantContent() else message.content) +
             message.attachments.sumOf(::estimateAttachment)
 
     /**

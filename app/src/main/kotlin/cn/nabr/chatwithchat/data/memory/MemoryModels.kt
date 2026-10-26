@@ -1,5 +1,6 @@
 package cn.nabr.chatwithchat.data.memory
 
+import cn.nabr.chatwithchat.data.context.semanticAssistantContent
 import cn.nabr.chatwithchat.data.database.entity.ChatRoomV2
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.history.HistoryRecallSnapshot
@@ -46,9 +47,9 @@ fun buildMemoryMessages(
         val turnIndex = startIndex + offset
         messages.add(MemoryConversationMessage(role = "user", content = userMessage.content))
         assistantMessages.getOrNull(turnIndex)
-            ?.firstOrNull { it.content.isNotBlank() }
+            ?.firstOrNull { it.semanticAssistantContent().isNotBlank() }
             ?.let { assistantMessage ->
-                messages.add(MemoryConversationMessage(role = "assistant", content = assistantMessage.content))
+                messages.add(MemoryConversationMessage(role = "assistant", content = assistantMessage.semanticAssistantContent()))
             }
     }
 

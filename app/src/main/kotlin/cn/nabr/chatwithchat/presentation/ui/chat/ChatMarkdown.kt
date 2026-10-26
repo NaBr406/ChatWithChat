@@ -48,12 +48,15 @@ import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -68,15 +71,17 @@ import cn.nabr.chatwithchat.presentation.common.isSettingsDarkTheme
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import com.mikepenz.markdown.annotator.AnnotatorSettings
 import com.mikepenz.markdown.annotator.annotatorSettings
+import com.mikepenz.markdown.annotator.buildMarkdownAnnotatedString
+import com.mikepenz.markdown.compose.LocalMarkdownAnnotator
 import com.mikepenz.markdown.compose.LocalMarkdownTypography
 import com.mikepenz.markdown.compose.LocalReferenceLinkHandler
+import com.mikepenz.markdown.compose.MarkdownElement
 import com.mikepenz.markdown.compose.components.MarkdownComponentModel
 import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.compose.elements.MarkdownBlockQuote
 import com.mikepenz.markdown.compose.elements.MarkdownCodeBlock
 import com.mikepenz.markdown.compose.elements.MarkdownCodeFence
-import com.mikepenz.markdown.compose.elements.MarkdownHeader
-import com.mikepenz.markdown.compose.elements.MarkdownParagraph
+import com.mikepenz.markdown.compose.elements.MarkdownText
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.m3.markdownColor
 import com.mikepenz.markdown.m3.markdownTypography
@@ -98,6 +103,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.intellij.markdown.IElementType
 import org.intellij.markdown.MarkdownTokenTypes
+import org.intellij.markdown.ast.findChildOfType
 import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
 import org.intellij.markdown.parser.MarkdownParser
 
@@ -119,8 +125,13 @@ fun ChatMarkdown(
     useMathJax: Boolean = true,
     contentColor: Color = MaterialTheme.colorScheme.onBackground,
     style: ChatMarkdownStyle = ChatMarkdownStyle.ANSWER,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isStreaming: Boolean = false
 ) {
+    val inheritedReveal = LocalStreamingReveal.current
+    val ownReveal = remember(contentIdentity) { StreamingRevealSession() }
+    if (inheritedReveal == null) ownReveal.updateSource(content, isStreaming)
+    val reveal = inheritedReveal ?: ownReveal
     val isDarkTheme = isSettingsDarkTheme()
     val materialColors = settingsMaterialColors()
     val clipboard = LocalClipboard.current
@@ -202,7 +213,9 @@ fun ChatMarkdown(
                             code = code,
                             language = language,
                             style = style,
-                            highlightsBuilder = highlightsBuilder
+                            highlightsBuilder = highlightsBuilder,
+                            revealKey = "code:${it.node.startOffset}",
+                            sourceStart = it.node.startOffset
                         )
                     }
                 }
@@ -219,7 +232,9 @@ fun ChatMarkdown(
                             code = code,
                             language = language,
                             style = style,
-                            highlightsBuilder = highlightsBuilder
+                            highlightsBuilder = highlightsBuilder,
+                            revealKey = "code:${it.node.startOffset}",
+                            sourceStart = it.node.startOffset
                         )
                     }
                 }
@@ -280,7 +295,8 @@ fun ChatMarkdown(
                     rawTable = extractNodeText(model.content, model.node),
                     style = model.typography.paragraph,
                     annotatorSettings = chatMarkdownAnnotatorSettings(annotator),
-                    contentColor = contentColor
+                    contentColor = contentColor,
+                    sourceStart = model.node.startOffset
                 )
             },
             horizontalRule = {
@@ -299,7 +315,10 @@ fun ChatMarkdown(
         )
         val animations = markdownAnimations(animateTextSize = { this })
 
-        CompositionLocalProvider(LocalContentColor provides contentColor) {
+        CompositionLocalProvider(
+            LocalContentColor provides contentColor,
+            LocalStreamingReveal provides reveal
+        ) {
             Markdown(
                 markdownState = markdownState,
                 colors = markdownColor(
@@ -316,7 +335,16 @@ fun ChatMarkdown(
                 padding = chatMarkdownPadding(),
                 dimens = chatMarkdownDimens(),
                 animations = animations,
-                modifier = modifier
+                modifier = modifier,
+                success = { state, markdownComponents, markdownModifier ->
+                    Column(markdownModifier) {
+                        state.node.children.forEach { node ->
+                            key(node.startOffset to node.type) {
+                                MarkdownElement(node, markdownComponents, state.content)
+                            }
+                        }
+                    }
+                }
             )
         }
     }
@@ -407,7 +435,9 @@ private fun HighlightedCodeContent(
     code: String,
     language: String?,
     style: TextStyle,
-    highlightsBuilder: Highlights.Builder
+    highlightsBuilder: Highlights.Builder,
+    revealKey: Any,
+    sourceStart: Int
 ) {
     val highlightedCode by produceState(
         initialValue = AnnotatedString(code),
@@ -420,8 +450,10 @@ private fun HighlightedCodeContent(
         }
     }
 
+    val revealDrawing = rememberStreamingRevealDrawing(code, revealKey, LocalStreamingSourceOffset.current + sourceStart)
     Text(
         text = highlightedCode,
+        onTextLayout = revealDrawing.onTextLayout,
         style = style.copy(
             color = LocalContentColor.current,
             letterSpacing = 0.sp
@@ -430,6 +462,7 @@ private fun HighlightedCodeContent(
         modifier = Modifier
             .horizontalScroll(rememberScrollState())
             .padding(horizontal = 14.dp, vertical = 12.dp)
+            .then(revealDrawing.modifier)
     )
 }
 
@@ -649,8 +682,13 @@ private fun ChatMarkdownTable(
     rawTable: String,
     style: TextStyle,
     annotatorSettings: AnnotatorSettings,
-    contentColor: Color
+    contentColor: Color,
+    sourceStart: Int
 ) {
+    val rowOffsets = remember(rawTable) {
+        var offset = 0
+        rawTable.lines().map { line -> offset.also { offset += line.length + 1 } }
+    }
     val table = remember(rawTable) { parseMarkdownTable(rawTable) }
     if (table == null) {
         Text(
@@ -694,7 +732,9 @@ private fun ChatMarkdownTable(
                     annotatorSettings = annotatorSettings,
                     backgroundColor = materialColors.grouped,
                     contentColor = contentColor,
-                    isHeader = true
+                    isHeader = true,
+                    revealKey = "table:$sourceStart:header",
+                    sourceStart = sourceStart
                 )
                 if (table.rows.isNotEmpty()) {
                     HorizontalDivider(
@@ -710,7 +750,9 @@ private fun ChatMarkdownTable(
                         annotatorSettings = annotatorSettings,
                         backgroundColor = materialColors.field,
                         contentColor = contentColor,
-                        isHeader = false
+                        isHeader = false,
+                        revealKey = "table:$sourceStart:row:$index",
+                        sourceStart = sourceStart + (rowOffsets.getOrNull(index + 2) ?: rawTable.length)
                     )
                     if (index < table.rows.lastIndex) {
                         HorizontalDivider(
@@ -732,7 +774,9 @@ private fun ChatMarkdownTableRow(
     annotatorSettings: AnnotatorSettings,
     backgroundColor: Color,
     contentColor: Color,
-    isHeader: Boolean
+    isHeader: Boolean,
+    revealKey: String,
+    sourceStart: Int
 ) {
     Row(modifier = Modifier.background(backgroundColor)) {
         columnWidths.forEachIndexed { index, width ->
@@ -752,12 +796,13 @@ private fun ChatMarkdownTableRow(
                         .defaultMinSize(minHeight = 48.dp)
                         .padding(horizontal = 12.dp, vertical = 10.dp)
                 ) {
-                    MarkdownParagraph(
-                        cellText,
-                        cellNode,
-                        Modifier,
-                        cellStyle,
-                        annotatorSettings
+                    RevealMarkdownText(
+                        content = cellText,
+                        node = cellNode,
+                        style = cellStyle,
+                        settings = annotatorSettings,
+                        revealKey = "$revealKey:cell:$index",
+                        sourceStart = LocalStreamingSourceOffset.current + sourceStart
                     )
                 }
             }
@@ -863,11 +908,8 @@ private fun ChatMarkdownHeading(
             .fillMaxWidth()
             .padding(top = topPadding, bottom = bottomPadding)
     ) {
-        if (contentType == null) {
-            MarkdownHeader(model.content, model.node, style)
-        } else {
-            MarkdownHeader(model.content, model.node, style, contentType)
-        }
+        val child = model.node.findChildOfType(contentType ?: MarkdownTokenTypes.ATX_CONTENT) ?: model.node
+        RevealMarkdownText(model.content, child, style, chatMarkdownAnnotatorSettings(LocalMarkdownAnnotator.current), Modifier.semantics { heading() }, revealKey = model.node.startOffset, sourceStart = LocalStreamingSourceOffset.current + model.node.startOffset)
     }
 }
 
@@ -1008,13 +1050,7 @@ private fun DefaultParagraph(
     style: TextStyle,
     annotator: MarkdownAnnotator
 ) {
-    MarkdownParagraph(
-        content,
-        node,
-        Modifier,
-        style,
-        chatMarkdownAnnotatorSettings(annotator)
-    )
+    RevealMarkdownText(content, node, style, chatMarkdownAnnotatorSettings(annotator))
 }
 
 @Composable
@@ -1031,3 +1067,24 @@ private fun extractNodeText(
     content: String,
     node: org.intellij.markdown.ast.ASTNode
 ): String = content.substring(node.startOffset, node.endOffset)
+
+@Composable
+private fun RevealMarkdownText(
+    content: String,
+    node: org.intellij.markdown.ast.ASTNode,
+    style: TextStyle,
+    settings: AnnotatorSettings,
+    modifier: Modifier = Modifier,
+    revealKey: Any = node.startOffset,
+    sourceStart: Int = LocalStreamingSourceOffset.current + node.startOffset
+) {
+    val styled = remember(content, node, style, settings) {
+        buildAnnotatedString {
+            pushStyle(style.toSpanStyle())
+            buildMarkdownAnnotatedString(content = content, node = node, annotatorSettings = settings)
+            pop()
+        }
+    }
+    val drawing = rememberStreamingRevealDrawing(styled.text, revealKey, sourceStart)
+    MarkdownText(styled, modifier.then(drawing.modifier), style) { layout, _ -> drawing.onTextLayout(layout) }
+}

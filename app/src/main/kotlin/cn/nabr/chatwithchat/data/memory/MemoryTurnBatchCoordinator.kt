@@ -1,9 +1,12 @@
 package cn.nabr.chatwithchat.data.memory
 
+import cn.nabr.chatwithchat.data.context.stripInternalStickerMarkers
 import cn.nabr.chatwithchat.data.database.dao.MemoryTurnBatchDao
 import cn.nabr.chatwithchat.data.database.entity.MemoryChatCheckpoint
 import cn.nabr.chatwithchat.data.database.entity.MemoryPendingTurn
+import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.effectiveContent
+import cn.nabr.chatwithchat.data.richcontent.AssistantContentProjection
 import cn.nabr.chatwithchat.util.isAssistantErrorMessage
 import cn.nabr.chatwithchat.util.stripAssistantErrorNote
 import java.security.MessageDigest
@@ -99,7 +102,7 @@ class MemoryTurnBatchCoordinator(
     private fun MemoryCompletedTurnInput.toSnapshotOrNull(): MemoryCompletedTurnSnapshot? {
         if (chatRoom.id <= 0 || userMessage.id <= 0 || userMessage.chatId != chatRoom.id) return null
         val successfulAssistants = assistantMessages.mapNotNull { assistant ->
-            val content = stripAssistantErrorNote(assistant.effectiveContent()).trim()
+            val content = assistant.memoryAssistantContent()
             if (content.isBlank() || isAssistantErrorMessage(content)) return@mapNotNull null
             assistant.platformType?.let { platformUid -> assistant to platformUid }
         }
@@ -126,7 +129,7 @@ class MemoryTurnBatchCoordinator(
                 )
             },
             assistantPlatformUid = assistantPlatformUid,
-            assistantContent = stripAssistantErrorNote(assistant.effectiveContent()).trim().take(MAX_MESSAGE_CHARS),
+            assistantContent = assistant.memoryAssistantContent().take(MAX_MESSAGE_CHARS),
             completedAt = completedAt,
             recalledMemoryRefs = recalledMemoryRefs.distinct().take(MAX_RECALLED_MEMORY_REFS),
             recalledMemoryAliases = recalledMemoryAliases
@@ -138,6 +141,9 @@ class MemoryTurnBatchCoordinator(
     private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
         .digest(value.toByteArray(Charsets.UTF_8))
         .joinToString(separator = "") { byte -> "%02x".format(byte) }
+
+    private fun MessageV2.memoryAssistantContent(): String =
+        stripAssistantErrorNote(AssistantContentProjection.toMarkdown(effectiveContent().stripInternalStickerMarkers())).trim()
 
     companion object {
         const val MAX_BATCH_TURNS = 5

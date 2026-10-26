@@ -1,0 +1,1 @@
+import{q as t}from"./host-kDG2vGs9.js";const e=[["rect",{width:"14",height:"20",x:"5",y:"2",rx:"2",ry:"2",key:"1yt0o3"}],["path",{d:"M12 18h.01",key:"mhygvu"}]],r=t("smartphone",e);export{e as __iconNode,r as default};

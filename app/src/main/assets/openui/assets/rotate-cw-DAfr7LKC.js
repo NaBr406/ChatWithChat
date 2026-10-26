@@ -1,0 +1,1 @@
+import{q as t}from"./host-kDG2vGs9.js";const o=[["path",{d:"M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8",key:"1p45f6"}],["path",{d:"M21 3v5h-5",key:"1q7to0"}]],a=t("rotate-cw",o);export{o as __iconNode,a as default};

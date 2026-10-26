@@ -84,6 +84,7 @@ import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
@@ -106,6 +107,10 @@ import cn.nabr.chatwithchat.data.database.entity.effectiveStickerRefs
 import cn.nabr.chatwithchat.data.database.entity.effectiveThoughts
 import cn.nabr.chatwithchat.data.database.entity.effectiveTokenUsage
 import cn.nabr.chatwithchat.data.model.ReasoningMode
+import cn.nabr.chatwithchat.data.richcontent.AssistantContentProjection
+import cn.nabr.chatwithchat.data.richcontent.interaction.RichInteractionEvent
+import cn.nabr.chatwithchat.data.richcontent.interaction.RichInteractionIdentity
+import cn.nabr.chatwithchat.data.richcontent.openui.OpenUiEnvelope
 import cn.nabr.chatwithchat.data.token.TokenUsageRecord
 import cn.nabr.chatwithchat.presentation.common.settingsCanvasBackground
 import cn.nabr.chatwithchat.presentation.common.settingsDropdownMenuItemColors
@@ -114,6 +119,7 @@ import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import java.io.File
 import kotlin.math.abs
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 
@@ -128,6 +134,7 @@ fun ChatScreen(
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboard.current
+    val uriHandler = LocalUriHandler.current
     val scope = rememberCoroutineScope()
     val navigationDescription = navigationIconContentDescription ?: stringResource(R.string.go_back)
 
@@ -136,6 +143,10 @@ fun ChatScreen(
     val indexStates by chatViewModel.indexStates.collectAsStateWithLifecycle()
     val loadingStates by chatViewModel.loadingStates.collectAsStateWithLifecycle()
     val isPersistingCompletion by chatViewModel.isPersistingCompletion.collectAsStateWithLifecycle()
+    val interactionVersion by chatViewModel.interactionVersion.collectAsStateWithLifecycle()
+    val bindRichInteraction = remember(chatViewModel, interactionVersion) {
+        { turnIndex: Int, platformIndex: Int -> chatViewModel.bindRichInteractionDocument(turnIndex, platformIndex) }
+    }
     val pendingSelectedAttachmentBatches by chatViewModel.pendingSelectedAttachmentBatches.collectAsStateWithLifecycle()
     val pendingMessageEditAttachmentBatches by chatViewModel.pendingMessageEditAttachmentBatches.collectAsStateWithLifecycle()
     val toolProgressStates by chatViewModel.toolProgressStates.collectAsStateWithLifecycle()
@@ -219,6 +230,26 @@ fun ChatScreen(
             onRetry = chatViewModel::retryChat,
             onShowPreviousRevision = chatViewModel::showPreviousAssistantRevision,
             onShowNextRevision = chatViewModel::showNextAssistantRevision,
+            bindRichInteraction = bindRichInteraction,
+            onRichInteractionEvent = { identity, event -> chatViewModel.dispatchRichInteraction(identity, event) },
+            bindOpenUi = { turn, platform -> chatViewModel.bindOpenUiDocument(turn, platform) },
+            onOpenUiAction = { event ->
+                chatViewModel.dispatchOpenUiAction(event)?.let { accepted ->
+                    when (accepted.action) {
+                        "OpenUrl" -> runCatching { uriHandler.openUri(accepted.value) }
+                            .onFailure { chatViewModel.reportOpenUiActionFailure() }
+                        "CopyToClipboard" -> scope.launch {
+                            try {
+                                clipboardManager.setClipEntry(ClipEntry(ClipData.newPlainText(accepted.value, accepted.value)))
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (_: Exception) {
+                                chatViewModel.reportOpenUiActionFailure()
+                            }
+                        }
+                    }
+                }
+            },
             onFilesSelected = chatViewModel::addSelectedFiles,
             onFileRemoved = chatViewModel::removeSelectedFile,
             onTextSkillsSelected = chatViewModel::selectTextSkills,
@@ -325,7 +356,7 @@ fun ChatScreen(
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-private fun ChatContent(
+internal fun ChatContent(
     title: String,
     currentModelLabel: String,
     currentModelOptions: List<ModelSelectionOption>,
@@ -362,6 +393,10 @@ private fun ChatContent(
     onRetry: (Int, Int) -> Unit,
     onShowPreviousRevision: (Int, Int) -> Unit,
     onShowNextRevision: (Int, Int) -> Unit,
+    bindRichInteraction: (Int, Int) -> RichInteractionHostBinding?,
+    onRichInteractionEvent: (RichInteractionIdentity, RichInteractionEvent) -> Unit,
+    bindOpenUi: (Int, Int) -> OpenUiHostBinding?,
+    onOpenUiAction: (OpenUiHostAction) -> Unit,
     onFilesSelected: (List<String>, Int) -> Unit,
     onFileRemoved: (String) -> Unit,
     onTextSkillsSelected: (List<cn.nabr.chatwithchat.data.textskill.SelectedTextSkill>, cn.nabr.chatwithchat.data.textskill.TextSkillSelectionScope) -> Unit,
@@ -715,6 +750,10 @@ private fun ChatContent(
                             onRetry = onRetry,
                             onShowPreviousRevision = onShowPreviousRevision,
                             onShowNextRevision = onShowNextRevision,
+                            bindRichInteraction = bindRichInteraction,
+                            onRichInteractionEvent = onRichInteractionEvent,
+                            bindOpenUi = bindOpenUi,
+                            onOpenUiAction = onOpenUiAction,
                             stickerAssetResolver = stickerAssetResolver
                         )
                     }
@@ -749,6 +788,10 @@ private fun ChatContent(
                                 onRetry = onRetry,
                                 onShowPreviousRevision = onShowPreviousRevision,
                                 onShowNextRevision = onShowNextRevision,
+                                bindRichInteraction = bindRichInteraction,
+                                onRichInteractionEvent = onRichInteractionEvent,
+                                bindOpenUi = bindOpenUi,
+                                onOpenUiAction = onOpenUiAction,
                                 stickerAssetResolver = stickerAssetResolver,
                                 onStreamingContentDisplayed = {
                                     requestScrollToLatestMessage()
@@ -912,6 +955,10 @@ private fun ChatMessagePair(
     onShowNextRevision: (Int, Int) -> Unit,
     stickerAssetResolver: StickerAssetResolver,
     onStreamingContentDisplayed: () -> Unit = {},
+    bindRichInteraction: (Int, Int) -> RichInteractionHostBinding? = { _, _ -> null },
+    onRichInteractionEvent: (RichInteractionIdentity, RichInteractionEvent) -> Unit = { _, _ -> },
+    bindOpenUi: (Int, Int) -> OpenUiHostBinding? = { _, _ -> null },
+    onOpenUiAction: (OpenUiHostAction) -> Unit = {},
     showMetadata: Boolean = true
 ) {
     val selectedAssistantMessage = assistantMessages.getOrNull(platformIndexState)
@@ -1047,6 +1094,18 @@ private fun ChatMessagePair(
                 },
                 contentIdentity = "$messageIndex:$selectedPlatformUid:$selectedAssistantRevisionIndex",
                 renderRichContent = !isInterruptedInitialRequest && displayedAssistantContent.contains("<ui-"),
+                interactionBinding = if (!isInterruptedInitialRequest && displayedAssistantContent.contains("<ui-")) {
+                    bindRichInteraction(messageIndex, platformIndexState)
+                } else {
+                    null
+                },
+                onInteractionEvent = onRichInteractionEvent,
+                openUiBinding = if (!isInterruptedInitialRequest && OpenUiEnvelope.containsOpenUi(displayedAssistantContent)) {
+                    bindOpenUi(messageIndex, platformIndexState)
+                } else {
+                    null
+                },
+                onOpenUiAction = onOpenUiAction,
                 onVisibleContentChanged = onStreamingContentDisplayed,
                 revisionIndexLabel = selectedAssistantMessage?.takeUnless { isInterruptedInitialRequest }?.let { assistantMessage ->
                     val totalRevisions = assistantMessage.revisions.size + 1
@@ -1070,12 +1129,12 @@ private fun ChatMessagePair(
                 canShowActions = canSubmitOrEdit || !isActiveMessage,
                 onCopyClick = {
                     onCopyText(
-                        if (isInterruptedInitialRequest) displayedAssistantContent else assistantContent
+                        if (isInterruptedInitialRequest) displayedAssistantContent else AssistantContentProjection.toMarkdown(assistantContent)
                     )
                 },
                 onSelectClick = {
                     onSelectText(
-                        if (isInterruptedInitialRequest) displayedAssistantContent else assistantContent
+                        if (isInterruptedInitialRequest) displayedAssistantContent else AssistantContentProjection.toMarkdown(assistantContent)
                     )
                 },
                 onRetryClick = { onRetry(messageIndex, platformIndexState) },

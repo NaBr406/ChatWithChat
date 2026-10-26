@@ -68,9 +68,13 @@ import cn.nabr.chatwithchat.data.database.entity.MessageStickerRef
 import cn.nabr.chatwithchat.data.database.entity.SafeMessageSourceTarget
 import cn.nabr.chatwithchat.data.database.entity.safeDedupeKey
 import cn.nabr.chatwithchat.data.database.entity.safeNavigationTarget
+import cn.nabr.chatwithchat.data.richcontent.interaction.RichInteractionEvent
+import cn.nabr.chatwithchat.data.richcontent.interaction.RichInteractionIdentity
+import cn.nabr.chatwithchat.data.richcontent.openui.OpenUiEnvelope
 import cn.nabr.chatwithchat.presentation.common.LocalAttachmentPreviewLauncher
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.theme.ChatWithChatTheme
+import cn.nabr.chatwithchat.presentation.ui.chat.openui.OpenUiChatContent
 import cn.nabr.chatwithchat.presentation.ui.chat.richcontent.RichChatContent
 import cn.nabr.chatwithchat.util.AttachmentNaming
 import java.io.File
@@ -134,6 +138,10 @@ fun OpponentChatBubble(
     canShowNextRevision: Boolean = false,
     canShowActions: Boolean = true,
     renderRichContent: Boolean = false,
+    interactionBinding: RichInteractionHostBinding? = null,
+    onInteractionEvent: (RichInteractionIdentity, RichInteractionEvent) -> Unit = { _, _ -> },
+    openUiBinding: OpenUiHostBinding? = null,
+    onOpenUiAction: (OpenUiHostAction) -> Unit = {},
     onCopyClick: () -> Unit = {},
     onSelectClick: () -> Unit = {},
     onRetryClick: () -> Unit = {},
@@ -141,7 +149,9 @@ fun OpponentChatBubble(
     onShowPreviousRevision: () -> Unit = {},
     onShowNextRevision: () -> Unit = {}
 ) {
-    val serializedStreamingText = if (STREAMING_TEXT_SMOOTHING_ENABLED) {
+    val openUiContent = remember(text, isLoading) { OpenUiEnvelope.parse(text, isLoading) }
+    val hasOpenUi = openUiContent.source != null
+    val serializedStreamingText = if (STREAMING_TEXT_SMOOTHING_ENABLED && !hasOpenUi) {
         rememberSerializedStreamingText(
             targetText = text,
             targetThoughts = thoughts,
@@ -181,38 +191,42 @@ fun OpponentChatBubble(
         Column {
             val displayText = serializedStreamingText.text
 
-            when {
-                isLoading && displayText.isBlank() && thoughts.isBlank() && stickerRefs.isEmpty() && showPendingIndicator -> {
-                    ResponseLoadingIndicator()
-                }
-                displayText.isNotBlank() || !isLoading -> {
-                    if (renderRichContent) {
-                        RichChatContent(
-                            content = displayText,
-                            isStreaming = isLoading,
-                            contentIdentity = contentIdentity,
-                            contentColor = MaterialTheme.colorScheme.onBackground,
-                            modifier = Modifier.padding(vertical = 6.dp)
-                        )
-                    } else if (isLoading || isTextAnimating) {
-                        IncrementalChatMarkdown(
-                            content = displayText,
-                            isStreaming = isLoading,
-                            isPendingAnimating = isTextAnimating,
-                            contentIdentity = contentIdentity,
-                            useMathJax = false,
-                            contentColor = MaterialTheme.colorScheme.onBackground,
-                            style = ChatMarkdownStyle.ANSWER,
-                            modifier = Modifier.padding(vertical = 6.dp)
-                        )
-                    } else {
-                        ChatMarkdown(
-                            content = appendStreamingTextTail(displayText, false),
-                            contentIdentity = contentIdentity,
-                            renderMath = true,
-                            useMathJax = true,
-                            modifier = Modifier.padding(vertical = 6.dp)
-                        )
+            if (hasOpenUi) {
+                OpenUiChatContent(
+                    content = openUiContent,
+                    contentIdentity = contentIdentity,
+                    isStreaming = isLoading,
+                    binding = openUiBinding,
+                    onVisibleContentChanged = onVisibleContentChanged,
+                    onAction = onOpenUiAction,
+                    modifier = Modifier.padding(vertical = 6.dp)
+                )
+            } else {
+                StreamingRevealContent(displayText, contentIdentity, isLoading) {
+                    when {
+                        isLoading && displayText.isBlank() && thoughts.isBlank() && stickerRefs.isEmpty() && showPendingIndicator -> {
+                            ResponseLoadingIndicator()
+                        }
+                        displayText.isNotBlank() || !isLoading -> {
+                            if (renderRichContent) {
+                                RichChatContent(
+                                    content = displayText,
+                                    isStreaming = isLoading,
+                                    contentIdentity = contentIdentity,
+                                    contentColor = MaterialTheme.colorScheme.onBackground,
+                                    interactionBinding = interactionBinding,
+                                    onInteractionEvent = onInteractionEvent,
+                                    modifier = Modifier.padding(vertical = 6.dp)
+                                )
+                            } else {
+                                ChatMarkdown(
+                                    content = displayText,
+                                    contentIdentity = contentIdentity,
+                                    isStreaming = isLoading,
+                                    modifier = Modifier.padding(vertical = 6.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }

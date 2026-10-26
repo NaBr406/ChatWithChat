@@ -164,6 +164,7 @@ class ToolLoopOrchestratorTest {
         )
         val orchestrator = ToolLoopOrchestrator(executor)
         val policies = mutableListOf<ToolRoundReasoningPolicy>()
+        val streamingPolicies = mutableListOf<Boolean>()
         val responses = ArrayDeque(
             listOf(
                 """{"type":"tool_calls","tool_calls":[{"id":"search","name":"search_stickers","arguments":{"query":"wave"}}]}""",
@@ -174,8 +175,9 @@ class ToolLoopOrchestratorTest {
 
         val result = orchestrator.runLoopWithRoundPolicy(
             scope = orchestrator.createToolScope(orchestrator.toolDefinitions)
-        ) { _, policy ->
+        ) { _, policy, canStreamFinalAnswer ->
             policies += policy
+            streamingPolicies += canStreamFinalAnswer
             Result.success(responses.removeFirst())
         }
 
@@ -188,6 +190,7 @@ class ToolLoopOrchestratorTest {
             ),
             policies
         )
+        assertEquals(listOf(true, false, true), streamingPolicies)
     }
 
     @Test

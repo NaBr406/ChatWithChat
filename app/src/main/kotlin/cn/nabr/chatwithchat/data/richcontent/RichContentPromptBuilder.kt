@@ -1,61 +1,28 @@
 package cn.nabr.chatwithchat.data.richcontent
 
-/** Builds the bounded protocol section included in a normal answer prompt. */
+import cn.nabr.chatwithchat.data.richcontent.openui.OpenUiPromptContract
+
+/** The prompt contract matches the bundled 55-component OpenUI library. */
 class RichContentPromptBuilder(
-    private val catalog: Map<String, ComponentSpec> = RichComponentCatalog.components
+    @Suppress("UNUSED_PARAMETER") catalog: Map<String, ComponentSpec> = RichComponentCatalog.components
 ) {
+    fun buildJsonAnswerContentPrompt(): String = buildString {
+        appendLine("Answer formatting within the tool JSON protocol:")
+        appendLine("These formatting rules apply ONLY to the decoded final_answer.content string. Preserve the required outer JSON envelope and tool_calls protocol.")
+        appendLine(build())
+        appendLine("Return one valid JSON object, never raw Markdown or OpenUI outside it. JSON-escape all quotes and newlines within content.")
+        append("JSON envelope example: ")
+        append("""{"type":"final_answer","content":"Here is the summary.\n\n```openui\nroot = Col([Text(\"Summary\")])\n```"}""")
+    }
+
     fun build(): String = buildString {
-        appendLine("Native rich UI is available when it improves the answer.")
-        appendLine("Use ordinary Markdown for ordinary answers; do not force a component into every answer.")
-        appendLine("Only use the exact lower-case ui-* tags listed below. Tags must occupy their own logical line, use double-quoted attributes, and be well formed.")
-        appendLine("Markdown remains valid inside container components. Do not interpret tags inside fenced, inline, or indented code as UI.")
-        appendLine("Do not emit HTML, CSS, JavaScript, arbitrary expressions, remote UI, or components outside this catalog.")
-        appendLine("Displayed values are model-provided text and are not client-verified. Keep all content readable as Markdown if a component cannot be used.")
-        appendLine("Interactive controls are not advertised until the host provides local state and action callbacks; use Markdown for choices and actions for now.")
-        appendLine("Available components:")
-        catalog.values
-            .filter { it.name in ADVERTISED_COMPONENTS }
-            .sortedBy(ComponentSpec::name)
-            .forEach { spec ->
-                append("- <${spec.name}")
-                spec.attributes.forEach { (name, attribute) ->
-                    append(" ")
-                    if (!attribute.required) append("[")
-                    append(name)
-                    append("=\"${attributeDescription(attribute)}\"")
-                    if (!attribute.required) append("]")
-                }
-                if (spec.selfClosing) {
-                    append(" />")
-                } else {
-                    append("> … </${spec.name}>")
-                }
-                if (spec.allowedChildren.isNotEmpty()) {
-                    append("; children: ")
-                    append(spec.allowedChildren.sorted().joinToString(", "))
-                }
-                appendLine()
-            }
-        appendLine("For interactive components, keep keys unique within this answer and use only the declared attributes. Never claim that a button action has already run.")
-    }
-
-    private fun attributeDescription(attribute: AttributeSpec): String = when (attribute.kind) {
-        AttributeKind.TEXT -> "text"
-        AttributeKind.ENUM -> attribute.values.sorted().joinToString("|", prefix = "{", postfix = "}")
-        AttributeKind.DECIMAL -> "number"
-        AttributeKind.INTEGER -> "integer"
-        AttributeKind.REFERENCE_LIST -> "comma-separated-keys"
-    }
-
-    private companion object {
-        val ADVERTISED_COMPONENTS = setOf(
-            "ui-card",
-            "ui-row",
-            "ui-col",
-            "ui-metric",
-            "ui-callout",
-            "ui-steps",
-            "ui-step"
-        )
+        appendLine("Answer in ordinary Markdown. When an interactive tool, comparison, visualization, or composed page helps, add an OpenUI Lang 1.0 program inside a fenced block whose exact language is openui.")
+        appendLine("Always include a self-contained semantic Markdown explanation OUTSIDE every openui fence, before the first fence. Include the answer's actual facts, recommendations, data, labels and important caveats there. Copy, conversation history, memory and export retain only that explanation; OpenUI source is presentation data and is never context. A UI-only answer is invalid.")
+        appendLine("The contract below applies ONLY INSIDE openui fences. Do not output the historical ui-* XML protocol. Match the user's language. Use the exact registered component and function signatures; no network tools or Query are available.")
+        appendLine(OpenUiPromptContract.text)
+        appendLine("Host integration rules override any conflicting examples above: preserve the required semantic Markdown explanation outside the fence. A plain answer needs no UI fence. Use root = Col([...]) and only the 55 listed components within a fence.")
+        appendLine("Local variables and input state stay on the device and are not automatically supplied to later answers. Do not claim photos, maps, URLs or remote resources were verified; external resources may be unavailable. Prefer supplied verified URLs and helpful fallbacks.")
+        appendLine("@ToAssistant is a user-clicked request to populate an EMPTY draft composer for review; it NEVER sends automatically. Explicitly include any chosen form values needed for that new request in its short message. @OpenUrl accepts only http(s); @CopyToClipboard copies only user-selected content. No other native capabilities are available. HtmlView runs in an isolated sandbox with no access to native actions.")
+        appendLine("Example decoded answer:\nThe plan takes two steps: preserve the original, then verify a restored copy.\n\n```openui\nroot = Col([Title(\"Backup plan\", \"lg\"), List([\"Preserve the original\", \"Verify a restored copy\"], \"number\")])\n```")
     }
 }

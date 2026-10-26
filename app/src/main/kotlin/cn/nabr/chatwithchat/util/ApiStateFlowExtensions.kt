@@ -21,6 +21,9 @@ import kotlinx.coroutines.launch
 private const val STREAM_PUBLISH_INTERVAL_MILLIS = 50L
 private const val PARAGRAPH_BREAK_NEWLINES = 2
 
+/** Persistence and timestamps do not imply that a provider finished its answer. */
+enum class StreamTerminalOutcome { Success, Failed, Cancelled, Interrupted }
+
 suspend fun Flow<ApiState>.handleStates(
     messageFlow: MutableStateFlow<ChatViewModel.GroupedMessages>,
     turnIndex: Int,
@@ -50,7 +53,8 @@ suspend fun Flow<ApiState>.handleStates(
      * Defaults to false, which reproduces the old behaviour: a turn that dies with its scope leaves the
      * message untimestamped and unsaved.
      */
-    wasStoppedByUser: () -> Boolean = { false }
+    wasStoppedByUser: () -> Boolean = { false },
+    onTerminalOutcome: (StreamTerminalOutcome) -> Unit = {}
 ) = coroutineScope {
     val buffer = StreamingMessageBuffer()
     val pendingStickers = linkedMapOf<String, MessageStickerRef>()
@@ -152,7 +156,17 @@ suspend fun Flow<ApiState>.handleStates(
                 )
             }
         }
-        onLoadingComplete()
+        val outcome = when {
+            error != null -> StreamTerminalOutcome.Failed
+            stoppedByUser -> StreamTerminalOutcome.Cancelled
+            streamCompletedNormally && isCompletedSuccessfully -> StreamTerminalOutcome.Success
+            else -> StreamTerminalOutcome.Interrupted
+        }
+        try {
+            onTerminalOutcome(outcome)
+        } finally {
+            onLoadingComplete()
+        }
     }
 }
 

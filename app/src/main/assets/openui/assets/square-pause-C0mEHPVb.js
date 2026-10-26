@@ -1,0 +1,1 @@
+import{q as e}from"./host-kDG2vGs9.js";const t=[["rect",{width:"18",height:"18",x:"3",y:"3",rx:"2",key:"afitv7"}],["line",{x1:"10",x2:"10",y1:"15",y2:"9",key:"c1nkhi"}],["line",{x1:"14",x2:"14",y1:"15",y2:"9",key:"h65svq"}]],i=e("square-pause",t);export{t as __iconNode,i as default};

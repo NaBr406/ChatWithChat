@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="openui_webview_unavailable">Interactive content requires an updated Android System WebView.</string>
     <string name="token_cache_hit">Cache hit %1$s</string>
     <string name="token_cache_miss">Cache miss %1$s</string>
     <string name="token_cache_rate">Hit rate %1$s</string>
@@ -7,4 +8,12 @@
     <string name="token_cache_official">Official</string>
     <string name="token_cache_partial">Partial</string>
     <string name="token_cache_estimated">Estimated</string>
+    <string name="rich_content_trend_up">Upward trend</string>
+    <string name="rich_content_trend_down">Downward trend</string>
+    <string name="rich_content_trend_neutral">Stable trend</string>
+    <string name="rich_interaction_draft_conflict">Send or clear your current draft and attachments before inserting this result.</string>
+    <string name="rich_interaction_busy">Wait for the current operation to finish before using this control.</string>
+    <string name="rich_interaction_stale">This control has expired. Use the controls in the current answer.</string>
+    <string name="rich_interaction_source">Source: %1$s</string>
+    <string name="rich_interaction_action_failed">The action could not be completed. Please try again.</string>
 </resources>

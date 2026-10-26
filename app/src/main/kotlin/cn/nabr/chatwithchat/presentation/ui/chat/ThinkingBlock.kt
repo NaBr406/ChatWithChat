@@ -169,18 +169,20 @@ internal fun ThinkingBlockContent(
                 animationSpec = tween(durationMillis = 90)
             )
         ) {
-            IncrementalThinkingMarkdown(
-                thoughts = visibleThoughts,
-                isStreaming = isLoading || isThoughtTextAnimating,
-                isPendingAnimating = isThoughtTextAnimating,
-                contentIdentity = contentIdentity,
-                useMathJax = useMathJax,
-                contentColor = materialColors.secondaryLabel,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 30.dp, end = 4.dp)
-                    .testTag(THINKING_CONTENT_TEST_TAG)
-            )
+            StreamingRevealContent(visibleThoughts, contentIdentity, isLoading || isThoughtTextAnimating) {
+                IncrementalThinkingMarkdown(
+                    thoughts = visibleThoughts,
+                    isStreaming = isLoading || isThoughtTextAnimating,
+                    isPendingAnimating = isThoughtTextAnimating,
+                    contentIdentity = contentIdentity,
+                    useMathJax = useMathJax,
+                    contentColor = materialColors.secondaryLabel,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 30.dp, end = 4.dp)
+                        .testTag(THINKING_CONTENT_TEST_TAG)
+                )
+            }
         }
     }
 }

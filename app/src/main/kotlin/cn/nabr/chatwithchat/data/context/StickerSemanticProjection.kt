@@ -4,6 +4,7 @@ import cn.nabr.chatwithchat.data.database.entity.MessageStickerRef
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.effectiveContent
 import cn.nabr.chatwithchat.data.database.entity.effectiveStickerRefs
+import cn.nabr.chatwithchat.data.richcontent.AssistantContentProjection
 
 private const val MAX_STICKER_ALT_TEXT_CHARS = 160
 private const val MAX_STICKERS_IN_CONTEXT = 1
@@ -18,7 +19,7 @@ fun MessageV2.semanticAssistantContent(): String {
         .mapNotNull(MessageStickerRef::boundedAltText)
         .joinToString(separator = " ") { altText -> "[assistant sent sticker: $altText]" }
 
-    val content = effectiveContent().stripInternalStickerMarkers().trim()
+    val content = AssistantContentProjection.toMarkdown(effectiveContent().stripInternalStickerMarkers()).trim()
     if (marker.isBlank() || content.contains(marker)) return content
 
     return listOf(content, marker)

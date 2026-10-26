@@ -1,0 +1,1 @@
+import{q as e}from"./host-kDG2vGs9.js";const o=[["path",{d:"M2 21a8 8 0 0 1 13.292-6",key:"bjp14o"}],["circle",{cx:"10",cy:"8",r:"5",key:"o932ke"}],["path",{d:"M22 19h-6",key:"vcuq98"}]],r=e("user-round-minus",o);export{o as __iconNode,r as default};

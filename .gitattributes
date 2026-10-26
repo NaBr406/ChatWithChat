@@ -1,1 +1,4 @@
 app/schemas/**/*.json text eol=lf
+
+# Preserve upstream license text, including its original whitespace.
+app/src/main/assets/openui/licenses/** -whitespace

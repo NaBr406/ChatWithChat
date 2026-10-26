@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -19,12 +20,14 @@ private const val THINKING_PENDING_PREVIEW_PREFIX = "…\n"
 
 internal data class ThinkingMarkdownBlock(
     val id: Int,
-    val content: String
+    val content: String,
+    val sourceStart: Int = 0
 )
 
 internal data class ThinkingMarkdownSnapshot(
     val blocks: List<ThinkingMarkdownBlock>,
-    val pendingText: String
+    val pendingText: String,
+    val pendingStart: Int = 0
 )
 
 internal class ThinkingMarkdownAccumulator {
@@ -247,7 +250,8 @@ internal class ThinkingMarkdownAccumulator {
         if (start < end && text.substring(start, end).isNotBlank()) {
             committedBlocks = committedBlocks + ThinkingMarkdownBlock(
                 id = nextBlockId++,
-                content = text.substring(start, end)
+                content = text.substring(start, end),
+                sourceStart = start
             )
         }
         blockStartIndex = safeEnd
@@ -255,9 +259,11 @@ internal class ThinkingMarkdownAccumulator {
 
     private fun snapshot(text: String): ThinkingMarkdownSnapshot {
         val safeStart = blockStartIndex.coerceIn(0, text.length)
+        val pending = text.substring(safeStart).trimStart('\n', '\r')
         return ThinkingMarkdownSnapshot(
             blocks = committedBlocks,
-            pendingText = text.substring(safeStart).trimStart('\n', '\r')
+            pendingText = pending,
+            pendingStart = text.length - pending.length
         )
     }
 }
@@ -305,22 +311,37 @@ internal fun IncrementalChatMarkdown(
     Column(modifier = modifier) {
         snapshot.blocks.forEach { block ->
             key(contentIdentity, block.id) {
-                ChatMarkdown(
-                    content = block.content,
-                    contentIdentity = "$contentIdentity:block:${block.id}",
-                    renderMath = true,
-                    useMathJax = useMathJax,
-                    contentColor = contentColor,
-                    style = style,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                CompositionLocalProvider(
+                    LocalStreamingSourceOffset provides block.sourceStart,
+                    LocalStreamingRevealNewLeafBaseline provides LocalStreamingReveal.current?.appendStart
+                ) {
+                    ChatMarkdown(
+                        content = block.content,
+                        contentIdentity = "$contentIdentity:block:${block.id}",
+                        renderMath = true,
+                        useMathJax = useMathJax,
+                        contentColor = contentColor,
+                        style = style,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
         }
 
         if (snapshot.pendingText.isNotBlank()) {
             val preview = pendingThinkingPreview(snapshot.pendingText)
+            val displayed = if (isPendingAnimating && preview.isNotBlank()) preview + "●" else preview
+            val prefixLength = if (preview == snapshot.pendingText) 0 else THINKING_PENDING_PREVIEW_PREFIX.length
+            val previewStart = snapshot.pendingStart + snapshot.pendingText.length - preview.length + prefixLength
+            val drawing = rememberStreamingRevealDrawing(
+                text = preview,
+                key = "pending:${snapshot.pendingStart}",
+                sourceStart = previewStart,
+                layoutText = displayed,
+                windowPrefixLength = prefixLength
+            )
             Text(
-                text = if (isPendingAnimating && preview.isNotBlank()) preview + "●" else preview,
+                text = displayed,
                 style = MaterialTheme.typography.bodyMedium.copy(
                     fontSize = if (style == ChatMarkdownStyle.THINKING) 14.sp else 16.sp,
                     lineHeight = if (style == ChatMarkdownStyle.THINKING) 22.sp else 24.sp,
@@ -328,7 +349,8 @@ internal fun IncrementalChatMarkdown(
                     letterSpacing = 0.sp
                 ),
                 color = contentColor,
-                modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp).then(drawing.modifier),
+                onTextLayout = drawing.onTextLayout
             )
         }
     }

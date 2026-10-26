@@ -15,7 +15,7 @@ object RichContentProjection {
     }
 
     private fun renderComponent(node: RichNode.Component): String {
-        val body = renderNodes(node.children).trimEnd()
+        val body = renderNodes(node.children).trim()
         val attrs = node.attributes
         val title = attrs["title"] ?: attrs["label"]
         return when (node.name) {

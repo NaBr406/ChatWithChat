@@ -130,6 +130,8 @@ import cn.nabr.chatwithchat.data.textskill.TextSkillInvocationSnapshot
 import cn.nabr.chatwithchat.data.token.TokenCacheStatus
 import cn.nabr.chatwithchat.data.token.TokenUsageEstimator
 import cn.nabr.chatwithchat.data.token.TokenUsageRecord
+import cn.nabr.chatwithchat.data.tool.JsonFinalAnswerStreamDecoder
+import cn.nabr.chatwithchat.data.tool.JsonToolModelOutput
 import cn.nabr.chatwithchat.data.tool.ToolAdvertisementSizer
 import cn.nabr.chatwithchat.data.tool.ToolArgumentStreamLimiter
 import cn.nabr.chatwithchat.data.tool.ToolCall
@@ -181,6 +183,7 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -610,6 +613,7 @@ class ChatRepositoryImpl @Inject constructor(
         val toolUsageRecords = mutableListOf<TokenUsageRecord>()
         val pendingVisualAttachments = mutableListOf<ToolResultVisualAttachment>()
         searchDecisionExecution?.usage?.let { usage -> toolUsageRecords += usage }
+        var streamedFinalAnswer = ""
         val loopResult = toolLoopOrchestrator.runLoopWithRoundPolicy(
             adapter = toolCallingAdapter,
             onProgress = { progress -> emit(progress) },
@@ -618,7 +622,7 @@ class ChatRepositoryImpl @Inject constructor(
             turnKey = userMessages.memoryTurnKey(),
             supportsVisualInput = platform.supportsVisualAssetInput(),
             supportsUserInteraction = true,
-            requestModel = { toolPrompt, reasoningPolicy ->
+            requestModel = { toolPrompt, reasoningPolicy, canStreamFinalAnswer ->
                 val visualMessages = syntheticVisualMessages(
                     sourceMessages = userMessages,
                     attachments = pendingVisualAttachments
@@ -633,22 +637,28 @@ class ChatRepositoryImpl @Inject constructor(
                 } else {
                     assistantMessages + List(visualMessages.size) { emptyList() }
                 }
-                collectProviderText(
+                collectStreamingToolProtocolText(
                     states = completeChatByProvider(
                         userMessages = requestMessages,
                         assistantMessages = requestAssistants,
                         platform = platform,
                         memoryPrompt = memoryPrompt,
                         reasoningMode = reasoningPolicy.resolve(reasoningMode),
-                        extraPrompt = toolPrompt,
+                        extraPrompt = mergePromptSections(
+                            toolPrompt,
+                            RichContentPromptBuilder().buildJsonAnswerContentPrompt()
+                        ),
                         emitEstimatedUsageWithoutOutput = true,
                         conversationSnapshot = frozenConversationSnapshot.takeIf { visualMessages == null },
+                        // The scoped appendix above preserves JSON during tool decisions while also
+                        // teaching direct final_answer.content responses the normal answer catalog.
                         includeRichContentPrompt = false
                     ),
-                    maxChars = config.maxToolProtocolResponseChars(),
-                    onThinking = { thinkingChunk -> emit(ApiState.Thinking(thinkingChunk)) },
-                    onStreamControl = { state -> emit(state) },
-                    onUsage = { usage -> toolUsageRecords += usage }
+                    adapter = toolCallingAdapter,
+                    config = config,
+                    canStreamFinalAnswer = canStreamFinalAnswer,
+                    onUsage = { usage -> toolUsageRecords += usage },
+                    onStreamedFinalAnswer = { content -> streamedFinalAnswer = content }
                 )
             },
             onToolResults = { results ->
@@ -660,7 +670,9 @@ class ChatRepositoryImpl @Inject constructor(
         when (loopResult) {
             is ToolLoopResult.FinalAnswer -> {
                 loopResult.content.takeIf { it.isNotBlank() }?.let { content ->
-                    emit(ApiState.Success(content))
+                    content.removePrefix(streamedFinalAnswer).takeIf { it.isNotEmpty() }?.let { remaining ->
+                        emit(ApiState.Success(remaining))
+                    }
                 }
                 val answerUsage = toolUsageRecords.lastOrNull()
                 val decisionUsage = searchDecisionExecution?.usage
@@ -727,7 +739,9 @@ class ChatRepositoryImpl @Inject constructor(
                     }
                 val hasVisibleFinalAnswer = loopResult.content.isNotBlank()
                 if (hasVisibleFinalAnswer) {
-                    emit(ApiState.Success(loopResult.content))
+                    loopResult.content.removePrefix(streamedFinalAnswer).takeIf { it.isNotEmpty() }?.let { remaining ->
+                        emit(ApiState.Success(remaining))
+                    }
                 }
                 aggregateToolUsage(
                     currentAnswerUsage = toolUsageRecords.lastOrNull().takeIf { hasVisibleFinalAnswer },
@@ -963,6 +977,8 @@ class ChatRepositoryImpl @Inject constructor(
     private suspend fun collectProviderText(
         states: Flow<ApiState>,
         maxChars: Int = Int.MAX_VALUE,
+        onText: suspend (String) -> Unit = {},
+        onTextRollback: (String) -> Unit = {},
         onThinking: suspend (String) -> Unit = {},
         onStreamControl: suspend (ApiState) -> Unit = {},
         onUsage: (TokenUsageRecord) -> Unit = {}
@@ -979,6 +995,7 @@ class ChatRepositoryImpl @Inject constructor(
                     }
                     is ApiState.StreamRollback -> {
                         checkpoints[state.requestId]?.let { text.setLength(it) }
+                        onTextRollback(text.toString())
                         onStreamControl(state)
                     }
                     is ApiState.StreamCheckpointReleased -> {
@@ -986,7 +1003,10 @@ class ChatRepositoryImpl @Inject constructor(
                         onStreamControl(state)
                     }
                     is ApiState.Thinking -> onThinking(state.thinkingChunk)
-                    is ApiState.Success -> text.appendToolProtocolFragment(state.textChunk, maxChars)
+                    is ApiState.Success -> {
+                        text.appendToolProtocolFragment(state.textChunk, maxChars)
+                        onText(state.textChunk)
+                    }
                     is ApiState.Error -> {
                         state.cause?.takeIf { it.isChatNetworkFailure() }?.let { throw it }
                         errorMessage = errorMessage ?: state.message
@@ -1003,6 +1023,67 @@ class ChatRepositoryImpl @Inject constructor(
             if (error.isChatNetworkFailure()) throw error
             Result.failure(error)
         }
+
+    /** Keeps JSON/tool arguments private while previewing answer content in a rollback transaction. */
+    private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.collectStreamingToolProtocolText(
+        states: Flow<ApiState>,
+        adapter: ToolCallingAdapter,
+        config: ToolLoopConfig,
+        canStreamFinalAnswer: Boolean,
+        onUsage: (TokenUsageRecord) -> Unit,
+        onStreamedFinalAnswer: (String) -> Unit
+    ): Result<String> {
+        val checkpointId = UUID.randomUUID().toString().takeIf { canStreamFinalAnswer }
+        var decoder = checkpointId?.let { JsonFinalAnswerStreamDecoder() }
+        var hasPreview = false
+        checkpointId?.let { emit(ApiState.StreamCheckpoint(it)) }
+        try {
+            val result = collectProviderText(
+                states = states,
+                maxChars = config.maxToolProtocolResponseChars(),
+                onText = { fragment ->
+                    decoder?.append(fragment)?.takeIf { it.isNotEmpty() }?.let { content ->
+                        hasPreview = true
+                        emit(ApiState.Success(content))
+                    }
+                },
+                onTextRollback = { text ->
+                    // The provider restores the UI through the same rollback event. Rebuild the decoder
+                    // from that raw checkpoint so a retry neither duplicates nor skips decoded text.
+                    if (decoder != null) {
+                        decoder = JsonFinalAnswerStreamDecoder().also { it.append(text) }
+                        hasPreview = decoder?.content?.isNotEmpty() == true
+                    }
+                },
+                onThinking = { emit(ApiState.Thinking(it)) },
+                onStreamControl = { emit(it) },
+                onUsage = onUsage
+            )
+            val preview = decoder?.content.orEmpty()
+            val answer = result.getOrNull()?.let { text ->
+                adapter.parseModelOutput(text, config).getOrNull() as? JsonToolModelOutput.FinalAnswer
+            }
+            if (hasPreview) {
+                if (answer != null && answer.content.isNotBlank() && answer.content.startsWith(preview)) {
+                    onStreamedFinalAnswer(preview)
+                } else {
+                    // Validate before returning to the orchestrator, which may execute a tool next.
+                    checkpointId?.let { emit(ApiState.StreamRollback(it)) }
+                }
+            }
+            checkpointId?.let { emit(ApiState.StreamCheckpointReleased(it)) }
+            return result
+        } catch (error: CancellationException) {
+            // A user stop saves the visible partial answer; cancellation must not erase that preview.
+            throw error
+        } catch (error: Throwable) {
+            checkpointId?.let {
+                if (hasPreview) emit(ApiState.StreamRollback(it))
+                emit(ApiState.StreamCheckpointReleased(it))
+            }
+            throw error
+        }
+    }
 
     private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.emitProviderStatesSkippingLoading(states: Flow<ApiState>) {
         states.collect { state ->
@@ -1282,10 +1363,7 @@ class ChatRepositoryImpl @Inject constructor(
                     .takeIf { definitions -> definitions.isNotEmpty() }
                     ?.let { definitions -> openAIResponsesToolAdapter.toResponseTools(definitions) },
                 toolChoice = ResponseToolChoice.None.takeIf { finalToolDefinitions.isNotEmpty() },
-                extraInstruction = mergePromptSections(
-                    nativeFinalToolInstruction(allResults),
-                    RichContentPromptBuilder().build()
-                ),
+                extraInstruction = nativeFinalToolInstruction(allResults),
                 nativePrefixItems = nativeExchange.replayItems,
                 contextManagement = nativeExchange.contextManagement,
                 assembledInputSuperseded = nativeExchange.supersedesAssembledInput
@@ -1713,10 +1791,7 @@ class ChatRepositoryImpl @Inject constructor(
                 toolChoice = ChatCompletionToolChoice.None.takeIf {
                     platform.compatibleType != ClientType.GLM && finalToolDefinitions.isNotEmpty()
                 },
-                extraInstruction = mergePromptSections(
-                    nativeFinalToolInstruction(allResults),
-                    RichContentPromptBuilder().build()
-                )
+                extraInstruction = nativeFinalToolInstruction(allResults)
             ),
             timeoutSeconds = platform.timeout,
             platform = platform,
@@ -2147,10 +2222,7 @@ class ChatRepositoryImpl @Inject constructor(
                     .takeIf { definitions -> definitions.isNotEmpty() }
                     ?.let { definitions -> anthropicNativeToolAdapter.toAnthropicTools(definitions) },
                 toolChoice = AnthropicToolChoice.None.takeIf { finalToolDefinitions.isNotEmpty() },
-                extraInstruction = mergePromptSections(
-                    nativeFinalToolInstruction(allResults),
-                    RichContentPromptBuilder().build()
-                )
+                extraInstruction = nativeFinalToolInstruction(allResults)
             ),
             timeoutSeconds = platform.timeout,
             platform = platform,
@@ -2538,10 +2610,7 @@ class ChatRepositoryImpl @Inject constructor(
                     .takeIf { definitions -> definitions.isNotEmpty() }
                     ?.let { definitions -> googleNativeToolAdapter.toGoogleTools(definitions) },
                 toolConfig = GoogleToolConfig.None.takeIf { finalToolDefinitions.isNotEmpty() },
-                extraInstruction = mergePromptSections(
-                    nativeFinalToolInstruction(allResults),
-                    RichContentPromptBuilder().build()
-                )
+                extraInstruction = nativeFinalToolInstruction(allResults)
             ),
             model = platform.model,
             timeoutSeconds = platform.timeout,
@@ -4577,7 +4646,7 @@ private fun chatSystemPrompt(
     memoryPrompt: String?,
     contextSummary: String?,
     extraPrompt: String? = null,
-    includeRichContentPrompt: Boolean = false
+    includeRichContentPrompt: Boolean = true
 ): String? = mergePromptSections(
     CoreSystemPrompt.TEXT,
     mergePromptSections(

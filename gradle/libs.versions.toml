@@ -34,10 +34,12 @@ snakeYaml = "2.2"
 splashscreen = "1.2.0"
 room = "2.8.4"
 work = "2.11.0"
+webkit = "1.15.0"
 
 [libraries]
 backdrop = { group = "io.github.kyant0", name = "backdrop", version = "1.0.6" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+androidx-webkit = { group = "androidx.webkit", name = "webkit", version.ref = "webkit" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }

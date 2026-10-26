@@ -1,0 +1,1 @@
+import{q as e}from"./host-kDG2vGs9.js";const o=[["path",{d:"m18 16 4-4-4-4",key:"1inbqp"}],["path",{d:"m6 8-4 4 4 4",key:"15zrgr"}],["path",{d:"m14.5 4-5 16",key:"e7oirm"}]],d=e("code-xml",o);export{o as __iconNode,d as default};

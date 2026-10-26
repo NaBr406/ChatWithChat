@@ -15,6 +15,7 @@ import cn.nabr.chatwithchat.data.context.ContextRange
 import cn.nabr.chatwithchat.data.context.ContextRangeCorrection
 import cn.nabr.chatwithchat.data.context.ContextStrategy
 import cn.nabr.chatwithchat.data.context.semanticAssistantContent
+import cn.nabr.chatwithchat.data.context.stripInternalStickerMarkers
 import cn.nabr.chatwithchat.data.database.entity.ACTIVE_REVISION_LATEST
 import cn.nabr.chatwithchat.data.database.entity.ChatRoomV2
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
@@ -41,6 +42,11 @@ import cn.nabr.chatwithchat.data.repository.AttachmentUploadCoordinator
 import cn.nabr.chatwithchat.data.repository.ChatRepository
 import cn.nabr.chatwithchat.data.repository.MemoryRepository
 import cn.nabr.chatwithchat.data.repository.SettingRepository
+import cn.nabr.chatwithchat.data.richcontent.RichContentParser
+import cn.nabr.chatwithchat.data.richcontent.interaction.RichInteractionEvent
+import cn.nabr.chatwithchat.data.richcontent.interaction.RichInteractionIdentity
+import cn.nabr.chatwithchat.data.richcontent.interaction.RichInteractionResult
+import cn.nabr.chatwithchat.data.richcontent.interaction.RichInteractionRuntime
 import cn.nabr.chatwithchat.data.textskill.ChatRequestContext
 import cn.nabr.chatwithchat.data.textskill.PendingTextSkillSelection
 import cn.nabr.chatwithchat.data.textskill.SelectedTextSkill
@@ -58,6 +64,7 @@ import cn.nabr.chatwithchat.data.tool.AskUserQuestionBroker
 import cn.nabr.chatwithchat.data.tool.ToolApprovalBroker
 import cn.nabr.chatwithchat.data.tool.ToolDefinition
 import cn.nabr.chatwithchat.di.ApplicationScope
+import cn.nabr.chatwithchat.presentation.ui.chat.richcontent.RichUiComponents
 import cn.nabr.chatwithchat.util.AttachmentPayloadCache
 import cn.nabr.chatwithchat.util.FileUtils
 import cn.nabr.chatwithchat.util.formatCurrentDate
@@ -241,6 +248,15 @@ class ChatViewModel @Inject constructor(
     // User input used for the chat composer
     val question = TextFieldState()
 
+    private val richInteractionHost = RichInteractionHostController(
+        runtime = RichInteractionRuntime(RichUiComponents.registry.interactionRegistry),
+        parser = RichContentParser(RichUiComponents.registry.catalog)
+    )
+    private val richInteractionTurnKeys = ChatTurnKeyRegistry()
+    private var richInteractionActiveSlot: Pair<Int, Int>? = null
+    private val _interactionVersion = MutableStateFlow(0L)
+    val interactionVersion = _interactionVersion.asStateFlow()
+
     // Selected attachment drafts for current message
     private val _selectedAttachments = MutableStateFlow(listOf<ChatAttachmentDraft>())
     val selectedAttachments = _selectedAttachments.asStateFlow()
@@ -294,6 +310,7 @@ class ChatViewModel @Inject constructor(
 
     private val _toolProgressStates = MutableStateFlow<Map<String, List<ToolProgressState>>>(emptyMap())
     val toolProgressStates = _toolProgressStates.asStateFlow()
+
     /**
      * Only this conversation's approval prompts.
      *
@@ -403,6 +420,116 @@ class ChatViewModel @Inject constructor(
         sendQuestion(questionText, _selectedAttachments.value)
     }
 
+    fun bindRichInteractionDocument(turnIndex: Int, platformIndex: Int): RichInteractionHostBinding? {
+        val source = richInteractionSource(turnIndex, platformIndex) ?: return null
+        return richInteractionHost.bind(source, richInteractionDraftGate())
+    }
+
+    fun bindOpenUiDocument(turnIndex: Int, platformIndex: Int): OpenUiHostBinding? {
+        val source = richInteractionSource(turnIndex, platformIndex) ?: return null
+        return richInteractionHost.bindOpenUi(source, richInteractionDraftGate())
+    }
+
+    /** Validates again against current host state before accepting a WebView callback. */
+    fun dispatchOpenUiAction(event: OpenUiHostAction): OpenUiHostAction? {
+        for (turn in _groupedMessages.value.userMessages.indices) {
+            val platform = _indexStates.value.getOrElse(turn) { 0 }
+            val source = richInteractionSource(turn, platform) ?: continue
+            if (!richInteractionHost.canAcceptOpenUi(event, source, richInteractionDraftGate())) continue
+            if (event.action == "ToAssistant") {
+                question.setTextAndPlaceCursorAtEnd(event.value)
+            }
+            return event
+        }
+        _attachmentNotice.value = context.getString(
+            if (richInteractionDraftGate().rejectionReason(true) != null) R.string.rich_interaction_draft_conflict else R.string.rich_interaction_stale
+        )
+        return null
+    }
+
+    fun reportOpenUiActionFailure() {
+        _attachmentNotice.value = context.getString(R.string.rich_interaction_action_failed)
+    }
+
+    /** Typed local events can only populate an empty composer; sending remains a separate user action. */
+    fun dispatchRichInteraction(identity: RichInteractionIdentity, event: RichInteractionEvent): RichInteractionResult {
+        val location = selectedRichInteractionLocation(identity)
+        val source = location?.let { (turn, platform) -> richInteractionSource(turn, platform) }
+        val result = richInteractionHost.dispatch(identity, event, source, richInteractionDraftGate())
+        val accepted = if (result is RichInteractionResult.Action) {
+            val current = location?.let { (turn, platform) -> richInteractionSource(turn, platform) }
+            if (!richInteractionHost.canAccept(result.snapshot, current, richInteractionDraftGate())) {
+                RichInteractionResult.Rejected("stale-source")
+            } else {
+                val sourceLabel = _platformsInApp.value.firstOrNull { it.uid == identity.platformUid }?.name ?: identity.platformUid
+                question.setTextAndPlaceCursorAtEnd(
+                    "${result.snapshot.text}\n\n${context.getString(R.string.rich_interaction_source, sourceLabel)}"
+                )
+                result
+            }
+        } else {
+            result
+        }
+        if (accepted is RichInteractionResult.Rejected) {
+            _attachmentNotice.value = when (accepted.reason) {
+                "existing-draft", "existing-attachments", "importing-attachments" -> context.getString(R.string.rich_interaction_draft_conflict)
+                "busy", "saving", "editing" -> context.getString(R.string.rich_interaction_busy)
+                else -> context.getString(R.string.rich_interaction_stale)
+            }
+        }
+        return accepted
+    }
+
+    private fun richInteractionDraftGate() = RichInteractionDraftGate(
+        isBusy = _loadingStates.value.any { it == LoadingState.Loading } || chatTurnCoordinator.isLive(turnKey),
+        isPersisting = _isPersistingCompletion.value,
+        isEditing = _messageEditSession.value != null,
+        hasDraftText = question.text.isNotEmpty(),
+        hasAttachments = _selectedAttachments.value.isNotEmpty(),
+        isImportingAttachments = _pendingSelectedAttachmentBatches.value > 0,
+        hasQueuedQuestion = pendingQuestionText != null
+    )
+
+    private fun richInteractionSource(
+        turnIndex: Int,
+        platformIndex: Int,
+        messages: GroupedMessages = _groupedMessages.value,
+        requireSelected: Boolean = true,
+        useLatestRevision: Boolean = false
+    ): RichInteractionHostSource? {
+        if (requireSelected && _indexStates.value.getOrElse(turnIndex) { 0 } != platformIndex) return null
+        val user = messages.userMessages.getOrNull(turnIndex) ?: return null
+        val candidate = messages.assistantMessages.getOrNull(turnIndex)?.getOrNull(platformIndex) ?: return null
+        val platformUid = candidate.platformType ?: return null
+        val keys = richInteractionTurnKeys.update(messages.userMessages.map { ChatTurnIdentity(it.id) })
+        val stableTurnKey = keys.getOrNull(turnIndex) ?: return null
+        val revision = candidate.richInteractionRevisionSource(useLatestRevision)
+        return RichInteractionHostSource(
+            chatId = user.chatId.takeIf { it > 0 } ?: chatRoomId,
+            turnKey = stableTurnKey,
+            platformUid = platformUid,
+            revisionKey = revision.key,
+            revisionFingerprint = revision.fingerprint,
+            content = revision.content.stripInternalStickerMarkers(),
+            isLatestRevision = revision.isLatest,
+            isStreaming = revision.isLatest &&
+                richInteractionActiveSlot == (turnIndex to platformIndex) &&
+                _loadingStates.value.getOrElse(platformIndex) { LoadingState.Idle } == LoadingState.Loading
+        )
+    }
+
+    private fun selectedRichInteractionLocation(identity: RichInteractionIdentity): Pair<Int, Int>? {
+        val messages = _groupedMessages.value
+        for (turnIndex in messages.userMessages.indices) {
+            val platformIndex = _indexStates.value.getOrElse(turnIndex) { 0 }
+            val source = richInteractionSource(turnIndex, platformIndex) ?: continue
+            if (source.chatId == identity.chatId && source.turnKey == identity.turnKey && source.platformUid == identity.platformUid) {
+                return turnIndex to platformIndex
+            }
+        }
+        return null
+    }
+
     /**
      * Cleans up only what this chat owns.
      *
@@ -414,6 +541,7 @@ class ChatViewModel @Inject constructor(
      * they delete; everything else stays under the cache's own LRU bound.
      */
     override fun onCleared() {
+        richInteractionHost.clear()
         val selectedDrafts = _selectedAttachments.value
         val editDrafts = _messageEditSession.value?.attachments.orEmpty()
         val pendingPaths = synchronized(pendingOwnedAttachmentPaths) {
@@ -661,6 +789,14 @@ class ChatViewModel @Inject constructor(
         val platform = _enabledPlatformsInApp.value.firstOrNull { it.uid == currentMessage.platformType } ?: return
         val platformSelection = resolvePlatformSelection(platform, currentMessage.effectiveTokenUsage()?.model)
         val revisionToAppendOnSuccess = currentMessage.snapshotLatestAssistantRevision(currentTimeStamp)
+        richInteractionSource(turnIndex, platformIndex, requireSelected = false, useLatestRevision = true)?.let { source ->
+            revisionToAppendOnSuccess?.let { revision ->
+                richInteractionHost.archiveRevision(
+                    source,
+                    richInteractionRevisionFingerprint(revision.content, revision.thoughts, revision.createdAt)
+                )
+            }
+        }
         clearToolProgress(turnIndex, platformIndex)
         setOnlyPlatformLoading(platformIndex)
         _groupedMessages.update {
@@ -706,7 +842,8 @@ class ChatViewModel @Inject constructor(
                 revisionToAppendOnSuccess = revisionToAppendOnSuccess,
                 onToolProgress = { progress -> turn.appendToolProgress(turnIndex, platformIndex, progress) },
                 resolveErrorMessage = chatTurnCoordinator::resolveToolErrorMessage,
-                wasStoppedByUser = { turn.stopRequested }
+                wasStoppedByUser = { turn.stopRequested },
+                onTerminalOutcome = { outcome -> turn.terminalOutcome = outcome }
             )
         }
     }
@@ -747,6 +884,11 @@ class ChatViewModel @Inject constructor(
             _loadingStates.update { emptyList() }
             return false
         }
+        richInteractionActiveSlot = turnIndex to platformIndex
+        richInteractionSource(turnIndex, platformIndex, requireSelected = false)?.let { source ->
+            richInteractionHost.beginAttempt(source, started.attemptId)
+        }
+        _interactionVersion.value += 1
         return true
     }
 
@@ -948,6 +1090,8 @@ class ChatViewModel @Inject constructor(
         // Find the index of the message being edited
         val messageIndex = userMessages.indexOfFirst { it.id == editedMessage.id }
         if (messageIndex == -1) return false
+        richInteractionHost.clear()
+        _interactionVersion.value += 1
 
         // Update the message content
         val updatedUserMessages = userMessages.toMutableList()
@@ -1031,6 +1175,18 @@ class ChatViewModel @Inject constructor(
                 ?: currentMessage.revisions
         } else {
             currentMessage.revisions
+        }
+        if (textChanged) {
+            richInteractionSource(turnIndex, platformIndex, requireSelected = false, useLatestRevision = true)?.let { source ->
+                updatedRevisions.firstOrNull()?.let { revision ->
+                    richInteractionHost.archiveRevision(
+                        source,
+                        richInteractionRevisionFingerprint(revision.content, revision.thoughts, revision.createdAt)
+                    )
+                }
+                richInteractionHost.invalidateLatest(source)
+            }
+            _interactionVersion.value += 1
         }
 
         _groupedMessages.update {
@@ -1147,7 +1303,8 @@ class ChatViewModel @Inject constructor(
                 onLoadingComplete = { turn.markPlatformIdle(currentPlatformIndex) },
                 onToolProgress = { progress -> turn.appendToolProgress(turnIndex, currentPlatformIndex, progress) },
                 resolveErrorMessage = chatTurnCoordinator::resolveToolErrorMessage,
-                wasStoppedByUser = { turn.stopRequested }
+                wasStoppedByUser = { turn.stopRequested },
+                onTerminalOutcome = { outcome -> turn.terminalOutcome = outcome }
             )
         }
         // Handed off: the coordinator now owns the memory activity stamp for this turn.
@@ -1180,8 +1337,11 @@ class ChatViewModel @Inject constructor(
         )
 
         _chatRoom.update { chatRoom ->
-            if (platformUid in chatRoom.enabledPlatform) chatRoom
-            else chatRoom.copy(enabledPlatform = chatRoom.enabledPlatform + platformUid)
+            if (platformUid in chatRoom.enabledPlatform) {
+                chatRoom
+            } else {
+                chatRoom.copy(enabledPlatform = chatRoom.enabledPlatform + platformUid)
+            }
         }
         _chatPlatformModels.update { current -> current + (selectedModel.platformUid to nextConfig) }
         _lastSelectedModel.update {
@@ -1299,8 +1459,11 @@ class ChatViewModel @Inject constructor(
 
     private fun ensureCurrentPlatformTracked(platformUid: String) {
         _chatRoom.update { chatRoom ->
-            if (platformUid in chatRoom.enabledPlatform) chatRoom
-            else chatRoom.copy(enabledPlatform = chatRoom.enabledPlatform + platformUid)
+            if (platformUid in chatRoom.enabledPlatform) {
+                chatRoom
+            } else {
+                chatRoom.copy(enabledPlatform = chatRoom.enabledPlatform + platformUid)
+            }
         }
     }
 
@@ -1978,8 +2141,11 @@ class ChatViewModel @Inject constructor(
                     chatRepository.fetchChatListV2().first { it.id == chatRoomId }
                 }
                 currentChatPlatformUid()?.let { platformUid ->
-                    if (platformUid in loadedChatRoom.enabledPlatform) loadedChatRoom
-                    else loadedChatRoom.copy(enabledPlatform = loadedChatRoom.enabledPlatform + platformUid)
+                    if (platformUid in loadedChatRoom.enabledPlatform) {
+                        loadedChatRoom
+                    } else {
+                        loadedChatRoom.copy(enabledPlatform = loadedChatRoom.enabledPlatform + platformUid)
+                    }
                 } ?: loadedChatRoom
             }
             maybeSendInitialQuestion()
@@ -2161,7 +2327,17 @@ class ChatViewModel @Inject constructor(
                         return@collectLatest
                     }
                     coroutineScope {
-                        launch { turn.messages.collect { messages -> _groupedMessages.value = messages } }
+                        launch {
+                            turn.messages.collect { messages ->
+                                _groupedMessages.value = messages
+                                richInteractionActiveSlot = turn.request.turnIndex to turn.request.platformIndex
+                                richInteractionSource(
+                                    turn.request.turnIndex,
+                                    turn.request.platformIndex,
+                                    requireSelected = false
+                                )?.let { source -> richInteractionHost.beginAttempt(source, turn.attemptId) }
+                            }
+                        }
                         launch { turn.loadingStates.collect { states -> _loadingStates.value = states } }
                         launch { turn.toolProgress.collect { progress -> _toolProgressStates.value = progress } }
                         launch { turn.isPersisting.collect { persisting -> _isPersistingCompletion.value = persisting } }
@@ -2201,6 +2377,20 @@ class ChatViewModel @Inject constructor(
             _indexStates.update { current ->
                 List(completion.persistedMessages.assistantMessages.size) { index -> current.getOrElse(index) { 0 } }
             }
+            richInteractionSource(
+                completion.turnIndex,
+                completion.platformIndex,
+                messages = completion.persistedMessages,
+                requireSelected = false
+            )?.let { source ->
+                richInteractionHost.completeAttempt(
+                    source = source.copy(isStreaming = false),
+                    attemptId = completion.attemptId,
+                    outcome = completion.terminalOutcome,
+                    saveSucceeded = true
+                )
+            }
+            _interactionVersion.value += 1
             refreshContextCompactionNotice()
         } catch (error: CancellationException) {
             throw error

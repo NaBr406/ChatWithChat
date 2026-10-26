@@ -3,11 +3,10 @@ package cn.nabr.chatwithchat.presentation.ui.chat
 import android.content.Context
 import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.database.entity.ChatRoomV2
-import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.database.entity.effectiveContent
-import cn.nabr.chatwithchat.data.memory.MemoryCompletedTurnInput
 import cn.nabr.chatwithchat.data.memory.MemoryAliasBinding
+import cn.nabr.chatwithchat.data.memory.MemoryCompletedTurnInput
 import cn.nabr.chatwithchat.data.model.ChatPlatformConfig
 import cn.nabr.chatwithchat.data.repository.ChatRepository
 import cn.nabr.chatwithchat.data.repository.MemoryRepository
@@ -19,7 +18,9 @@ import cn.nabr.chatwithchat.data.tool.TOOL_BUDGET_EXCEEDED_PREFIX
 import cn.nabr.chatwithchat.data.tool.TOOL_PROTOCOL_RESPONSE_TOO_LARGE
 import cn.nabr.chatwithchat.data.tool.TOOL_RESULT_BUDGET_EXHAUSTED
 import cn.nabr.chatwithchat.di.ApplicationScope
+import cn.nabr.chatwithchat.util.StreamTerminalOutcome
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
@@ -83,6 +84,9 @@ class ChatTurnCoordinator @Inject constructor(
         internal val persistingFlow: MutableStateFlow<Boolean>,
         internal val request: TurnRequest
     ) {
+        val attemptId: String = UUID.randomUUID().toString()
+        internal var terminalOutcome: StreamTerminalOutcome = StreamTerminalOutcome.Interrupted
+
         val messages: StateFlow<ChatViewModel.GroupedMessages> = messagesFlow.asStateFlow()
         val loadingStates: StateFlow<List<ChatViewModel.LoadingState>> = loadingFlow.asStateFlow()
         val toolProgress: StateFlow<Map<String, List<ChatViewModel.ToolProgressState>>> =
@@ -158,7 +162,11 @@ class ChatTurnCoordinator @Inject constructor(
     data class TurnCompletion(
         val key: String,
         val savedChatRoom: ChatRoomV2,
-        val persistedMessages: ChatViewModel.GroupedMessages
+        val persistedMessages: ChatViewModel.GroupedMessages,
+        val attemptId: String = "",
+        val terminalOutcome: StreamTerminalOutcome = StreamTerminalOutcome.Interrupted,
+        val turnIndex: Int = -1,
+        val platformIndex: Int = -1
     )
 
     private val turns = MutableStateFlow<Map<String, LiveTurn>>(emptyMap())
@@ -306,7 +314,11 @@ class ChatTurnCoordinator @Inject constructor(
                 TurnCompletion(
                     key = turn.key,
                     savedChatRoom = savedChatRoom,
-                    persistedMessages = persistedMessages
+                    persistedMessages = persistedMessages,
+                    attemptId = turn.attemptId,
+                    terminalOutcome = turn.terminalOutcome,
+                    turnIndex = turn.request.turnIndex,
+                    platformIndex = turn.request.platformIndex
                 )
             )
 

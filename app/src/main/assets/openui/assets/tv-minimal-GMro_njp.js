@@ -1,0 +1,1 @@
+import{q as t}from"./host-kDG2vGs9.js";const e=[["path",{d:"M7 21h10",key:"1b0cd5"}],["rect",{width:"20",height:"14",x:"2",y:"3",rx:"2",key:"48i651"}]],c=t("tv-minimal",e);export{e as __iconNode,c as default};

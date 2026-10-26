@@ -1,0 +1,1 @@
+import{q as t}from"./host-kDG2vGs9.js";const e=[["path",{d:"M3 5h18",key:"1u36vt"}],["path",{d:"M3 12h18",key:"1i2n21"}],["path",{d:"M3 19h18",key:"awlh7x"}]],i=t("text-align-justify",e);export{e as __iconNode,i as default};

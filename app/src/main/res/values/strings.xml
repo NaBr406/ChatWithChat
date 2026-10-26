@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="openui_webview_unavailable">Interactive content requires an updated Android System WebView.</string>
     <string name="app_name">ChatWithChat</string>
     <string name="chat_with_chat_introduction_logo">ChatWithChat 介绍图标</string>
     <string name="welcome_title">可随身携带的\n强大 AI 助手</string>
@@ -885,4 +886,12 @@ Referer: https://example.com</string>
     <string name="skill_capability_mcp_tool_call">MCP 工具调用</string>
     <string name="skill_capability_mcp_resource_read">MCP 资源读取</string>
     <string name="skill_capability_mcp_prompt_read">MCP 提示读取</string>
+    <string name="rich_content_trend_up">趋势上升</string>
+    <string name="rich_content_trend_down">趋势下降</string>
+    <string name="rich_content_trend_neutral">趋势平稳</string>
+    <string name="rich_interaction_draft_conflict">请先发送或清空当前草稿和附件，再填入交互结果。</string>
+    <string name="rich_interaction_busy">请等待当前操作完成后，再使用此交互。</string>
+    <string name="rich_interaction_stale">此交互已失效，请使用当前回答中的控件。</string>
+    <string name="rich_interaction_source">来源：%1$s</string>
+    <string name="rich_interaction_action_failed">操作未完成，请重试。</string>
 </resources>

@@ -92,7 +92,7 @@ class ToolLoopOrchestrator(
         onProgress = onProgress,
         chatId = chatId,
         turnKey = turnKey,
-        requestModel = { toolPrompt, _ -> requestModel(toolPrompt) }
+        requestModel = { toolPrompt, _, _ -> requestModel(toolPrompt) }
     )
 
     /**
@@ -110,7 +110,8 @@ class ToolLoopOrchestrator(
         onToolResults: suspend (List<ToolResult>) -> Unit = {},
         requestModel: suspend (
             toolPrompt: String,
-            reasoningPolicy: ToolRoundReasoningPolicy
+            reasoningPolicy: ToolRoundReasoningPolicy,
+            canStreamFinalAnswer: Boolean
         ) -> Result<String>
     ): ToolLoopResult {
         val maxRounds = config.maxToolRounds.coerceAtLeast(0)
@@ -145,7 +146,11 @@ class ToolLoopOrchestrator(
                     config = config
                 )
             }
-            val modelText = requestModel(toolPrompt, roundState.reasoningPolicy).getOrElse { throwable ->
+            val modelText = requestModel(
+                toolPrompt,
+                roundState.reasoningPolicy,
+                allResults.isEmpty() || isFinalAnswerRound || roundState.acceptsDirectFinalAnswer
+            ).getOrElse { throwable ->
                 return fallbackOrFailure(
                     adapter = adapter,
                     allCalls = allCalls,
@@ -445,7 +450,8 @@ private fun List<ToolCall>.selectAvailable(
 private class ToolBudgetState(
     config: ToolLoopConfig,
     private val policyFor: (String) -> ToolPolicy
-) {    private var remainingToolCalls = config.maxToolCallsPerChat.coerceAtLeast(0)
+) {
+    private var remainingToolCalls = config.maxToolCallsPerChat.coerceAtLeast(0)
     private val remainingToolCallsByName = mutableMapOf<String, Int>()
 
     fun select(calls: List<ToolCall>): BudgetedToolCalls {

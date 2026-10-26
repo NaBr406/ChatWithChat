@@ -161,6 +161,7 @@ ksp {
 }
 
 dependencies {
+    implementation(libs.androidx.webkit)
     implementation(libs.backdrop)
     // Android
     implementation(libs.androidx.core.ktx)

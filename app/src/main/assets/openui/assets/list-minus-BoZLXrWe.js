@@ -1,0 +1,1 @@
+import{q as t}from"./host-kDG2vGs9.js";const e=[["path",{d:"M16 5H3",key:"m91uny"}],["path",{d:"M11 12H3",key:"51ecnj"}],["path",{d:"M16 19H3",key:"zzsher"}],["path",{d:"M21 12h-6",key:"bt1uis"}]],a=t("list-minus",e);export{e as __iconNode,a as default};

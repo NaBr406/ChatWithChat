@@ -44,6 +44,19 @@ class ContextTokenCounterTest {
         assertEquals(ContextTokenCounter.ATTACHMENT_ESTIMATED_TOKENS, estimate - baseline())
     }
 
+    @Test
+    fun `user code stays in token budget while assistant presentation code is projected out`() {
+        val raw = "Facts.\n```openui\nroot = Col([Text(\"" + "source data ".repeat(80) + "\")])\n```"
+        val user = message().copy(content = raw)
+        val assistant = user.copy(platformType = "provider")
+        assertEquals(4 + counter.estimateText(raw), counter.estimateMessage(user))
+        assertEquals(4 + counter.estimateText("Facts."), counter.estimateMessage(assistant))
+        assertEquals(
+            ContextTokenCounter.TURN_OVERHEAD_TOKENS + counter.estimateMessage(user) + counter.estimateMessage(assistant),
+            counter.estimateTurn(ConversationTurn(user, assistant, false))
+        )
+    }
+
     /** 不带附件时的消息开销，用来把附件的贡献单独择出来。 */
     private fun baseline(): Int = counter.estimateMessage(message())
 
