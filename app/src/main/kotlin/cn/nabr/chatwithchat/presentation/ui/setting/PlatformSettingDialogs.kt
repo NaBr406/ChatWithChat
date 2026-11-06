@@ -28,10 +28,13 @@ import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.presentation.common.FullApiUrlCheckbox
+import cn.nabr.chatwithchat.presentation.common.SecretVisibilityToggle
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.common.settingsSliderColors
 import cn.nabr.chatwithchat.presentation.common.settingsTextButtonColors
@@ -281,6 +284,7 @@ private fun APIKeyDialog(
     onConfirmRequest: (token: String) -> Unit
 ) {
     var token by remember { mutableStateOf("") }
+    var tokenVisible by remember { mutableStateOf(false) }
     val configuration = LocalWindowInfo.current
     val screenWidth = with(LocalDensity.current) { configuration.containerSize.width.toDp() }
     val screenHeight = with(LocalDensity.current) { configuration.containerSize.height.toDp() }
@@ -303,24 +307,41 @@ private fun APIKeyDialog(
                 onValueChange = { token = it },
                 label = { Text(stringResource(R.string.api_key)) },
                 singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done)
+                visualTransformation = if (tokenVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                trailingIcon = { SecretVisibilityToggle(visible = tokenVisible, onToggle = { tokenVisible = !tokenVisible }) },
+                keyboardOptions = KeyboardOptions(
+                    autoCorrectEnabled = false,
+                    keyboardType = KeyboardType.Password,
+                    imeAction = ImeAction.Done
+                )
             )
         },
         onDismissRequest = onDismissRequest,
+        // The field always opens empty, so confirming it blank used to wipe a working key. Clearing is now
+        // its own explicit button.
         confirmButton = {
             TextButton(
                 onClick = { onConfirmRequest(token) },
+                enabled = token.isNotBlank(),
                 colors = settingsTextButtonColors()
             ) {
                 Text(stringResource(R.string.confirm))
             }
         },
         dismissButton = {
-            TextButton(
-                onClick = onDismissRequest,
-                colors = settingsTextButtonColors()
-            ) {
-                Text(stringResource(R.string.cancel))
+            Row {
+                TextButton(
+                    onClick = { onConfirmRequest("") },
+                    colors = settingsTextButtonColors()
+                ) {
+                    Text(stringResource(R.string.clear_token))
+                }
+                TextButton(
+                    onClick = onDismissRequest,
+                    colors = settingsTextButtonColors()
+                ) {
+                    Text(stringResource(R.string.cancel))
+                }
             }
         }
     )

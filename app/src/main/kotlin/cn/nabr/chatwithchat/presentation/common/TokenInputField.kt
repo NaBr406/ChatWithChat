@@ -6,6 +6,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Clear
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
@@ -73,4 +75,18 @@ fun HelpText(helpLink: String = "") {
         text = annotatedString,
         color = materialColors.secondaryLabel
     )
+}
+
+/** Trailing icon that reveals or hides a masked secret field. */
+@Composable
+fun SecretVisibilityToggle(
+    visible: Boolean,
+    onToggle: () -> Unit
+) {
+    IconButton(onClick = onToggle) {
+        Icon(
+            imageVector = if (visible) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
+            contentDescription = stringResource(if (visible) R.string.hide_secret else R.string.show_secret)
+        )
+    }
 }

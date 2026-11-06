@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Delete
@@ -35,6 +36,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -48,6 +52,7 @@ import cn.nabr.chatwithchat.data.mcp.McpToolDescriptor
 import cn.nabr.chatwithchat.data.mcp.McpTransport
 import cn.nabr.chatwithchat.presentation.common.AppleRed
 import cn.nabr.chatwithchat.presentation.common.HigActionDialog
+import cn.nabr.chatwithchat.presentation.common.SecretVisibilityToggle
 import cn.nabr.chatwithchat.presentation.common.SettingsMaterialGroup
 import cn.nabr.chatwithchat.presentation.common.SettingsTopAppBar
 import cn.nabr.chatwithchat.presentation.common.settingsCanvasBackground
@@ -425,6 +430,7 @@ private fun McpAddServerDialog(
     var displayName by remember { mutableStateOf("") }
     var url by remember { mutableStateOf("") }
     var token by remember { mutableStateOf("") }
+    var tokenVisible by remember { mutableStateOf(false) }
     var transport by remember { mutableStateOf(McpTransport.STREAMABLE_HTTP) }
     var allowPrivateNetwork by remember { mutableStateOf(false) }
     val materialColors = settingsMaterialColors()
@@ -466,7 +472,10 @@ private fun McpAddServerDialog(
                     onDraftEdited()
                 },
                 label = { Text(stringResource(R.string.mcp_field_token)) },
-                singleLine = true
+                singleLine = true,
+                visualTransformation = if (tokenVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                trailingIcon = { SecretVisibilityToggle(visible = tokenVisible, onToggle = { tokenVisible = !tokenVisible }) },
+                keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, keyboardType = KeyboardType.Password)
             )
             Row(
                 modifier = Modifier
