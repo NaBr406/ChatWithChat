@@ -336,7 +336,9 @@ internal fun IncrementalChatMarkdown(
             key(contentIdentity, "pending", snapshot.pendingStart) {
                 CompositionLocalProvider(LocalStreamingSourceOffset provides snapshot.pendingStart) {
                     ChatMarkdown(
-                        content = snapshot.pendingText,
+                        // A link still arriving would otherwise flash its raw `[label](https://…` syntax
+                        // before it closes and turns into a link or citation chip.
+                        content = if (isStreaming) snapshot.pendingText.withoutTrailingPartialLink() else snapshot.pendingText,
                         contentIdentity = "$contentIdentity:pending:${snapshot.pendingStart}",
                         renderMath = true,
                         useMathJax = useMathJax,

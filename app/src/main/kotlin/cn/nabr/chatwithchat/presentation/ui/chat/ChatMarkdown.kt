@@ -165,8 +165,21 @@ fun ChatMarkdown(
             }
             .toMap()
     }
-    val annotator = remember(inlineMathByPlaceholder) {
+    // Citation chips belong to answers; thoughts and user messages keep their links as written.
+    val citationContext = LocalChatCitations.current.takeIf { style == ChatMarkdownStyle.ANSWER }
+    val citationSources = citationContext?.sources
+    val citationGroupIds = remember(content, citationSources) {
+        citationSources?.let { sources -> scanCitationGroupIds(content, sources) }.orEmpty()
+    }
+    val citationInlineContent = rememberCitationInlineContent(citationContext, citationGroupIds)
+    val annotator = remember(inlineMathByPlaceholder, citationSources, citationInlineContent.keys) {
+        val registeredCitationIds = citationInlineContent.keys
         markdownAnnotator { source, child ->
+            if (citationSources != null &&
+                appendCitationIfMatched(source, child, citationSources, registeredCitationIds)
+            ) {
+                return@markdownAnnotator true
+            }
             val text = source.substring(child.startOffset, child.endOffset)
             if (!containsInlineMathPlaceholder(text)) {
                 false
@@ -328,7 +341,7 @@ fun ChatMarkdown(
                     dividerColor = materialColors.separatorStrong,
                     tableBackground = materialColors.field
                 ),
-                inlineContent = markdownInlineContent(inlineMathContent),
+                inlineContent = markdownInlineContent(inlineMathContent + citationInlineContent),
                 annotator = annotator,
                 components = components,
                 typography = chatMarkdownTypography(style),

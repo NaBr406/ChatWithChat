@@ -56,7 +56,7 @@ class OpenAICompatibleJsonToolAdapter(
         val formattedResults = renderToolResults(results, config) ?: return null
         return buildString {
             appendLine("已有针对用户最新请求的工具结果。")
-            appendLine("仅在相关时使用；若采用网页来源，请在回答中引用来源 URL。")
+            appendLine("仅在相关时使用；若采用网页来源，请在回答中引用来源 URL：在所依据的句子后写成 Markdown 链接 [站点名](结果中的原样 URL)。")
             appendLine("若工具结果为 tool_permission_denied，请说明缺少的 Android 权限，并请用户开启后再重试。")
             appendLine("若请求较宽泛或不够具体但结果可用，请按最合理的默认范围直接回答，简短说明该范围，不要在给出有用内容前先追问。")
             stickerFinalAnswerInstruction(results)?.let { instruction ->

@@ -1,10 +1,5 @@
 package cn.nabr.chatwithchat.presentation.ui.chat
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -28,19 +23,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.rounded.KeyboardArrowDown
-import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,11 +42,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.font.FontWeight
@@ -62,12 +52,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import cn.nabr.chatwithchat.R
-import cn.nabr.chatwithchat.data.database.entity.AppSourceNavigationTarget
 import cn.nabr.chatwithchat.data.database.entity.MessageSourceMetadata
 import cn.nabr.chatwithchat.data.database.entity.MessageStickerRef
-import cn.nabr.chatwithchat.data.database.entity.SafeMessageSourceTarget
-import cn.nabr.chatwithchat.data.database.entity.safeDedupeKey
-import cn.nabr.chatwithchat.data.database.entity.safeNavigationTarget
 import cn.nabr.chatwithchat.data.richcontent.interaction.RichInteractionEvent
 import cn.nabr.chatwithchat.data.richcontent.interaction.RichInteractionIdentity
 import cn.nabr.chatwithchat.data.richcontent.openui.OpenUiEnvelope
@@ -176,150 +162,168 @@ fun OpponentChatBubble(
         }
     }
     val isTextAnimating = serializedStreamingText.isTextAnimating
-    Column(modifier = modifier) {
-        if (thoughts.isNotBlank()) {
-            ThinkingBlockContent(
-                modifier = Modifier.padding(top = 6.dp),
-                thoughts = thoughts,
-                visibleThoughts = serializedStreamingText.thoughts,
-                isThoughtTextAnimating = serializedStreamingText.isThoughtTextAnimating,
-                isThinking = isThinking,
-                contentIdentity = contentIdentity,
-                isLoading = isLoading,
-                isAnswerVisible = text.isNotBlank(),
-                initiallyExpanded = isLoading || hasObservedStreaming
-            )
+    // Citation chips in the answer resolve against this message's own sources and open one shared sheet,
+    // hosted here rather than in the chip so a streaming re-layout cannot dispose it while it is open.
+    val citationSources = remember(sourceMetadata) { CitationSources.of(sourceMetadata) }
+    var openedCitation by remember(contentIdentity) { mutableStateOf<List<Int>?>(null) }
+    val citationContext = remember(citationSources, contentIdentity) {
+        citationSources.takeUnless { it.isEmpty }?.let { sources ->
+            ChatCitationContext(sources) { members -> openedCitation = members }
         }
-
-        Column {
-            val displayText = serializedStreamingText.text
-            // A plain holder, not state: it only flips together with `isLoading`, which recomposes anyway.
-            val streamedHere = remember(contentIdentity) { BooleanArray(1) }
-            if (isLoading) streamedHere[0] = true
-
-            if (hasOpenUi) {
-                OpenUiChatContent(
-                    content = openUiContent,
+    }
+    openedCitation?.let { members ->
+        CitationSourcesSheet(
+            title = stringResource(R.string.citation_sheet_title),
+            sources = members.mapNotNull(citationSources.items::getOrNull),
+            onDismiss = { openedCitation = null }
+        )
+    }
+    CompositionLocalProvider(LocalChatCitations provides citationContext) {
+        Column(modifier = modifier) {
+            if (thoughts.isNotBlank()) {
+                ThinkingBlockContent(
+                    modifier = Modifier.padding(top = 6.dp),
+                    thoughts = thoughts,
+                    visibleThoughts = serializedStreamingText.thoughts,
+                    isThoughtTextAnimating = serializedStreamingText.isThoughtTextAnimating,
+                    isThinking = isThinking,
                     contentIdentity = contentIdentity,
-                    isStreaming = isLoading,
-                    binding = openUiBinding,
-                    onVisibleContentChanged = onVisibleContentChanged,
-                    onAction = onOpenUiAction,
-                    modifier = Modifier.padding(vertical = 6.dp)
+                    isLoading = isLoading,
+                    isAnswerVisible = text.isNotBlank(),
+                    initiallyExpanded = isLoading || hasObservedStreaming
                 )
-            } else {
-                StreamingRevealContent(displayText, contentIdentity, isLoading) {
-                    when {
-                        isLoading && displayText.isBlank() && thoughts.isBlank() && stickerRefs.isEmpty() && showPendingIndicator -> {
-                            ResponseLoadingIndicator()
-                        }
-                        displayText.isNotBlank() || !isLoading -> {
-                            if (renderRichContent) {
-                                RichChatContent(
-                                    content = displayText,
-                                    isStreaming = isLoading,
-                                    contentIdentity = contentIdentity,
-                                    contentColor = MaterialTheme.colorScheme.onBackground,
-                                    interactionBinding = interactionBinding,
-                                    onInteractionEvent = onInteractionEvent,
-                                    modifier = Modifier.padding(vertical = 6.dp)
-                                )
-                            } else if (streamedHere[0]) {
-                                // Reparsing the whole answer on every token made long answers drop frames.
-                                // Finished blocks are committed once; only the tail is reparsed. Kept after
-                                // the stream ends so the layout does not jump at completion.
-                                IncrementalChatMarkdown(
-                                    content = displayText,
-                                    isStreaming = isLoading,
-                                    isPendingAnimating = false,
-                                    contentIdentity = contentIdentity,
-                                    useMathJax = true,
-                                    contentColor = MaterialTheme.colorScheme.onBackground,
-                                    style = ChatMarkdownStyle.ANSWER,
-                                    modifier = Modifier.padding(vertical = 6.dp),
-                                    pendingAsMarkdown = true
-                                )
-                            } else {
-                                ChatMarkdown(
-                                    content = displayText,
-                                    contentIdentity = contentIdentity,
-                                    isStreaming = isLoading,
-                                    modifier = Modifier.padding(vertical = 6.dp)
-                                )
+            }
+
+            Column {
+                val displayText = serializedStreamingText.text
+                // A plain holder, not state: it only flips together with `isLoading`, which recomposes anyway.
+                val streamedHere = remember(contentIdentity) { BooleanArray(1) }
+                if (isLoading) streamedHere[0] = true
+
+                if (hasOpenUi) {
+                    OpenUiChatContent(
+                        content = openUiContent,
+                        contentIdentity = contentIdentity,
+                        isStreaming = isLoading,
+                        binding = openUiBinding,
+                        onVisibleContentChanged = onVisibleContentChanged,
+                        onAction = onOpenUiAction,
+                        modifier = Modifier.padding(vertical = 6.dp)
+                    )
+                } else {
+                    StreamingRevealContent(displayText, contentIdentity, isLoading) {
+                        when {
+                            isLoading && displayText.isBlank() && thoughts.isBlank() && stickerRefs.isEmpty() && showPendingIndicator -> {
+                                ResponseLoadingIndicator()
+                            }
+                            displayText.isNotBlank() || !isLoading -> {
+                                if (renderRichContent) {
+                                    RichChatContent(
+                                        content = displayText,
+                                        isStreaming = isLoading,
+                                        contentIdentity = contentIdentity,
+                                        contentColor = MaterialTheme.colorScheme.onBackground,
+                                        interactionBinding = interactionBinding,
+                                        onInteractionEvent = onInteractionEvent,
+                                        modifier = Modifier.padding(vertical = 6.dp)
+                                    )
+                                } else if (streamedHere[0]) {
+                                    // Reparsing the whole answer on every token made long answers drop frames.
+                                    // Finished blocks are committed once; only the tail is reparsed. Kept after
+                                    // the stream ends so the layout does not jump at completion.
+                                    IncrementalChatMarkdown(
+                                        content = displayText,
+                                        isStreaming = isLoading,
+                                        isPendingAnimating = false,
+                                        contentIdentity = contentIdentity,
+                                        useMathJax = true,
+                                        contentColor = MaterialTheme.colorScheme.onBackground,
+                                        style = ChatMarkdownStyle.ANSWER,
+                                        modifier = Modifier.padding(vertical = 6.dp),
+                                        pendingAsMarkdown = true
+                                    )
+                                } else {
+                                    ChatMarkdown(
+                                        content = displayText,
+                                        contentIdentity = contentIdentity,
+                                        isStreaming = isLoading,
+                                        modifier = Modifier.padding(vertical = 6.dp)
+                                    )
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            StickerMessageBlock(
-                stickerRefs = stickerRefs,
-                assetResolver = stickerAssetResolver,
-                modifier = Modifier.padding(top = 2.dp, bottom = 8.dp)
-            )
+                StickerMessageBlock(
+                    stickerRefs = stickerRefs,
+                    assetResolver = stickerAssetResolver,
+                    modifier = Modifier.padding(top = 2.dp, bottom = 8.dp)
+                )
 
-            MessageFileThumbnailRow(
-                files = attachments,
-                usePrimaryColors = false,
-                modifier = Modifier.padding(top = 6.dp, bottom = 8.dp)
-            )
+                MessageFileThumbnailRow(
+                    files = attachments,
+                    usePrimaryColors = false,
+                    modifier = Modifier.padding(top = 6.dp, bottom = 8.dp)
+                )
 
-            SourceMetadataBlock(
-                sources = sourceMetadata,
-                modifier = Modifier.padding(top = 2.dp, bottom = 8.dp)
-            )
+                SourceMetadataBlock(
+                    sources = sourceMetadata,
+                    modifier = Modifier.padding(top = 2.dp, bottom = 8.dp)
+                )
 
-            if (canShowActions && !isTextAnimating && !serializedStreamingText.isThoughtTextAnimating) {
-                Row(
-                    modifier = Modifier
-                        .padding(top = 4.dp)
-                        .alpha(0.72f),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    if (!isError) {
-                        CopyTextIcon(onCopyClick)
-                        SelectTextIcon(onSelectClick)
-                        if (canEdit) {
-                            EditTextIcon(onEditClick)
-                        }
-                    }
-                    if (canRetry) {
-                        RetryIcon(onRetryClick)
-                    }
-                }
-
-                revisionIndexLabel?.let { label ->
+                if (canShowActions && !isTextAnimating && !serializedStreamingText.isThoughtTextAnimating) {
                     Row(
-                        modifier = Modifier.padding(top = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        modifier = Modifier
+                            .padding(top = 4.dp)
+                            .alpha(0.72f),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
-                        IconButton(
-                            modifier = Modifier.size(36.dp),
-                            enabled = canShowPreviousRevision,
-                            onClick = onShowPreviousRevision
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                                contentDescription = stringResource(R.string.previous_revision),
-                                modifier = Modifier.size(18.dp)
-                            )
+                        if (!isError) {
+                            CopyTextIcon(onCopyClick)
+                            SelectTextIcon(onSelectClick)
+                            if (canEdit) {
+                                EditTextIcon(onEditClick)
+                            }
                         }
-                        Text(
-                            text = label,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        IconButton(
-                            modifier = Modifier.size(36.dp),
-                            enabled = canShowNextRevision,
-                            onClick = onShowNextRevision
+                        if (canRetry) {
+                            RetryIcon(onRetryClick)
+                        }
+                    }
+
+                    revisionIndexLabel?.let { label ->
+                        Row(
+                            modifier = Modifier.padding(top = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                contentDescription = stringResource(R.string.next_revision),
-                                modifier = Modifier.size(18.dp)
+                            IconButton(
+                                modifier = Modifier.size(36.dp),
+                                enabled = canShowPreviousRevision,
+                                onClick = onShowPreviousRevision
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                                    contentDescription = stringResource(R.string.previous_revision),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            IconButton(
+                                modifier = Modifier.size(36.dp),
+                                enabled = canShowNextRevision,
+                                onClick = onShowNextRevision
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                    contentDescription = stringResource(R.string.next_revision),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -354,193 +358,6 @@ private fun ResponseLoadingIndicator() {
             fontWeight = FontWeight.Medium,
             color = materialColors.secondaryLabel
         )
-    }
-}
-
-@Composable
-internal fun SourceMetadataBlock(
-    sources: List<MessageSourceMetadata>,
-    modifier: Modifier = Modifier
-) {
-    val materialColors = settingsMaterialColors()
-    val visibleSources = sources
-        .mapNotNull { source -> source.safeDedupeKey()?.let { key -> key to source } }
-        .distinctBy { (key, _) -> key }
-        .map { (_, source) -> source }
-    if (visibleSources.isEmpty()) return
-
-    var isExpanded by remember(visibleSources) { mutableStateOf(false) }
-    val rotationAngle by animateFloatAsState(
-        targetValue = if (isExpanded) 180f else 0f,
-        label = "source_rotation"
-    )
-
-    Surface(
-        modifier = modifier
-            .fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        color = materialColors.grouped,
-        contentColor = materialColors.primaryLabel,
-        border = BorderStroke(0.5.dp, materialColors.separator),
-        tonalElevation = 0.dp
-    ) {
-        Column {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { isExpanded = !isExpanded }
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(28.dp)
-                        .background(materialColors.primaryLabel.copy(alpha = 0.1f), CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Language,
-                        contentDescription = null,
-                        tint = materialColors.primaryLabel,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-                Text(
-                    text = "${stringResource(R.string.sources_title)} (${visibleSources.size})",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                    color = materialColors.primaryLabel,
-                    modifier = Modifier.weight(1f)
-                )
-                Icon(
-                    imageVector = Icons.Rounded.KeyboardArrowDown,
-                    contentDescription = if (isExpanded) {
-                        stringResource(R.string.collapse)
-                    } else {
-                        stringResource(R.string.expand)
-                    },
-                    tint = materialColors.secondaryLabel,
-                    modifier = Modifier
-                        .size(20.dp)
-                        .rotate(rotationAngle)
-                )
-            }
-
-            AnimatedVisibility(
-                visible = isExpanded,
-                enter = expandVertically(),
-                exit = shrinkVertically()
-            ) {
-                Column {
-                    HorizontalDivider(
-                        thickness = 0.5.dp,
-                        color = materialColors.separatorStrong
-                    )
-                    visibleSources.forEachIndexed { index, source ->
-                        SourceMetadataItem(
-                            source = source,
-                            sourceNumber = index + 1
-                        )
-                        if (index < visibleSources.lastIndex) {
-                            HorizontalDivider(
-                                modifier = Modifier.padding(start = 52.dp),
-                                thickness = 0.5.dp,
-                                color = materialColors.separator
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SourceMetadataItem(
-    source: MessageSourceMetadata,
-    sourceNumber: Int
-) {
-    val materialColors = settingsMaterialColors()
-    val uriHandler = LocalUriHandler.current
-    val target = source.safeNavigationTarget() ?: return
-    val detail = when (target) {
-        is SafeMessageSourceTarget.PublicUrl -> target.url
-        is SafeMessageSourceTarget.LocalApp -> {
-            val targetLabel = when (target.navigationTarget) {
-                AppSourceNavigationTarget.CHAT_ROOM -> stringResource(R.string.source_local_chat)
-                AppSourceNavigationTarget.MEMORY -> stringResource(R.string.source_local_memory)
-            }
-            "$targetLabel · ${target.entityId}"
-        }
-    }
-    val openSource: (() -> Unit)? = (target as? SafeMessageSourceTarget.PublicUrl)?.let { publicTarget ->
-        { runCatching { uriHandler.openUri(publicTarget.url) } }
-    }
-    val interactionModifier = openSource?.let { onClick ->
-        Modifier.clickable(onClick = onClick)
-    } ?: Modifier
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(interactionModifier)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.Top,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        Box(
-            modifier = Modifier
-                .size(30.dp)
-                .background(materialColors.controlFill.copy(alpha = 0.46f), CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = sourceNumber.toString(),
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = materialColors.secondaryLabel
-            )
-        }
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(2.dp)
-        ) {
-            Text(
-                text = source.title.ifBlank { detail },
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
-                color = materialColors.primaryLabel,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                text = detail,
-                style = MaterialTheme.typography.bodySmall,
-                color = if (openSource != null) materialColors.primaryLabel else materialColors.secondaryLabel,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            source.snippet.takeIf { it.isNotBlank() }?.let { snippet ->
-                Text(
-                    text = snippet,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = materialColors.secondaryLabel,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
-        if (openSource != null) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Rounded.OpenInNew,
-                contentDescription = stringResource(R.string.open_link),
-                tint = materialColors.tertiaryLabel,
-                modifier = Modifier
-                    .padding(top = 2.dp)
-                    .size(18.dp)
-            )
-        }
     }
 }
 

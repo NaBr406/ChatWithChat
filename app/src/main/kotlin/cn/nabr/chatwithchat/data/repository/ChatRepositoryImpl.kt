@@ -4263,7 +4263,7 @@ private const val OPENAI_NATIVE_WEB_SEARCH_INSTRUCTION =
     "只有需要当前网页信息或核查来源时才调用 web_search。" +
         "query 应简洁，并加入有用的实体、主题、时间范围、地区、来源范围和一手来源词。" +
         "查询区域事实时优先使用用户的语言；不要用 web_search 查询本地日期、时间、时区、设备状态或应用设置。" +
-        "回答采用网页信息时引用来源 URL。"
+        "回答采用网页信息时引用来源 URL：在所依据的句子后写成 Markdown 链接 [站点名](工具结果中的原样 URL)。"
 
 /**
  * Ends with the rule the native paths were missing.
