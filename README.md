@@ -1,78 +1,72 @@
 <div align="center">
 
-<img src="./images/logo.png" alt="ChatWithChat logo" width="150">
+<img src="./images/logo.png" alt="ChatWithChat" width="144">
 
 # ChatWithChat
 
-**面向 Android 的本地优先多模型 AI 助手**
+**Android 多模型 AI 助手**
 
-在同一个移动端界面中连接主流模型服务与 OpenAI 兼容端点，并按需启用工具调用、MCP 服务器、联网搜索和跨会话长期记忆。
+连接自己的模型服务，在聊天中使用交互组件、联网工具、本地技能与长期记忆。
 
 <p>
   <img alt="Android 12+" src="https://img.shields.io/badge/Android-12%2B-3DDC84?logo=android&logoColor=white">
-  <img alt="Kotlin" src="https://img.shields.io/badge/Kotlin-2.3.20-7F52FF?logo=kotlin&logoColor=white">
+  <img alt="Kotlin 2.3.20" src="https://img.shields.io/badge/Kotlin-2.3.20-7F52FF?logo=kotlin&logoColor=white">
   <img alt="Jetpack Compose" src="https://img.shields.io/badge/UI-Jetpack%20Compose-4285F4?logo=jetpackcompose&logoColor=white">
-  <a href="https://github.com/NaBr406/ChatWithChat/releases/tag/v1.2.0"><img alt="GitHub Release" src="https://img.shields.io/badge/Release-v1.2.0-0969DA?logo=github"></a>
-  <a href="./LICENSE"><img alt="GPL-3.0 license" src="https://img.shields.io/badge/License-GPL--3.0-blue"></a>
+  <img alt="OpenUI Lang" src="https://img.shields.io/badge/OpenUI-55%20components-2563EB">
+  <a href="./LICENSE"><img alt="GPL-3.0" src="https://img.shields.io/badge/License-GPL--3.0-blue"></a>
 </p>
 
 <p>
-  <a href="https://github.com/NaBr406/ChatWithChat/releases/download/v1.2.0/v1.2.0.apk"><strong>下载 v1.2.0 APK</strong></a>
-  ·
-  <a href="https://github.com/NaBr406/ChatWithChat/releases/tag/v1.2.0">查看发布说明</a>
-  ·
-  <a href="#本地开发">从源码构建</a>
+  <a href="https://github.com/NaBr406/ChatWithChat/releases"><strong>下载 APK</strong></a>
+  &nbsp;·&nbsp;
+  <a href="#快速开始">使用指南</a>
+  &nbsp;·&nbsp;
+  <a href="#本地开发">源码构建</a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/NaBr406/ChatWithChat/issues/new/choose">反馈问题</a>
 </p>
 
 </div>
 
-ChatWithChat 不提供项目方托管的账号、模型或 API 中转服务。你需要使用自己的模型服务凭据，或者连接本机、局域网中的 Ollama / OpenAI 兼容服务。聊天记录、设置和长期记忆由应用在本地管理；发生模型请求、联网搜索、MCP 工具调用或记忆整理时，相关内容会发送到你配置的外部端点。
+ChatWithChat 是一个本地优先的 Android AI 聊天应用。它支持多个模型服务，在普通文字回答中展示表单、图表和可交互页面，也能调用搜索、设备工具和远程 MCP 工具。聊天记录、设置和记忆保存在设备上，你可以管理实际使用的端点、工具和提示词扩展。
 
-> [!IMPORTANT]
-> 当前稳定版为 `v1.2.0`，可从 [GitHub Release](https://github.com/NaBr406/ChatWithChat/releases/tag/v1.2.0) 下载 [`v1.2.0.apk`](https://github.com/NaBr406/ChatWithChat/releases/download/v1.2.0/v1.2.0.apk)。APK 的 SHA-256 为 `edf3c0c000297db024fd255e2fda80134f2c49141164d140417999d832556265`。项目尚未上架 Google Play 或 F-Droid，安装 GitHub APK 时需要允许浏览器或文件管理器安装未知来源应用。
+项目不提供托管账号、模型额度或 API 中转服务。你需要使用自己的服务凭据，或者连接局域网中的 Ollama / OpenAI 兼容服务。模型对话、搜索、MCP 调用和后台记忆整理会把相关内容发送到对应端点。
 
 > [!NOTE]
-> `v1.2.0` 对应 Room schema 23，包含参考聊天历史、长期记忆召回、按供应商配置的上下文管理与自动压缩、本地纯文本技能、远程 MCP 服务器接入、AnySearch 搜索后端、文档附件本地正文抽取，以及 Token 缓存命中统计。
+> 本文介绍当前源码。已有的 [v1.2.0 APK](https://github.com/NaBr406/ChatWithChat/releases/tag/v1.2.0) 不一定包含近期改动；体验当前实现请从源码构建。源码 `versionName` 仍为 `1.2.0`，功能范围不能只凭版本名判断。
 
-## 核心能力
+<table>
+  <tr>
+    <td width="33%" valign="top"><strong>交互式回答</strong><br><sub>55 个 OpenUI 注册组件，可组合表单、图表、地图、学习卡片、SVG 和沙箱 HTML。</sub></td>
+    <td width="33%" valign="top"><strong>多模型与流式阅读</strong><br><sub>切换模型和思考强度，渐进展示正文与推理，查看 Token 用量及缓存命中。</sub></td>
+    <td width="33%" valign="top"><strong>工具与扩展</strong><br><sub>联网搜索、网页读取、交互提问、设备工具、远程 MCP 和本地纯文本技能。</sub></td>
+  </tr>
+  <tr>
+    <td valign="top"><strong>本地长期记忆</strong><br><sub>Markdown 权威内容、端侧向量召回、可恢复的整理流程，以及记忆查看和导出。</sub></td>
+    <td valign="top"><strong>上下文管理</strong><br><sub>跨会话历史召回、按供应商独立压缩、回合范围选择与失败降级。</sub></td>
+    <td valign="top"><strong>移动端会话管理</strong><br><sub>图片与文档附件、消息编辑、回答版本切换、历史搜索和会话导出。</sub></td>
+  </tr>
+</table>
 
-| 能力 | 当前实现 |
+**阅读导航**
+
+[近期更新](#近期更新) · [界面预览](#界面预览) · [核心能力](#核心能力) · [模型服务](#支持的模型服务) · [交互式回答](#交互式回答与富内容) · [工具与搜索](#工具调用与联网搜索) · [本地技能](#本地技能) · [长期记忆](#长期记忆) · [上下文管理](#上下文管理与自动压缩) · [数据与隐私](#数据与隐私边界) · [开发与构建](#本地开发)
+
+## 近期更新
+
+| 方向 | 当前源码中的改动 |
 | --- | --- |
-| 多模型接入 | 支持 OpenAI、Anthropic、Google Gemini、Groq、OpenRouter、Ollama，以及自定义 OpenAI 兼容端点 |
-| 移动端聊天 | 首屏直接开始对话，抽屉管理历史会话，顶部切换模型与思考强度 |
-| 推理流展示 | 统一接收 Responses reasoning summary、`reasoning_content`、`reasoning`、`<think>` 与 `<thinking>`，流式写入可折叠思考区 |
-| 工具调用 | 统一的工具循环、参数校验、调用额度、权限检查、逐次调用确认和结果来源展示 |
-| MCP 服务器 | 接入远程 Streamable HTTP / SSE 服务器的工具，按工具逐个启用，一律按可写入处理并逐次确认 |
-| 本地技能 | 导入包含 `SKILL.md` 的 ZIP 包，按会话或按单次请求挂载纯文本技能提示 |
-| 联网搜索 | 可选自建 SearXNG 或厂商托管的 AnySearch 作为搜索后端，并按需读取网页正文 |
-| 上下文管理 | 按供应商选择自动压缩的四个成本档位或“原文优先”，用检查点链折叠较早内容，并可在会话内选择参与上下文的回合范围 |
-| 长期记忆 | Room schema 23 记忆流水线，以 `MEMORY.md` 为权威事实源，结合端侧 ONNX、ObjectBox HNSW、混合召回和可恢复的原子写入，并支持导入既有记忆 |
-| 参考聊天历史 | 在同一“启用记忆”开关下，按需从其他会话召回有界的历史片段；使用独立的 Room 投影、FTS 和本地向量索引，不替代 `MEMORY.md` |
-| 丰富消息 | 流式回复、Markdown、代码块复制、数学公式、思考过程、来源链接，以及按平台与回合统计的 Token 用量与缓存命中率 |
-| 会话操作 | 搜索标题和消息并按最近更新时间排序，复制与批量删除历史会话，编辑消息、重试回答、切换回答版本并导出会话 |
-| 图片与文档附件 | 从相册或相机添加图片，或选择 PDF、docx 与纯文本类文档在本地抽取正文；单文件与单次附件总量上限均为 50 MiB |
-| 表情库 | 管理内置和自定义静态表情；AI 仅接收标题、替代文本和标签，可在回复中按需搜索并发送 |
-
-## 相较上游的主要改造
-
-ChatWithChat 不只是更换了名称和图标。相较于 GPT Mobile 上游基础，本仓库已经替换或扩展了多个核心子系统：
-
-| 方向 | 本项目实现 |
-| --- | --- |
-| 独立项目身份 | Android `namespace`、`applicationId`、资源、链接与构建产物迁移到 `cn.nabr.chatwithchat` / `NaBr406/ChatWithChat` |
-| 模型与推理控制 | 统一模型发现和启用流程，按提供商映射自动、关闭、低、中、高、最高思考强度，并记住模型与思考模式选择 |
-| 推理流兼容 | 新增跨 SSE 分片的 `ReasoningStreamParser`，按完整 UTF-8 行解码，处理结构化推理字段和思考标签，抑制重复来源，并让未闭合标签仍可见 |
-| 聊天交互 | 增加回答轮次导航、回答版本切换、按平台与轮次统计 Token、用户/助手消息编辑、重试、导出，以及新建会话附件接力 |
-| 附件链路 | 支持相册多选、相机拍照、本地缩略图、格式与容量准入、图片压缩、PDF 与 docx 本地正文抽取，以及兼容端点不支持 Files API 时的内联回退 |
-| 工具平台 | 建立统一工具注册、schema 校验、执行预算、超时、权限、逐次调用确认与来源展示，内置搜索、网页读取、设备时间、按需定位、日历与闹钟写入 |
-| MCP 接入 | 新增远程 MCP 客户端：Streamable HTTP / SSE 传输、服务器与工具缓存持久化、JSON Schema 子集翻译与逐工具拒绝理由、确定性工具命名、注册表原子换入，以及固定为「可写入 + 每次确认」的信任策略 |
-| 本地技能 | 新增纯文本技能子系统：ZIP 包校验与解压门禁、`SKILL.md` 前置元数据解析与标准性判定、引用文件解析、按会话或单次请求的挂载绑定，以及请求快照留存 |
-| 长期记忆 | 新增完整的本地记忆子系统，包括五轮批处理、日记忆蒸馏、schema 23 恢复状态、默认 `ignore` 的质量门禁、可恢复的 `retire` 整理、原子 Markdown 提交、端侧向量索引、Top8 Hybrid recall，以及记忆导入与身份安全的全语料整理 |
-| 参考聊天历史 | 新增可重建的会话轮次投影、异步回填与队列、FTS 检索、独立历史向量快照、混合排序、去重、当前会话排除和进程终止恢复 |
-| 上下文管理 | 新增按模型真实窗口推导的请求预算、四档成本档位、检查点链与后台折叠、OpenAI 服务端压缩接入、跨供应商独立链、可选回合范围，以及压缩失败时的确定性抽取式降级 |
-| 构建与交付 | 增加单 ABI 构建、APK 包名/版本/签名/ABI 校验、固定哈希记忆模型供应，以及 16 KB ZIP/ELF 兼容门禁 |
+| OpenUI 集成 | 本地打包 React + OpenUI Lang，迁入 55 个注册组件、函数库、字体、图标和许可证；与原生 Markdown 混排 |
+| 富内容交互 | 表单状态与消息、平台和回答版本绑定，拒绝过期回调；已保存的历史内容在重开会话后重新建立交互 |
+| 正文与思考流 | 修复兼容接口 JSON 工具协议的正文缓冲问题，增量解码标准 `final_answer.content`；正文和 thinking 共享渐显机制 |
+| 网络恢复 | 对可识别的网络中断进行有限重试，回滚当前请求的显示检查点，避免重复拼接 |
+| 接口配置 | 支持完整 API URL、自定义请求头和 `{session_id}`；为官方 OpenCode 地址补充会话标识 |
+| 聊天界面 | 新增玻璃效果，调整 HyperOS 导航栏与页面边距；显示 OpenUI 时关闭聊天背景采样以规避设备渲染兼容问题 |
+| 记忆维护 | 增加事实当前性、项目生命周期与身份收敛处理，改进维护诊断，提供记忆文档导出 |
 
 ## 界面预览
+
+以下截图展示已有聊天、设置和工具页面，尚未覆盖近期新增的 OpenUI 与玻璃效果。
 
 <table>
   <tr>
@@ -102,6 +96,27 @@ ChatWithChat 不只是更换了名称和图标。相较于 GPT Mobile 上游基�
   </tr>
 </table>
 
+
+## 核心能力
+
+| 能力 | 当前实现 |
+| --- | --- |
+| 多模型接入 | 支持 OpenAI、Anthropic、Google Gemini、Groq、OpenRouter、Ollama，以及自定义 OpenAI 兼容端点 |
+| 移动端聊天 | 首屏直接开始对话，抽屉管理历史会话，顶部切换模型与思考强度，包含玻璃效果与 HyperOS 导航栏适配 |
+| 推理流展示 | 统一接收 Responses reasoning summary、`reasoning_content`、`reasoning`、`<think>` 与 `<thinking>`，流式写入可折叠思考区 |
+| 工具调用 | 统一的工具循环、参数校验、调用额度、权限检查、逐次调用确认和结果来源展示 |
+| MCP 服务器 | 接入远程 Streamable HTTP / SSE 服务器的工具，按工具逐个启用，一律按可写入处理并逐次确认 |
+| 本地技能 | 导入包含 `SKILL.md` 的 ZIP 包，按会话或按单次请求挂载纯文本技能提示 |
+| 联网搜索 | 可选自建 SearXNG 或厂商托管的 AnySearch 作为搜索后端，并按需读取网页正文 |
+| 上下文管理 | 按供应商选择自动压缩的四个成本档位或“原文优先”，用检查点链折叠较早内容，并可在会话内选择参与上下文的回合范围 |
+| 长期记忆 | Room schema 29 记忆流水线，以 `MEMORY.md` 为权威事实源，结合端侧 ONNX、ObjectBox HNSW、混合召回和可恢复的原子写入，并支持导入既有记忆 |
+| 参考聊天历史 | 在同一“启用记忆”开关下，按需从其他会话召回有界的历史片段；使用独立的 Room 投影、FTS 和本地向量索引，不替代 `MEMORY.md` |
+| 交互式回答 | 本地 OpenUI Lang 渲染器，支持表单、图表、地图、SVG 与沙箱 HTML，模型动作仅回填待确认的草稿 |
+| 丰富消息 | 流式回复、Markdown、代码块复制、数学公式、思考过程、来源链接，以及按平台与回合统计的 Token 用量与缓存命中率 |
+| 会话操作 | 搜索标题和消息并按最近更新时间排序，复制与批量删除历史会话，编辑消息、重试回答、切换回答版本并导出会话 |
+| 图片与文档附件 | 从相册或相机添加图片，或选择 PDF、docx 与纯文本类文档在本地抽取正文；单文件与单次附件总量上限均为 50 MiB |
+| 表情库 | 管理内置和自定义静态表情；AI 仅接收标题、替代文本和标签，可在回复中按需搜索并发送 |
+
 ## 支持的模型服务
 
 添加平台后，应用会从服务端同步模型列表。你可以选择启用的模型、设置默认模型，并为支持的模型选择自动、关闭、低、中、高或最高思考强度。
@@ -117,6 +132,21 @@ ChatWithChat 不只是更换了名称和图标。相较于 GPT Mobile 上游基�
 | Custom | 自定义 OpenAI 兼容接口 | 结构化 JSON 回退 |
 
 不同服务和模型支持的思考参数、视觉输入、上下文长度与工具能力并不完全一致，最终行为仍取决于目标端点的实际兼容程度。
+
+### 完整 API URL 与自定义请求头
+
+平台设置支持两种地址方式：普通 URL 由应用拼接协议路径；启用完整 API URL 后，对话请求直接使用填写的地址。模型列表等辅助请求仍需服务端提供相应能力，不能因为对话地址可用就假定所有接口可用。
+
+自定义请求头每行填写一项，例如：
+
+```text
+X-Client-Name: ChatWithChat
+x-opencode-session: {session_id}
+```
+
+`{session_id}` 会替换为请求会话标识。已保存聊天的标识按平台与会话稳定生成；其他请求使用独立的请求标识。官方 `opencode.ai` 地址自动添加 `x-opencode-session`，代理地址可通过自定义头显式启用。`Authorization`、`Host`、`Content-Length`、`Content-Type` 和受管理的上传头不允许在这里覆盖。
+
+端点、凭据和请求头按请求传递，避免共享客户端在聊天、标题生成、附件处理与后台记忆任务并发时串用平台配置。
 
 ### 推理与思考过程
 
@@ -135,8 +165,8 @@ ChatWithChat 不只是更换了名称和图标。相较于 GPT Mobile 上游基�
 
 ### 安装发布版
 
-1. 下载 [ChatWithChat v1.2.0 APK](https://github.com/NaBr406/ChatWithChat/releases/download/v1.2.0/v1.2.0.apk)。从 v1.1.0 升级时，先在应用内导出记忆和会话，再卸载旧版。
-2. 如需校验完整性，确认 SHA-256 为 `edf3c0c000297db024fd255e2fda80134f2c49141164d140417999d832556265`。
+1. 从 [GitHub Releases](https://github.com/NaBr406/ChatWithChat/releases) 选择 APK。需要当前源码中的近期功能时，按下方开发说明构建；升级或更换安装包签名前建议导出重要会话与记忆。
+2. 若下载的是已发布的 `v1.2.0.apk`，其 SHA-256 为 `edf3c0c000297db024fd255e2fda80134f2c49141164d140417999d832556265`。
 3. 在 Android 12 或更高版本设备上打开 APK，并按系统提示允许当前来源安装应用。
 
 ### 首次配置
@@ -158,6 +188,78 @@ ChatWithChat 不只是更换了名称和图标。相较于 GPT Mobile 上游基�
 
 如果 Android 设备需要连接电脑上运行的 Ollama，请填写电脑在局域网中的地址；Android 设备里的 `localhost` 指向设备自身。
 
+## 交互式回答与富内容
+
+回答可以包含普通 Markdown 和显式标记为 `openui` 的程序块。聊天列表、输入框与消息操作由 Compose 管理；程序块交给应用内的 React + OpenUI Lang 渲染器。同一条回答可以包含文字说明、表格、表单和图形。
+
+### 组件与适用场景
+
+| 类别 | 组件举例 | 可用于 |
+| --- | --- | --- |
+| 布局 | `Col`、`Row`、`Grid`、`Card`、`Carousel`、`Popover` | 方案对比、卡片列表、分组信息与补充说明 |
+| 文本 | `Title`、`Text`、`Markdown`、`Code`、`Math`、`Quote` | 说明文字、代码、公式和引用 |
+| 输入 | `Input`、`TextArea`、`Select`、`Slider`、`Checkbox`、`RadioGroup`、`DatePicker` | 参数调整、筛选、问卷与表单 |
+| 数据 | `Table`、`Chart` | 数据比较，柱状、折线、面积、饼图、环形和散点图 |
+| 媒体 | `Image`、`SearchImage`、`Map`、`MapMarker`、`YouTube` | 图片说明、地点分布、驾车路线与视频嵌入 |
+| 学习与状态 | `Flashcard`、`Timer`、`Celebration` | 翻转卡片、倒计时与完成反馈 |
+| 绘图与页面 | `Svg`、`G`、`Circle`、`Line`、`Path`、`HtmlView` 等 | 示意图、动态绘图、Canvas 和内联 HTML 小程序 |
+
+当前迁入 55 个注册组件，包括基础布局与 SVG 图形元素。组件、函数、样式、KaTeX 字体、Lucide 图标和 MapLibre worker 都随 APK 本地打包，不需要额外部署聊天前端服务器。组件来自 [Thesys Open Intelligent UI](https://github.com/thesysdev/open-intelligent-ui) 的固定提交，并保留其 MIT 许可证。
+
+可以尝试这样的请求：
+
+- “做一个贷款月供计算器，让我用滑块调整年限和利率。”
+- “比较这几套方案，用图表展示数据，并给出完整的文字建议。”
+- “把这些单词做成可以翻面的记忆卡片。”
+- “用 SVG 画出这个机构，提供可以调整位置的控件。”
+
+模型仍需要生成合法的 OpenUI Lang 程序。提示词包含实际组件签名与宿主约定，复杂页面是否正确生成取决于模型能力；普通问题可以只用 Markdown 回答。
+
+### 交互与消息状态
+
+| 行为 | 应用处理 |
+| --- | --- |
+| 本地修改 | 输入、选项、滑块和 `Set` / `Reset` 只更新页面局部状态，不自动产生模型请求 |
+| 流式生成 | 追加同一程序时复用 WebView 与 React root；生成期间控件只读，完成并保存后开放交互 |
+| 历史内容 | 已持久化的历史回答可在重开会话后重新建立交互；表单值本身不写入数据库 |
+| 回答切换 | 状态与聊天、轮次、平台、回答版本和请求 attempt 绑定；替换、回滚或身份变化时重置，旧回调失效 |
+| 回填对话 | `ToAssistant` 将明确选定的值放入空白输入框，由用户检查并点击发送；不覆盖已有草稿或附件 |
+| 原生动作 | HTTP(S) 链接和复制请求交给原生宿主校验；组件不能直接发送消息或调用设备工具 |
+| 暂停与恢复 | 控件和相关计时器随宿主暂停；页面仍存在时保留局部值，页面销毁后恢复初始状态 |
+
+历史表单的本地操作不受其他回答正在生成的全局忙碌状态影响；需要回填输入框的动作仍检查忙碌、编辑、保存与草稿冲突。单个程序块最多接受 1,048,576 个源字符，动作值另有长度限制。
+
+### Markdown、复制与上下文
+
+模型必须在 OpenUI 围栏外提供完整的文字说明，包含结论、实际数据和必要条件。复制回答、导出、后续对话上下文、长期记忆与助手 Token 估算使用语义文本投影，过滤组件源码。页面中的本地修改不会自动进入下一次模型请求，需要用户通过回填动作明确提交。
+
+原生富内容解析器仍兼容已有的 `ui-*` 内容。新回答使用 OpenUI；未注册、无效或未完成的旧结构节点按兼容渲染规则降级。普通 Markdown 支持代码、数学公式、表格、链接与可折叠思考区。
+
+### HTML 沙箱与联网组件
+
+`HtmlView` 在独立的 opaque-origin iframe 中运行，只允许内联脚本。它可以实现 Canvas 或内联小游戏，但不能访问父页面 DOM、原生桥、外部脚本、网络 fetch、嵌套 frame、表单提交或远程 HTTPS 图片；图片只允许 data/blob URL。沙箱不提供脚本执行配额，同步死循环仍可能阻塞所在 WebView。
+
+这项网络限制仅适用于 `HtmlView`。常规图片、图片搜索、地图、路线与视频仍可能访问外部服务：
+
+| 内容 | 外部依赖与失败处理 |
+| --- | --- |
+| 图片搜索与图片回退 | Wikipedia / Wikimedia Commons；无结果或网络失败时显示不可用状态 |
+| 地图 | OpenFreeMap 矢量底图、Esri 栅格回退；WebGL 或地图服务不可用时保留周围回答并显示状态 |
+| 路线 | 公共 OSRM 驾车路线；失败时保留有标记的路线概览 |
+| 视频 | YouTube 的 `youtube-nocookie` 嵌入，需要网络连接 |
+
+本地打包描述的是渲染器资源。外部媒体与服务不因此具备离线能力，也不代表模型提供的图片、位置或链接已经核验。
+
+实现与验证见 [前端 README](./web/openui/README.md)、[浏览器验证矩阵](./web/openui/VERIFICATION.md)、[Android 集成记录](./docs/superpowers/reports/2026-10-26-openui-webview-integration.md) 和 [设备渲染兼容修复](./docs/superpowers/reports/2026-10-26-openui-native-crash-fix.md)。这些记录区分了固定样例、真实模型回放与设备测试；模拟器长批次中的原生崩溃仍在集成记录中保留，不能把组件注册数量理解为完整设备验收结果。
+
+## 流式显示与网络恢复
+
+正文和 thinking 按到达内容渐进显示。渐显层按 Unicode code point 的到达速率调整动画时长与透明度；它不使用模型 tokenizer，也不会把显示速度当成服务端 Token 速度。Markdown 格式闭合或节点更新时，已显示文字不会因为重新排版而整段重新播放。
+
+兼容接口的 JSON 工具路径支持增量解码标准 `{"type":"final_answer","content":"…"}`，避免正文等完整 JSON 收齐后才出现。它处理跨分片转义与 Unicode；工具参数和 JSON 外壳不会显示成正文。最终输出仍经过协议校验，无效预览会撤回，非标准字段顺序可能仍需等待完整输出。具体实现见 [正文流式修复记录](./docs/superpowers/reports/2026-10-22-body-streaming-fix.md)。
+
+遇到可识别的网络中断时，应用最多进行 5 次重连，使用递增等待，并回滚当前请求的显示检查点后重新生成。这不是服务端断点续传，可能产生额外请求和用量；取消、参数错误与认证失败不会被当成普通网络中断无限重试。
+
 ## 工具调用与联网搜索
 
 工具总开关提供“关闭”和“自动”两种模式。自动模式下，模型可以在当前请求需要时调用已启用工具。内置工具以只读为主，写入型工具单独把关：`add_schedule` 和 `set_alarm` 会写入系统日历与时钟，默认关闭且必须由用户显式启用；表情库额外提供 `search_stickers` 和 `send_sticker`，后者只会从本地已启用目录中选择并展示静态表情：
@@ -166,6 +268,8 @@ ChatWithChat 不只是更换了名称和图标。相较于 GPT Mobile 上游基�
 | --- | --- | --- |
 | `web_search` | 搜索公开网页并返回结构化来源 | 工具调用为自动、联网搜索为自动，并已配置搜索后端 |
 | `fetch_url` | 读取公开网页正文 | 与网页搜索相同 |
+| `ask_user_question` | 在聊天中提出结构化问题，等待用户选择或填写答案后继续 | 工具调用为自动，需要当前前台会话参与 |
+| `list_visual_assets` / `view_image` | 列出并按引用读取当前会话的可用图片 | 工具调用为自动，受会话范围与视觉资产访问规则限制 |
 | `current_datetime` | 读取设备本地日期、时间与时区 | 工具调用为自动 |
 | `device_location` | 按需读取设备当前位置 | 默认关闭，需要用户主动启用并授予 Android 定位权限 |
 | `add_schedule` | 向系统日历写入日程 | 默认关闭，需要用户主动启用并授予日历权限 |
@@ -185,13 +289,13 @@ ChatWithChat 不只是更换了名称和图标。相较于 GPT Mobile 上游基�
 | SearXNG | 需要填写自建或自选实例的 URL | 只发送到你填写的那个实例 |
 | AnySearch | 厂商托管，零配置可用；API Key 可留空 | 发送到 `api.anysearch.com` 这一第三方服务 |
 
-匿名调用 AnySearch 也能工作，但速率上限按出口 IP 计算，只够轻量使用；填入 API Key 后按密钥计费与限速。两个后端返回的都是结构化来源列表，网页正文仍由应用自己从公开 URL 读取。
+AnySearch 支持受限的匿名使用，填入 API Key 后使用对应账户配额；实际限额与收费以服务方为准。两个后端返回的都是结构化来源列表，网页正文仍由应用自己从公开 URL 读取。
 
 ### MCP 服务器
 
-应用可以接入远程 MCP 服务器**的工具**，不接入 resources 与 prompts。传输方式支持当前规范的 Streamable HTTP 与仍被大量部署使用的旧版 HTTP+SSE；本地 stdio 服务器不在范围内，Android 无法启动子进程。客户端使用 `io.modelcontextprotocol:kotlin-sdk-client`，固定在 0.11.1。
+应用可以接入远程 MCP 服务器的工具，不接入 resources 与 prompts。传输方式支持当前规范的 Streamable HTTP 与仍被大量部署使用的旧版 HTTP+SSE；当前不支持启动本地 stdio 服务器。客户端使用 `io.modelcontextprotocol:kotlin-sdk-client`，固定在 0.11.1。
 
-信任模型是这部分的重点，因为工具定义来自第三方：
+远程工具定义来自第三方，应用采用以下处理规则：
 
 | 环节 | 处理方式 |
 | --- | --- |
@@ -204,7 +308,7 @@ ChatWithChat 不只是更换了名称和图标。相较于 GPT Mobile 上游基�
 | Schema 翻译 | `McpSchemaTranslator` 把服务器 schema 转换为应用能表达的子集：会改变参数结构的关键字（`$ref`、`oneOf`、`if/then`、元组 `items` 等）整体拒绝该工具并给出理由码，只收窄取值的关键字则丢弃并保留属性 |
 | 工具命名 | 映射为 `mcp_<别名>_<工具>`，控制在 64 字符内，超长时附带 `(serverId, toolName)` 的短摘要；别名创建时固定，避免改名后孤立已有的启用与授权记录 |
 
-服务器与工具缓存持久化在 `mcp_servers` 与 `mcp_tools` 两张表中，由 schema 23 引入，因此冷启动无需联网即可重建工具目录。单个服务器最多同步 500 个工具、20 页；同步失败时保留上一份目录，不会因为一次网络抖动就抹掉用户已启用并授权的工具。凭据以明文存放在 `mcp_servers.auth_token`，与现有的平台 API 密钥存放方式一致。
+服务器与工具缓存持久化在 `mcp_servers` 与 `mcp_tools` 两张表中，由历史数据库迁移引入，因此冷启动无需联网即可重建工具目录。单个服务器最多同步 500 个工具、20 页；同步失败时保留上一份目录，不会因为一次网络抖动就抹掉用户已启用并授权的工具。凭据以明文存放在 `mcp_servers.auth_token`，与现有的平台 API 密钥存放方式一致。
 
 完整的翻译规则、预算测算、恢复行为与测试要求见 [工具调用开发指南](./docs/superpowers/tool-calling.md)。当前仍不支持插件市场或任意第三方工具下载。
 
@@ -237,19 +341,19 @@ ChatWithChat 不只是更换了名称和图标。相较于 GPT Mobile 上游基�
 
 ## 长期记忆
 
-长期记忆默认关闭，并且不是简单地把完整聊天记录拼回提示词。开启“启用记忆”后，应用只记录包含成功助手回答的已完成轮次，将其存入 Room 的待处理队列；每个不可变批次最多 5 轮，在达到 5 轮、用户空闲 30 分钟或发生上下文压缩时进入后台维护流程。这个开关也控制下方独立的参考聊天历史索引与召回。
+长期记忆默认关闭。开启“启用记忆”后，应用只记录包含成功助手回答的已完成轮次，将其存入 Room 的待处理队列；每个不可变批次最多 5 轮，在达到 5 轮、用户空闲 30 分钟或发生上下文压缩时进入后台维护流程。这个开关也控制下方独立的参考聊天历史索引与召回。
 
 ### 实现分层
 
 | 层级 | 实现与职责 |
 | --- | --- |
 | 权威内容 | `filesDir/memory_store/MEMORY.md` 是普通聊天召回的唯一事实源；`memory/YYYY-MM-DD.md` 只作为维护输入，蒸馏进入 `MEMORY.md` 前不会参与普通召回 |
-| 调度状态 | Room schema 23 保存待处理轮次、聊天检查点、维护任务、活动日志、变更组、变更回执、语料代次和日蒸馏检查点；参考聊天历史的派生表、队列和回填状态也在同一数据库中 |
+| 调度状态 | Room schema 29 保存待处理轮次、聊天检查点、维护任务、活动日志、变更组、变更回执、语料代次和日蒸馏检查点；参考聊天历史的派生表、队列和回填状态也在同一数据库中 |
 | 语义整理 | 使用平台列表中首个已启用且已选择模型的兼容平台，把对话批次转换为受约束的 `create`、`replace`、`remove` 或 `ignore` 操作；全语料整理还支持可恢复的 `retire` |
 | 一致性提交 | `MemoryMutationCoordinator` 通过幂等键、目标哈希、暂存文件、原子替换和 Room compare-and-set 状态推进提交，避免进程终止后重复写入或回滚新内容 |
 | 本地向量化 | 校验固定版本和 SHA-256 的 `bge-small-zh-v1.5` ONNX 资产，在设备上生成 512 维 CLS/L2 向量；该步骤不会调用云端 embedding 服务 |
 | 派生索引 | ObjectBox 5.4.2 HNSW 位于 `noBackupFilesDir/memory_vector_index`，只保存可从当前 Markdown 重建的派生状态，不拥有权威内容 |
-| 召回 | `HybridMemoryRetriever` 对当前 `MEMORY.md` 同时进行关键词和向量检索，再做融合、去重和多样化；普通长期记忆查询最多保留 8 条结果且不设记忆层 Token 预算，维护工作集仍可使用显式预算；索引缺失、过期或损坏时永久回退到当前 Markdown 关键词召回 |
+| 召回 | `HybridMemoryRetriever` 对当前 `MEMORY.md` 同时进行关键词和向量检索，再做融合、去重和多样化；普通长期记忆查询最多保留 8 条结果且不设记忆层 Token 预算，维护工作集仍可使用显式预算；索引缺失、过期或损坏时回退到当前 Markdown 关键词召回 |
 | 可见性 | 记忆页提供权威 Markdown 的只读查看与导出，以及模型调用、记忆生成、组织结果、重试和失败原因的活动日志 |
 
 ```mermaid
@@ -257,7 +361,7 @@ flowchart TD
     TURN["成功完成的对话轮次"] --> PENDING["Room 待处理轮次"]
     PENDING --> BATCH["最多 5 轮的不可变批次"]
     BATCH --> LLM["已配置模型生成受约束操作"]
-    LLM --> RECEIPT["schema 23 变更组与回执"]
+    LLM --> RECEIPT["变更组与回执"]
     RECEIPT --> MARKDOWN["原子提交 MEMORY.md / daily Markdown"]
     MARKDOWN --> DISTILL["跨日蒸馏稳定事实"]
     DISTILL --> MARKDOWN
@@ -269,11 +373,17 @@ flowchart TD
     HYBRID --> PROMPT["全部 Core 事实 + 最多 8 条查询事实"]
 ```
 
-召回查询由最新用户消息和最近 6 条上下文组成，先取最多 24 个候选，再选择最多 8 条查询事实；长期记忆检索本身不设记忆层 Token 预算。Core 事实独立于查询相关性，保留所有符合当前性、可见性和安全校验的事实。最终提示仍受所选 provider 的 context window 和请求预检约束。私密或敏感记忆会保留敏感度元数据，并在注入提示中要求仅在当前请求确有需要时使用，不能因为被召回就主动暴露。
+召回查询由最新用户消息和最近 6 条上下文组成，在最多 24 个候选中选择最多 8 条查询事实；长期记忆检索本身不设记忆层 Token 预算。Core 事实独立于查询相关性，保留所有符合当前性、可见性和安全校验的事实。最终提示仍受所选 provider 的 context window 和请求预检约束。私密或敏感记忆会保留敏感度元数据，并在注入提示中要求仅在当前请求确有需要时使用，不能因为被召回就主动暴露。
+
+### 事实当前性与整理诊断
+
+近期维护流程增加了事实当前性、项目生命周期与规范身份处理。项目迁移、名称别名或阶段变化需要结合已有事实判断；已失效或冲突的内容通过整理与召回校验处理，避免旧项目状态持续进入新回答。项目迁移包含确定性提案规划与提交状态检查。
+
+记忆页面可以查看权威文档、导出 Markdown，并检查模型调用、整理结果、重试与失败原因。缺少可用模型导致的阻塞任务，只有在模型配置确实满足条件时才重新开放，减少无效重试。后台整理仍可能出错，活动日志用于检查实际发生了哪些变更。
 
 ### 恢复与降级
 
-应用启动时会先恢复未完成的变更回执，再进行语料 bootstrap 和向量索引对账。有效租约仍在运行的任务不会被抢占；过期或无主任务通过 CAS 完成恢复。若暂存文件缺失、哈希冲突或目标内容已经写入，恢复流程会分别终止、标记冲突或幂等完成，而不是覆盖当前 `MEMORY.md`。
+应用启动时恢复未完成的变更回执，随后进行语料 bootstrap 和向量索引对账。有效租约仍在运行的任务不会被抢占；过期或无主任务通过 CAS 完成恢复。若暂存文件缺失、哈希冲突或目标内容已经写入，恢复流程会分别终止、标记冲突或幂等完成，而不是覆盖当前 `MEMORY.md`。
 
 ObjectBox 索引可以安全删除并从 Markdown 重建。模型资产缺失、损坏、版本不匹配，或者向量快照不新鲜时，embedding capability 保持 `NOT_PROVISIONED`，普通聊天仍使用当前 Markdown 的关键词结果；不会联网下载模型、调用云端 embedding 或使用伪向量替代。
 
@@ -287,7 +397,7 @@ ObjectBox 索引可以安全删除并从 Markdown 重建。模型资产缺失、
 | --- | --- |
 | 隐私开关 | 不新增单独的历史开关，复用“启用记忆”。关闭后不向新请求注入历史，也不消费或写入新的历史索引；已有派生数据保留，重新开启时异步校准 |
 | 收录边界 | 只收录有用户消息和成功助手回答的已完成轮次；编辑、删除或不完整的轮次不会进入可用召回，旧投影在重建前会失效，当前会话默认不参与结果 |
-| 索引生命周期 | Room schema 23 保存轮次投影、FTS、异步队列、回填检查点、索引代次、embedding 缓存和独立历史向量快照；WorkManager 负责回填、增量修复和重建 |
+| 索引生命周期 | Room schema 29 保存轮次投影、FTS、异步队列、回填检查点、索引代次、embedding 缓存和独立历史向量快照；WorkManager 负责回填、增量修复和重建 |
 | 召回路径 | 中文感知的词法检索与端侧语义向量检索融合、去重并按会话分散；最多注入 4 个片段、约 400 Token，每个来源会话最多 2 个片段 |
 | 降级与提示 | 向量资产不可用、快照过期或损坏时回退到词法检索；只注入有界的自然语言片段，并标记为不可信历史证据，不包含内部 ID、路径、哈希、诊断字段或附件字节 |
 
@@ -297,7 +407,7 @@ ObjectBox 索引可以安全删除并从 Markdown 重建。模型资产缺失、
 
 长对话迟早会超出模型的输入窗口。应用不会静默丢弃消息，而是按供应商决定单次请求携带多少历史、以及超出部分如何折叠。所有策略都只影响请求的组装方式；`messages_v2` 里的原始消息始终保留，也始终可以在界面上翻阅。
 
-预算由模型的**真实输入窗口**推导，而不是模型名字。`ContextWindowResolver` 按三步解析：先用从模型列表接口发现并写入 `platform_model_v2.context_window` 的值，再查一张人工维护的模型族前缀表，最后回退到该供应商类型的保守默认值。名字里带 `-1m` 或 `-128k` 不构成依据。Ollama 例外并直接短路到回退值：应用使用的 OpenAI 兼容端点无法传递 `num_ctx`，实际窗口由服务端设置决定，超出部分会被静默截断。
+预算由模型的输入窗口推导。`ContextWindowResolver` 优先使用模型列表接口发现并写入 `platform_model_v2.context_window` 的值，缺失时查模型族前缀表，仍无法确定时使用该供应商类型的保守默认值。名字里带 `-1m` 或 `-128k` 不构成依据。Ollama 例外并直接短路到回退值：应用使用的 OpenAI 兼容端点无法传递 `num_ctx`，实际窗口由服务端设置决定，超出部分会被静默截断。
 
 ### 策略与成本档位
 
@@ -305,13 +415,13 @@ ObjectBox 索引可以安全删除并从 Markdown 重建。模型资产缺失、
 
 | 选项 | 压缩线上限 | 原文尾巴上限 | 说明 |
 | --- | --- | --- | --- |
-| 自动压缩 · 节流 | 32K | 8K | 折叠最勤，单次请求最便宜，长对话连贯性相应弱 |
+| 自动压缩 · 节流 | 32K | 8K | 折叠最勤，携带的原文较少，长对话细节更多依赖摘要 |
 | 自动压缩 · 均衡 | 96K | 16K | 默认档，成本与连贯性的折中 |
-| 自动压缩 · 宽裕 | 200K | 48K | 摘要更详细，长对话记得更牢，成本约为均衡档三倍 |
+| 自动压缩 · 宽裕 | 200K | 48K | 允许携带更多近期原文与压缩内容，实际费用由请求用量决定 |
 | 自动压缩 · 跟随窗口 | 无上限 | 无上限 | 取消上限，两条线按模型窗口比例计算 |
 | 原文优先 | — | 整个可用预算 | 容量允许时按原文发送，超出预算后才压缩较早内容 |
 
-档位只是上限。请求预算先从窗口扣掉输出预留（15%，上限 8192）和安全余量（5%，上限 2048），得到有效输入预算；压缩线取其 75%、后台预折叠线取 60%、原文尾巴取 30%，再分别与档位上限取较小者。因此在小窗口模型上比例先到上限，四个档位表现完全一致；档位只有在窗口大到上限成为决定因素时才起作用。跟随窗口档去掉上限后，1M 窗口模型的单次请求可携带约 297K token 原文，费用可能是均衡档的一二十倍。
+档位只是上限。请求预算先从窗口扣掉输出预留（15%，上限 8192）和安全余量（5%，上限 2048），得到有效输入预算；压缩线取其 75%、后台预折叠线取 60%、原文尾巴取 30%，再分别与档位上限取较小者。因此在小窗口模型上比例先到上限，四个档位表现完全一致；档位只有在窗口大到上限成为决定因素时才起作用。跟随窗口档去掉上限后，1M 窗口模型的单次请求可携带约 297K token 原文，实际请求用量和费用可能明显增加。
 
 「原文优先」不等于「从不压缩」：它把整个剩余预算交给逐字回合，接近预算的 80% 时给出提示，真正超出后仍会折叠较早内容。它也是唯一支持手动选择回合范围的策略。
 
@@ -344,6 +454,7 @@ ObjectBox 索引可以安全删除并从 Markdown 重建。模型资产缺失、
 | 联网搜索 | SearXNG 后端只把查询发送到你填写的实例；AnySearch 后端会把查询发送到 `api.anysearch.com`。两者的网页正文都由应用从公开 URL 读取 |
 | MCP 工具调用 | 工具名、参数和返回结果在你启用的远程服务器与应用之间传输；每次调用都需要你确认，会话级授权仅存在于内存 |
 | 文档附件 | PDF、docx 与纯文本类文档在设备本地抽取正文；只有抽出的文字进入模型请求，原始文件字节不会上传 |
+| 交互页面 | 本地表单值不自动进入后续请求；回填后由用户发送。HtmlView 内联脚本受沙箱限制，常规图片、地图和视频可能访问第三方服务 |
 | 本地技能 | 技能包解压后保存在应用私有存储；挂载后其文本内容会作为提示词的一部分发送到所选模型，包内脚本不会执行 |
 | 长期记忆语义整理 | 完成轮次、已有记忆和受约束整理提示会发送到已配置的模型服务；模型返回的操作在本地校验后才允许提交 |
 | 长期记忆召回 | Markdown、Room 控制状态、ONNX embedding 和 ObjectBox 检索均在设备端运行；普通召回不会调用云端 embedding |
@@ -358,12 +469,13 @@ ObjectBox 索引可以安全删除并从 Markdown 重建。模型资产缺失、
 
 ### 环境要求
 
-- JDK 17。
+- 推荐 JDK 21；Java 源码与目标字节码兼容级别为 17。
 - Android Studio 与 Android SDK 36。
 - Windows PowerShell，或能运行 Gradle Wrapper 的类 Unix 环境。
 - 设备测试需要 Android 12+ 真机或模拟器。
+- 修改 OpenUI 前端需要 Node.js 24+ 与 npm。
 
-项目是单 `app` 模块，`namespace` 与 `applicationId` 均为 `cn.nabr.chatwithchat`。
+项目是单 `app` 模块，`namespace` 与 `applicationId` 均为 `cn.nabr.chatwithchat`，当前 Room schema 为 29。OpenUI 产物已放在 `app/src/main/assets/openui/`，仅构建 Android 时无需运行 npm。
 
 ```powershell
 git clone https://github.com/NaBr406/ChatWithChat.git
@@ -411,6 +523,28 @@ macOS / Linux 下将 `.\gradlew.bat` 替换为 `./gradlew`。代码格式由 ktl
 
 `build-apk.ps1` 也接受 `armeabi-v7a` 和 `x86`，但当前生产兼容验证重点是 `arm64-v8a` 与 `x86_64`；32 位 ABI 仍需单独验证。
 
+### OpenUI 前端开发
+
+在 `web/openui/` 中使用 Node.js 24 或更高版本：
+
+```powershell
+Set-Location web/openui
+npm ci --ignore-scripts
+npm test
+npm run build
+
+# 浏览器测试，首次安装 Chromium
+npx playwright install chromium
+npm run test:browser
+
+Set-Location ../..
+.\gradlew.bat :app:assembleDebug
+```
+
+`npm run build` 执行 TypeScript 检查、Vite 打包与许可证收集，只替换 `app/src/main/assets/openui/` 的生成资源。修改前端后需要重新构建 APK，Android 构建本身不会自动更新这些资源。
+
+`gallery.html` 是诊断画廊，包含组件组合、示例程序和明确标注的示例数据工具，不是生产聊天运行时。Vitest 验证函数与宿主协议，Playwright 检查浏览器交互；Android WebView 的输入法、原生选择、滚动与设备 WebGL 需要单独验证。完整说明见 [web/openui/README.md](./web/openui/README.md)。
+
 ### Release 构建
 
 生产 Release 包含固定版本、固定哈希的端侧记忆模型。模型二进制不提交到 Git，干净工作区需要先准备并校验资产：
@@ -444,14 +578,40 @@ macOS / Linux 下将 `.\gradlew.bat` 替换为 `./gradlew`。代码格式由 ktl
 
 当前 `arm64-v8a` 与 `x86_64` 的目标原生库已经通过 16 KB ELF 对齐验证。`armeabi-v7a` 与 `x86` 仍属于单独的 32 位支持策略，不应把 64 位门禁结论直接外推到 32 位产物。
 
+## 相较上游的主要改造
+
+项目基于 GPT Mobile 持续开发，以下子系统已在本仓库中重写或扩展：
+
+| 方向 | 本项目实现 |
+| --- | --- |
+| 独立项目身份 | Android `namespace`、`applicationId`、资源、链接与构建产物迁移到 `cn.nabr.chatwithchat` / `NaBr406/ChatWithChat` |
+| 模型与推理控制 | 统一模型发现和启用流程，按提供商映射自动、关闭、低、中、高、最高思考强度，并记住模型与思考模式选择 |
+| 推理流兼容 | 新增跨 SSE 分片的 `ReasoningStreamParser`，按完整 UTF-8 行解码，处理结构化推理字段和思考标签，抑制重复来源，并让未闭合标签仍可见 |
+| 富内容渲染 | 增加结构化内容解析、流式累积、语义投影、原生兼容渲染与 OpenUI WebView 宿主；模型提示词与实际组件签名保持一致 |
+| 交互状态 | 按会话、轮次、平台、回答版本隔离本地状态，校验事件来源，支持历史内容重建交互与输入框冲突检查 |
+| 聊天交互 | 增加回答轮次导航、回答版本切换、按平台与轮次统计 Token、用户/助手消息编辑、重试、导出，以及新建会话附件接力 |
+| 附件链路 | 支持相册多选、相机拍照、本地缩略图、格式与容量准入、图片压缩、PDF 与 docx 本地正文抽取，以及兼容端点不支持 Files API 时的内联回退 |
+| 工具平台 | 建立统一工具注册、schema 校验、执行预算、超时、权限、逐次调用确认与来源展示，内置搜索、网页读取、设备时间、按需定位、日历与闹钟写入 |
+| MCP 接入 | 新增远程 MCP 客户端：Streamable HTTP / SSE 传输、服务器与工具缓存持久化、JSON Schema 子集翻译与逐工具拒绝理由、确定性工具命名、注册表原子换入，以及固定为「可写入 + 每次确认」的信任策略 |
+| 本地技能 | 新增纯文本技能子系统：ZIP 包校验与解压门禁、`SKILL.md` 前置元数据解析与标准性判定、引用文件解析、按会话或单次请求的挂载绑定，以及请求快照留存 |
+| 长期记忆 | 新增完整的本地记忆子系统，包括五轮批处理、日记忆蒸馏、可恢复的维护状态、默认 `ignore` 的质量门禁、可恢复的 `retire` 整理、原子 Markdown 提交、端侧向量索引、Top8 Hybrid recall，以及记忆导入与身份安全的全语料整理 |
+| 参考聊天历史 | 新增可重建的会话轮次投影、异步回填与队列、FTS 检索、独立历史向量快照、混合排序、去重、当前会话排除和进程终止恢复 |
+| 上下文管理 | 新增按模型真实窗口推导的请求预算、四档成本档位、检查点链与后台折叠、OpenAI 服务端压缩接入、跨供应商独立链、可选回合范围，以及压缩失败时的确定性抽取式降级 |
+| 构建与交付 | 增加单 ABI 构建、APK 包名/版本/签名/ABI 校验、固定哈希记忆模型供应，以及 16 KB ZIP/ELF 兼容门禁 |
+
+
 ## 架构概览
 
 ```mermaid
 flowchart LR
     subgraph APP["Android 应用"]
         UI["Compose UI"] --> VM["ViewModel / StateFlow"]
+        UI --> CONTENT["原生 Markdown / 兼容富内容"]
+        UI --> OPENUI["本地 OpenUI WebView"]
+        OPENUI --> HOST["来源校验 / 本地状态 / 草稿回填"]
+        HOST --> VM
         VM --> CHAT["聊天 Repository"]
-        CHAT --> ROOM["Room schema 23<br/>聊天、平台、任务、回执、历史投影与 MCP"]
+        CHAT --> ROOM["Room schema 29<br/>聊天、平台、任务、回执、历史投影与 MCP"]
         CHAT --> DATASTORE["DataStore<br/>应用偏好"]
         CHAT --> TOOLS["统一工具循环"]
         CHAT --> RECORDER["完成轮次记录"]
@@ -479,11 +639,15 @@ flowchart LR
     WORK --> PROVIDERS
     TOOLS --> SEARCH["SearXNG / AnySearch / 公开网页"]
     MCP --> MCP_SERVERS["远程 MCP 服务器"]
+    OPENUI --> MEDIA["图片 / 地图 / 路线 / 视频服务"]
 ```
 
 主要代码目录：
 
 - `app/src/main/kotlin/cn/nabr/chatwithchat/presentation/`：Compose UI、导航与 ViewModel。
+- `web/openui/`：React + OpenUI Lang 组件库、函数、宿主协议、诊断画廊与前端测试。
+- `app/src/main/assets/openui/`：随 APK 打包的前端资源、字体和许可证。
+- `app/src/main/kotlin/cn/nabr/chatwithchat/data/richcontent/`：富内容解析、OpenUI 契约、语义投影与原生交互运行时。
 - `app/src/main/kotlin/cn/nabr/chatwithchat/data/network/`：各模型服务的网络客户端。
 - `app/src/main/kotlin/cn/nabr/chatwithchat/data/repository/`：聊天、设置、附件、模型发现、推理流解析和记忆上下文装配。
 - `app/src/main/kotlin/cn/nabr/chatwithchat/data/tool/`：工具注册、执行、安全策略、审批与 provider adapter。
@@ -496,14 +660,15 @@ flowchart LR
 - `app/src/main/kotlin/cn/nabr/chatwithchat/data/database/`：Room entity、DAO、schema migration，以及记忆任务、历史索引、回执、语料代次与 MCP 状态。
 - `app/src/test/kotlin/`、`app/src/androidTest/kotlin/`：JVM 与设备测试。
 
-技术栈包括 Kotlin、Jetpack Compose、Material 3、Hilt、Room、DataStore、WorkManager、Ktor CIO、kotlinx.serialization、ObjectBox、ONNX Runtime、PdfBox-Android 与 MCP Kotlin SDK。
+Android 技术栈包括 Kotlin、Jetpack Compose、Material 3、Hilt、Room、DataStore、WorkManager、Ktor CIO、kotlinx.serialization、ObjectBox、ONNX Runtime、PdfBox-Android 与 MCP Kotlin SDK。交互前端使用 React、OpenUI Lang、Zod、KaTeX、Lucide 与 MapLibre，通过受限消息桥与原生宿主通信。
 
 ## CI 与发布流程
 
 - Pull Request 会执行 ktlint 检查；相关代码变更会触发 Debug APK 构建。
 - CodeQL 在 Pull Request 和每周定时任务中运行。
 - 推送标签或手动触发 Release workflow 时，会准备记忆模型、构建并签名 APK / AAB，再上传为 Actions artifact。
-- 当前 CI 不会运行完整 JVM / 设备测试，也不会自动创建 GitHub Release；Actions artifact 与正式发布仍是两个独立步骤。
+- 当前 CI 不会运行完整 JVM / 设备测试，也不会自动重建 OpenUI 前端或创建 GitHub Release；Actions artifact 与正式发布仍是两个独立步骤。
+- CodeQL 使用 JDK 21，Debug / Release workflow 仍配置 JDK 17；本地开发建议使用 JDK 21，CI 构建环境尚未完全统一。
 - `v1.2.0` 已作为正式 GitHub Release 发布，公开资产为 [`v1.2.0.apk`](https://github.com/NaBr406/ChatWithChat/releases/download/v1.2.0/v1.2.0.apk)。
 
 提交代码前，请至少运行与修改范围对应的单元测试和 `:app:compileDebugKotlin`；数据库、记忆、权限或 Android 生命周期改动还应补充设备测试。改动 MCP 客户端或升级 MCP SDK 时必须跑一次 `McpSdkBuildCanaryInstrumentedTest`——SDK 尚未到 1.0，也不声明支持 Android，需要在 ART 上实测能加载并完成握手。
@@ -513,10 +678,10 @@ flowchart LR
 - [提交 Bug](https://github.com/NaBr406/ChatWithChat/issues/new/choose)
 - [查看 GitHub Actions](https://github.com/NaBr406/ChatWithChat/actions)
 
-报告问题时，请附上 Android 版本、提供商类型、模型 ID、API URL 类型、复现步骤，以及必要的截图或 logcat 片段。请勿公开 API 密钥、完整请求头或其他敏感信息。
+报告问题时，请附上 Android 版本、提供商类型、模型 ID、API URL 类型、复现步骤，以及必要的截图或 logcat 片段。OpenUI 渲染问题请同时提供 Android System WebView 版本，以及脱敏后的失败程序或可复现示例。请勿公开 API 密钥、完整请求头或其他敏感信息。
 
 ## 项目背景与许可证
 
 ChatWithChat 基于 [GPT Mobile](https://github.com/Taewan-P/gpt_mobile) 持续改造，现使用独立的项目身份与 Android 包名 `cn.nabr.chatwithchat`。旧的 `dev.chungjungsoo.gptmobile` 安装包不会被 Android 视为本项目的原地升级版本，两者的数据也不会自动迁移。
 
-本项目按 [GNU General Public License v3.0](./LICENSE) 发布。应用内“开源许可”页面列出了所使用第三方依赖的许可证信息。
+本项目按 [GNU General Public License v3.0](./LICENSE) 发布。OpenUI 上游 MIT 声明保留在 [LICENSE.upstream](./web/openui/LICENSE.upstream)，构建时生成前端依赖许可证与版本清单。应用内“开源许可”页面列出了 Android 第三方依赖的许可证信息。
