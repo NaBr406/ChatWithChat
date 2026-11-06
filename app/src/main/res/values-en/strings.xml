@@ -16,4 +16,6 @@
     <string name="rich_interaction_stale">This control has expired. Use the controls in the current answer.</string>
     <string name="rich_interaction_source">Source: %1$s</string>
     <string name="rich_interaction_action_failed">The action could not be completed. Please try again.</string>
+    <string name="chat_not_found">This chat no longer exists</string>
+    <string name="chat_save_failed">The answer could not be saved. Retry before leaving this chat.</string>
 </resources>

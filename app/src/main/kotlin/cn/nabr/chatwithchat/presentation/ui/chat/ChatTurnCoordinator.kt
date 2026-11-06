@@ -1,6 +1,8 @@
 package cn.nabr.chatwithchat.presentation.ui.chat
 
 import android.content.Context
+import android.util.Log
+import android.widget.Toast
 import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.database.entity.ChatRoomV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
@@ -295,6 +297,7 @@ class ChatTurnCoordinator @Inject constructor(
         if (!shouldPersistTurn(chatRoom.id, messages)) return
 
         turn.persistingFlow.value = true
+        var saved = false
         try {
             // A chat deleted while its turn ran must not come back: `saveChat` upserts the row, so an
             // id that no longer resolves means the save has nothing left to belong to.
@@ -308,6 +311,7 @@ class ChatTurnCoordinator @Inject constructor(
                 )
                 saved to chatRepository.groupedMessagesFor(saved.id)
             }
+            saved = true
             turn.resolvedChatId = savedChatRoom.id
             turn.messagesFlow.value = persistedMessages
             _completions.emit(
@@ -326,9 +330,16 @@ class ChatTurnCoordinator @Inject constructor(
             maybeGenerateChatTitle(savedChatRoom, persistedMessages, turn.request.preferredMemoryPlatform)
         } catch (cancellation: CancellationException) {
             throw cancellation
-        } catch (_: Throwable) {
+        } catch (error: Throwable) {
             // A failed save must not take the process with it. The message list is still in memory and
-            // the next turn's save covers the same rows.
+            // the next turn's save covers the same rows, but the user has to know the answer is not on
+            // disk yet: leaving the chat now loses it. Memory and title failures after the save stay quiet.
+            Log.e(TAG, "Turn post-processing failed (saved=$saved)", error)
+            if (!saved) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, R.string.chat_save_failed, Toast.LENGTH_LONG).show()
+                }
+            }
         }
     }
 
@@ -449,3 +460,5 @@ internal fun shouldYieldRoomLoad(hasLiveTurn: Boolean): Boolean = hasLiveTurn
 
 private const val TURN_KEY_CHAT_PREFIX = "chat:"
 private const val TURN_KEY_DRAFT_PREFIX = "draft:"
+
+private const val TAG = "ChatTurnCoordinator"

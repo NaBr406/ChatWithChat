@@ -306,6 +306,9 @@ class ChatViewModel @Inject constructor(
     private val _loadingStates = MutableStateFlow<List<LoadingState>>(emptyList())
     val loadingStates = _loadingStates.asStateFlow()
     private val _isPersistingCompletion = MutableStateFlow(false)
+
+    /** Stop pressed before the turn existed; see [stopGeneration]. */
+    private var stopRequestedBeforeTurn = false
     val isPersistingCompletion = _isPersistingCompletion.asStateFlow()
 
     private val _toolProgressStates = MutableStateFlow<Map<String, List<ToolProgressState>>>(emptyMap())
@@ -394,7 +397,7 @@ class ChatViewModel @Inject constructor(
 
     fun askQuestion() {
         val questionText = question.text.toString()
-        if (_isPersistingCompletion.value) return
+        if (isTurnInFlight() || chatTurnCoordinator.isLive(turnKey)) return
         if (_pendingSelectedAttachmentBatches.value > 0) {
             pendingQuestionText = questionText
             question.clearText()
@@ -780,9 +783,31 @@ class ChatViewModel @Inject constructor(
 
     fun generateDefaultChatTitle(): String? = chatRepository.generateDefaultChatTitle(_groupedMessages.value.userMessages)
 
-    fun retryChat(turnIndex: Int, platformIndex: Int) {
-        if (_isPersistingCompletion.value) return
+    fun retryChat(turnIndex: Int, requestedPlatformIndex: Int) {
+        // A retry while a turn runs would blank a slot the stream still writes to, and the refused start
+        // below would then clear the loading state, so the screen looked idle with the answer streaming.
+        if (isTurnInFlight() || chatTurnCoordinator.isLive(turnKey)) return
+        stopRequestedBeforeTurn = false
         if (turnIndex !in _groupedMessages.value.assistantMessages.indices) return
+        // A turn stopped before its first token is saved without an answer row (blank rows are not
+        // persisted), so the retry button had no slot to retry and did nothing. Recreate it for the
+        // chat's current platform.
+        val platformIndex = if (
+            _groupedMessages.value.assistantMessages[turnIndex].getOrNull(requestedPlatformIndex) != null
+        ) {
+            requestedPlatformIndex
+        } else {
+            val chatPlatform = currentChatPlatform() ?: return
+            val slot = ensureCurrentTurnAssistantSlot(
+                turnIndex = turnIndex,
+                platformUid = chatPlatform.uid,
+                modelId = resolvePlatformSelection(chatPlatform).platform.model
+            ) ?: return
+            _indexStates.update { states ->
+                states.toMutableList().apply { if (turnIndex in indices) this[turnIndex] = slot }
+            }
+            slot
+        }
         val currentMessage = _groupedMessages.value.assistantMessages
             .getOrNull(turnIndex)
             ?.getOrNull(platformIndex)
@@ -867,6 +892,11 @@ class ChatViewModel @Inject constructor(
         memoryPlatform: PlatformV2?,
         block: suspend (ChatTurnCoordinator.LiveTurn) -> Unit
     ): Boolean {
+        if (stopRequestedBeforeTurn) {
+            stopRequestedBeforeTurn = false
+            _loadingStates.update { emptyList() }
+            return false
+        }
         val started = chatTurnCoordinator.start(
             key = turnKey,
             request = ChatTurnCoordinator.TurnRequest(
@@ -882,7 +912,8 @@ class ChatViewModel @Inject constructor(
             block = block
         )
         if (started == null) {
-            _loadingStates.update { emptyList() }
+            // The live turn's mirror owns the loading state; clearing it here hid the stop button mid-stream.
+            if (!chatTurnCoordinator.isLive(turnKey)) _loadingStates.update { emptyList() }
             return false
         }
         richInteractionActiveSlot = turnIndex to platformIndex
@@ -917,6 +948,13 @@ class ChatViewModel @Inject constructor(
             pendingQuestionText = null
             restoreQueuedQuestion(queuedQuestion)
             _loadingStates.update { emptyList() }
+            return
+        }
+
+        // Skill compilation and the first save of a new chat run before any turn exists, so there is
+        // nothing for the coordinator to stop yet. The flag makes the pending start give up instead.
+        if (!chatTurnCoordinator.isLive(turnKey) && _loadingStates.value.any { it == LoadingState.Loading }) {
+            stopRequestedBeforeTurn = true
             return
         }
 
@@ -1369,7 +1407,10 @@ class ChatViewModel @Inject constructor(
             settingRepository.updateLastSelectedModel(selectedModel.platformUid, selectedModel.modelId, nextReasoningMode)
             if (_chatRoom.value.id > 0) {
                 chatRepository.saveChatPlatformModels(_chatRoom.value.id, _chatPlatformModels.value)
-                persistCurrentChatSnapshot()
+                // A snapshot during a turn can land after the turn's own save and replace the final answer
+                // with the partial one (`saveChat` deletes rows missing from its list). The turn reads the
+                // platform models at save time anyway.
+                if (!isTurnInFlight() && !chatTurnCoordinator.isLive(turnKey)) persistCurrentChatSnapshot()
             }
         }
         refreshContextStateForCurrentPlatform()
@@ -1726,6 +1767,7 @@ class ChatViewModel @Inject constructor(
     }
 
     private fun sendQuestion(questionText: String, attachments: List<ChatAttachmentDraft>) {
+        stopRequestedBeforeTurn = false
         val candidates = textSkillCandidates()
         if (candidates.isEmpty()) {
             sendQuestionWithTextSkillSnapshot(questionText, attachments, textSkillSnapshot = null)
@@ -1741,6 +1783,12 @@ class ChatViewModel @Inject constructor(
             }.onFailure { error ->
                 _attachmentNotice.update { error.message ?: "Skill 编译失败" }
             }.getOrNull() ?: run {
+                _loadingStates.update { emptyList() }
+                return@launch
+            }
+            if (stopRequestedBeforeTurn) {
+                // Stopped while compiling: nothing was sent and the text is still in the composer.
+                stopRequestedBeforeTurn = false
                 _loadingStates.update { emptyList() }
                 return@launch
             }
@@ -2135,12 +2183,16 @@ class ChatViewModel @Inject constructor(
 
     private fun fetchChatRoom() {
         viewModelScope.launch {
-            _chatRoom.update {
-                val loadedChatRoom = if (chatRoomId == 0) {
-                    ChatRoomV2(id = 0, title = context.getString(R.string.untitled_chat), enabledPlatform = enabledPlatformsInChat)
-                } else {
-                    chatRepository.fetchChatListV2().first { it.id == chatRoomId }
+            val loadedChatRoom = if (chatRoomId == 0) {
+                ChatRoomV2(id = 0, title = context.getString(R.string.untitled_chat), enabledPlatform = enabledPlatformsInChat)
+            } else {
+                // The row can be gone (deleted while this screen was in the back stack); `first` crashed here.
+                chatRepository.fetchChatListV2().firstOrNull { it.id == chatRoomId } ?: run {
+                    _attachmentNotice.update { context.getString(R.string.chat_not_found) }
+                    return@launch
                 }
+            }
+            _chatRoom.update {
                 currentChatPlatformUid()?.let { platformUid ->
                     if (platformUid in loadedChatRoom.enabledPlatform) {
                         loadedChatRoom

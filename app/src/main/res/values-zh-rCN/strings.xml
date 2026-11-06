@@ -882,4 +882,6 @@ Referer: https://example.com</string>
     <string name="rich_interaction_stale">此交互已失效，请使用当前回答中的控件。</string>
     <string name="rich_interaction_source">来源：%1$s</string>
     <string name="rich_interaction_action_failed">操作未完成，请重试。</string>
+    <string name="chat_not_found">该会话已不存在</string>
+    <string name="chat_save_failed">回答未能保存，离开此会话前请重试</string>
 </resources>
