@@ -25,11 +25,9 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -82,21 +80,9 @@ fun EmptyChatScreen(
     val composerDensity = LocalDensity.current
     var composerHeight by remember { mutableStateOf(68.dp) }
     val context = LocalContext.current
-    var selectedAttachments by remember { mutableStateOf(listOf<ChatAttachmentDraft>()) }
-    var pendingTextSkills by remember { mutableStateOf(listOf<PendingTextSkillSelection>()) }
-    val latestSelectedAttachments = rememberUpdatedState(selectedAttachments)
-    val attachmentsTransferred = remember { mutableStateOf(false) }
+    val selectedAttachments by homeViewModel.emptyChatAttachments.collectAsStateWithLifecycle()
+    val pendingTextSkills by homeViewModel.emptyChatTextSkills.collectAsStateWithLifecycle()
     val canChat = homeModelsState.canStartChat() && currentModelOptions.isNotEmpty()
-
-    DisposableEffect(Unit) {
-        onDispose {
-            if (!attachmentsTransferred.value) {
-                latestSelectedAttachments.value
-                    .filter { it.cleanupOnDiscard }
-                    .forEach { attachment -> File(attachment.sourceFilePath).delete() }
-            }
-        }
-    }
 
     ChatGlassScope(backdrop = composerBackdrop) {
         Scaffold(
@@ -195,7 +181,7 @@ fun EmptyChatScreen(
                         selectedTextSkills = pendingTextSkills.map(PendingTextSkillSelection::skill),
                         availableTextSkills = availableTextSkills,
                         onFilesSelected = { filePaths, copyFailureCount ->
-                            val current = selectedAttachments
+                            val current = homeViewModel.emptyChatAttachments.value
                             val existingCandidates = current.map { attachment ->
                                 attachment.sourceFilePath.toEmptyChatAdmissionCandidate(context)
                             }
@@ -214,13 +200,15 @@ fun EmptyChatScreen(
                                 File(filePath).delete()
                             }
 
-                            selectedAttachments = current + admission.accepted.map { candidate ->
-                                ChatAttachmentDraft(
-                                    sourceFilePath = candidate.path,
-                                    status = ChatAttachmentDraft.Status.Ready,
-                                    cleanupOnDiscard = true
-                                )
-                            }
+                            homeViewModel.updateEmptyChatAttachments(
+                                current + admission.accepted.map { candidate ->
+                                    ChatAttachmentDraft(
+                                        sourceFilePath = candidate.path,
+                                        status = ChatAttachmentDraft.Status.Ready,
+                                        cleanupOnDiscard = true
+                                    )
+                                }
+                            )
                             val totalRejectedCount = admission.totalRejectedCount(copyFailureCount)
                             if (totalRejectedCount > 0) {
                                 Toast.makeText(
@@ -231,23 +219,23 @@ fun EmptyChatScreen(
                             }
                         },
                         onFileRemoved = { filePath ->
-                            selectedAttachments = selectedAttachments.filter { it.sourceFilePath != filePath }
+                            homeViewModel.updateEmptyChatAttachments(
+                                homeViewModel.emptyChatAttachments.value.filter { it.sourceFilePath != filePath }
+                            )
                             File(filePath).delete()
                         },
                         onTextSkillsSelected = { skills, scope ->
-                            pendingTextSkills = mergeTextSkillSelection(pendingTextSkills, skills, scope)
+                            homeViewModel.updateEmptyChatTextSkills(mergeTextSkillSelection(pendingTextSkills, skills, scope))
                         },
                         onTextSkillRemoved = { skill ->
-                            pendingTextSkills = pendingTextSkills.removeTextSkillSelection(skill)
+                            homeViewModel.updateEmptyChatTextSkills(pendingTextSkills.removeTextSkillSelection(skill))
                         },
                         onSendButtonClick = {
                             val prompt = inputState.text.toString().trim()
                             val attachmentPaths = selectedAttachments.map { it.sourceFilePath }
                             if (prompt.isNotEmpty() || attachmentPaths.isNotEmpty()) {
                                 if (onStartChat(prompt, attachmentPaths, pendingTextSkills)) {
-                                    attachmentsTransferred.value = true
-                                    selectedAttachments = emptyList()
-                                    pendingTextSkills = emptyList()
+                                    homeViewModel.releaseEmptyChatDraft()
                                     inputState.clearText()
                                 }
                             }

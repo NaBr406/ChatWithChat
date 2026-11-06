@@ -1,9 +1,9 @@
 package cn.nabr.chatwithchat.presentation.ui.home
 
 import android.util.Log
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import dagger.hilt.android.lifecycle.HiltViewModel
 import cn.nabr.chatwithchat.data.database.entity.ChatRoomV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.model.AvailableChatModel
@@ -13,10 +13,14 @@ import cn.nabr.chatwithchat.data.model.coerceReasoningModeForModel
 import cn.nabr.chatwithchat.data.model.defaultReasoningMode
 import cn.nabr.chatwithchat.data.repository.ChatRepository
 import cn.nabr.chatwithchat.data.repository.SettingRepository
+import cn.nabr.chatwithchat.data.textskill.PendingTextSkillSelection
 import cn.nabr.chatwithchat.data.textskill.SelectedTextSkill
 import cn.nabr.chatwithchat.data.textskill.TextSkillPackageRepository
 import cn.nabr.chatwithchat.data.textskill.toSelectableTextSkills
+import cn.nabr.chatwithchat.presentation.ui.chat.ChatAttachmentDraft
 import cn.nabr.chatwithchat.presentation.ui.chat.ChatTurnCoordinator
+import dagger.hilt.android.lifecycle.HiltViewModel
+import java.io.File
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.FlowPreview
@@ -56,12 +60,14 @@ class HomeViewModel @Inject constructor(
     private val chatRepository: ChatRepository,
     private val settingRepository: SettingRepository,
     private val textSkillPackageRepository: TextSkillPackageRepository,
-    private val chatTurnCoordinator: ChatTurnCoordinator
+    private val chatTurnCoordinator: ChatTurnCoordinator,
+    private val savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
     companion object {
         private const val SEARCH_DEBOUNCE_MS = 300L
         private const val TAG = "HomeViewModel"
+        private const val KEY_EMPTY_CHAT_ATTACHMENTS = "empty_chat_attachment_paths"
     }
 
     data class ChatListState(
@@ -99,6 +105,18 @@ class HomeViewModel @Inject constructor(
     private val _availableTextSkills = MutableStateFlow<List<SelectedTextSkill>>(emptyList())
     val availableTextSkills: StateFlow<List<SelectedTextSkill>> = _availableTextSkills.asStateFlow()
 
+    // The landing page's draft lives here rather than in the composable: rotation, a theme change or opening
+    // the attachment preview all dispose that composition, and disposing it used to delete the user's files.
+    private val _emptyChatAttachments = MutableStateFlow(
+        savedStateHandle.get<ArrayList<String>>(KEY_EMPTY_CHAT_ATTACHMENTS).orEmpty()
+            .filter { File(it).exists() }
+            .map { path -> ChatAttachmentDraft(sourceFilePath = path, status = ChatAttachmentDraft.Status.Ready, cleanupOnDiscard = true) }
+    )
+    val emptyChatAttachments: StateFlow<List<ChatAttachmentDraft>> = _emptyChatAttachments.asStateFlow()
+
+    private val _emptyChatTextSkills = MutableStateFlow<List<PendingTextSkillSelection>>(emptyList())
+    val emptyChatTextSkills: StateFlow<List<PendingTextSkillSelection>> = _emptyChatTextSkills.asStateFlow()
+
     init {
         viewModelScope.launch {
             textSkillPackageRepository.packages.collect { packages ->
@@ -118,6 +136,28 @@ class HomeViewModel @Inject constructor(
             .launchIn(viewModelScope)
     }
 
+    fun updateEmptyChatAttachments(attachments: List<ChatAttachmentDraft>) {
+        _emptyChatAttachments.value = attachments
+        savedStateHandle[KEY_EMPTY_CHAT_ATTACHMENTS] = ArrayList(attachments.map { it.sourceFilePath })
+    }
+
+    fun updateEmptyChatTextSkills(skills: List<PendingTextSkillSelection>) {
+        _emptyChatTextSkills.value = skills
+    }
+
+    /** The new chat owns the files now, so the draft is dropped without deleting them. */
+    fun releaseEmptyChatDraft() {
+        updateEmptyChatAttachments(emptyList())
+        _emptyChatTextSkills.value = emptyList()
+    }
+
+    override fun onCleared() {
+        _emptyChatAttachments.value
+            .filter { it.cleanupOnDiscard }
+            .forEach { File(it.sourceFilePath).delete() }
+        super.onCleared()
+    }
+
     fun updateSearchQuery(query: String) {
         _searchQuery.update { query }
     }
@@ -125,12 +165,7 @@ class HomeViewModel @Inject constructor(
     private fun searchChats(query: String) {
         viewModelScope.launch {
             val chats = chatRepository.searchChatsV2(query)
-            _chatListState.update {
-                it.copy(
-                    chats = chats,
-                    selectedChats = List(chats.size) { false }
-                )
-            }
+            _chatListState.update { state -> state.withChats(chats) }
         }
     }
 
@@ -152,7 +187,7 @@ class HomeViewModel @Inject constructor(
             // running turn finish would recreate the chat the user just deleted.
             chatTurnCoordinator.cancelForChats(selectedChats.map { it.id }.toSet())
             chatRepository.deleteChatsV2(selectedChats)
-            _chatListState.update { it.copy(chats = chatRepository.fetchChatListV2()) }
+            reloadChatsForCurrentQuery()
             disableSelectionMode()
         }
     }
@@ -165,9 +200,16 @@ class HomeViewModel @Inject constructor(
             val selectedChat = selectedChats.singleOrNull() ?: return@launch
 
             chatRepository.duplicateChatV2(selectedChat)
-            _chatListState.update { it.copy(chats = chatRepository.fetchChatListV2()) }
+            reloadChatsForCurrentQuery()
             disableSelectionMode()
         }
+    }
+
+    // Selection can now be made inside search results, so the refresh keeps the user's filter.
+    private suspend fun reloadChatsForCurrentQuery() {
+        val query = _searchQuery.value
+        val chats = if (query.isBlank()) chatRepository.fetchChatListV2() else chatRepository.searchChatsV2(query)
+        _chatListState.update { it.copy(chats = chats) }
     }
 
     fun disableSelectionMode() {
@@ -183,8 +225,9 @@ class HomeViewModel @Inject constructor(
         _searchQuery.update { "" }
     }
 
+    // Search stays as it is: clearing the query here made the debounced search reload the full list 300 ms
+    // later and wipe the selection the long-press had just made.
     fun enableSelectionMode() {
-        disableSearchMode()
         _chatListState.update { it.copy(isSelectionMode = true) }
     }
 
@@ -204,8 +247,6 @@ class HomeViewModel @Inject constructor(
                     isSelectionMode = false
                 )
             }
-
-            Log.d("chats", "${_chatListState.value.chats}")
         }
     }
 
@@ -329,6 +370,16 @@ class HomeViewModel @Inject constructor(
             )
         }
     }
+}
+
+/** Swaps the list while keeping the selection, matched by chat id, so a reload never drops what is selected. */
+internal fun HomeViewModel.ChatListState.withChats(newChats: List<ChatRoomV2>): HomeViewModel.ChatListState {
+    val selectedIds = chats.filterIndexed { index, _ -> selectedChats.getOrElse(index) { false } }
+        .mapTo(mutableSetOf()) { it.id }
+    return copy(
+        chats = newChats,
+        selectedChats = newChats.map { it.id in selectedIds }
+    )
 }
 
 internal fun resetDrawerSelectionState(state: HomeViewModel.ChatListState): HomeViewModel.ChatListState = state.copy(
