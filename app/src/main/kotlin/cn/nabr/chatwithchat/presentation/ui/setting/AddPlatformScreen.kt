@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -46,6 +47,7 @@ import cn.nabr.chatwithchat.data.ModelConstants
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.model.ClientType
 import cn.nabr.chatwithchat.presentation.common.FullApiUrlCheckbox
+import cn.nabr.chatwithchat.presentation.common.SettingsHelpTooltipIcon
 import cn.nabr.chatwithchat.presentation.common.SettingsMaterialGroup
 import cn.nabr.chatwithchat.presentation.common.SettingsTopAppBar
 import cn.nabr.chatwithchat.presentation.common.settingsCanvasBackground
@@ -102,11 +104,12 @@ fun AddPlatformScreen(
 
             SettingsMaterialGroup {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    // Platform Name
+                    // Titles sit above the fields rather than floating inside them, so a help icon can
+                    // stand beside the title of the field it explains.
+                    AddPlatformFieldTitle(title = stringResource(R.string.platform_name))
                     OutlinedTextField(
                         value = platformName,
                         onValueChange = { platformName = it },
-                        label = { Text(stringResource(R.string.platform_name)) },
                         placeholder = { Text(stringResource(R.string.platform_name_hint)) },
                         modifier = Modifier.fillMaxWidth(),
                         enabled = !isBusy && !platformSaved,
@@ -115,9 +118,9 @@ fun AddPlatformScreen(
                         colors = settingsTextFieldColors()
                     )
 
-                    Spacer(modifier = Modifier.height(24.dp))
+                    Spacer(modifier = Modifier.height(ADD_PLATFORM_FIELD_SPACING))
 
-                    // Client Type Dropdown
+                    AddPlatformFieldTitle(title = stringResource(R.string.api_type))
                     ExposedDropdownMenuBox(
                         expanded = clientTypeExpanded,
                         onExpandedChange = { if (!isBusy && !platformSaved) clientTypeExpanded = it }
@@ -129,16 +132,12 @@ fun AddPlatformScreen(
                             enabled = !isBusy && !platformSaved,
                             shape = RoundedCornerShape(10.dp),
                             colors = settingsTextFieldColors(),
-                            label = { Text(stringResource(R.string.api_type)) },
                             trailingIcon = {
                                 ExposedDropdownMenuDefaults.TrailingIcon(expanded = clientTypeExpanded)
                             },
                             modifier = Modifier
                                 .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable, true)
-                                .fillMaxWidth(),
-                            supportingText = {
-                                Text(getClientTypeDescription(selectedClientType))
-                            }
+                                .fillMaxWidth()
                         )
 
                         ExposedDropdownMenu(
@@ -161,18 +160,11 @@ fun AddPlatformScreen(
                                             shape = RoundedCornerShape(8.dp)
                                         ),
                                     text = {
-                                        Column {
-                                            Text(
-                                                text = getClientTypeName(clientType),
-                                                style = MaterialTheme.typography.bodyLarge,
-                                                color = materialColors.primaryLabel
-                                            )
-                                            Text(
-                                                text = getClientTypeDescription(clientType),
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = materialColors.secondaryLabel
-                                            )
-                                        }
+                                        Text(
+                                            text = getClientTypeName(clientType),
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            color = materialColors.primaryLabel
+                                        )
                                     },
                                     trailingIcon = if (isSelected) {
                                         {
@@ -206,13 +198,12 @@ fun AddPlatformScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(24.dp))
+                    Spacer(modifier = Modifier.height(ADD_PLATFORM_FIELD_SPACING))
 
-                    // API URL
+                    AddPlatformFieldTitle(title = stringResource(R.string.api_url))
                     OutlinedTextField(
                         value = apiUrl,
                         onValueChange = { apiUrl = it },
-                        label = { Text(stringResource(R.string.api_url)) },
                         placeholder = { Text(stringResource(R.string.api_url_hint)) },
                         modifier = Modifier.fillMaxWidth(),
                         enabled = !isBusy && !platformSaved,
@@ -224,40 +215,41 @@ fun AddPlatformScreen(
                     FullApiUrlCheckbox(
                         checked = isFullApiUrl,
                         onCheckedChange = { isFullApiUrl = it },
-                        enabled = !isBusy && !platformSaved
+                        enabled = !isBusy && !platformSaved,
+                        helpInTooltip = true
                     )
 
+                    Spacer(modifier = Modifier.height(ADD_PLATFORM_FIELD_SPACING - 4.dp))
+
+                    AddPlatformFieldTitle(
+                        title = stringResource(R.string.simulated_request_headers),
+                        helpText = stringResource(R.string.simulated_request_headers_supporting)
+                    )
                     OutlinedTextField(
                         value = customHeaders,
                         onValueChange = { customHeaders = it },
-                        label = { Text(stringResource(R.string.simulated_request_headers)) },
                         placeholder = { Text(stringResource(R.string.simulated_request_headers_hint)) },
                         modifier = Modifier.fillMaxWidth(),
                         enabled = !isBusy && !platformSaved,
                         minLines = 3,
                         maxLines = 6,
                         shape = RoundedCornerShape(10.dp),
-                        colors = settingsTextFieldColors(),
-                        supportingText = { Text(stringResource(R.string.simulated_request_headers_supporting)) }
+                        colors = settingsTextFieldColors()
                     )
 
-                    Spacer(modifier = Modifier.height(24.dp))
+                    Spacer(modifier = Modifier.height(ADD_PLATFORM_FIELD_SPACING))
 
-                    // API Key
+                    AddPlatformFieldTitle(title = stringResource(R.string.api_key))
                     OutlinedTextField(
                         value = apiKey,
                         onValueChange = { apiKey = it },
-                        label = { Text(stringResource(R.string.api_key)) },
                         placeholder = { Text(stringResource(R.string.api_key_hint)) },
                         modifier = Modifier.fillMaxWidth(),
                         enabled = !isBusy && !platformSaved,
                         singleLine = true,
                         shape = RoundedCornerShape(10.dp),
                         colors = settingsTextFieldColors(),
-                        visualTransformation = PasswordVisualTransformation(),
-                        supportingText = {
-                            Text(stringResource(R.string.api_key_supporting))
-                        }
+                        visualTransformation = PasswordVisualTransformation()
                     )
                 }
             }
@@ -472,13 +464,26 @@ private fun getClientTypeName(clientType: ClientType): String = when (clientType
 }
 
 @Composable
-private fun getClientTypeDescription(clientType: ClientType): String = when (clientType) {
-    ClientType.OPENAI -> stringResource(R.string.client_type_openai_desc)
-    ClientType.GLM -> stringResource(R.string.client_type_glm_desc)
-    ClientType.ANTHROPIC -> stringResource(R.string.client_type_anthropic_desc)
-    ClientType.GOOGLE -> stringResource(R.string.client_type_google_desc)
-    ClientType.GROQ -> stringResource(R.string.client_type_groq_desc)
-    ClientType.OLLAMA -> stringResource(R.string.client_type_ollama_desc)
-    ClientType.OPENROUTER -> stringResource(R.string.client_type_openrouter_desc)
-    ClientType.CUSTOM -> stringResource(R.string.client_type_custom_desc)
+private fun AddPlatformFieldTitle(
+    title: String,
+    helpText: String? = null
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 32.dp)
+            .padding(start = 4.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelLarge,
+            color = settingsMaterialColors().secondaryLabel
+        )
+        if (helpText != null) {
+            SettingsHelpTooltipIcon(helpText = helpText)
+        }
+    }
 }
+
+private val ADD_PLATFORM_FIELD_SPACING = 16.dp

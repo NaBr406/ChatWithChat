@@ -42,12 +42,14 @@ import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -59,6 +61,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -77,6 +80,7 @@ import cn.nabr.chatwithchat.data.tool.ToolCallingMode
 import cn.nabr.chatwithchat.data.tool.ToolCatalogEntry
 import cn.nabr.chatwithchat.data.websearch.WebSearchBackend
 import cn.nabr.chatwithchat.data.websearch.WebSearchMode
+import cn.nabr.chatwithchat.presentation.common.AppleGreen
 import cn.nabr.chatwithchat.presentation.common.AppleRed
 import cn.nabr.chatwithchat.presentation.common.HigActionDialog
 import cn.nabr.chatwithchat.presentation.common.LocalNotificationPermissionRequester
@@ -194,16 +198,13 @@ fun SettingScreen(
                 )
                 SettingsRow(
                     title = stringResource(R.string.skills),
-                    description = stringResource(R.string.skills_description),
                     leadingIcon = Icons.Outlined.Extension,
                     onClick = onNavigateToSkills
                 )
                 SettingsRow(
                     title = stringResource(R.string.mcp_servers),
-                    description = stringResource(R.string.mcp_servers_description),
                     leadingIcon = Icons.Outlined.Hub,
-                    onClick = onNavigateToMcpServers,
-                    descriptionMaxLines = 2
+                    onClick = onNavigateToMcpServers
                 )
             }
 
@@ -460,6 +461,9 @@ private fun ToolCatalogEntry.settingsIcon(): ImageVector = when (settings.iconKe
     else -> Icons.Outlined.Extension
 }
 
+/** One height for every settings card, single-line or not, so the list reads as one even rhythm. */
+private val SETTINGS_ROW_MIN_HEIGHT = 48.dp
+
 /**
  * A titled run of settings cards. Each row inside gets its own card instead of the group sharing one
  * card with hairline dividers, which is what keeps the list from reading as a dense iOS table.
@@ -490,6 +494,7 @@ private fun SettingsRow(
     leadingIcon: ImageVector? = null,
     toggleValue: Boolean? = null,
     descriptionMaxLines: Int = 1,
+    titleTrailingContent: (@Composable () -> Unit)? = null,
     trailingContent: (@Composable () -> Unit)? = null
 ) {
     val materialColors = settingsMaterialColors()
@@ -507,13 +512,13 @@ private fun SettingsRow(
             modifier = Modifier
                 .fillMaxWidth()
                 .then(interactionModifier)
-                .defaultMinSize(minHeight = 56.dp)
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .defaultMinSize(minHeight = SETTINGS_ROW_MIN_HEIGHT)
+                .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (leadingIcon != null) {
                 Box(
-                    modifier = Modifier.size(32.dp),
+                    modifier = Modifier.size(28.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
@@ -523,18 +528,25 @@ private fun SettingsRow(
                         tint = materialColors.secondaryLabel
                     )
                 }
-                Spacer(modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.size(14.dp))
             }
             Column(
                 modifier = Modifier.weight(1f)
             ) {
-                Text(
-                    text = title,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = materialColors.primaryLabel
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        modifier = Modifier.weight(1f, fill = false),
+                        text = title,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = materialColors.primaryLabel
+                    )
+                    if (titleTrailingContent != null) {
+                        Spacer(modifier = Modifier.size(6.dp))
+                        titleTrailingContent()
+                    }
+                }
                 if (description != null) {
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
@@ -548,7 +560,11 @@ private fun SettingsRow(
             }
             if (trailingContent != null) {
                 Spacer(modifier = Modifier.size(8.dp))
-                trailingContent()
+                // The whole card is the touch target, so a switch does not need its own 48dp minimum;
+                // without this, rows with a switch stand taller than every other card.
+                CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+                    trailingContent()
+                }
             }
         }
     }
@@ -729,12 +745,36 @@ private fun PlatformItem(
     platform: PlatformV2,
     onItemClick: () -> Unit
 ) {
-    val statusText = if (platform.enabled) stringResource(R.string.enabled) else stringResource(R.string.disabled)
+    val materialColors = settingsMaterialColors()
     SettingsRow(
         title = platform.name,
-        description = "${getClientTypeDisplayName(platform.compatibleType)} · $statusText",
         leadingIcon = Icons.Outlined.Cloud,
-        onClick = onItemClick
+        onClick = onItemClick,
+        titleTrailingContent = {
+            PlatformStatusIcon(enabled = platform.enabled)
+        },
+        trailingContent = {
+            Text(
+                text = getClientTypeDisplayName(platform.compatibleType),
+                maxLines = 1,
+                style = MaterialTheme.typography.bodyMedium,
+                color = materialColors.secondaryLabel
+            )
+        }
+    )
+}
+
+/** Enabled / disabled as a glyph instead of a second line of text, so every platform row stays one line. */
+@Composable
+private fun PlatformStatusIcon(enabled: Boolean) {
+    val materialColors = settingsMaterialColors()
+    Icon(
+        imageVector = ImageVector.vectorResource(
+            if (enabled) R.drawable.ic_status_enabled else R.drawable.ic_status_disabled
+        ),
+        contentDescription = stringResource(if (enabled) R.string.enabled else R.string.disabled),
+        tint = if (enabled) AppleGreen else materialColors.tertiaryLabel,
+        modifier = Modifier.size(16.dp)
     )
 }
 
@@ -745,10 +785,8 @@ fun MemoryEnabledItem(
 ) {
     SettingsRow(
         title = stringResource(R.string.memory_enabled_title),
-        description = stringResource(R.string.memory_enabled_description),
         onClick = { onCheckedChange(!memoryEnabled) },
         leadingIcon = Icons.Outlined.Memory,
-        descriptionMaxLines = 2,
         trailingContent = {
             Switch(
                 checked = memoryEnabled,

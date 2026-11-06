@@ -886,6 +886,7 @@ Referer: https://example.com</string>
     <string name="hide_secret">隐藏</string>
     <string name="chat_not_found">该会话已不存在</string>
     <string name="chat_save_failed">回答未能保存，离开此会话前请重试</string>
+    <string name="field_help">查看说明</string>
     <string name="citation_sheet_title">引用来源</string>
     <string name="sources_count">%1$d 个来源</string>
 </resources>
