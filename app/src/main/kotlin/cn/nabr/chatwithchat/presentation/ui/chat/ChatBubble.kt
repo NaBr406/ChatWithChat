@@ -122,6 +122,8 @@ fun OpponentChatBubble(
     modifier: Modifier = Modifier,
     canRetry: Boolean,
     isLoading: Boolean,
+    /** The model is reasoning right now, per the stream's own events; see `ThinkingBlockContent`. */
+    isThinking: Boolean = false,
     showPendingIndicator: Boolean = true,
     isError: Boolean = false,
     text: String,
@@ -181,6 +183,7 @@ fun OpponentChatBubble(
                 thoughts = thoughts,
                 visibleThoughts = serializedStreamingText.thoughts,
                 isThoughtTextAnimating = serializedStreamingText.isThoughtTextAnimating,
+                isThinking = isThinking,
                 contentIdentity = contentIdentity,
                 isLoading = isLoading,
                 isAnswerVisible = text.isNotBlank(),

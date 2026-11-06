@@ -1,14 +1,21 @@
 package cn.nabr.chatwithchat.presentation.ui.chat
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -20,7 +27,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
-import androidx.compose.material.icons.rounded.Psychology
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -31,7 +37,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -67,6 +79,7 @@ fun ThinkingBlock(
         thoughts = thoughts,
         visibleThoughts = visibleThoughts,
         isThoughtTextAnimating = isThinking || visibleThoughts != thoughts,
+        isThinking = isThinking,
         contentIdentity = contentIdentity,
         isLoading = isLoading,
         isAnswerVisible = isAnswerVisible,
@@ -80,6 +93,12 @@ internal fun ThinkingBlockContent(
     thoughts: String,
     visibleThoughts: String,
     isThoughtTextAnimating: Boolean,
+    /**
+     * Whether the model is reasoning right now, as reported by the stream (see `handleStates`'
+     * `onThinkingChanged`). Drives the header only: the animated orb and "thinking" label while true,
+     * the settled orb and "finished" label otherwise, including for every message loaded from history.
+     */
+    isThinking: Boolean,
     contentIdentity: Any,
     isLoading: Boolean,
     isAnswerVisible: Boolean,
@@ -117,25 +136,39 @@ internal fun ThinkingBlockContent(
                 .testTag(THINKING_HEADER_TEST_TAG),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = Icons.Rounded.Psychology,
-                contentDescription = null,
-                tint = settingsMaterialColors().primaryLabel,
-                modifier = Modifier.size(18.dp)
+            val orbColor by animateColorAsState(
+                targetValue = if (isThinking) materialColors.primaryLabel else materialColors.secondaryLabel,
+                animationSpec = tween(durationMillis = THINKING_STATE_CROSSFADE_MILLIS),
+                label = "thinking_orb_color"
+            )
+            ThinkingOrb(
+                isAnimating = isThinking,
+                color = orbColor,
+                size = 20.dp
             )
             Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = stringResource(
-                    if (isThoughtTextAnimating) R.string.thinking_in_progress_compact else R.string.thinking_complete
-                ),
-                style = MaterialTheme.typography.bodyMedium.copy(
-                    fontSize = 14.sp,
-                    lineHeight = 20.sp,
-                    fontWeight = FontWeight.Medium,
-                    letterSpacing = 0.sp
-                ),
-                color = materialColors.primaryLabel
-            )
+            AnimatedContent(
+                targetState = isThinking,
+                transitionSpec = {
+                    fadeIn(tween(THINKING_STATE_CROSSFADE_MILLIS)) togetherWith
+                        fadeOut(tween(THINKING_STATE_CROSSFADE_MILLIS / 2))
+                },
+                label = "thinking_label"
+            ) { thinking ->
+                Text(
+                    text = stringResource(
+                        if (thinking) R.string.thinking_in_progress_compact else R.string.thinking_complete
+                    ),
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                        fontWeight = FontWeight.Medium,
+                        letterSpacing = 0.sp
+                    ),
+                    color = materialColors.secondaryLabel,
+                    modifier = Modifier.thinkingShimmer(active = thinking, highlight = materialColors.primaryLabel)
+                )
+            }
             Spacer(modifier = Modifier.width(4.dp))
             Icon(
                 imageVector = Icons.Rounded.KeyboardArrowDown,
@@ -186,6 +219,42 @@ internal fun ThinkingBlockContent(
         }
     }
 }
+
+/**
+ * A light band sweeping across the "thinking" label, after thinking-orbs' demo pills.
+ *
+ * The sweep is drawn over the already-drawn glyphs with SrcAtop in an offscreen layer, so it only ever
+ * tints the text, and its progress is read in the draw phase: each frame is a redraw, not a recomposition.
+ */
+@Composable
+private fun Modifier.thinkingShimmer(active: Boolean, highlight: Color): Modifier {
+    if (!active) return this
+    val transition = rememberInfiniteTransition(label = "thinking_shimmer")
+    val progress = transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(durationMillis = THINKING_SHIMMER_MILLIS, easing = LinearEasing)),
+        label = "thinking_shimmer_progress"
+    )
+    return this
+        .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+        .drawWithContent {
+            drawContent()
+            val band = size.width.coerceAtLeast(1f) * 0.7f
+            val start = -band + (size.width + band * 2f) * progress.value - band
+            drawRect(
+                brush = Brush.horizontalGradient(
+                    colors = listOf(Color.Transparent, highlight, Color.Transparent),
+                    startX = start,
+                    endX = start + band * 2f
+                ),
+                blendMode = BlendMode.SrcAtop
+            )
+        }
+}
+
+private const val THINKING_STATE_CROSSFADE_MILLIS = 220
+private const val THINKING_SHIMMER_MILLIS = 1700
 
 @Preview(name = "Thinking - Completed", widthDp = 390)
 @Composable

@@ -54,9 +54,25 @@ suspend fun Flow<ApiState>.handleStates(
      * message untimestamped and unsaved.
      */
     wasStoppedByUser: () -> Boolean = { false },
-    onTerminalOutcome: (StreamTerminalOutcome) -> Unit = {}
+    onTerminalOutcome: (StreamTerminalOutcome) -> Unit = {},
+    /**
+     * Reports whether the model is reasoning right now, from the provider's own events rather than from
+     * what happens to be on screen.
+     *
+     * True on the first non-empty reasoning chunk of a segment. False as soon as anything shows that
+     * the segment is over: the first visible answer text, a tool call starting (a later round may
+     * reason again and flips it back), a rollback, or the stream ending for any reason. Only edges are
+     * reported, so callers never see the same value twice in a row.
+     */
+    onThinkingChanged: (Boolean) -> Unit = {}
 ) = coroutineScope {
     val buffer = StreamingMessageBuffer()
+    var isThinking = false
+    fun setThinking(value: Boolean) {
+        if (isThinking == value) return
+        isThinking = value
+        onThinkingChanged(value)
+    }
     val pendingStickers = linkedMapOf<String, MessageStickerRef>()
     val publishSignals = Channel<Unit>(capacity = Channel.CONFLATED)
     val publisher = launch {
@@ -74,6 +90,7 @@ suspend fun Flow<ApiState>.handleStates(
             when (chunk) {
                 is ApiState.StreamCheckpoint -> buffer.checkpoint(chunk.requestId)
                 is ApiState.StreamRollback -> {
+                    setThinking(false)
                     buffer.rollback(chunk.requestId)
                     buffer.publishPending(messageFlow, turnIndex, platformIdx)
                 }
@@ -84,9 +101,12 @@ suspend fun Flow<ApiState>.handleStates(
                         AppendResult.PENDING -> publishSignals.trySend(Unit)
                         AppendResult.EMPTY -> {}
                     }
+                    if (chunk.thinkingChunk.isNotBlank()) setThinking(true)
                 }
 
                 is ApiState.Success -> {
+                    // Whitespace between the reasoning and the answer is not the answer starting yet.
+                    if (chunk.textChunk.isNotBlank()) setThinking(false)
                     when (buffer.appendContent(chunk.textChunk)) {
                         AppendResult.FIRST -> buffer.publishPending(messageFlow, turnIndex, platformIdx)
                         AppendResult.PENDING -> publishSignals.trySend(Unit)
@@ -109,10 +129,12 @@ suspend fun Flow<ApiState>.handleStates(
                 }
 
                 ApiState.Done -> {
+                    setThinking(false)
                     isCompletedSuccessfully = true
                 }
 
                 is ApiState.Error -> {
+                    setThinking(false)
                     terminalError = resolveErrorMessage(chunk.message)
                 }
 
@@ -121,6 +143,7 @@ suspend fun Flow<ApiState>.handleStates(
                 is ApiState.ToolFailed -> {
                     // 工具调用夹在两轮模型请求之间，是唯一可靠的轮次边界信号：
                     // 下一轮再吐正文/推理时要另起一段。
+                    setThinking(false)
                     buffer.onRoundBoundary()
                     onToolProgress(chunk)
                 }
@@ -130,6 +153,7 @@ suspend fun Flow<ApiState>.handleStates(
         }
         streamCompletedNormally = true
     } finally {
+        setThinking(false)
         publishSignals.close()
         publisher.cancel()
         buffer.flush(messageFlow, turnIndex, platformIdx)

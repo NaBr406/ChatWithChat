@@ -84,7 +84,8 @@ class ChatTurnCoordinator @Inject constructor(
         internal val loadingFlow: MutableStateFlow<List<ChatViewModel.LoadingState>>,
         internal val toolProgressFlow: MutableStateFlow<Map<String, List<ChatViewModel.ToolProgressState>>>,
         internal val persistingFlow: MutableStateFlow<Boolean>,
-        internal val request: TurnRequest
+        internal val request: TurnRequest,
+        internal val thinkingFlow: MutableStateFlow<Set<String>> = MutableStateFlow(emptySet())
     ) {
         val attemptId: String = UUID.randomUUID().toString()
         internal var terminalOutcome: StreamTerminalOutcome = StreamTerminalOutcome.Interrupted
@@ -94,6 +95,9 @@ class ChatTurnCoordinator @Inject constructor(
         val toolProgress: StateFlow<Map<String, List<ChatViewModel.ToolProgressState>>> =
             toolProgressFlow.asStateFlow()
         val isPersisting: StateFlow<Boolean> = persistingFlow.asStateFlow()
+
+        /** Slots, keyed like [ChatViewModel.toolProgressKey], whose model is reasoning right now. */
+        val thinkingSlots: StateFlow<Set<String>> = thinkingFlow.asStateFlow()
 
         internal var job: Job? = null
 
@@ -129,6 +133,11 @@ class ChatTurnCoordinator @Inject constructor(
                     current.toMutableList().apply { this[platformIndex] = ChatViewModel.LoadingState.Idle }
                 }
             }
+        }
+
+        internal fun setThinking(turnIndex: Int, platformIndex: Int, isThinking: Boolean) {
+            val slotKey = ChatViewModel.toolProgressKey(turnIndex, platformIndex)
+            thinkingFlow.update { current -> if (isThinking) current + slotKey else current - slotKey }
         }
 
         internal fun appendToolProgress(turnIndex: Int, platformIndex: Int, progress: cn.nabr.chatwithchat.data.dto.ApiState) {

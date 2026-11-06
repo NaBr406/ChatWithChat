@@ -314,6 +314,10 @@ class ChatViewModel @Inject constructor(
     private val _toolProgressStates = MutableStateFlow<Map<String, List<ToolProgressState>>>(emptyMap())
     val toolProgressStates = _toolProgressStates.asStateFlow()
 
+    /** Answer slots ([toolProgressKey]) whose model is reasoning right now, driven by stream events. */
+    private val _thinkingSlots = MutableStateFlow<Set<String>>(emptySet())
+    val thinkingSlots = _thinkingSlots.asStateFlow()
+
     /**
      * Only this conversation's approval prompts.
      *
@@ -869,7 +873,8 @@ class ChatViewModel @Inject constructor(
                 onToolProgress = { progress -> turn.appendToolProgress(turnIndex, platformIndex, progress) },
                 resolveErrorMessage = chatTurnCoordinator::resolveToolErrorMessage,
                 wasStoppedByUser = { turn.stopRequested },
-                onTerminalOutcome = { outcome -> turn.terminalOutcome = outcome }
+                onTerminalOutcome = { outcome -> turn.terminalOutcome = outcome },
+                onThinkingChanged = { isThinking -> turn.setThinking(turnIndex, platformIndex, isThinking) }
             )
         }
     }
@@ -1343,7 +1348,8 @@ class ChatViewModel @Inject constructor(
                 onToolProgress = { progress -> turn.appendToolProgress(turnIndex, currentPlatformIndex, progress) },
                 resolveErrorMessage = chatTurnCoordinator::resolveToolErrorMessage,
                 wasStoppedByUser = { turn.stopRequested },
-                onTerminalOutcome = { outcome -> turn.terminalOutcome = outcome }
+                onTerminalOutcome = { outcome -> turn.terminalOutcome = outcome },
+                onThinkingChanged = { isThinking -> turn.setThinking(turnIndex, currentPlatformIndex, isThinking) }
             )
         }
         // Handed off: the coordinator now owns the memory activity stamp for this turn.
@@ -2377,6 +2383,7 @@ class ChatViewModel @Inject constructor(
                         // Cleared explicitly rather than mirrored: `collectLatest` cancels the inner
                         // collectors as soon as the turn is removed, so the final `false` may never arrive.
                         _isPersistingCompletion.value = false
+                        _thinkingSlots.value = emptySet()
                         return@collectLatest
                     }
                     coroutineScope {
@@ -2394,6 +2401,7 @@ class ChatViewModel @Inject constructor(
                         launch { turn.loadingStates.collect { states -> _loadingStates.value = states } }
                         launch { turn.toolProgress.collect { progress -> _toolProgressStates.value = progress } }
                         launch { turn.isPersisting.collect { persisting -> _isPersistingCompletion.value = persisting } }
+                        launch { turn.thinkingSlots.collect { slots -> _thinkingSlots.value = slots } }
                     }
                 }
         }

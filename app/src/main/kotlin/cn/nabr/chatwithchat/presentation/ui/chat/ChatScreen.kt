@@ -150,6 +150,7 @@ fun ChatScreen(
     val pendingSelectedAttachmentBatches by chatViewModel.pendingSelectedAttachmentBatches.collectAsStateWithLifecycle()
     val pendingMessageEditAttachmentBatches by chatViewModel.pendingMessageEditAttachmentBatches.collectAsStateWithLifecycle()
     val toolProgressStates by chatViewModel.toolProgressStates.collectAsStateWithLifecycle()
+    val thinkingSlots by chatViewModel.thinkingSlots.collectAsStateWithLifecycle()
     val pendingToolApproval by chatViewModel.pendingToolApproval.collectAsStateWithLifecycle()
     val pendingUserQuestion by chatViewModel.pendingUserQuestion.collectAsStateWithLifecycle()
     val isChatTitleDialogOpen by chatViewModel.isChatTitleDialogOpen.collectAsStateWithLifecycle()
@@ -205,6 +206,7 @@ fun ChatScreen(
             indexStates = indexStates,
             loadingStates = loadingStates,
             toolProgressStates = toolProgressStates,
+            thinkingSlots = thinkingSlots,
             enabledPlatformLookup = enabledPlatformLookup,
             canUseChat = canUseChat,
             isIdle = isIdle,
@@ -370,6 +372,7 @@ internal fun ChatContent(
     indexStates: List<Int>,
     loadingStates: List<ChatViewModel.LoadingState>,
     toolProgressStates: Map<String, List<ChatViewModel.ToolProgressState>>,
+    thinkingSlots: Set<String> = emptySet(),
     enabledPlatformLookup: Map<String, PlatformV2>,
     canUseChat: Boolean,
     isIdle: Boolean,
@@ -760,6 +763,7 @@ internal fun ChatContent(
                             platformIndexState = indexStates.getOrElse(index) { 0 },
                             loadingStates = loadingStates,
                             toolProgressStates = toolProgressStates,
+                            thinkingSlots = thinkingSlots,
                             enabledPlatformLookup = enabledPlatformLookup,
                             canUseChat = canUseChat,
                             isIdle = isIdle,
@@ -923,6 +927,7 @@ private fun ChatMessagePair(
     platformIndexState: Int,
     loadingStates: List<ChatViewModel.LoadingState>,
     toolProgressStates: Map<String, List<ChatViewModel.ToolProgressState>>,
+    thinkingSlots: Set<String>,
     enabledPlatformLookup: Map<String, PlatformV2>,
     canUseChat: Boolean,
     isIdle: Boolean,
@@ -972,6 +977,7 @@ private fun ChatMessagePair(
             )
     val selectedPlatformUid = selectedAssistantMessage?.platformType.orEmpty()
     val selectedToolProgressStates = toolProgressStates[ChatViewModel.toolProgressKey(messageIndex, platformIndexState)].orEmpty()
+    val isSelectedPlatformThinking = ChatViewModel.toolProgressKey(messageIndex, platformIndexState) in thinkingSlots
     val isCurrentPlatformLoading =
         loadingStates.getOrElse(platformIndexState) { ChatViewModel.LoadingState.Idle } == ChatViewModel.LoadingState.Loading
     val isInterruptedInitialRequest = shouldShowInterruptedInitialRequest(
@@ -1063,6 +1069,7 @@ private fun ChatMessagePair(
                 canEdit = canUseChat && canSubmitOrEdit && !isInterruptedInitialRequest,
                 canRetry = canUseChat && isActiveMessage && !isCurrentPlatformLoading,
                 isLoading = isActiveMessage && isCurrentPlatformLoading,
+                isThinking = isActiveMessage && isCurrentPlatformLoading && isSelectedPlatformThinking,
                 showPendingIndicator = selectedToolProgressStates.none { state ->
                     state.status == ChatViewModel.ToolProgressStatus.Running
                 },

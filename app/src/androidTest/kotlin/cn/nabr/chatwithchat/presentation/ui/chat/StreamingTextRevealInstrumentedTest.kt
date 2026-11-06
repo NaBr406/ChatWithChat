@@ -116,6 +116,9 @@ class StreamingTextRevealInstrumentedTest {
                         thoughts = thoughts.value,
                         visibleThoughts = thoughts.value,
                         isThoughtTextAnimating = streaming.value,
+                        // Header state is covered by InlineCitationThinkingInstrumentedTest; keeping it
+                        // settled here leaves this test free of the never-ending thinking animation.
+                        isThinking = false,
                         contentIdentity = "thinking-stream",
                         isLoading = streaming.value,
                         isAnswerVisible = false,
