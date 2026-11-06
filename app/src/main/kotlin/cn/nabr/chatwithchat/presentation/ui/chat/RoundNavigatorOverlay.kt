@@ -367,6 +367,8 @@ internal fun List<RoundNavigationItem>.completedRoundCount(): Int = count { item
     item.status == RoundStatus.Completed
 }
 
+private val WHITESPACE_RUN = Regex("\\s+")
+
 fun buildRoundNavigationItems(
     groupedMessages: ChatViewModel.GroupedMessages,
     loadingStates: List<ChatViewModel.LoadingState>,
@@ -401,7 +403,7 @@ fun buildRoundNavigationItems(
         turnIndex = index,
         displayNumber = index + 1,
         questionPreview = userMessage.content
-            .replace(Regex("\\s+"), " ")
+            .replace(WHITESPACE_RUN, " ")
             .trim(),
         status = status,
         hasSuccessfulAnswer = successCount > 0,

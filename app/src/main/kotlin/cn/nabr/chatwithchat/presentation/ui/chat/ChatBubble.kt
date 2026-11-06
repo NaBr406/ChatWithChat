@@ -190,6 +190,9 @@ fun OpponentChatBubble(
 
         Column {
             val displayText = serializedStreamingText.text
+            // A plain holder, not state: it only flips together with `isLoading`, which recomposes anyway.
+            val streamedHere = remember(contentIdentity) { BooleanArray(1) }
+            if (isLoading) streamedHere[0] = true
 
             if (hasOpenUi) {
                 OpenUiChatContent(
@@ -217,6 +220,21 @@ fun OpponentChatBubble(
                                     interactionBinding = interactionBinding,
                                     onInteractionEvent = onInteractionEvent,
                                     modifier = Modifier.padding(vertical = 6.dp)
+                                )
+                            } else if (streamedHere[0]) {
+                                // Reparsing the whole answer on every token made long answers drop frames.
+                                // Finished blocks are committed once; only the tail is reparsed. Kept after
+                                // the stream ends so the layout does not jump at completion.
+                                IncrementalChatMarkdown(
+                                    content = displayText,
+                                    isStreaming = isLoading,
+                                    isPendingAnimating = false,
+                                    contentIdentity = contentIdentity,
+                                    useMathJax = true,
+                                    contentColor = MaterialTheme.colorScheme.onBackground,
+                                    style = ChatMarkdownStyle.ANSWER,
+                                    modifier = Modifier.padding(vertical = 6.dp),
+                                    pendingAsMarkdown = true
                                 )
                             } else {
                                 ChatMarkdown(

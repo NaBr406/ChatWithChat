@@ -119,6 +119,7 @@ import com.kyant.backdrop.backdrops.layerBackdrop
 import java.io.File
 import kotlin.math.abs
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 
@@ -424,36 +425,40 @@ internal fun ChatContent(
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     val lastMessageIndex = groupedMessages.userMessages.lastIndex
     val bottomItemIndex = groupedMessages.userMessages.size
-    val roundNavigationItems = remember(
-        groupedMessages,
-        loadingStates,
-        enabledPlatformLookup,
-        indexStates
-    ) {
-        buildRoundNavigationItems(
-            groupedMessages = groupedMessages,
-            loadingStates = loadingStates,
-            enabledPlatformLookup = enabledPlatformLookup,
-            selectedPlatformIndices = indexStates
-        )
+    var isRoundNavigatorOpen by remember { mutableStateOf(false) }
+    val roundCount = groupedMessages.userMessages.size
+    // Built only while the navigator is open: rebuilding it for the whole chat on every token was wasted
+    // work, since the top bar needs only the count. The last list is kept for the exit animation.
+    val roundItemsCache = remember { arrayOfNulls<List<RoundNavigationItem>>(1) }
+    val roundNavigationItems = if (isRoundNavigatorOpen) {
+        remember(groupedMessages, loadingStates, enabledPlatformLookup, indexStates) {
+            buildRoundNavigationItems(
+                groupedMessages = groupedMessages,
+                loadingStates = loadingStates,
+                enabledPlatformLookup = enabledPlatformLookup,
+                selectedPlatformIndices = indexStates
+            )
+        }.also { roundItemsCache[0] = it }
+    } else {
+        roundItemsCache[0].orEmpty()
     }
-    val currentTurnIndex by remember(roundNavigationItems, listState) {
+    // List item index equals turn index: turns come first in the LazyColumn, one item each.
+    val currentTurnIndex by remember(roundCount, listState) {
         derivedStateOf {
-            if (roundNavigationItems.isEmpty()) {
+            if (roundCount == 0) {
                 null
             } else {
                 val layoutInfo = listState.layoutInfo
                 val viewportCenter = (layoutInfo.viewportStartOffset + layoutInfo.viewportEndOffset) / 2
                 val centeredVisibleTurnIndex = layoutInfo.visibleItemsInfo
                     .asSequence()
-                    .filter { itemInfo -> itemInfo.index in roundNavigationItems.indices }
+                    .filter { itemInfo -> itemInfo.index in 0 until roundCount }
                     .minByOrNull { itemInfo ->
                         abs((itemInfo.offset + itemInfo.size / 2) - viewportCenter)
                     }
                     ?.index
-                val visibleTurnIndex = centeredVisibleTurnIndex
-                    ?: listState.firstVisibleItemIndex.coerceIn(0, roundNavigationItems.lastIndex)
-                roundNavigationItems[visibleTurnIndex].turnIndex
+                centeredVisibleTurnIndex
+                    ?: listState.firstVisibleItemIndex.coerceIn(0, roundCount - 1)
             }
         }
     }
@@ -496,8 +501,12 @@ internal fun ChatContent(
     val activeSourceMetadata = activeMetadataAssistant?.sourceMetadata.orEmpty()
     // Build the session usage index once per message snapshot. Message rows must not each
     // flatten and scan the complete conversation while the active response is streaming.
+    // Reuses the previous lists for keys whose usage did not change, so older turns keep the same
+    // parameter instances and skip recomposition while the active answer streams.
+    val tokenUsageIndexCache = remember { arrayOfNulls<Map<SessionTokenUsageKey, List<TokenUsageRecord>>>(1) }
     val sessionTokenUsageIndex = remember(groupedMessages.assistantMessages) {
-        buildSessionTokenUsageIndex(groupedMessages.assistantMessages)
+        buildSessionTokenUsageIndex(groupedMessages.assistantMessages, previous = tokenUsageIndexCache[0])
+            .also { tokenUsageIndexCache[0] = it }
     }
     val activeSessionTokenUsages = sessionTokenUsagesFor(
         index = sessionTokenUsageIndex,
@@ -523,7 +532,6 @@ internal fun ChatContent(
     var programmaticScrollInProgress by remember { mutableStateOf(false) }
     var previousBottomItemIndex by remember { mutableStateOf(bottomItemIndex) }
     var hasHandledInitialLoad by rememberSaveable { mutableStateOf(false) }
-    var isRoundNavigatorOpen by remember { mutableStateOf(false) }
     BackHandler(enabled = isRoundNavigatorOpen) {
         isRoundNavigatorOpen = false
     }
@@ -568,10 +576,15 @@ internal fun ChatContent(
         listState.requestScrollToItem(currentBottomItemIndex)
     }
 
+    // Remembered so the active turn gets the same callback instance on every token.
+    val followStreamingContent: () -> Unit = remember { { requestScrollToLatestMessage() } }
+
     fun requestFollowLatest() {
         scrollIntent = reduceChatScrollIntent(scrollIntent, ChatScrollEvent.FollowLatestRequested)
     }
 
+    // The collector below starts once per list state, so it must read the latest value, not the first.
+    val currentIsIdle by rememberUpdatedState(isIdle)
     LaunchedEffect(listState) {
         snapshotFlow {
             val firstVisibleTurn = listState.layoutInfo.visibleItemsInfo
@@ -596,7 +609,7 @@ internal fun ChatContent(
                     )
                 )
             } else if (
-                isIdle &&
+                currentIsIdle &&
                 scrollIntent.shouldRestoreFollowingViewport(
                     isScrollInProgress = viewport.isScrollInProgress,
                     canScrollForward = viewport.canScrollForward,
@@ -656,13 +669,20 @@ internal fun ChatContent(
     }
 
     // 抽屉搜索框弹出的键盘属于抽屉，聊天页不该因此跳到最新消息（抽屉关掉后阅读位置就丢了）。
-    val imeVisible = !LocalChatDrawerImeSuppressed.current &&
-        WindowInsets.ime.getBottom(LocalDensity.current) > 0
-    LaunchedEffect(imeVisible) {
-        if (imeVisible) {
-            requestFollowLatest()
-            scrollToLatestMessage(animated = false)
-        }
+    // Read in a snapshotFlow rather than during composition: reading the inset here recomposed the whole
+    // chat on every frame of the keyboard animation.
+    val drawerImeSuppressed by rememberUpdatedState(LocalChatDrawerImeSuppressed.current)
+    val imeInsets = WindowInsets.ime
+    val imeDensity = LocalDensity.current
+    LaunchedEffect(imeInsets, imeDensity) {
+        snapshotFlow { !drawerImeSuppressed && imeInsets.getBottom(imeDensity) > 0 }
+            .distinctUntilChanged()
+            .collect { imeVisible ->
+                if (imeVisible) {
+                    requestFollowLatest()
+                    scrollToLatestMessage(animated = false)
+                }
+            }
     }
 
     Scaffold(
@@ -681,7 +701,7 @@ internal fun ChatContent(
                 currentModelLabel = currentModelLabel,
                 currentModelOptions = currentModelOptions,
                 currentReasoningMode = currentReasoningMode,
-                roundCount = roundNavigationItems.size,
+                roundCount = roundCount,
                 isRoundNavigatorOpen = isRoundNavigatorOpen,
                 isMenuItemEnabled = isMenuItemEnabled,
                 isContextCompacted = isContextCompacted,
@@ -719,12 +739,15 @@ internal fun ChatContent(
                         bottom = composerHeight + 12.dp
                     )
                 ) {
-                    val historicalMessageCount = lastMessageIndex.coerceAtLeast(0)
-
+                    // One call site for every turn. The last turn used to be a separate `item {}`, so when
+                    // a new turn arrived the previous one moved to a different composable group and lost
+                    // its remembered state (expanded blocks, highlighting, parsed Markdown).
                     items(
-                        count = historicalMessageCount,
-                        key = { index -> turnKeys[index] }
+                        count = groupedMessages.userMessages.size,
+                        key = { index -> turnKeys[index] },
+                        contentType = { "turn" }
                     ) { index ->
+                        val isLastTurn = index == lastMessageIndex
                         ChatMessagePair(
                             messageIndex = index,
                             message = groupedMessages.userMessages[index],
@@ -741,7 +764,8 @@ internal fun ChatContent(
                             canUseChat = canUseChat,
                             isIdle = isIdle,
                             canSubmitOrEdit = canSubmitOrEdit,
-                            isActiveMessage = false,
+                            isActiveMessage = isLastTurn,
+                            showMetadata = !isLastTurn || !showStreamingMetadataFooter,
                             maximumUserChatBubbleWidth = maximumUserChatBubbleWidth,
                             maximumOpponentChatBubbleWidth = maximumOpponentChatBubbleWidth,
                             onEditQuestion = onEditQuestion,
@@ -756,50 +780,9 @@ internal fun ChatContent(
                             onRichInteractionEvent = onRichInteractionEvent,
                             bindOpenUi = bindOpenUi,
                             onOpenUiAction = onOpenUiAction,
-                            stickerAssetResolver = stickerAssetResolver
+                            stickerAssetResolver = stickerAssetResolver,
+                            onStreamingContentDisplayed = if (isLastTurn) followStreamingContent else NoStreamingCallback
                         )
-                    }
-
-                    if (lastMessageIndex >= 0) {
-                        item(key = turnKeys[lastMessageIndex]) {
-                            ChatMessagePair(
-                                messageIndex = lastMessageIndex,
-                                message = groupedMessages.userMessages[lastMessageIndex],
-                                assistantMessages = groupedMessages.assistantMessages.getOrNull(lastMessageIndex) ?: emptyList(),
-                                sessionTokenUsages = sessionTokenUsagesFor(
-                                    index = sessionTokenUsageIndex,
-                                    assistantMessages = groupedMessages.assistantMessages.getOrNull(lastMessageIndex) ?: emptyList(),
-                                    platformIndex = indexStates.getOrElse(lastMessageIndex) { 0 }
-                                ),
-                                platformIndexState = indexStates.getOrElse(lastMessageIndex) { 0 },
-                                loadingStates = loadingStates,
-                                toolProgressStates = toolProgressStates,
-                                enabledPlatformLookup = enabledPlatformLookup,
-                                canUseChat = canUseChat,
-                                isIdle = isIdle,
-                                canSubmitOrEdit = canSubmitOrEdit,
-                                isActiveMessage = true,
-                                showMetadata = !showStreamingMetadataFooter,
-                                maximumUserChatBubbleWidth = maximumUserChatBubbleWidth,
-                                maximumOpponentChatBubbleWidth = maximumOpponentChatBubbleWidth,
-                                onEditQuestion = onEditQuestion,
-                                onEditAssistant = onEditAssistant,
-                                onCopyText = onCopyText,
-                                onPlatformClick = onPlatformClick,
-                                onSelectText = onSelectText,
-                                onRetry = onRetry,
-                                onShowPreviousRevision = onShowPreviousRevision,
-                                onShowNextRevision = onShowNextRevision,
-                                bindRichInteraction = bindRichInteraction,
-                                onRichInteractionEvent = onRichInteractionEvent,
-                                bindOpenUi = bindOpenUi,
-                                onOpenUiAction = onOpenUiAction,
-                                stickerAssetResolver = stickerAssetResolver,
-                                onStreamingContentDisplayed = {
-                                    requestScrollToLatestMessage()
-                                }
-                            )
-                        }
                     }
 
                     item(key = CHAT_BOTTOM_KEY) {
@@ -1162,8 +1145,11 @@ internal data class SessionTokenUsageKey(
     val model: String
 )
 
+private val NoStreamingCallback: () -> Unit = {}
+
 internal fun buildSessionTokenUsageIndex(
-    allAssistantMessages: List<List<MessageV2>>
+    allAssistantMessages: List<List<MessageV2>>,
+    previous: Map<SessionTokenUsageKey, List<TokenUsageRecord>>? = null
 ): Map<SessionTokenUsageKey, List<TokenUsageRecord>> {
     val grouped = linkedMapOf<SessionTokenUsageKey, MutableList<TokenUsageRecord>>()
     allAssistantMessages.asSequence()
@@ -1174,7 +1160,9 @@ internal fun buildSessionTokenUsageIndex(
             grouped.getOrPut(SessionTokenUsageKey(usage.platformUid, usage.model)) { mutableListOf() }
                 .add(usage)
         }
-    return grouped.mapValues { (_, usages) -> usages.toList() }
+    return grouped.mapValues { (key, usages) ->
+        previous?.get(key)?.takeIf { it == usages } ?: usages.toList()
+    }
 }
 
 internal fun sessionTokenUsagesFor(

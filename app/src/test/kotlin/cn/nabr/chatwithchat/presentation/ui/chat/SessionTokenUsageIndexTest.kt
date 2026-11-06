@@ -3,6 +3,8 @@ package cn.nabr.chatwithchat.presentation.ui.chat
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.token.TokenUsageRecord
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertSame
 import org.junit.Test
 
 class SessionTokenUsageIndexTest {
@@ -40,5 +42,25 @@ class SessionTokenUsageIndexTest {
             sessionTokenUsagesFor(index, "anthropic", "sonnet").map(TokenUsageRecord::totalTokens)
         )
         assertEquals(emptyList<TokenUsageRecord>(), sessionTokenUsagesFor(index, "", "gpt"))
+    }
+
+    /** Unchanged groups keep their list instance so older turns skip recomposition while one streams. */
+    @Test
+    fun rebuildReusesListsForUnchangedGroups() {
+        fun message(platform: String, model: String, output: Int) = MessageV2(
+            content = "x",
+            platformType = platform,
+            tokenUsage = TokenUsageRecord(inputTokens = 1, outputTokens = output, platformUid = platform, model = model)
+        )
+        val stable = message("openai", "gpt", 1)
+        val first = buildSessionTokenUsageIndex(listOf(listOf(stable), listOf(message("anthropic", "sonnet", 1))))
+
+        val second = buildSessionTokenUsageIndex(
+            listOf(listOf(stable), listOf(message("anthropic", "sonnet", 2))),
+            previous = first
+        )
+
+        assertSame(first[SessionTokenUsageKey("openai", "gpt")], second[SessionTokenUsageKey("openai", "gpt")])
+        assertNotSame(first[SessionTokenUsageKey("anthropic", "sonnet")], second[SessionTokenUsageKey("anthropic", "sonnet")])
     }
 }

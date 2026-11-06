@@ -301,7 +301,8 @@ internal fun IncrementalChatMarkdown(
     useMathJax: Boolean,
     contentColor: Color,
     style: ChatMarkdownStyle,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    pendingAsMarkdown: Boolean = false
 ) {
     val accumulator = remember(contentIdentity) { ThinkingMarkdownAccumulator() }
     val snapshot = remember(contentIdentity, content, isStreaming) {
@@ -328,7 +329,24 @@ internal fun IncrementalChatMarkdown(
             }
         }
 
-        if (snapshot.pendingText.isNotBlank()) {
+        if (pendingAsMarkdown && snapshot.pendingText.isNotBlank()) {
+            // Answers render the unfinished block as Markdown too, so syntax never flashes raw. Only this
+            // tail is reparsed per token; committed blocks above keep their parse and layout. The source
+            // offset matches the block it will be committed as, so reveal progress carries over.
+            key(contentIdentity, "pending", snapshot.pendingStart) {
+                CompositionLocalProvider(LocalStreamingSourceOffset provides snapshot.pendingStart) {
+                    ChatMarkdown(
+                        content = snapshot.pendingText,
+                        contentIdentity = "$contentIdentity:pending:${snapshot.pendingStart}",
+                        renderMath = true,
+                        useMathJax = useMathJax,
+                        contentColor = contentColor,
+                        style = style,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        } else if (snapshot.pendingText.isNotBlank()) {
             val preview = pendingThinkingPreview(snapshot.pendingText)
             val displayed = if (isPendingAnimating && preview.isNotBlank()) preview + "●" else preview
             val prefixLength = if (preview == snapshot.pendingText) 0 else THINKING_PENDING_PREVIEW_PREFIX.length

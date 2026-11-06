@@ -77,6 +77,7 @@ fun EmptyChatScreen(
     val currentReasoningMode = lastSelectedModel?.reasoningMode ?: ReasoningMode.AUTO
     val inputState = rememberTextFieldState()
     val composerBackdrop = rememberLayerBackdrop()
+    val glassSupported = rememberDeviceSupportsChatGlass()
     val composerDensity = LocalDensity.current
     var composerHeight by remember { mutableStateOf(68.dp) }
     val context = LocalContext.current
@@ -145,7 +146,7 @@ fun EmptyChatScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .layerBackdrop(composerBackdrop)
+                        .then(if (glassSupported) Modifier.layerBackdrop(composerBackdrop) else Modifier)
                         .settingsCanvasBackground()
                         .padding(
                             start = 24.dp,
@@ -173,7 +174,7 @@ fun EmptyChatScreen(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .onSizeChanged { composerHeight = with(composerDensity) { it.height.toDp() } },
-                        backdrop = composerBackdrop,
+                        backdrop = composerBackdrop.takeIf { glassSupported },
                         inputState = inputState,
                         chatEnabled = true,
                         sendButtonEnabled = true,

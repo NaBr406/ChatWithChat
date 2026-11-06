@@ -1,5 +1,8 @@
 package cn.nabr.chatwithchat.presentation.ui.chat
 
+import android.app.ActivityManager
+import android.content.Context
+import android.os.PowerManager
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -28,6 +31,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.layout.positionOnScreen
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import com.kyant.backdrop.backdrops.LayerBackdrop
@@ -51,19 +55,45 @@ internal fun Modifier.chatTopBarBackground(): Modifier {
     }
 }
 
+private const val GLASS_MIN_TOTAL_MEMORY_BYTES = 3L * 1024 * 1024 * 1024
+
+/**
+ * Whether this device should draw the blurred glass at all.
+ *
+ * Every glass surface re-blurs the recorded chat layer on each frame the list changes, which during
+ * streaming is every frame. Low-memory devices and battery saver get the solid fallback instead.
+ * Checked when the screen is composed, so toggling battery saver applies the next time it opens.
+ */
+internal fun deviceSupportsChatGlass(context: Context): Boolean {
+    val activityManager = context.getSystemService(ActivityManager::class.java)
+    val powerManager = context.getSystemService(PowerManager::class.java)
+    if (activityManager?.isLowRamDevice == true) return false
+    if (powerManager?.isPowerSaveMode == true) return false
+    val memoryInfo = ActivityManager.MemoryInfo()
+    activityManager?.getMemoryInfo(memoryInfo)
+    return memoryInfo.totalMem == 0L || memoryInfo.totalMem >= GLASS_MIN_TOTAL_MEMORY_BYTES
+}
+
+@Composable
+internal fun rememberDeviceSupportsChatGlass(): Boolean {
+    val context = LocalContext.current
+    return remember(context) { deviceSupportsChatGlass(context) }
+}
+
 @Composable
 internal fun ChatGlassScope(
     backdrop: LayerBackdrop = rememberLayerBackdrop(),
     enabled: Boolean = true,
     content: @Composable () -> Unit
 ) {
+    val glassActive = enabled && rememberDeviceSupportsChatGlass()
     var windowOrigin by remember { mutableStateOf(Offset.Zero) }
     Box(
         modifier = Modifier.onGloballyPositioned {
             windowOrigin = it.positionOnScreen() - it.positionInWindow()
         }
     ) {
-        CompositionLocalProvider(LocalChatGlass provides if (enabled) ChatGlassContext(backdrop, windowOrigin) else null) {
+        CompositionLocalProvider(LocalChatGlass provides if (glassActive) ChatGlassContext(backdrop, windowOrigin) else null) {
             content()
         }
     }
