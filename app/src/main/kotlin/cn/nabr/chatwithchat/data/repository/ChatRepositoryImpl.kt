@@ -4640,6 +4640,11 @@ private fun List<MessageSourceMetadata>.dedupeMessageSources(): List<MessageSour
         .distinctBy { (key, _) -> key }
         .map { (_, source) -> source }
 
+/**
+ * 供应商的提示词缓存只认逐字节相同的前缀，所以各段按变化频率从低到高排列：Core 与富文本契约是固定文本，
+ * 平台提示词和 Skill 随用户配置变化，运行时日期按天变化，记忆、摘要和额外指令每轮都可能不同。
+ * 富文本契约约有 37K 字符，此前排在最后，位于每轮都变的记忆之后，因此永远落在缓存前缀之外。
+ */
 private fun chatSystemPrompt(
     platformSystemPrompt: String?,
     runtimeContextPrompt: String?,
@@ -4649,13 +4654,13 @@ private fun chatSystemPrompt(
     includeRichContentPrompt: Boolean = true
 ): String? = mergePromptSections(
     CoreSystemPrompt.TEXT,
+    if (includeRichContentPrompt) RichContentPromptBuilder().build() else null,
     mergePromptSections(
         platformSystemPrompt,
         runtimeContextPrompt,
         memoryPrompt,
         contextSummary,
-        extraPrompt,
-        if (includeRichContentPrompt) RichContentPromptBuilder().build() else null
+        extraPrompt
     )
 )
 

@@ -4967,6 +4967,13 @@ class ChatRepositoryImplTest {
             "$provider injected the base system prompt before the core prompt",
             baseSystemIndex >= CoreSystemPrompt.TEXT.length
         )
+        val richCatalogIndex = prompt.indexOf(RichContentPromptBuilder().build().trim())
+        if (richCatalogIndex >= 0) {
+            assertTrue(
+                "$provider placed the static rich catalog after per-turn sections, outside the cache prefix",
+                richCatalogIndex < baseSystemIndex && richCatalogIndex < prompt.indexOf(PROVIDER_MEMORY_MARKER)
+            )
+        }
         assertTrue("$provider lost runtime context", prompt.contains("运行时上下文："))
         assertTrue("$provider lost context summary", prompt.contains("较早对话摘要："))
         assertTrue("$provider lost omitted context", prompt.contains("provider-topic-1"))
@@ -5027,13 +5034,13 @@ class ChatRepositoryImplTest {
         val EXPECTED_STICKER_BASELINE_ROWS = listOf(
             // Raw serialized requests include the core prompt and the rich catalog in every round that
             // can answer the user, with content-scoped JSON instructions in the fallback protocol.
-            "sticker-request-baseline|custom_json|3|2|42508,42568,41821|14631,14542,14217|40979,41027,40313|67,67,67|54,54,54|159,73,0|0,248,0|0,0,0|1|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|ollama_json|3|2|42504,42564,41817|14634,14545,14220|40979,41027,40313|67,67,67|54,54,54|159,73,0|0,248,0|0,0,0|1|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|groq_json|3|2|42559,42619,41872|14648,14559,14234|40979,41027,40313|67,67,67|54,54,54|159,73,0|0,248,0|0,0,0|1|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|openai_responses|3|2|42256,42403,42274|13521,13524,13516|40019,40079,40170|42,42,42|54,54,54|803,361,330|0,479,334|2,1,2|2|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|openrouter_native|3|2|42399,42539,42471|14806,14784,14808|40019,40078,40169|67,67,67|54,54,54|829,374,356|0,509,366|2,1,2|2|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|anthropic_native|3|2|42252,42407,42296|14779,14760,14776|40019,40079,40170|67,67,67|54,54,54|742,331,270|0,502,359|2,1,2|2|30/3/33|60/6/66|3|1",
-            "sticker-request-baseline|google_native|3|2|42224,42376,42251|14768,14746,14761|40019,40078,40169|51,51,51|54,54,54|707,327,235|0,460,334|2,1,2|2|30/3/33|60/6/66|3|1"
+            "sticker-request-baseline|custom_json|3|2|42698,42758,42011|14667,14578,14253|41169,41217,40503|67,67,67|54,54,54|159,73,0|0,248,0|0,0,0|1|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|ollama_json|3|2|42694,42754,42007|14670,14581,14256|41169,41217,40503|67,67,67|54,54,54|159,73,0|0,248,0|0,0,0|1|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|groq_json|3|2|42749,42809,42062|14684,14595,14270|41169,41217,40503|67,67,67|54,54,54|159,73,0|0,248,0|0,0,0|1|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|openai_responses|3|2|42446,42593,42464|13558,13560,13552|40209,40269,40360|42,42,42|54,54,54|803,361,330|0,479,334|2,1,2|2|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|openrouter_native|3|2|42589,42729,42661|14843,14821,14845|40209,40268,40359|67,67,67|54,54,54|829,374,356|0,509,366|2,1,2|2|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|anthropic_native|3|2|42442,42597,42486|14816,14796,14812|40209,40269,40360|67,67,67|54,54,54|742,331,270|0,502,359|2,1,2|2|30/3/33|60/6/66|3|1",
+            "sticker-request-baseline|google_native|3|2|42414,42566,42441|14805,14783,14798|40209,40268,40359|51,51,51|54,54,54|707,327,235|0,460,334|2,1,2|2|30/3/33|60/6/66|3|1"
         )
 
         /**
@@ -5044,16 +5051,16 @@ class ChatRepositoryImplTest {
          * over the measured totals so unrelated prompt growth still fails.
          */
         val JSON_STICKER_TOKEN_CEILINGS = mapOf(
-            "custom_json" to 43_439,
-            "ollama_json" to 43_449,
-            "groq_json" to 43_489
+            "custom_json" to 43_547,
+            "ollama_json" to 43_557,
+            "groq_json" to 43_597
         )
 
         val NATIVE_STICKER_TOKEN_CEILINGS = mapOf(
-            "openai_responses" to 40_613,
-            "openrouter_native" to 44_448,
-            "anthropic_native" to 44_370,
-            "google_native" to 44_328
+            "openai_responses" to 40_722,
+            "openrouter_native" to 44_559,
+            "anthropic_native" to 44_479,
+            "google_native" to 44_439
         )
     }
 
