@@ -32,7 +32,8 @@ internal data class RichInteractionHostSource(
     val revisionFingerprint: String,
     val content: String,
     val isLatestRevision: Boolean = true,
-    val isStreaming: Boolean = false
+    val isStreaming: Boolean = false,
+    val isPersisted: Boolean = false
 ) {
     val slot: String get() = "$chatId:$turnKey:$platformUid"
 }
@@ -57,7 +58,7 @@ internal data class RichInteractionDraftGate(
     }
 }
 
-/** Bounded, screen-owned evidence. A database row alone is deliberately not completion evidence. */
+/** Live attempts revoke stale callbacks; persisted sources can rebuild their local interaction session. */
 internal class RichInteractionHostController(
     private val runtime: RichInteractionRuntime,
     private val parser: RichContentParser,
@@ -146,7 +147,7 @@ internal class RichInteractionHostController(
     fun bind(source: RichInteractionHostSource, gate: RichInteractionDraftGate): RichInteractionHostBinding {
         val attempt = evidence(source) ?: attempts[source.slot]
         val identity = identity(source, attempt)
-        val allowed = isSavedSuccess(source) && gate.rejectionReason(forAction = false) == null
+        val allowed = isSavedSuccess(source)
         val cached = bindings[identity]
         if (cached != null && cached.source == source && cached.allowed == allowed && runtime.observe(identity) != null) {
             return cached.binding
@@ -182,7 +183,9 @@ internal class RichInteractionHostController(
         val source = selectedSource ?: return rejected("missing-source")
         val attempt = evidence(source) ?: attempts[source.slot]
         if (identity != identity(source, attempt) || !isSavedSuccess(source)) return rejected("stale-source")
-        gate.rejectionReason(event is RichInteractionEvent.InvokeAction)?.let { return rejected(it) }
+        if (event is RichInteractionEvent.InvokeAction) {
+            gate.rejectionReason(forAction = true)?.let { return rejected(it) }
+        }
         // Rebind before dispatch so a source change or rollback invalidates the old token immediately.
         bind(source, gate)
         return runtime.dispatch(identity, event)
@@ -211,15 +214,17 @@ internal class RichInteractionHostController(
         return OpenUiHostBinding(
             identity = identity(source, attempt).toString(),
             revision = source.revisionFingerprint,
-            interactive = source.isLatestRevision && isSavedSuccess(source) && gate.rejectionReason(false) == null
+            interactive = isSavedSuccess(source) &&
+                source.content.length <= maxSourceChars &&
+                OpenUiEnvelope.parse(source.content).let { it.source != null && it.isComplete }
         )
     }
 
     fun canAcceptOpenUi(event: OpenUiHostAction, source: RichInteractionHostSource?, gate: RichInteractionDraftGate): Boolean {
-        if (source == null || !source.isLatestRevision || source.content.length > maxSourceChars || !OpenUiActionPolicy.accepts(event)) return false
+        if (source == null || source.content.length > maxSourceChars || !OpenUiActionPolicy.accepts(event)) return false
         val binding = bindOpenUi(source, gate)
         if (!binding.interactive || event.identity != binding.identity || event.revision != binding.revision) return false
-        if (gate.rejectionReason(event.action == "ToAssistant") != null) return false
+        if (event.action == "ToAssistant" && gate.rejectionReason(forAction = true) != null) return false
         val envelope = OpenUiEnvelope.parse(source.content)
         return envelope.source != null && envelope.isComplete
     }
@@ -247,7 +252,7 @@ internal class RichInteractionHostController(
     }
 
     private fun isSavedSuccess(source: RichInteractionHostSource): Boolean =
-        !source.isStreaming && evidence(source) != null
+        !source.isStreaming && (evidence(source) != null || (source.isPersisted && attempts[source.slot] == null))
 
     private fun successKey(source: RichInteractionHostSource) = SuccessKey(
         source.slot,

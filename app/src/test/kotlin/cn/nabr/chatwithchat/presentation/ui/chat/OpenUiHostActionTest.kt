@@ -24,7 +24,7 @@ class OpenUiHostActionTest {
         assertFalse(host.canAcceptOpenUi(event, source, RichInteractionDraftGate()))
         host.completeAttempt(source, "one", StreamTerminalOutcome.Success, true)
         assertTrue(host.canAcceptOpenUi(event, source, RichInteractionDraftGate()))
-        assertFalse(host.canAcceptOpenUi(event, source.copy(isLatestRevision = false), RichInteractionDraftGate()))
+        assertTrue(host.canAcceptOpenUi(event, source.copy(isLatestRevision = false), RichInteractionDraftGate()))
         assertFalse(host.canAcceptOpenUi(event, source.copy(revisionFingerprint = "changed"), RichInteractionDraftGate()))
         assertFalse(host.canAcceptOpenUi(event, source.copy(isStreaming = true), RichInteractionDraftGate()))
         host.beginAttempt(source, "two")
@@ -47,6 +47,47 @@ class OpenUiHostActionTest {
             RichInteractionDraftGate(isPersisting = true),
             RichInteractionDraftGate(hasQueuedQuestion = true)
         ).forEach { assertFalse(host.canAcceptOpenUi(event, source, it)) }
+    }
+
+    @Test
+    fun persistedProgramsRemainInteractiveAfterReopeningAndCacheEviction() {
+        val saved = source.copy(isPersisted = true)
+        val host = host()
+        val first = host.bindOpenUi(saved, RichInteractionDraftGate())
+        repeat(40) { index ->
+            val next = source.copy(turnKey = "turn-$index")
+            host.beginAttempt(next, "attempt-$index")
+            host.completeAttempt(next, "attempt-$index", StreamTerminalOutcome.Success, true)
+        }
+        assertTrue(host.bindOpenUi(saved, RichInteractionDraftGate()).interactive)
+        host.clear()
+        val reopened = host.bindOpenUi(saved, RichInteractionDraftGate())
+        assertTrue(reopened.interactive)
+        assertTrue(host.canAcceptOpenUi(OpenUiHostAction(reopened.identity, reopened.revision, "ToAssistant", "Continue"), saved, RichInteractionDraftGate()))
+        assertFalse(host.canAcceptOpenUi(OpenUiHostAction(first.identity, "old-fingerprint", "ToAssistant", "Continue"), saved, RichInteractionDraftGate()))
+        assertTrue(host.bindOpenUi(saved.copy(isLatestRevision = false), RichInteractionDraftGate()).interactive)
+        assertFalse(host.bindOpenUi(saved.copy(isStreaming = true), RichInteractionDraftGate()).interactive)
+        assertFalse(host.bindOpenUi(saved.copy(content = saved.content.removeSuffix("```")), RichInteractionDraftGate()).interactive)
+        host.beginAttempt(saved, "retry")
+        assertFalse(host.canAcceptOpenUi(OpenUiHostAction(reopened.identity, reopened.revision, "ToAssistant", "Continue"), saved, RichInteractionDraftGate()))
+        assertFalse(host.bindOpenUi(saved, RichInteractionDraftGate()).interactive)
+    }
+
+    @Test
+    fun nextTurnDoesNotDisableLocalControlsCopyOrLinksButStillProtectsComposer() {
+        val saved = source.copy(isPersisted = true)
+        val host = host()
+        val gate = RichInteractionDraftGate(isBusy = true, isPersisting = true)
+        val before = host.bindOpenUi(saved, RichInteractionDraftGate())
+        host.beginAttempt(source.copy(turnKey = "next-turn"), "next")
+        val binding = host.bindOpenUi(saved, gate)
+        assertTrue(binding.interactive)
+        assertTrue(binding == before)
+        val copy = OpenUiHostAction(binding.identity, binding.revision, "CopyToClipboard", "Copied")
+        assertTrue(host.canAcceptOpenUi(copy, saved, gate))
+        assertTrue(host.canAcceptOpenUi(copy.copy(action = "OpenUrl", value = "https://example.com"), saved, gate))
+        assertFalse(host.canAcceptOpenUi(copy.copy(action = "ToAssistant"), saved, gate))
+        assertTrue(host.canAcceptOpenUi(copy.copy(action = "ToAssistant"), saved, RichInteractionDraftGate()))
     }
 
     @Test

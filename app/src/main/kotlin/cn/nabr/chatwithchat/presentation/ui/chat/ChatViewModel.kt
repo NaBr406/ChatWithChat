@@ -511,6 +511,7 @@ class ChatViewModel @Inject constructor(
             revisionKey = revision.key,
             revisionFingerprint = revision.fingerprint,
             content = revision.content.stripInternalStickerMarkers(),
+            isPersisted = candidate.id > 0 && user.id > 0,
             isLatestRevision = revision.isLatest,
             isStreaming = revision.isLatest &&
                 richInteractionActiveSlot == (turnIndex to platformIndex) &&

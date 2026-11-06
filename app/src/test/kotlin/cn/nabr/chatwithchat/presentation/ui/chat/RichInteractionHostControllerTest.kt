@@ -59,6 +59,22 @@ class RichInteractionHostControllerTest {
     }
 
     @Test
+    fun persistedHistoryRebuildsSessionAndRejectsCallbacksFromBeforeClear() {
+        val host = controller()
+        val saved = source.copy(isPersisted = true)
+        val first = host.bind(saved, RichInteractionDraftGate())
+        assertTrue(first.session.value.isInteractionEnabled)
+        val oldEvent = RichInteractionEvent.InvokeAction(first.session.value.token, "old-click", "go")
+        host.clear()
+        val restored = host.bind(saved, RichInteractionDraftGate(isBusy = true))
+        assertTrue(restored.session.value.isInteractionEnabled)
+        assertTrue(host.dispatch(restored.identity, oldEvent, saved, RichInteractionDraftGate()) is RichInteractionResult.Rejected)
+        val event = RichInteractionEvent.InvokeAction(restored.session.value.token, "new-click", "go")
+        assertTrue(host.dispatch(restored.identity, event, saved, RichInteractionDraftGate(isBusy = true)) is RichInteractionResult.Rejected)
+        assertTrue(host.dispatch(restored.identity, event, saved, RichInteractionDraftGate()) is RichInteractionResult.Action)
+    }
+
+    @Test
     fun everyComposerConflictRejectsActionsWithoutConsumingTheirEvent() {
         val host = controller()
         host.beginAttempt(source, "attempt")
