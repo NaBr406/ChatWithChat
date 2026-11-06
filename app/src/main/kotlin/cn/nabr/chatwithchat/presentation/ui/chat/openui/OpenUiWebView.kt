@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
 import android.net.Uri
+import android.os.SystemClock
 import android.view.ActionMode
 import android.view.Menu
 import android.view.MenuItem
@@ -50,6 +51,12 @@ internal class OpenUiWebView(context: Context) : WebView(context) {
     private var selecting = false
     private var touchX = 0f
     private var touchY = 0f
+    private var lastPublishAt = 0L
+    private var publishScheduled = false
+    private val deferredPublish = Runnable {
+        publishScheduled = false
+        if (!destroyed && isReady) publish()
+    }
     private val loader = WebViewAssetLoader.Builder()
         .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(context))
         .build()
@@ -122,14 +129,41 @@ internal class OpenUiWebView(context: Context) : WebView(context) {
         }
         settings.textZoom = (fontScale * 100).toInt().coerceIn(50, 300)
         if (value == content) return
-        if (content?.identity != value.identity) onHeight(1.0)
+        // Only a real identity change resets the height. A fresh view (no content yet) keeps the height
+        // the composable restored from cache, so an answer scrolled back into view does not collapse.
+        val previous = content
+        if (previous != null && previous.identity != value.identity) onHeight(1.0)
         content = value
         revision++
-        if (isReady) publish()
+        if (isReady) schedulePublish()
+    }
+
+    /**
+     * Each publish re-sends and re-renders the whole program, so while streaming they are spaced out;
+     * the final, non-streaming content always goes out at once.
+     */
+    private fun schedulePublish() {
+        val value = content ?: return
+        if (!value.streaming) {
+            removeCallbacks(deferredPublish)
+            publishScheduled = false
+            publish()
+            return
+        }
+        val wait = STREAM_PUBLISH_INTERVAL_MS - (SystemClock.uptimeMillis() - lastPublishAt)
+        if (wait <= 0) {
+            removeCallbacks(deferredPublish)
+            publishScheduled = false
+            publish()
+        } else if (!publishScheduled) {
+            publishScheduled = true
+            postDelayed(deferredPublish, wait)
+        }
     }
 
     private fun publish() {
         val value = content ?: return
+        lastPublishAt = SystemClock.uptimeMillis()
         val payload = JSONObject()
             .put("identity", value.identity)
             .put("revision", revision)
@@ -168,12 +202,18 @@ internal class OpenUiWebView(context: Context) : WebView(context) {
         val current = content ?: return
         if (json.opt("identity") !is String ||
             json.opt("revision") !is Number ||
-            json.optString("identity") != current.identity ||
-            json.optDouble("revision") != revision.toDouble()
+            json.optString("identity") != current.identity
         ) {
             return
         }
-        when (json.optString("type")) {
+        val messageRevision = json.optDouble("revision")
+        // Heights trail by one frame and one IPC hop, and publishing is throttled while streaming, so an
+        // exact match dropped nearly every height mid-stream. Any revision of this identity is a usable
+        // height; actions still need the exact revision.
+        val type = json.optString("type")
+        if (messageRevision > revision.toDouble()) return
+        if (type != "height" && messageRevision != revision.toDouble()) return
+        when (type) {
             "height" -> {
                 if (json.opt("height") !is Number) return
                 val height = json.optDouble("height", Double.NaN)
@@ -240,6 +280,7 @@ internal class OpenUiWebView(context: Context) : WebView(context) {
     fun release() {
         if (destroyed) return
         destroyed = true
+        removeCallbacks(deferredPublish)
         onHeight = {}
         onAction = { _, _ -> }
         onUnavailable = {}
@@ -260,6 +301,7 @@ internal class OpenUiWebView(context: Context) : WebView(context) {
         const val MAX_ACTION_CHARS = 32768
         const val MAX_SOURCE_CHARS = 1048576
         const val MAX_CSS_HEIGHT = 10000000.0
+        const val STREAM_PUBLISH_INTERVAL_MS = 150L
 
         fun isPublicWebUrl(value: String): Boolean {
             if (value.length > 8192 || value.any { it.isISOControl() }) return false

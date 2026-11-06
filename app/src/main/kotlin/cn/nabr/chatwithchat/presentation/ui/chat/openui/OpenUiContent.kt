@@ -81,7 +81,9 @@ private fun OpenUiProgram(
     val owner = LocalLifecycleOwner.current
     val currentBinding by rememberUpdatedState(binding)
     val currentOnAction by rememberUpdatedState(onAction)
-    var height by remember(identity) { mutableDoubleStateOf(1.0) }
+    // Seeded from the cache so a WebView recreated on scroll-back opens at its last height instead of
+    // 1 dp, which blanked the answer and made the list jump.
+    var height by remember(identity) { mutableDoubleStateOf(OpenUiHeightCache.get(identity) ?: 1.0) }
     val viewHolder = remember { arrayOfNulls<OpenUiWebView>(1) }
     var unavailable by remember { mutableStateOf(false) }
     // Compose Constraints have a finite representation. Exceptionally huge documents remain
@@ -105,6 +107,7 @@ private fun OpenUiProgram(
                     if (height != nextHeight) {
                         height = nextHeight
                     }
+                    if (nextHeight > 1.0) OpenUiHeightCache.put(identity, nextHeight)
                 }
                 webView.onAction = { action, value ->
                     currentBinding?.let { current ->
@@ -130,5 +133,16 @@ private fun OpenUiProgram(
         owner.lifecycle.addObserver(observer)
         viewHolder[0]?.setPagePaused(!owner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
         onDispose { owner.lifecycle.removeObserver(observer) }
+    }
+}
+
+/** Last measured CSS height per program identity, shared across WebView instances. Main thread only. */
+private object OpenUiHeightCache {
+    private val heights = android.util.LruCache<String, Double>(256)
+
+    fun get(identity: String): Double? = heights.get(identity)
+
+    fun put(identity: String, height: Double) {
+        heights.put(identity, height)
     }
 }
