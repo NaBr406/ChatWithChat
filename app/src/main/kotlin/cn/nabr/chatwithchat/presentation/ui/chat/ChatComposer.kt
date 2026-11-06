@@ -11,9 +11,12 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -21,16 +24,23 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imeAnimationTarget
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -72,28 +82,38 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.layout.positionOnScreen
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.util.lerp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
@@ -120,6 +140,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ChatComposer(
     modifier: Modifier = Modifier,
@@ -179,6 +200,58 @@ fun ChatComposer(
         targetValue = materialColors.controlFill.copy(alpha = if (isAttachmentMenuExpanded) 0.44f else 0f),
         label = "attachmentButtonColor"
     )
+
+    // Expansion: the input grows and the attachment/send buttons move into its bottom edge while the
+    // user is writing. It is decided from focus, the draft and the send action — not from the keyboard
+    // alone, which can be hidden while a draft is still being written. See [composerExpansionTarget].
+    val focusRequester = remember { FocusRequester() }
+    val focusManager = LocalFocusManager.current
+    val textInteractionSource = remember { MutableInteractionSource() }
+    val isInputFocused by textInteractionSource.collectIsFocusedAsState()
+    val hasDraftText = inputState.text.isNotEmpty()
+    var collapsedAfterSend by remember { mutableStateOf(false) }
+    // The attachment menu and Skill sheet take focus while they are up; collapsing underneath them
+    // would move the "+" button they are anchored to.
+    val isHoldingExpansion = isAttachmentMenuMounted || isTextSkillSheetOpen || isCopyingPickedAttachments
+    val composerExpansion = remember { Animatable(if (hasDraftText) 1f else 0f) }
+    var isExpanded by remember { mutableStateOf(hasDraftText) }
+    LaunchedEffect(isInputFocused, hasDraftText, collapsedAfterSend, isHoldingExpansion) {
+        if (isHoldingExpansion) return@LaunchedEffect
+        isExpanded = composerExpansionTarget(
+            isInputFocused = isInputFocused,
+            hasDraftText = hasDraftText,
+            collapsedAfterSend = collapsedAfterSend
+        )
+    }
+    LaunchedEffect(isExpanded) {
+        // A spring keeps its velocity when retargeted, so focusing and blurring in quick succession
+        // reverses the motion where it is instead of restarting or stacking animations. Folding back is
+        // stiffer so it lands together with the keyboard sliding away rather than trailing behind it.
+        composerExpansion.animateTo(
+            targetValue = if (isExpanded) 1f else 0f,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioNoBouncy,
+                stiffness = if (isExpanded) Spring.StiffnessMediumLow else COMPOSER_COLLAPSE_STIFFNESS
+            )
+        )
+    }
+    LaunchedEffect(hasDraftText) {
+        if (hasDraftText) collapsedAfterSend = false
+    }
+    // Hiding the keyboard (back gesture, IME's own hide key) leaves Compose focus where it was. Treat
+    // it as leaving the input, so an empty composer folds back instead of staying tall with no keyboard.
+    // The animation target flips as soon as the keyboard starts to hide; `isImeVisible` would only
+    // flip once its slide-out had finished, which made the composer wait a full keyboard animation.
+    val density = LocalDensity.current
+    val isImeTargetVisible = WindowInsets.imeAnimationTarget.getBottom(density) > 0
+    var wasImeTargetVisible by remember { mutableStateOf(isImeTargetVisible) }
+    LaunchedEffect(isImeTargetVisible) {
+        // Our own menu and sheet hide the keyboard by taking window focus; that is not the user leaving.
+        if (wasImeTargetVisible && !isImeTargetVisible && isInputFocused && !isHoldingExpansion) {
+            focusManager.clearFocus()
+        }
+        wasImeTargetVisible = isImeTargetVisible
+    }
 
     LaunchedEffect(pendingCameraPhotoPath) {
         withContext(Dispatchers.IO) {
@@ -287,166 +360,45 @@ fun ChatComposer(
         if (selectedTextSkills.isNotEmpty()) {
             TextSkillDraftRow(selectedTextSkills, onTextSkillRemoved)
         }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.Bottom
-        ) {
-            if (showAttachmentButton) {
+        ComposerExpandingLayout(
+            expansion = { composerExpansion.value },
+            background = {
                 Box(
                     modifier = Modifier
-                        .size(40.dp)
-                        .onGloballyPositioned {
-                            attachmentButtonBounds = it.boundsInWindow()
-                            composerWindowOrigin = it.positionOnScreen() - it.positionInWindow()
+                        .composerGlass(backdrop, ComposerShape)
+                        // The empty part of the box (most of it once expanded) still means "type here".
+                        // Screen readers reach the text field itself, so this target stays out of their tree.
+                        .clearAndSetSemantics { }
+                        .clickable(
+                            interactionSource = null,
+                            indication = null,
+                            enabled = chatEnabled
+                        ) {
+                            collapsedAfterSend = false
+                            focusRequester.requestFocus()
                         }
-                        .composerGlass(backdrop, CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(30.dp)
-                            .background(attachmentButtonColor, CircleShape)
-                    )
-                    IconButton(
-                        modifier = Modifier.size(40.dp),
-                        enabled = chatEnabled && !isAttachmentBusy,
-                        onClick = {
-                            isAttachmentMenuMounted = true
-                            isAttachmentMenuExpanded = true
+                )
+            },
+            input = {
+                BasicTextField(
+                    state = inputState,
+                    modifier = Modifier
+                        .focusRequester(focusRequester)
+                        .pointerInput(Unit) {
+                            // Observe, never consume: a tap on an already-focused field after sending has
+                            // no focus change to react to, but it is still the user asking to type.
+                            awaitEachGesture {
+                                awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                collapsedAfterSend = false
+                            }
                         },
-                        colors = IconButtonDefaults.iconButtonColors(
-                            contentColor = if (isAttachmentMenuExpanded) materialColors.primaryLabel else materialColors.secondaryLabel,
-                            disabledContentColor = materialColors.tertiaryLabel
-                        )
-                    ) {
-                        Icon(
-                            modifier = Modifier.size(24.dp),
-                            imageVector = Icons.Rounded.Add,
-                            contentDescription = stringResource(R.string.attach_file)
-                        )
-                    }
-                    if (isAttachmentMenuMounted) {
-                        ComposerActionMenu(
-                            backdrop = backdrop,
-                            composerWindowOrigin = composerWindowOrigin,
-                            expanded = isAttachmentMenuExpanded,
-                            anchorBounds = attachmentButtonBounds,
-                            onDismissRequest = { isAttachmentMenuExpanded = false },
-                            onExitFinished = { isAttachmentMenuMounted = false }
-                        ) {
-                            DropdownMenuItem(
-                                colors = settingsDropdownMenuItemColors(),
-                                modifier = Modifier.heightIn(min = 48.dp),
-                                text = {
-                                    Text(
-                                        text = stringResource(R.string.choose_image),
-                                        style = MaterialTheme.typography.bodyMedium
-                                    )
-                                },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Outlined.Image,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(20.dp),
-                                        tint = materialColors.secondaryLabel
-                                    )
-                                },
-                                contentPadding = PaddingValues(horizontal = 14.dp),
-                                onClick = {
-                                    isAttachmentMenuExpanded = false
-                                    launchImagePicker()
-                                }
-                            )
-                            DropdownMenuItem(
-                                colors = settingsDropdownMenuItemColors(),
-                                modifier = Modifier.heightIn(min = 48.dp),
-                                text = {
-                                    Text(
-                                        text = stringResource(R.string.choose_document),
-                                        style = MaterialTheme.typography.bodyMedium
-                                    )
-                                },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Outlined.Description,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(20.dp),
-                                        tint = materialColors.secondaryLabel
-                                    )
-                                },
-                                contentPadding = PaddingValues(horizontal = 14.dp),
-                                onClick = {
-                                    isAttachmentMenuExpanded = false
-                                    launchDocumentPicker()
-                                }
-                            )
-                            DropdownMenuItem(
-                                colors = settingsDropdownMenuItemColors(),
-                                modifier = Modifier.heightIn(min = 48.dp),
-                                text = { Text(stringResource(R.string.invoke_skill), style = MaterialTheme.typography.bodyMedium) },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Outlined.Extension,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(20.dp),
-                                        tint = materialColors.secondaryLabel
-                                    )
-                                },
-                                contentPadding = PaddingValues(horizontal = 14.dp),
-                                onClick = {
-                                    isAttachmentMenuExpanded = false
-                                    isTextSkillSheetOpen = true
-                                }
-                            )
-                            DropdownMenuItem(
-                                colors = settingsDropdownMenuItemColors(),
-                                modifier = Modifier.heightIn(min = 48.dp),
-                                text = {
-                                    Text(
-                                        text = stringResource(R.string.take_photo),
-                                        style = MaterialTheme.typography.bodyMedium
-                                    )
-                                },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Outlined.PhotoCamera,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(20.dp),
-                                        tint = materialColors.secondaryLabel
-                                    )
-                                },
-                                contentPadding = PaddingValues(horizontal = 14.dp),
-                                onClick = {
-                                    isAttachmentMenuExpanded = false
-                                    launchCameraCapture()
-                                }
-                            )
-                        }
-                    }
-                }
-            }
-            BasicTextField(
-                state = inputState,
-                modifier = Modifier.weight(1f),
-                enabled = chatEnabled,
-                textStyle = mergedStyle.copy(color = materialColors.primaryLabel),
-                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                lineLimits = chatInputLineLimits,
-                decorator = { innerTextField ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .composerGlass(backdrop, RoundedCornerShape(20.dp))
-                            .heightIn(min = 40.dp)
-                            .padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(horizontal = 6.dp, vertical = 4.dp)
-                        ) {
+                    enabled = chatEnabled,
+                    interactionSource = textInteractionSource,
+                    textStyle = mergedStyle.copy(color = materialColors.primaryLabel),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    lineLimits = chatInputLineLimits,
+                    decorator = { innerTextField ->
+                        Box(modifier = Modifier.fillMaxWidth()) {
                             if (inputState.text.isEmpty()) {
                                 Text(
                                     modifier = Modifier.alpha(0.7f),
@@ -455,49 +407,201 @@ fun ChatComposer(
                                     color = materialColors.secondaryLabel
                                 )
                             }
-                            Box(modifier = Modifier.fillMaxWidth()) {
-                                innerTextField()
-                            }
+                            innerTextField()
                         }
-                        Box(contentAlignment = Alignment.Center) {
-                            Box(
-                                modifier = Modifier
-                                    .size(32.dp)
-                                    .background(
-                                        color = if (isGenerating || canSend) {
-                                            materialColors.primaryLabel
-                                        } else {
-                                            materialColors.controlFill
-                                        },
-                                        shape = CircleShape
-                                    )
+                    }
+                )
+            },
+            attachButton = if (showAttachmentButton) {
+                {
+                    Box(
+                        modifier = Modifier
+                            .size(ComposerAttachButtonSize)
+                            .onGloballyPositioned {
+                                attachmentButtonBounds = it.boundsInWindow()
+                                composerWindowOrigin = it.positionOnScreen() - it.positionInWindow()
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        // Its own glass circle only while it stands outside the input. Once it has moved
+                        // inside, the input glass is already behind it and a second lens would stack.
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .graphicsLayer { alpha = 1f - composerExpansion.value.coerceIn(0f, 1f) }
+                                .composerGlass(backdrop, CircleShape)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(30.dp)
+                                .background(attachmentButtonColor, CircleShape)
+                        )
+                        IconButton(
+                            modifier = Modifier.size(ComposerAttachButtonSize),
+                            enabled = chatEnabled && !isAttachmentBusy,
+                            onClick = {
+                                isAttachmentMenuMounted = true
+                                isAttachmentMenuExpanded = true
+                            },
+                            colors = IconButtonDefaults.iconButtonColors(
+                                contentColor = if (isAttachmentMenuExpanded) materialColors.primaryLabel else materialColors.secondaryLabel,
+                                disabledContentColor = materialColors.tertiaryLabel
                             )
-                            IconButton(
-                                modifier = Modifier.size(32.dp),
-                                enabled = isGenerating || canSend,
-                                onClick = if (isGenerating) onStopButtonClick else onSendButtonClick,
-                                colors = IconButtonDefaults.iconButtonColors(
-                                    contentColor = materialColors.canvas,
-                                    disabledContentColor = materialColors.tertiaryLabel
-                                )
+                        ) {
+                            Icon(
+                                modifier = Modifier.size(24.dp),
+                                imageVector = Icons.Rounded.Add,
+                                contentDescription = stringResource(R.string.attach_file)
+                            )
+                        }
+                        if (isAttachmentMenuMounted) {
+                            ComposerActionMenu(
+                                backdrop = backdrop,
+                                composerWindowOrigin = composerWindowOrigin,
+                                expanded = isAttachmentMenuExpanded,
+                                anchorBounds = attachmentButtonBounds,
+                                onDismissRequest = { isAttachmentMenuExpanded = false },
+                                onExitFinished = { isAttachmentMenuMounted = false }
                             ) {
-                                Icon(
-                                    modifier = Modifier.size(if (isGenerating) 16.dp else 20.dp),
-                                    imageVector = if (isGenerating) {
-                                        Icons.Rounded.Stop
-                                    } else {
-                                        Icons.Rounded.ArrowUpward
+                                DropdownMenuItem(
+                                    colors = settingsDropdownMenuItemColors(),
+                                    modifier = Modifier.heightIn(min = 48.dp),
+                                    text = {
+                                        Text(
+                                            text = stringResource(R.string.choose_image),
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
                                     },
-                                    contentDescription = stringResource(
-                                        if (isGenerating) R.string.stop_generating else R.string.send
-                                    )
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Outlined.Image,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(20.dp),
+                                            tint = materialColors.secondaryLabel
+                                        )
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 14.dp),
+                                    onClick = {
+                                        isAttachmentMenuExpanded = false
+                                        launchImagePicker()
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    colors = settingsDropdownMenuItemColors(),
+                                    modifier = Modifier.heightIn(min = 48.dp),
+                                    text = {
+                                        Text(
+                                            text = stringResource(R.string.choose_document),
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Outlined.Description,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(20.dp),
+                                            tint = materialColors.secondaryLabel
+                                        )
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 14.dp),
+                                    onClick = {
+                                        isAttachmentMenuExpanded = false
+                                        launchDocumentPicker()
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    colors = settingsDropdownMenuItemColors(),
+                                    modifier = Modifier.heightIn(min = 48.dp),
+                                    text = { Text(stringResource(R.string.invoke_skill), style = MaterialTheme.typography.bodyMedium) },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Outlined.Extension,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(20.dp),
+                                            tint = materialColors.secondaryLabel
+                                        )
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 14.dp),
+                                    onClick = {
+                                        isAttachmentMenuExpanded = false
+                                        isTextSkillSheetOpen = true
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    colors = settingsDropdownMenuItemColors(),
+                                    modifier = Modifier.heightIn(min = 48.dp),
+                                    text = {
+                                        Text(
+                                            text = stringResource(R.string.take_photo),
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Outlined.PhotoCamera,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(20.dp),
+                                            tint = materialColors.secondaryLabel
+                                        )
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 14.dp),
+                                    onClick = {
+                                        isAttachmentMenuExpanded = false
+                                        launchCameraCapture()
+                                    }
                                 )
                             }
                         }
                     }
                 }
-            )
-        }
+            } else {
+                null
+            },
+            sendButton = {
+                Box(contentAlignment = Alignment.Center) {
+                    Box(
+                        modifier = Modifier
+                            .size(ComposerSendButtonSize)
+                            .background(
+                                color = if (isGenerating || canSend) {
+                                    materialColors.primaryLabel
+                                } else {
+                                    materialColors.controlFill
+                                },
+                                shape = CircleShape
+                            )
+                    )
+                    IconButton(
+                        modifier = Modifier.size(ComposerSendButtonSize),
+                        enabled = isGenerating || canSend,
+                        onClick = if (isGenerating) {
+                            onStopButtonClick
+                        } else {
+                            {
+                                collapsedAfterSend = true
+                                onSendButtonClick()
+                            }
+                        },
+                        colors = IconButtonDefaults.iconButtonColors(
+                            contentColor = materialColors.canvas,
+                            disabledContentColor = materialColors.tertiaryLabel
+                        )
+                    ) {
+                        Icon(
+                            modifier = Modifier.size(if (isGenerating) 16.dp else 20.dp),
+                            imageVector = if (isGenerating) {
+                                Icons.Rounded.Stop
+                            } else {
+                                Icons.Rounded.ArrowUpward
+                            },
+                            contentDescription = stringResource(
+                                if (isGenerating) R.string.stop_generating else R.string.send
+                            )
+                        )
+                    }
+                }
+            }
+        )
     }
     if (isTextSkillSheetOpen) {
         TextSkillSelectionSheet(
@@ -510,6 +614,117 @@ fun ChatComposer(
         )
     }
 }
+
+/**
+ * Whether the composer should be in its tall, writing layout.
+ *
+ * Any draft text keeps it open, so nothing typed is ever folded away. Without text it follows focus,
+ * except right after a send: focus may still be in the field then, but the message is gone and the
+ * composer returns to rest until the user taps or types again.
+ */
+internal fun composerExpansionTarget(
+    isInputFocused: Boolean,
+    hasDraftText: Boolean,
+    collapsedAfterSend: Boolean
+): Boolean = when {
+    hasDraftText -> true
+    collapsedAfterSend -> false
+    else -> isInputFocused
+}
+
+/**
+ * Lays out the composer between its resting row and its expanded box from one fraction.
+ *
+ * Resting (`0`): `[+] [ text…            (↑) ]`. Expanded (`1`): the input box spans the full width and
+ * grows a bottom strip that holds `+` at the start and send at the end. Every position and size is
+ * interpolated from [expansion], read here in the measure pass, so the animation relayouts without
+ * recomposing and can be reversed from any point. The text re-wraps continuously as its width changes.
+ */
+@Composable
+private fun ComposerExpandingLayout(
+    expansion: () -> Float,
+    background: @Composable () -> Unit,
+    input: @Composable () -> Unit,
+    attachButton: (@Composable () -> Unit)?,
+    sendButton: @Composable () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Layout(
+        contents = listOf(background, input, attachButton ?: {}, sendButton),
+        modifier = modifier.fillMaxWidth()
+    ) { (backgroundMeasurables, inputMeasurables, attachMeasurables, sendMeasurables), constraints ->
+        val fraction = expansion().coerceIn(0f, 1f)
+        val width = constraints.maxWidth
+        val attachPlaceable = attachMeasurables.firstOrNull()?.measure(Constraints())
+        val sendPlaceable = sendMeasurables.first().measure(Constraints())
+
+        val collapsedLeft = attachPlaceable?.let { it.width + ComposerAttachGap.roundToPx() } ?: 0
+        val containerLeft = lerp(collapsedLeft, 0, fraction)
+        val textStart = ComposerTextStartInset.roundToPx()
+        val collapsedTextWidth = width - collapsedLeft - textStart - ComposerCollapsedTextEndInset.roundToPx()
+        val expandedTextWidth = width - textStart - ComposerExpandedTextEndInset.roundToPx()
+        val textWidth = lerp(collapsedTextWidth, expandedTextWidth, fraction).coerceAtLeast(0)
+        val inputPlaceable = inputMeasurables.first().measure(
+            Constraints(minWidth = textWidth, maxWidth = textWidth)
+        )
+        val textHeight = inputPlaceable.height
+
+        val collapsedHeight = maxOf(
+            ComposerCollapsedMinHeight.roundToPx(),
+            textHeight + ComposerCollapsedTextVerticalInset.roundToPx() * 2
+        )
+        val toolbarHeight = ComposerToolbarHeight.roundToPx()
+        val expandedTextTop = ComposerExpandedTextTop.roundToPx()
+        val expandedHeight = expandedTextTop + textHeight + ComposerExpandedTextBottomGap.roundToPx() + toolbarHeight
+        val height = lerp(collapsedHeight, expandedHeight, fraction)
+        val backgroundPlaceable = backgroundMeasurables.first().measure(
+            Constraints.fixed((width - containerLeft).coerceAtLeast(0), height)
+        )
+
+        layout(width, height) {
+            backgroundPlaceable.placeRelative(containerLeft, 0)
+            inputPlaceable.placeRelative(
+                x = containerLeft + textStart,
+                y = lerp((collapsedHeight - textHeight) / 2, expandedTextTop, fraction)
+            )
+            attachPlaceable?.let { placeable ->
+                val toolbarInset = (toolbarHeight - placeable.height) / 2
+                placeable.placeRelative(
+                    x = lerp(0, toolbarInset, fraction),
+                    y = lerp(height - placeable.height, height - toolbarInset - placeable.height, fraction)
+                )
+            }
+            val sendToolbarInset = (toolbarHeight - sendPlaceable.height) / 2
+            sendPlaceable.placeRelative(
+                x = lerp(
+                    width - ComposerCollapsedSendEndInset.roundToPx() - sendPlaceable.width,
+                    width - sendToolbarInset - sendPlaceable.width,
+                    fraction
+                ),
+                y = lerp((height - sendPlaceable.height) / 2, height - sendToolbarInset - sendPlaceable.height, fraction)
+            )
+        }
+    }
+}
+
+/** Critically damped at this stiffness the fold settles in about 230ms, close to the keyboard's slide. */
+private const val COMPOSER_COLLAPSE_STIFFNESS = 800f
+
+private val ComposerShape = RoundedCornerShape(20.dp)
+private val ComposerAttachButtonSize = 40.dp
+private val ComposerSendButtonSize = 32.dp
+private val ComposerAttachGap = 6.dp
+private val ComposerCollapsedMinHeight = 40.dp
+private val ComposerCollapsedTextVerticalInset = 8.dp
+private val ComposerTextStartInset = 18.dp
+private val ComposerCollapsedSendEndInset = 4.dp
+
+// Send button, its end inset and the gap before the text.
+private val ComposerCollapsedTextEndInset = 42.dp
+private val ComposerExpandedTextEndInset = 18.dp
+private val ComposerExpandedTextTop = 14.dp
+private val ComposerExpandedTextBottomGap = 2.dp
+private val ComposerToolbarHeight = 48.dp
 
 internal fun canSubmitChatMessage(
     chatEnabled: Boolean,
