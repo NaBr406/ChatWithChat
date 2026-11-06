@@ -295,7 +295,7 @@ fun ChatComposer(
             if (showAttachmentButton) {
                 Box(
                     modifier = Modifier
-                        .size(60.dp)
+                        .size(40.dp)
                         .onGloballyPositioned {
                             attachmentButtonBounds = it.boundsInWindow()
                             composerWindowOrigin = it.positionOnScreen() - it.positionInWindow()
@@ -309,7 +309,7 @@ fun ChatComposer(
                             .background(attachmentButtonColor, CircleShape)
                     )
                     IconButton(
-                        modifier = Modifier.size(60.dp),
+                        modifier = Modifier.size(40.dp),
                         enabled = chatEnabled && !isAttachmentBusy,
                         onClick = {
                             isAttachmentMenuMounted = true
@@ -321,7 +321,7 @@ fun ChatComposer(
                         )
                     ) {
                         Icon(
-                            modifier = Modifier.size(28.dp),
+                            modifier = Modifier.size(24.dp),
                             imageVector = Icons.Rounded.Add,
                             contentDescription = stringResource(R.string.attach_file)
                         )
@@ -437,15 +437,15 @@ fun ChatComposer(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .composerGlass(backdrop, RoundedCornerShape(30.dp))
-                            .heightIn(min = 60.dp)
-                            .padding(start = 12.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+                            .composerGlass(backdrop, RoundedCornerShape(20.dp))
+                            .heightIn(min = 40.dp)
+                            .padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Box(
                             modifier = Modifier
                                 .weight(1f)
-                                .padding(horizontal = 6.dp, vertical = 10.dp)
+                                .padding(horizontal = 6.dp, vertical = 4.dp)
                         ) {
                             if (inputState.text.isEmpty()) {
                                 Text(
@@ -462,7 +462,7 @@ fun ChatComposer(
                         Box(contentAlignment = Alignment.Center) {
                             Box(
                                 modifier = Modifier
-                                    .size(36.dp)
+                                    .size(32.dp)
                                     .background(
                                         color = if (isGenerating || canSend) {
                                             materialColors.primaryLabel
@@ -473,6 +473,7 @@ fun ChatComposer(
                                     )
                             )
                             IconButton(
+                                modifier = Modifier.size(32.dp),
                                 enabled = isGenerating || canSend,
                                 onClick = if (isGenerating) onStopButtonClick else onSendButtonClick,
                                 colors = IconButtonDefaults.iconButtonColors(
