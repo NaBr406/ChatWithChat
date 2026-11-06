@@ -471,10 +471,12 @@ private fun buildHighlightedAnnotatedString(
     language: String?,
     highlightsBuilder: Highlights.Builder
 ): AnnotatedString {
-    val syntaxLanguage = language?.let { SyntaxLanguage.getByName(it) }
+    // `Builder` is mutable and shared by every block of a message, and this runs on a background
+    // dispatcher. Copying keeps blocks from swapping code mid-build, and always setting the language stops
+    // an unlabelled block from inheriting the previous block's language.
+    val syntaxLanguage = language?.let { SyntaxLanguage.getByName(it) } ?: SyntaxLanguage.DEFAULT
     val codeHighlights = highlightsBuilder
-        .code(code)
-        .let { if (syntaxLanguage != null) it.language(syntaxLanguage) else it }
+        .copy(code = code, language = syntaxLanguage)
         .build()
         .getHighlights()
 

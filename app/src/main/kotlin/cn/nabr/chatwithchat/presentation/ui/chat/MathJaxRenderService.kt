@@ -6,10 +6,14 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.util.LruCache
 import android.view.View
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import com.caverock.androidsvg.SVG
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -17,8 +21,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import kotlin.coroutines.resume
-import kotlin.math.roundToInt
 
 private const val MATH_JAX_BASE_URL = "file:///android_asset/mathjax/"
 private const val MATH_JAX_RENDER_RETRY_DELAY_MILLIS = 50L
@@ -264,7 +266,7 @@ internal object MathJaxRenderService {
 
     private fun rendererFor(applicationContext: Context): BackgroundMathJaxRenderer {
         val currentRenderer = renderer
-        if (currentRenderer != null) return currentRenderer
+        if (currentRenderer != null && currentRenderer.isAlive) return currentRenderer
 
         return BackgroundMathJaxRenderer(applicationContext).also { renderer = it }
     }
@@ -289,7 +291,12 @@ internal fun MathRenderRequest.cacheKey(): String = buildString(tex.length + 64)
 @SuppressLint("SetJavaScriptEnabled")
 private class BackgroundMathJaxRenderer(context: Context) {
     private val pageLoadedContinuations = mutableListOf<kotlinx.coroutines.CancellableContinuation<Unit>>()
+    private val scriptContinuations = mutableSetOf<kotlinx.coroutines.CancellableContinuation<String?>>()
     private var pageLoaded = false
+
+    /** False once the renderer process died; the service then builds a fresh renderer for the next request. */
+    var isAlive = true
+        private set
     private val webView = WebView(context.applicationContext).apply {
         setBackgroundColor(android.graphics.Color.TRANSPARENT)
         isClickable = false
@@ -320,6 +327,22 @@ private class BackgroundMathJaxRenderer(context: Context) {
                 }
                 pageLoadedContinuations.clear()
             }
+
+            // Every WebView in the app shares one renderer process. Without this override a crash in it (for
+            // example from model-written OpenUI script) kills the whole app once any formula has rendered.
+            override fun onRenderProcessGone(
+                view: WebView,
+                detail: RenderProcessGoneDetail
+            ): Boolean {
+                isAlive = false
+                val failure = IllegalStateException("MathJax renderer process gone")
+                pageLoadedContinuations.toList().forEach { if (it.isActive) it.resumeWithException(failure) }
+                pageLoadedContinuations.clear()
+                scriptContinuations.toList().forEach { if (it.isActive) it.resumeWithException(failure) }
+                scriptContinuations.clear()
+                view.destroy()
+                return true
+            }
         }
 
         measure(
@@ -338,6 +361,7 @@ private class BackgroundMathJaxRenderer(context: Context) {
     }
 
     suspend fun renderSvg(request: MathRenderRequest): RawMathSvgResult {
+        check(isAlive) { "MathJax renderer process gone" }
         waitForPageLoad()
 
         var retryCount = 0
@@ -368,7 +392,11 @@ private class BackgroundMathJaxRenderer(context: Context) {
     }
 
     private suspend fun evaluateJavascript(script: String): String? = suspendCancellableCoroutine { continuation ->
+        check(isAlive) { "MathJax renderer process gone" }
+        scriptContinuations += continuation
+        continuation.invokeOnCancellation { scriptContinuations.remove(continuation) }
         webView.evaluateJavascript(script) { rawResult ->
+            scriptContinuations.remove(continuation)
             if (continuation.isActive) {
                 continuation.resume(rawResult)
             }
