@@ -2,13 +2,16 @@ package cn.nabr.chatwithchat.presentation.ui.home
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -39,12 +42,17 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.semantics.Role
@@ -53,13 +61,21 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.database.entity.ChatRoomV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.presentation.common.AppleRed
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
+import cn.nabr.chatwithchat.presentation.ui.chat.ChatGlassIconButton
+import cn.nabr.chatwithchat.presentation.ui.chat.ChatGlassScope
+import cn.nabr.chatwithchat.presentation.ui.chat.chatSelectionGlass
+import cn.nabr.chatwithchat.presentation.ui.chat.chatTopBarBackground
+import cn.nabr.chatwithchat.presentation.ui.chat.rememberDeviceSupportsChatGlass
 import cn.nabr.chatwithchat.util.getPlatformName
+import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -84,112 +100,161 @@ fun ChatHistoryDrawer(
     onAboutClick: () -> Unit
 ) {
     val groupedChats = remember(chatListState.chats) { groupChatsByUpdatedAt(chatListState.chats) }
+    val materialColors = settingsMaterialColors()
+    val density = LocalDensity.current
+    // Same glass as the chat page: the history list is recorded as the backdrop and scrolls under the
+    // header, so the new-chat button and the search capsule refract the rows passing beneath them.
+    val drawerBackdrop = rememberLayerBackdrop()
+    val glassSupported = rememberDeviceSupportsChatGlass()
+    var headerHeight by remember { mutableStateOf(0.dp) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxHeight()
-            .widthIn(max = 328.dp)
-            .padding(horizontal = 14.dp, vertical = 18.dp)
-    ) {
-        if (chatListState.isSelectionMode) {
-            DrawerSelectionToolbar(
-                selectedCount = chatListState.selectedChats.count { it },
-                onCloseSelection = onCloseSelection,
-                onDuplicateSelected = onDuplicateSelected,
-                onDeleteSelected = onDeleteSelected
-            )
-        } else {
-            DrawerHeader(
-                onNewChatClick = onNewChatClick
-            )
-            ChatDrawerSearchField(
-                query = searchQuery,
-                onQueryChange = onSearchQueryChanged,
-                onClearSearch = onClearSearch
-            )
-        }
-
-        LazyColumn(
+    ChatGlassScope(backdrop = drawerBackdrop) {
+        Column(
             modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                .fillMaxHeight()
+                .widthIn(max = 328.dp)
+                .padding(horizontal = 14.dp, vertical = 18.dp)
         ) {
-            if (chatListState.chats.isEmpty() && searchQuery.isNotBlank()) {
-                item {
-                    Text(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 32.dp),
-                        text = stringResource(R.string.no_search_results),
-                        textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            ) {
+                ChatHistoryList(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .then(if (glassSupported) Modifier.layerBackdrop(drawerBackdrop) else Modifier)
+                        .background(materialColors.canvas),
+                    topContentPadding = headerHeight,
+                    chatListState = chatListState,
+                    groupedChats = groupedChats,
+                    platformState = platformState,
+                    searchQuery = searchQuery,
+                    onChatClick = onChatClick,
+                    onChatLongClick = onChatLongClick,
+                    onChatSelected = onChatSelected
+                )
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .chatTopBarBackground()
+                        .onSizeChanged { size -> headerHeight = with(density) { size.height.toDp() } }
+                ) {
+                    if (chatListState.isSelectionMode) {
+                        DrawerSelectionToolbar(
+                            selectedCount = chatListState.selectedChats.count { it },
+                            onCloseSelection = onCloseSelection,
+                            onDuplicateSelected = onDuplicateSelected,
+                            onDeleteSelected = onDeleteSelected
+                        )
+                    } else {
+                        DrawerHeader(
+                            onNewChatClick = onNewChatClick
+                        )
+                        ChatDrawerSearchField(
+                            query = searchQuery,
+                            onQueryChange = onSearchQueryChanged,
+                            onClearSearch = onClearSearch
+                        )
+                    }
                 }
             }
 
-            groupedChats.forEach { group ->
-                item(key = "group-${group.bucket}") {
-                    ChatHistorySectionHeader(title = group.bucket.label())
-                }
+            HorizontalDivider(modifier = Modifier.padding(top = 8.dp, bottom = 6.dp))
+            DrawerActionRow(
+                icon = Icons.Outlined.Settings,
+                label = stringResource(R.string.settings),
+                onClick = onSettingsClick
+            )
+            DrawerActionRow(
+                icon = ImageVector.vectorResource(R.drawable.ic_info),
+                label = stringResource(R.string.about),
+                onClick = onAboutClick
+            )
+        }
+    }
+}
 
-                items(
-                    items = group.chats,
-                    key = { it.id }
-                ) { chatRoom ->
-                    val chatIndex = chatListState.chats.indexOfFirst { it.id == chatRoom.id }
-                    val selected = chatListState.selectedChats.getOrElse(chatIndex) { false }
-                    val usingPlatform = chatRoom.enabledPlatform.joinToString(", ") { uid ->
-                        platformState.getPlatformName(uid)
-                    }
-
-                    ChatHistoryRow(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .then(
-                                if (chatListState.isSelectionMode) {
-                                    Modifier.toggleable(
-                                        value = selected,
-                                        role = Role.Checkbox,
-                                        onValueChange = {
-                                            if (chatIndex >= 0) {
-                                                onChatSelected(chatIndex)
-                                            }
-                                        }
-                                    )
-                                } else {
-                                    Modifier.combinedClickable(
-                                        onClick = { onChatClick(chatRoom) },
-                                        onLongClick = {
-                                            if (chatIndex >= 0) {
-                                                onChatLongClick(chatIndex)
-                                            }
-                                        }
-                                    )
-                                }
-                            ),
-                        title = chatRoom.title,
-                        platformLabel = stringResource(R.string.using_certain_platform, usingPlatform),
-                        isSelectionMode = chatListState.isSelectionMode,
-                        selected = selected,
-                        isRunning = chatRoom.id in chatListState.runningChatIds
-                    )
-                }
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ChatHistoryList(
+    modifier: Modifier,
+    topContentPadding: Dp,
+    chatListState: HomeViewModel.ChatListState,
+    groupedChats: List<ChatHistoryGroup>,
+    platformState: List<PlatformV2>,
+    searchQuery: String,
+    onChatClick: (ChatRoomV2) -> Unit,
+    onChatLongClick: (Int) -> Unit,
+    onChatSelected: (Int) -> Unit
+) {
+    LazyColumn(
+        modifier = modifier,
+        contentPadding = PaddingValues(top = topContentPadding),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        if (chatListState.chats.isEmpty() && searchQuery.isNotBlank()) {
+            item {
+                Text(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 32.dp),
+                    text = stringResource(R.string.no_search_results),
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
 
-        HorizontalDivider(modifier = Modifier.padding(top = 8.dp, bottom = 6.dp))
-        DrawerActionRow(
-            icon = Icons.Outlined.Settings,
-            label = stringResource(R.string.settings),
-            onClick = onSettingsClick
-        )
-        DrawerActionRow(
-            icon = ImageVector.vectorResource(R.drawable.ic_info),
-            label = stringResource(R.string.about),
-            onClick = onAboutClick
-        )
+        groupedChats.forEach { group ->
+            item(key = "group-${group.bucket}") {
+                ChatHistorySectionHeader(title = group.bucket.label())
+            }
+
+            items(
+                items = group.chats,
+                key = { it.id }
+            ) { chatRoom ->
+                val chatIndex = chatListState.chats.indexOfFirst { it.id == chatRoom.id }
+                val selected = chatListState.selectedChats.getOrElse(chatIndex) { false }
+                val usingPlatform = chatRoom.enabledPlatform.joinToString(", ") { uid ->
+                    platformState.getPlatformName(uid)
+                }
+
+                ChatHistoryRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(
+                            if (chatListState.isSelectionMode) {
+                                Modifier.toggleable(
+                                    value = selected,
+                                    role = Role.Checkbox,
+                                    onValueChange = {
+                                        if (chatIndex >= 0) {
+                                            onChatSelected(chatIndex)
+                                        }
+                                    }
+                                )
+                            } else {
+                                Modifier.combinedClickable(
+                                    onClick = { onChatClick(chatRoom) },
+                                    onLongClick = {
+                                        if (chatIndex >= 0) {
+                                            onChatLongClick(chatIndex)
+                                        }
+                                    }
+                                )
+                            }
+                        ),
+                    title = chatRoom.title,
+                    platformLabel = stringResource(R.string.using_certain_platform, usingPlatform),
+                    isSelectionMode = chatListState.isSelectionMode,
+                    selected = selected,
+                    isRunning = chatRoom.id in chatListState.runningChatIds
+                )
+            }
+        }
     }
 }
 
@@ -315,18 +380,12 @@ private fun DrawerHeader(
             style = MaterialTheme.typography.titleLarge,
             color = materialColors.primaryLabel
         )
-        IconButton(
-            modifier = Modifier.size(40.dp),
-            onClick = onNewChatClick,
-            colors = IconButtonDefaults.iconButtonColors(
-                containerColor = settingsMaterialColors().primaryLabel.copy(alpha = 0.12f),
-                contentColor = settingsMaterialColors().primaryLabel
-            )
-        ) {
+        ChatGlassIconButton(onClick = onNewChatClick) {
             Icon(
                 modifier = Modifier.size(22.dp),
                 imageVector = Icons.Rounded.Add,
-                contentDescription = stringResource(R.string.new_chat)
+                contentDescription = stringResource(R.string.new_chat),
+                tint = materialColors.primaryLabel
             )
         }
     }
@@ -350,16 +409,12 @@ private fun ChatDrawerSearchField(
         textStyle = MaterialTheme.typography.bodyLarge.copy(color = materialColors.primaryLabel),
         cursorBrush = SolidColor(settingsMaterialColors().primaryLabel),
         decorationBox = { innerTextField ->
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = materialColors.grouped,
-                border = BorderStroke(0.5.dp, materialColors.separator)
-            ) {
+            Box(modifier = Modifier.chatSelectionGlass(DrawerSearchShape)) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = 44.dp)
-                        .padding(start = 12.dp, end = 4.dp),
+                        .padding(start = 16.dp, end = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
@@ -492,6 +547,8 @@ private fun DrawerActionRow(
         }
     }
 }
+
+private val DrawerSearchShape = RoundedCornerShape(percent = 50)
 
 private data class ChatHistoryGroup(
     val bucket: ChatHistoryBucket,
