@@ -57,11 +57,13 @@ import cn.nabr.chatwithchat.presentation.ui.chat.ChatGlassIconButton
 import cn.nabr.chatwithchat.presentation.ui.chat.ChatGlassPolicy
 import cn.nabr.chatwithchat.presentation.ui.chat.ChatGlassScope
 import cn.nabr.chatwithchat.presentation.ui.chat.ChatViewModel
+import cn.nabr.chatwithchat.presentation.ui.chat.LocalChatGlass
 import cn.nabr.chatwithchat.presentation.ui.chat.ModelSelectionOption
 import cn.nabr.chatwithchat.presentation.ui.chat.OpenUiHostBinding
 import cn.nabr.chatwithchat.presentation.ui.chat.OpponentChatBubble
 import cn.nabr.chatwithchat.presentation.ui.chat.StickerAssetResolver
 import cn.nabr.chatwithchat.presentation.ui.chat.composerGlass
+import cn.nabr.chatwithchat.presentation.ui.chat.deviceSupportsChatGlass
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import java.io.File
@@ -96,12 +98,15 @@ class OpenUiRenderProbeInstrumentedTest {
     private lateinit var evidence: File
     private lateinit var mode: String
     private var productionShell = false
-    private val autoGlassEnabled = AtomicReference(true)
+    private var glassSupportedByDevice = false
+    private val liveBackdropCaptureEnabled = AtomicReference(true)
+    private val glassSurfaceEnabled = AtomicReference(false)
     private val nativeContentField = OpenUiWebView::class.java.getDeclaredField("content").apply { isAccessible = true }
 
     @Test
     fun replayFixtureOrLiveContentThroughProductionBubble() {
         val arguments = InstrumentationRegistry.getArguments()
+        glassSupportedByDevice = deviceSupportsChatGlass(instrumentation.targetContext)
         mode = arguments.getString("renderProbeMode", "auto")
         require(mode in setOf("auto", "plain", "backdrop")) { "renderProbeMode must be auto, plain or backdrop" }
         val shell = arguments.getString("renderProbeShell", "simplified")
@@ -114,6 +119,7 @@ class OpenUiRenderProbeInstrumentedTest {
         }
         val expectedCases = arguments.getString("renderProbeCases", "1").toInt().also { require(it in 1..100) }
         val settleMs = arguments.getString("renderProbeSettleMs", "150").toLong().also { require(it in 0..5000) }
+        val initialDark = arguments.getString("renderProbeDark", "false").toBoolean()
         val filesRoot = instrumentation.targetContext.filesDir.canonicalFile
         val outputDirectory = File(filesRoot, "openui-render-probe").apply { mkdirs() }
         evidence = File(outputDirectory, "$mode-${System.currentTimeMillis()}.jsonl")
@@ -137,6 +143,7 @@ class OpenUiRenderProbeInstrumentedTest {
                 .put("source", if (liveMode) "live:${liveSource.name}" else fixturePath)
                 .put("cases", expectedCases)
                 .put("settleMs", settleMs)
+                .put("initialDark", initialDark)
                 .put("initialSourceOffset", liveOffsetAtStart)
                 .put("shell", shell)
         )
@@ -146,7 +153,7 @@ class OpenUiRenderProbeInstrumentedTest {
         val identity = mutableStateOf("probe:idle")
         val mounted = mutableStateOf(false)
         val streaming = mutableStateOf(false)
-        val dark = mutableStateOf(false)
+        val dark = mutableStateOf(initialDark)
         composeRule.setContent {
             val localView = LocalView.current
             val state = rememberLazyListState()
@@ -158,15 +165,20 @@ class OpenUiRenderProbeInstrumentedTest {
                 userMessages = listOf(MessageV2(id = 1, content = "Probe question", platformType = "render-probe", createdAt = 0)),
                 assistantMessages = listOf(listOf(fakeMessage))
             )
-            val glassEnabled = !productionShell || glassPolicy.isEnabled(groupedMessages.assistantMessages, listOf(0))
+            val captureLiveGlass = !productionShell ||
+                glassPolicy.shouldCaptureLiveContent(groupedMessages.assistantMessages, listOf(0))
             SideEffect {
                 rootView.set(localView.rootView)
                 listState.set(state)
                 scope.set(localScope)
-                autoGlassEnabled.set(glassEnabled)
             }
             ChatWithChatTheme(themeMode = if (dark.value) ThemeMode.DARK else ThemeMode.LIGHT) {
-                ChatGlassScope(backdrop, enabled = glassEnabled) {
+                ChatGlassScope(backdrop, captureLiveContent = captureLiveGlass) {
+                    val glassContext = LocalChatGlass.current
+                    SideEffect {
+                        liveBackdropCaptureEnabled.set(glassContext?.captureBackdrop != null)
+                        glassSurfaceEnabled.set(glassContext != null)
+                    }
                     if (productionShell && mounted.value) {
                         ChatContent(
                             title = "Render probe",
@@ -615,7 +627,12 @@ class OpenUiRenderProbeInstrumentedTest {
     private fun verifySettledUpdate(id: String, update: AcknowledgedUpdate?): OpenUiWebView? {
         if (update == null) return null
         if (productionShell) {
-            assertFalse("Automatic OpenUI backdrop policy remained enabled for $id", autoGlassEnabled.get())
+            assertFalse("Automatic OpenUI live backdrop capture remained enabled for $id", liveBackdropCaptureEnabled.get())
+            assertEquals(
+                "Automatic OpenUI glass surface state did not match this device's glass support for $id",
+                glassSupportedByDevice,
+                glassSurfaceEnabled.get()
+            )
             scrollOpenUiWebViewIntoView()
         }
         val current = awaitRenderedContent(id, update.content)
@@ -730,7 +747,9 @@ class OpenUiRenderProbeInstrumentedTest {
     ) {
         val row = extra.put("timeMs", System.currentTimeMillis()).put("event", event)
             .put("mode", mode).put("case", cycle).put("step", step)
-            .put("autoGlassEnabled", autoGlassEnabled.get())
+            .put("liveBackdropCaptureEnabled", liveBackdropCaptureEnabled.get())
+            .put("glassSurfaceEnabled", glassSurfaceEnabled.get())
+            .put("glassSupportedByDevice", glassSupportedByDevice)
         val nativeWebViews = JSONArray()
         val visibleWebViewCount = AtomicInteger()
         val openUiWebViewCount = AtomicInteger()

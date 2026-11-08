@@ -192,9 +192,10 @@ fun ChatScreen(
     }
 
     val glassPolicy = remember(chatViewModel) { ChatGlassPolicy() }
-    // Resolve before composing any child WebView, including one in an older turn.
-    val glassEnabled = glassPolicy.isEnabled(groupedMessages.assistantMessages, indexStates)
-    ChatGlassScope(enabled = glassEnabled) {
+    // Resolve before composing any child WebView, including one in an older turn. A false result
+    // switches the sampling source to the ambient canvas; it does not disable the glass surfaces.
+    val captureLiveGlass = glassPolicy.shouldCaptureLiveContent(groupedMessages.assistantMessages, indexStates)
+    ChatGlassScope(captureLiveContent = captureLiveGlass) {
         ChatContent(
             title = chatRoom.title,
             currentModelLabel = currentModelLabel,
@@ -422,7 +423,9 @@ internal fun ChatContent(
     val maximumUserChatBubbleWidth = ((screenWidthDp - systemChatMargin) * 0.78F).coerceAtMost(560.dp)
     val maximumOpponentChatBubbleWidth = screenWidthDp - systemChatMargin
     val listState = rememberLazyListState()
-    val composerBackdrop = LocalChatGlass.current?.backdrop
+    val glassContext = LocalChatGlass.current
+    val composerBackdrop = glassContext?.backdrop
+    val capturedContentBackdrop = glassContext?.captureBackdrop
     val composerDensity = LocalDensity.current
     var composerHeight by remember { mutableStateOf(68.dp) }
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
@@ -734,7 +737,7 @@ internal fun ChatContent(
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
-                        .then(if (composerBackdrop != null) Modifier.layerBackdrop(composerBackdrop) else Modifier)
+                        .then(if (capturedContentBackdrop != null) Modifier.layerBackdrop(capturedContentBackdrop) else Modifier)
                         .settingsCanvasBackground(),
                     state = listState,
                     contentPadding = PaddingValues(

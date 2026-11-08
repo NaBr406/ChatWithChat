@@ -61,7 +61,7 @@ ChatWithChat 是一个本地优先的 Android AI 聊天应用。它支持多个�
 | 正文与思考流 | 修复兼容接口 JSON 工具协议的正文缓冲问题，增量解码标准 `final_answer.content`；正文和 thinking 共享渐显机制 |
 | 网络恢复 | 对可识别的网络中断进行有限重试，回滚当前请求的显示检查点，避免重复拼接 |
 | 接口配置 | 支持完整 API URL、自定义请求头和 `{session_id}`；为官方 OpenCode 地址补充会话标识 |
-| 聊天界面 | 新增玻璃效果，调整 HyperOS 导航栏与页面边距；显示 OpenUI 时关闭聊天背景采样以规避设备渲染兼容问题 |
+| 聊天界面 | 新增玻璃效果，调整 HyperOS 导航栏与页面边距；显示 OpenUI 时改用画布环境采样，避开 WebView 背景录制但保留玻璃效果 |
 | 记忆维护 | 增加事实当前性、项目生命周期与身份收敛处理，改进维护诊断，提供记忆文档导出 |
 
 ## 界面预览
@@ -229,6 +229,8 @@ x-opencode-session: {session_id}
 
 历史表单的本地操作不受其他回答正在生成的全局忙碌状态影响；需要回填输入框的动作仍检查忙碌、编辑、保存与草稿冲突。单个程序块最多接受 1,048,576 个源字符，动作值另有长度限制。
 
+聊天页检测到 OpenUI 后不会再把 WebView 录制进 Compose 背景层。输入框、顶栏按钮和选择面板改用应用画布的环境背景继续绘制模糊、折射和色调；设备本身不支持玻璃时仍使用实体背景。
+
 ### Markdown、复制与上下文
 
 模型必须在 OpenUI 围栏外提供完整的文字说明，包含结论、实际数据和必要条件。复制回答、导出、后续对话上下文、长期记忆与助手 Token 估算使用语义文本投影，过滤组件源码。页面中的本地修改不会自动进入下一次模型请求，需要用户通过回填动作明确提交。
@@ -250,7 +252,7 @@ x-opencode-session: {session_id}
 
 本地打包描述的是渲染器资源。外部媒体与服务不因此具备离线能力，也不代表模型提供的图片、位置或链接已经核验。
 
-实现与验证见 [前端 README](./web/openui/README.md)、[浏览器验证矩阵](./web/openui/VERIFICATION.md)、[Android 集成记录](./docs/superpowers/reports/2026-10-26-openui-webview-integration.md) 和 [设备渲染兼容修复](./docs/superpowers/reports/2026-10-26-openui-native-crash-fix.md)。这些记录区分了固定样例、真实模型回放与设备测试；模拟器长批次中的原生崩溃仍在集成记录中保留，不能把组件注册数量理解为完整设备验收结果。
+实现与验证见 [前端 README](./web/openui/README.md)、[浏览器验证矩阵](./web/openui/VERIFICATION.md)、[Android 集成记录](./docs/superpowers/reports/2026-10-26-openui-webview-integration.md)、[设备渲染兼容修复](./docs/superpowers/reports/2026-10-26-openui-native-crash-fix.md) 和 [OpenUI 与聊天玻璃共存修复](./docs/superpowers/reports/2026-11-07-openui-glass-coexistence.md)。这些记录区分了固定样例、真实模型回放与设备测试；模拟器长批次中的原生崩溃仍在集成记录中保留，不能把组件注册数量理解为完整设备验收结果。
 
 ## 流式显示与网络恢复
 
