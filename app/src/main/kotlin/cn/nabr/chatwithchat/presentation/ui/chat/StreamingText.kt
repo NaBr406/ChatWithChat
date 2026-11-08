@@ -7,10 +7,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlin.math.exp
 
-internal const val STREAMING_TEXT_SMOOTHING_ENABLED = false
+internal const val STREAMING_TEXT_SMOOTHING_ENABLED = true
 private const val STREAMING_TEXT_FRAME_MILLIS = 24L
 internal const val STREAMING_TEXT_COMPLETION_FRAME_COUNT = 80
 private const val STREAMING_TEXT_TAIL = "●"
@@ -100,6 +102,78 @@ internal fun rememberSmoothedStreamingText(
 }
 
 /**
+ * Turns bursty arrivals into an even per-frame flow of characters.
+ *
+ * Providers deliver text in irregular bursts (3 characters in one publish, 200 in the next). Showing
+ * each burst at once made the layout grow by a variable number of lines at irregular moments, which
+ * no fade or scroll smoothing can hide. The pacer releases characters at the measured arrival rate,
+ * keeps roughly [bufferMillis] of text in reserve to absorb the gaps between bursts, works a larger
+ * backlog off over [catchUpMillis], and low-passes its own speed over [speedTimeConstantMillis] so a
+ * burst landing does not visibly change the pace. No character waits much longer than
+ * [maxLatencyMillis]. After the stream ends the rest drains within about [drainMillis].
+ */
+internal class StreamingTextPacer(
+    private val bufferMillis: Float = 220f,
+    private val catchUpMillis: Float = 900f,
+    private val speedTimeConstantMillis: Float = 250f,
+    private val maxLatencyMillis: Float = 700f,
+    private val drainMillis: Float = 400f,
+    private val rateTimeConstantMillis: Float = 1_200f,
+    private val minCharsPerMillis: Float = 0.02f,
+    private val minDrainCharsPerMillis: Float = 0.25f
+) {
+    private var observedTotal = -1
+    private var arrivedSinceStart = 0
+    private var millisSinceStart = 0f
+    private var arrivalCharsPerMillis = 0f
+    private var releaseCharsPerMillis = 0f
+    private var credit = 0f
+
+    /** Returns how many characters to reveal in a frame lasting [frameMillis]. */
+    fun advance(frameMillis: Float, targetTotal: Int, backlog: Int, isStreaming: Boolean): Int {
+        val dt = frameMillis.coerceIn(1f, 64f)
+        if (observedTotal < 0 || targetTotal < observedTotal) observedTotal = targetTotal
+        val arrived = targetTotal - observedTotal
+        observedTotal = targetTotal
+        if (arrived > 0 || arrivedSinceStart > 0) {
+            arrivedSinceStart += arrived
+            millisSinceStart += dt
+            arrivalCharsPerMillis = if (millisSinceStart < rateTimeConstantMillis) {
+                // Until one time constant has passed, the plain average is a better estimate than an
+                // average that starts from zero.
+                arrivedSinceStart / maxOf(millisSinceStart, WARM_UP_MIN_MILLIS)
+            } else {
+                arrivalCharsPerMillis + (arrived / dt - arrivalCharsPerMillis) * (1f - exp(-dt / rateTimeConstantMillis))
+            }
+        }
+        if (backlog <= 0) {
+            credit = 0f
+            releaseCharsPerMillis = 0f
+            return 0
+        }
+        val perMillis = if (isStreaming) {
+            val reserve = arrivalCharsPerMillis * bufferMillis
+            val wanted = (arrivalCharsPerMillis + (backlog - reserve) / catchUpMillis)
+                .coerceAtLeast(maxOf(arrivalCharsPerMillis * 0.4f, minCharsPerMillis))
+            releaseCharsPerMillis += (wanted - releaseCharsPerMillis) * (1f - exp(-dt / speedTimeConstantMillis))
+            maxOf(releaseCharsPerMillis, backlog / maxLatencyMillis, minCharsPerMillis)
+        } else {
+            // The floor ends the drain in finite time instead of slowing down on the last few characters.
+            maxOf(arrivalCharsPerMillis, backlog / drainMillis, minDrainCharsPerMillis)
+                .also { releaseCharsPerMillis = it }
+        }
+        credit = (credit + perMillis * dt).coerceAtMost(backlog.toFloat())
+        val release = credit.toInt()
+        credit -= release
+        return release
+    }
+
+    private companion object {
+        const val WARM_UP_MIN_MILLIS = 150f
+    }
+}
+
+/**
  * Reveals thinking and answer text through one serialized queue.
  *
  * A thinking backlog always wins; answer text stays staged until the thinking side catches up.
@@ -129,41 +203,45 @@ internal fun rememberSerializedStreamingText(
             }
         )
     }
+    // Survives the restart when streaming ends, so the drain starts from the measured rate.
+    val pacer = remember(contentIdentity) { StreamingTextPacer() }
     val latestTargetText by rememberUpdatedState(targetText)
     val latestTargetThoughts by rememberUpdatedState(targetThoughts)
     val latestOnVisibleContentChanged by rememberUpdatedState(onVisibleContentChanged)
 
     LaunchedEffect(contentIdentity, isStreaming) {
-        var observedText = targetText
-        var observedThoughts = targetThoughts
-        var textCompletionStartIndex = visibleText.length
-        var textCompletionFrame = 0
-        var thoughtsCompletionStartIndex = visibleThoughts.length
-        var thoughtsCompletionFrame = 0
+        // Compared by reference: the targets are remembered upstream, so a new instance means new text,
+        // and a full comparison of a long answer on every frame is avoided. Null forces a first check.
+        var observedText: String? = null
+        var observedThoughts: String? = null
+        var previousFrameNanos = withFrameNanos { it }
 
         while (isActive) {
+            val frameNanos = withFrameNanos { it }
+            val frameMillis = (frameNanos - previousFrameNanos) / 1_000_000f
+            previousFrameNanos = frameNanos
             val previousVisibleTextLength = visibleText.length
             val previousVisibleThoughtsLength = visibleThoughts.length
             val textTarget = latestTargetText
             val thoughtsTarget = latestTargetThoughts
 
-            if (visibleText.length > textTarget.length || !textTarget.startsWith(visibleText)) {
+            val thoughtsChanged = thoughtsTarget !== observedThoughts
+            val textChanged = textTarget !== observedText
+            // A rollback or rewrite: keep only what is still a prefix of the new target.
+            if (textChanged && (visibleText.length > textTarget.length || !textTarget.startsWith(visibleText))) {
                 visibleText = textTarget.take(
                     safeTextEnd(textTarget, commonPrefixLength(visibleText, textTarget))
                 )
-                textCompletionStartIndex = visibleText.length
-                textCompletionFrame = 0
             }
-            if (visibleThoughts.length > thoughtsTarget.length || !thoughtsTarget.startsWith(visibleThoughts)) {
+            if (
+                thoughtsChanged &&
+                (visibleThoughts.length > thoughtsTarget.length || !thoughtsTarget.startsWith(visibleThoughts))
+            ) {
                 visibleThoughts = thoughtsTarget.take(
                     safeTextEnd(thoughtsTarget, commonPrefixLength(visibleThoughts, thoughtsTarget))
                 )
-                thoughtsCompletionStartIndex = visibleThoughts.length
-                thoughtsCompletionFrame = 0
             }
 
-            val thoughtsChanged = thoughtsTarget != observedThoughts
-            val textChanged = textTarget != observedText
             when {
                 thoughtsChanged -> activeSide = StreamingPresentationSide.THOUGHTS
                 textChanged && visibleThoughts.length >= thoughtsTarget.length -> {
@@ -173,53 +251,27 @@ internal fun rememberSerializedStreamingText(
             observedText = textTarget
             observedThoughts = thoughtsTarget
 
-            val hasThoughtBacklog = visibleThoughts.length < thoughtsTarget.length
-            val hasTextBacklog = visibleText.length < textTarget.length
-            when (activeSide) {
-                StreamingPresentationSide.THOUGHTS -> {
-                    if (hasThoughtBacklog) {
-                        if (!isStreaming) thoughtsCompletionFrame++
-                        visibleThoughts = thoughtsTarget.take(
-                            if (isStreaming) {
-                                nextStreamingTextEnd(
-                                    text = thoughtsTarget,
-                                    currentIndex = visibleThoughts.length
-                                )
-                            } else {
-                                nextCompletedStreamingTextEnd(
-                                    text = thoughtsTarget,
-                                    currentIndex = visibleThoughts.length,
-                                    completionStartIndex = thoughtsCompletionStartIndex,
-                                    completionFrame = thoughtsCompletionFrame
-                                )
-                            }
-                        )
-                    } else if (hasTextBacklog) {
-                        activeSide = StreamingPresentationSide.TEXT
-                    }
-                }
-
-                StreamingPresentationSide.TEXT -> {
-                    if (hasTextBacklog) {
-                        if (!isStreaming) textCompletionFrame++
-                        visibleText = textTarget.take(
-                            if (isStreaming) {
-                                nextStreamingTextEnd(
-                                    text = textTarget,
-                                    currentIndex = visibleText.length
-                                )
-                            } else {
-                                nextCompletedStreamingTextEnd(
-                                    text = textTarget,
-                                    currentIndex = visibleText.length,
-                                    completionStartIndex = textCompletionStartIndex,
-                                    completionFrame = textCompletionFrame
-                                )
-                            }
-                        )
-                    } else if (hasThoughtBacklog) {
-                        activeSide = StreamingPresentationSide.THOUGHTS
-                    }
+            val thoughtBacklog = thoughtsTarget.length - visibleThoughts.length
+            val textBacklog = textTarget.length - visibleText.length
+            if (activeSide == StreamingPresentationSide.THOUGHTS && thoughtBacklog <= 0 && textBacklog > 0) {
+                activeSide = StreamingPresentationSide.TEXT
+            } else if (activeSide == StreamingPresentationSide.TEXT && textBacklog <= 0 && thoughtBacklog > 0) {
+                activeSide = StreamingPresentationSide.THOUGHTS
+            }
+            val release = pacer.advance(
+                frameMillis = frameMillis,
+                targetTotal = thoughtsTarget.length + textTarget.length,
+                backlog = thoughtBacklog + textBacklog,
+                isStreaming = isStreaming
+            )
+            if (release > 0) {
+                when (activeSide) {
+                    StreamingPresentationSide.THOUGHTS -> visibleThoughts = thoughtsTarget.take(
+                        safeTextEnd(thoughtsTarget, visibleThoughts.length + minOf(release, thoughtBacklog))
+                    )
+                    StreamingPresentationSide.TEXT -> visibleText = textTarget.take(
+                        safeTextEnd(textTarget, visibleText.length + minOf(release, textBacklog))
+                    )
                 }
             }
 
@@ -230,23 +282,19 @@ internal fun rememberSerializedStreamingText(
                 latestOnVisibleContentChanged()
             }
 
-            if (!isStreaming && !hasThoughtBacklog && !hasTextBacklog) {
+            if (!isStreaming && visibleThoughts == thoughtsTarget && visibleText == textTarget) {
                 return@LaunchedEffect
             }
-            delay(STREAMING_TEXT_FRAME_MILLIS)
         }
     }
 
-    val isThoughtTextAnimating =
-        activeSide == StreamingPresentationSide.THOUGHTS && visibleThoughts != targetThoughts
-    val isTextAnimating =
-        activeSide == StreamingPresentationSide.TEXT && visibleText != targetText
-
+    // Any unrevealed text counts, including answer text staged behind thinking: callers use these to
+    // keep Markdown accumulation and fade-in in streaming mode until everything is on screen.
     return SerializedStreamingText(
         text = visibleText,
         thoughts = visibleThoughts,
-        isTextAnimating = isTextAnimating,
-        isThoughtTextAnimating = isThoughtTextAnimating
+        isTextAnimating = visibleText != targetText,
+        isThoughtTextAnimating = visibleThoughts != targetThoughts
     )
 }
 

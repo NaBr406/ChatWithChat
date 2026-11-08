@@ -162,6 +162,9 @@ fun OpponentChatBubble(
         }
     }
     val isTextAnimating = serializedStreamingText.isTextAnimating
+    // The pacer may still be revealing text after the stream ends; until it finishes, keep Markdown
+    // accumulation and fade-in in streaming mode so a half-revealed paragraph is not committed early.
+    val isTextStreaming = isLoading || isTextAnimating
     // Citation chips in the answer resolve against this message's own sources and open one shared sheet,
     // hosted here rather than in the chip so a streaming re-layout cannot dispose it while it is open.
     val citationSources = remember(sourceMetadata) { CitationSources.of(sourceMetadata) }
@@ -211,7 +214,7 @@ fun OpponentChatBubble(
                         modifier = Modifier.padding(vertical = 6.dp)
                     )
                 } else {
-                    StreamingRevealContent(displayText, contentIdentity, isLoading) {
+                    StreamingRevealContent(displayText, contentIdentity, isTextStreaming) {
                         when {
                             isLoading && displayText.isBlank() && thoughts.isBlank() && stickerRefs.isEmpty() && showPendingIndicator -> {
                                 ResponseLoadingIndicator()
@@ -220,7 +223,7 @@ fun OpponentChatBubble(
                                 if (renderRichContent) {
                                     RichChatContent(
                                         content = displayText,
-                                        isStreaming = isLoading,
+                                        isStreaming = isTextStreaming,
                                         contentIdentity = contentIdentity,
                                         contentColor = MaterialTheme.colorScheme.onBackground,
                                         interactionBinding = interactionBinding,
@@ -233,7 +236,7 @@ fun OpponentChatBubble(
                                     // the stream ends so the layout does not jump at completion.
                                     IncrementalChatMarkdown(
                                         content = displayText,
-                                        isStreaming = isLoading,
+                                        isStreaming = isTextStreaming,
                                         isPendingAnimating = false,
                                         contentIdentity = contentIdentity,
                                         useMathJax = true,

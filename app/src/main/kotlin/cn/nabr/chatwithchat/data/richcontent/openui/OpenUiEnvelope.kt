@@ -23,6 +23,16 @@ object OpenUiEnvelope {
     }
 
     fun parse(content: String, isStreaming: Boolean = false): OpenUiContent {
+        // The chat screen parses the whole streamed answer several times per publish on the main thread.
+        // A program needs an "openui" fence label, so without one the result is the content as Markdown,
+        // unless the streaming trim below could apply to a half-typed label on the last line.
+        if (!content.contains(PROGRAM_LABEL)) {
+            val lastLine = content.substringAfterLast('\n').trimStart()
+            val mayTrimPartialLabel = isStreaming && lastLine.startsWith("```") && "```$PROGRAM_LABEL".startsWith(lastLine)
+            if (!mayTrimPartialLabel) {
+                return OpenUiContent(if (content.isEmpty()) emptyList() else listOf(OpenUiPart.Markdown(content)))
+            }
+        }
         val parts = mutableListOf<OpenUiPart>()
         var ordinaryFence: Pair<Char, Int>? = null
         var programFence: Pair<Char, Int>? = null
@@ -47,7 +57,7 @@ object OpenUiEnvelope {
                     currentProgram != null -> Unit
                     currentOrdinary != null && token.first == currentOrdinary.first && token.second >= currentOrdinary.second && info.isEmpty() -> ordinaryFence = null
                     currentOrdinary != null -> Unit
-                    info == "openui" -> {
+                    info == PROGRAM_LABEL -> {
                         if (offset > markdownStart) parts += OpenUiPart.Markdown(content.substring(markdownStart, offset))
                         programFence = token
                         sourceStart = lineEnd
@@ -65,12 +75,13 @@ object OpenUiEnvelope {
             if (isStreaming && ordinaryFence != null) {
                 val lastLine = markdown.substringAfterLast('\n')
                 val trimmed = lastLine.trimStart()
-                if (trimmed.startsWith("```") && "```openui".startsWith(trimmed)) markdown = markdown.dropLast(lastLine.length)
+                if (trimmed.startsWith("```") && "```$PROGRAM_LABEL".startsWith(trimmed)) markdown = markdown.dropLast(lastLine.length)
             }
             if (markdown.isNotEmpty()) parts += OpenUiPart.Markdown(markdown)
         }
         return OpenUiContent(parts)
     }
 
+    private const val PROGRAM_LABEL = "openui"
     private val fence = Regex(" {0,3}(`{3,}|~{3,})([^`~]*)")
 }

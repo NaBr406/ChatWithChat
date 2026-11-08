@@ -2,9 +2,56 @@ package cn.nabr.chatwithchat.presentation.ui.chat
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class IncrementalThinkingMarkdownTest {
+    @Test
+    fun longLineAcrossChunks_preservesTextWhenNewlineFinallyArrives() {
+        val accumulator = ThinkingMarkdownAccumulator()
+        val text = StringBuilder()
+        repeat(250) {
+            text.append("推理内容 ".repeat(20))
+            val snapshot = accumulator.update(text.toString(), forceFlush = false)
+            assertEquals(text.toString(), snapshot.pendingText)
+        }
+        val snapshot = accumulator.update("$text\n\nnext\n", forceFlush = false)
+
+        assertEquals(text.toString(), snapshot.blocks.single().content)
+        assertEquals("next\n", snapshot.pendingText)
+        assertEquals(text.length + 2, snapshot.pendingStart)
+    }
+
+    @Test
+    fun rollbackDuringIncompleteLine_resetsNewlineSearchPosition() {
+        val accumulator = ThinkingMarkdownAccumulator()
+        accumulator.update("old\n\n" + "x".repeat(10_000), forceFlush = false)
+        accumulator.update("new", forceFlush = false)
+
+        val snapshot = accumulator.update("new\n\nnext\n", forceFlush = false)
+
+        assertEquals(listOf("new"), snapshot.blocks.map { it.content })
+        assertEquals("next\n", snapshot.pendingText)
+    }
+
+    @Test
+    fun manyCommittedParagraphs_keepPublishedSnapshotsImmutable() {
+        val accumulator = ThinkingMarkdownAccumulator()
+        val text = (0 until 1_000).joinToString("\n\n") { "paragraph $it" }
+        val first = accumulator.update("$text\n\npending\n", forceFlush = false)
+        val appended = accumulator.update("$text\n\npending\nmore", forceFlush = false)
+        assertSame(first.blocks, appended.blocks)
+
+        val finished = accumulator.update("$text\n\npending\nmore", forceFlush = true)
+        assertEquals(1_000, first.blocks.size)
+        assertEquals(1_001, finished.blocks.size)
+        first.blocks.forEachIndexed { index, block -> assertSame(block, finished.blocks[index]) }
+
+        accumulator.update("replacement", forceFlush = true)
+        assertEquals(1_001, finished.blocks.size)
+        assertEquals("paragraph 0", first.blocks.first().content)
+    }
+
     @Test
     fun update_commitsOnlyCompletedParagraphs() {
         val accumulator = ThinkingMarkdownAccumulator()
@@ -137,5 +184,58 @@ class IncrementalThinkingMarkdownTest {
             "…\n" + content.takeLast(100),
             pendingThinkingPreview(text = content, maxCharacters = 100)
         )
+    }
+
+    @Test
+    fun softBreakCommit_splitsLongRunOfPlainLines() {
+        val lines = (0 until 200).map { "第 $it 行推理内容，没有空行分隔。" }
+        val text = lines.joinToString("\n") + "\n"
+        val snapshot = ThinkingMarkdownAccumulator(softBreakCommitLength = 300).update(text, forceFlush = false)
+
+        assertTrue("expected the run to be split, got ${snapshot.blocks.size} blocks", snapshot.blocks.size > 5)
+        assertTrue(snapshot.blocks.all { it.content.length < 300 + lines.maxOf(String::length) + 1 })
+        val rebuilt = (snapshot.blocks.map { it.content } + snapshot.pendingText.trimEnd('\n'))
+            .filter { it.isNotEmpty() }
+            .joinToString("\n")
+        assertEquals(lines.joinToString("\n"), rebuilt)
+        snapshot.blocks.forEach { block ->
+            assertEquals(block.content, text.substring(block.sourceStart, block.sourceStart + block.content.length))
+        }
+    }
+
+    @Test
+    fun softBreakCommit_matchesWhetherStreamedOrLoadedAtOnce() {
+        val text = (0 until 120).joinToString("\n") { "line $it of a long thought" } + "\n\nend"
+        val streamed = ThinkingMarkdownAccumulator(softBreakCommitLength = 200)
+        var index = 0
+        while (index < text.length) {
+            index = (index + 7).coerceAtMost(text.length)
+            streamed.update(text.substring(0, index), forceFlush = false)
+        }
+        val streamedBlocks = streamed.update(text, forceFlush = true).blocks
+        val loadedBlocks = ThinkingMarkdownAccumulator(softBreakCommitLength = 200).update(text, forceFlush = true).blocks
+
+        assertEquals(loadedBlocks, streamedBlocks)
+    }
+
+    @Test
+    fun softBreakCommit_neverSplitsListsTablesOrDisplayMath() {
+        val list = (0 until 60).joinToString("\n") { "- item $it with some words" }
+        val table = "| a | b |\n| - | - |\n" + (0 until 60).joinToString("\n") { "| $it | value |" }
+        val math = "intro line\n$$\n" + (0 until 60).joinToString("\n") { "x_$it + y_$it \\\\" } + "\n$$"
+
+        listOf(list, table, math).forEach { block ->
+            val snapshot = ThinkingMarkdownAccumulator(softBreakCommitLength = 100).update("$block\n", forceFlush = true)
+            assertEquals(listOf(block), snapshot.blocks.map { it.content })
+        }
+    }
+
+    @Test
+    fun softBreakCommit_disabledByDefault() {
+        val text = (0 until 200).joinToString("\n") { "plain line $it" } + "\n"
+
+        val snapshot = ThinkingMarkdownAccumulator().update(text, forceFlush = false)
+
+        assertEquals(emptyList<ThinkingMarkdownBlock>(), snapshot.blocks)
     }
 }

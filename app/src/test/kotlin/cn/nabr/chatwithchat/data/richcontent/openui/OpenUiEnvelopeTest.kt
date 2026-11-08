@@ -60,4 +60,14 @@ class OpenUiEnvelopeTest {
     fun partiallyArrivingFenceMarkerDoesNotFlashAsNarrative() {
         assertEquals("Facts.\n", OpenUiEnvelope.parse("Facts.\n```ope", true).markdown)
     }
+
+    @Test
+    fun contentWithoutProgramLabel_takesFastPathWithSameResult() {
+        val answer = "Intro\n\n```kotlin\nval x = 1\n```\n\nMore text\n```"
+        assertEquals(OpenUiContent(listOf(OpenUiPart.Markdown(answer))), OpenUiEnvelope.parse(answer, isStreaming = false))
+        assertEquals(OpenUiContent(emptyList()), OpenUiEnvelope.parse(""))
+        assertFalse(OpenUiEnvelope.containsOpenUi(answer))
+        // A bare fence still arriving on the last line may become a program label: the full parse decides.
+        assertEquals("Facts.\n", OpenUiEnvelope.parse("Facts.\n```", true).markdown)
+    }
 }

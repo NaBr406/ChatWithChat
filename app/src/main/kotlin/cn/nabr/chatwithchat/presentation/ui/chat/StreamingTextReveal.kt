@@ -11,13 +11,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.ClipOp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Paint
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.text.TextLayoutResult
 import java.util.regex.Pattern
+import kotlin.math.ceil
+import kotlin.math.floor
 
 internal const val STREAMING_REVEAL_DURATION_MILLIS = 200L
 
@@ -66,8 +70,37 @@ internal class StreamingRevealRate {
 
 private val graphemePattern = Pattern.compile("\\X")
 
+/**
+ * Grapheme clusters are short, so segmenting from a little before [appendedAt] finds the same boundaries
+ * there as segmenting from the start. Scanning the whole leaf ran a `\X` match per character of every
+ * growing leaf (up to the 4 000-character thinking tail) twice per publish on the main thread.
+ */
+private const val GRAPHEME_SCAN_LOOKBEHIND = 32
+
+private fun graphemeMatcherNear(text: String, appendedAt: Int): java.util.regex.Matcher =
+    graphemePattern.matcher(text).region(graphemeScanStart(text, appendedAt), text.length)
+
+/** A position shortly before [appendedAt] that is certainly a cluster boundary, or 0 if none is found. */
+private fun graphemeScanStart(text: String, appendedAt: Int): Int {
+    var index = (appendedAt - GRAPHEME_SCAN_LOOKBEHIND).coerceAtMost(text.length - 1)
+    if (index <= 0) return 0
+    val limit = (index - GRAPHEME_SCAN_LOOKBEHIND).coerceAtLeast(0)
+    while (index > limit) {
+        if (alwaysStartsGraphemeCluster(text[index])) return index
+        index--
+    }
+    return 0
+}
+
+/**
+ * ASCII (except LF, which joins a preceding CR) and CJK ideographs, kana, CJK and fullwidth punctuation
+ * never extend the cluster before them. Hangul is left out: leading jamo join a following syllable.
+ */
+private fun alwaysStartsGraphemeCluster(char: Char): Boolean =
+    (char < '\u0080' && char != '\n') || char in '\u3000'..'\u9FFF' || char in '\uFF00'..'\uFFEF'
+
 internal fun streamingRevealStart(text: String, appendedAt: Int): Int {
-    val matcher = graphemePattern.matcher(text)
+    val matcher = graphemeMatcherNear(text, appendedAt)
     while (matcher.find()) {
         if (matcher.start() >= appendedAt) return matcher.start()
         if (matcher.end() > appendedAt) return matcher.end()
@@ -76,7 +109,7 @@ internal fun streamingRevealStart(text: String, appendedAt: Int): Int {
 }
 
 private fun stableGraphemeEnd(text: String, appendedAt: Int): Int {
-    val matcher = graphemePattern.matcher(text)
+    val matcher = graphemeMatcherNear(text, appendedAt)
     while (matcher.find()) {
         if (matcher.start() < appendedAt && matcher.end() > appendedAt) return matcher.start()
     }
@@ -193,26 +226,66 @@ internal fun rememberStreamingRevealDrawing(
     val modifier = if (ranges.isEmpty()) {
         Modifier
     } else {
-        Modifier.drawWithContent {
+        Modifier.drawWithCache {
             val result = layout.value
-            val now = clock.longValue
-            val active = ranges.any { now - it.startedAt < it.profile.durationMillis }
-            if (active && result != null && result.layoutInput.text.text == layoutText && ValueAnimator.areAnimatorsEnabled()) {
-                // The temporary layer contains only this text leaf, never its background or controls.
-                drawContext.canvas.saveLayer(Rect(0f, 0f, size.width, size.height), Paint())
-                try {
-                    drawContent()
-                    ranges.forEach { range ->
-                        val hiddenAlpha = (1f - (now - range.startedAt).toFloat() / range.profile.durationMillis).coerceIn(0f, 1f) * range.profile.hiddenAlpha
-                        if (hiddenAlpha > 0f && range.end <= text.length) {
-                            drawPath(result.getPathForRange(range.start, range.end), Color.Black, alpha = hiddenAlpha, blendMode = BlendMode.DstOut)
-                        }
-                    }
-                } finally {
-                    drawContext.canvas.restore()
-                }
+            // Glyph paths depend on layout, not animation time. Cache them instead of asking the
+            // text engine to rebuild selection geometry on every display frame.
+            val paths = if (result != null && result.layoutInput.text.text == layoutText) {
+                ranges.filter { it.end <= text.length }.map { it to result.getPathForRange(it.start, it.end) }
             } else {
-                drawContent()
+                emptyList()
+            }
+            val paint = Paint()
+            // The offscreen layer used to cover the whole leaf: in a long paragraph or the thinking tail
+            // that is most of the screen, allocated and composited by the GPU on every frame of every
+            // fade, for a line or two of fading glyphs. Cover only those glyphs, on whole pixels so the
+            // seam with the directly drawn rest of the text is invisible.
+            val bounds = paths
+                .map { (_, path) -> path.getBounds() }
+                .reduceOrNull { union, next ->
+                    Rect(
+                        minOf(union.left, next.left),
+                        minOf(union.top, next.top),
+                        maxOf(union.right, next.right),
+                        maxOf(union.bottom, next.bottom)
+                    )
+                }
+                ?.let { union ->
+                    Rect(
+                        floor(union.left - 1f).coerceAtLeast(0f),
+                        floor(union.top).coerceAtLeast(0f),
+                        ceil(union.right + 1f).coerceAtMost(size.width),
+                        ceil(union.bottom).coerceAtMost(size.height)
+                    )
+                }
+                ?.takeIf { !it.isEmpty }
+            onDrawWithContent {
+                val now = clock.longValue
+                val active = paths.any { (range, _) -> now - range.startedAt < range.profile.durationMillis }
+                if (bounds != null && active && ValueAnimator.areAnimatorsEnabled()) {
+                    clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom, ClipOp.Difference) {
+                        this@onDrawWithContent.drawContent()
+                    }
+                    // The temporary layer contains only the fading glyphs of this leaf, never its
+                    // background or controls.
+                    drawContext.canvas.save()
+                    drawContext.canvas.clipRect(bounds)
+                    drawContext.canvas.saveLayer(bounds, paint)
+                    try {
+                        drawContent()
+                        paths.forEach { (range, path) ->
+                            val hiddenAlpha = (1f - (now - range.startedAt).toFloat() / range.profile.durationMillis).coerceIn(0f, 1f) * range.profile.hiddenAlpha
+                            if (hiddenAlpha > 0f) {
+                                drawPath(path, Color.Black, alpha = hiddenAlpha, blendMode = BlendMode.DstOut)
+                            }
+                        }
+                    } finally {
+                        drawContext.canvas.restore()
+                        drawContext.canvas.restore()
+                    }
+                } else {
+                    drawContent()
+                }
             }
         }
     }

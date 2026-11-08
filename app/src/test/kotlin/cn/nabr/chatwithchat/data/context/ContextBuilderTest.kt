@@ -245,6 +245,18 @@ class ContextBuilderTest {
     }
 
     @Test
+    fun `sticker marker cleanup fast path keeps every normalization`() {
+        assertEquals("plain [link](x) text", "plain [link](x) text\n\n".stripInternalStickerMarkers())
+        assertEquals("a\nb", "a  \nb".stripInternalStickerMarkers())
+        assertEquals("a\nb", "a\t\nb".stripInternalStickerMarkers())
+        assertEquals("a\n\nb", "a\n\n\n\nb".stripInternalStickerMarkers())
+        assertEquals("a\n\nb", "a\r\n\r\n\r\nb".stripInternalStickerMarkers())
+        assertEquals("a  b", "a [ASSISTANT SENT STICKER: x] b".stripInternalStickerMarkers())
+        assertEquals("tail", "tail\n[assistant sent sticker: unfinished".stripInternalStickerMarkers())
+        assertEquals("a\n\nb", "a\n[assistant sent sticker: x]\n\nb".stripInternalStickerMarkers())
+    }
+
+    @Test
     fun `sticker marker escapes brackets in alt text`() {
         val message = MessageV2(
             content = "",

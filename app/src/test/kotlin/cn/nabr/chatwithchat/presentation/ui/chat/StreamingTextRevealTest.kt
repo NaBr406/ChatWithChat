@@ -182,4 +182,26 @@ class StreamingTextRevealTest {
         assertEquals(100L, high.profile.durationMillis)
         assertEquals(0.55f, high.profile.hiddenAlpha, 0.001f)
     }
+
+    @Test
+    fun revealStart_nearScanMatchesFullScanAcrossClusters() {
+        val family = "👨‍👩‍👧‍👦"
+        val flag = "🇨🇳"
+        val accented = "é̂"
+        val unit = "推理 text $family$flag$accented 한국어 ✔️\r\n"
+        val text = unit.repeat(40)
+        val graphemes = java.util.regex.Pattern.compile("\\X")
+        fun fullScan(appendedAt: Int): Int {
+            val matcher = graphemes.matcher(text)
+            while (matcher.find()) {
+                if (matcher.start() >= appendedAt) return matcher.start()
+                if (matcher.end() > appendedAt) return matcher.end()
+            }
+            return text.length
+        }
+
+        for (appendedAt in 0..text.length) {
+            assertEquals("appendedAt=$appendedAt", fullScan(appendedAt), streamingRevealStart(text, appendedAt))
+        }
+    }
 }
