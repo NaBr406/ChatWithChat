@@ -5,6 +5,8 @@ import cn.nabr.chatwithchat.data.dto.google.request.GenerateContentRequest
 import cn.nabr.chatwithchat.data.dto.groq.request.GroqChatCompletionRequest
 import cn.nabr.chatwithchat.data.dto.openai.request.ChatCompletionRequest
 import cn.nabr.chatwithchat.data.dto.openai.request.ResponsesRequest
+import cn.nabr.chatwithchat.data.dto.openai.response.ReasoningSummaryTextDoneEvent
+import cn.nabr.chatwithchat.data.dto.openai.response.ResponseCompletedEvent
 import com.sun.net.httpserver.HttpServer
 import io.ktor.client.engine.cio.CIO
 import java.io.EOFException
@@ -17,6 +19,24 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ChatStreamDisconnectTest {
+    @Test
+    fun `large reasoning done event does not prevent Responses completion`() = runBlocking {
+        val summary = "Long reasoning. ".repeat(20_000)
+        val body = "data: {\"type\":\"response.reasoning_summary_text.done\",\"item_id\":\"rs_1\"," +
+            "\"output_index\":0,\"summary_index\":0,\"text\":\"$summary\"}\n\n" +
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"r_1\",\"status\":\"completed\"}}\n\n"
+        withServer(body, 200) { endpoint, client ->
+            val events = OpenAIAPIImpl(client).streamResponses(
+                ResponsesRequest("test", emptyList()),
+                10,
+                endpoint
+            ).toList()
+            assertEquals(summary, (events.first() as ReasoningSummaryTextDoneEvent).text)
+            assertTrue(events.last() is ResponseCompletedEvent)
+            assertEquals(2, events.size)
+        }
+    }
+
     @Test
     fun `all providers reject EOF before a completion event`() = runBlocking {
         withServer("", 200) { endpoint, client ->

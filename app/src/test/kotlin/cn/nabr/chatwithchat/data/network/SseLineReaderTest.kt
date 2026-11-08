@@ -4,17 +4,29 @@ import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.charsets.TooLongLineException
 import io.ktor.utils.io.writeFully
+import java.nio.charset.StandardCharsets
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.nio.charset.StandardCharsets
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 
 class SseLineReaderTest {
+    @Test
+    fun `reads large Responses summary done event followed by terminal event`() = runBlocking {
+        val line = "data: {\"type\":\"response.reasoning_summary_text.done\",\"text\":\"" +
+            "长推理内容".repeat(100_000) + "\"}"
+        val channel = ByteReadChannel("$line\n\ndata: [DONE]\n")
+
+        assertEquals(line, channel.readSseLineOrNull())
+        assertEquals("", channel.readSseLineOrNull())
+        assertEquals("data: [DONE]", channel.readSseLineOrNull())
+        assertNull(channel.readSseLineOrNull())
+    }
+
     @Test
     fun `reads a bounded UTF-8 SSE line`() = runBlocking {
         val channel = ByteReadChannel("data: {\"value\":\"ok\"}\n")
