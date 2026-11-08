@@ -20,4 +20,16 @@
     <string name="hide_secret">Hide</string>
     <string name="chat_not_found">This chat no longer exists</string>
     <string name="chat_save_failed">The answer could not be saved. Retry before leaving this chat.</string>
+    <string name="api_protocol">API protocol</string>
+    <string name="provider_advanced">Advanced connection settings</string>
+    <string name="use_full_api_url_compact">Use exact URL</string>
+    <string name="tool_call_strategy">Tool calling strategy</string>
+    <string name="tool_strategy_auto">Automatic</string>
+    <string name="tool_strategy_native">Native</string>
+    <string name="tool_strategy_json">JSON</string>
+    <string name="tool_call_strategy_help">Automatic uses native tool calls and falls back to JSON only when tools are explicitly unsupported before any tool interaction. Native reports errors without fallback. JSON uses prompt-based tool calls. The global tool switch still applies.</string>
+    <string name="protocol_chat_completions_help">Uses /chat/completions. For OpenAI compatible gateways and local services.</string>
+    <string name="protocol_responses_help">Uses /responses. Select this when your service supports the OpenAI Responses API.</string>
+    <string name="protocol_anthropic_help">Uses /messages with the Anthropic message format.</string>
+    <string name="protocol_google_help">Existing Google Generative AI connection.</string>
 </resources>

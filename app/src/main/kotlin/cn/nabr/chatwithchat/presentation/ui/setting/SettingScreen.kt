@@ -93,7 +93,6 @@ import cn.nabr.chatwithchat.presentation.common.settingsCanvasBackground
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.common.settingsSwitchColors
 import cn.nabr.chatwithchat.presentation.common.settingsTextFieldColors
-import cn.nabr.chatwithchat.util.getClientTypeDisplayName
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -755,7 +754,7 @@ private fun PlatformItem(
         },
         trailingContent = {
             Text(
-                text = getClientTypeDisplayName(platform.compatibleType),
+                text = platform.resolvedApiProtocol.displayName,
                 maxLines = 1,
                 style = MaterialTheme.typography.bodyMedium,
                 color = materialColors.secondaryLabel

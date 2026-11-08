@@ -31,56 +31,9 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import cn.nabr.chatwithchat.R
-import cn.nabr.chatwithchat.data.model.ClientType
-
-data class PlatformTypeInfo(
-    val clientType: ClientType,
-    val titleResId: Int,
-    val descriptionResId: Int
-)
-
-private val platformTypes = listOf(
-    PlatformTypeInfo(
-        clientType = ClientType.OPENAI,
-        titleResId = R.string.openai,
-        descriptionResId = R.string.openai_description
-    ),
-    PlatformTypeInfo(
-        clientType = ClientType.GLM,
-        titleResId = R.string.glm,
-        descriptionResId = R.string.glm_description
-    ),
-    PlatformTypeInfo(
-        clientType = ClientType.ANTHROPIC,
-        titleResId = R.string.anthropic,
-        descriptionResId = R.string.anthropic_description
-    ),
-    PlatformTypeInfo(
-        clientType = ClientType.GOOGLE,
-        titleResId = R.string.google,
-        descriptionResId = R.string.google_description
-    ),
-    PlatformTypeInfo(
-        clientType = ClientType.GROQ,
-        titleResId = R.string.groq,
-        descriptionResId = R.string.groq_description
-    ),
-    PlatformTypeInfo(
-        clientType = ClientType.OLLAMA,
-        titleResId = R.string.ollama,
-        descriptionResId = R.string.ollama_description
-    ),
-    PlatformTypeInfo(
-        clientType = ClientType.OPENROUTER,
-        titleResId = R.string.openrouter,
-        descriptionResId = R.string.openrouter_description
-    ),
-    PlatformTypeInfo(
-        clientType = ClientType.CUSTOM,
-        titleResId = R.string.custom_provider,
-        descriptionResId = R.string.custom_provider_description
-    )
-)
+import cn.nabr.chatwithchat.data.model.ApiProtocol
+import cn.nabr.chatwithchat.presentation.common.SettingsHelpTooltipIcon
+import cn.nabr.chatwithchat.presentation.common.descriptionRes
 
 @Composable
 fun SetupPlatformTypeScreen(
@@ -108,11 +61,11 @@ fun SetupPlatformTypeScreen(
                     .padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                items(platformTypes) { platformTypeInfo ->
+                items(ApiProtocol.selectable) { protocol ->
                     PlatformTypeCard(
-                        platformTypeInfo = platformTypeInfo,
+                        protocol = protocol,
                         onClick = {
-                            setupViewModel.selectClientType(platformTypeInfo.clientType)
+                            setupViewModel.selectProtocol(protocol)
                             onPlatformTypeSelected()
                         }
                     )
@@ -132,25 +85,24 @@ private fun PlatformTypeHeader(modifier: Modifier = Modifier) {
             .fillMaxWidth()
             .padding(20.dp)
     ) {
-        Text(
-            modifier = Modifier
-                .padding(4.dp)
-                .semantics { heading() },
-            text = stringResource(R.string.choose_platform_type),
-            style = MaterialTheme.typography.headlineMedium
-        )
-        Text(
-            modifier = Modifier.padding(4.dp),
-            text = stringResource(R.string.choose_platform_type_description),
-            style = MaterialTheme.typography.bodyLarge
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                modifier = Modifier
+                    .padding(4.dp)
+                    .weight(1f, fill = false)
+                    .semantics { heading() },
+                text = stringResource(R.string.choose_platform_type),
+                style = MaterialTheme.typography.headlineMedium
+            )
+            SettingsHelpTooltipIcon(helpText = stringResource(R.string.choose_platform_type_description))
+        }
     }
 }
 
 @Composable
 private fun PlatformTypeCard(
     modifier: Modifier = Modifier,
-    platformTypeInfo: PlatformTypeInfo,
+    protocol: ApiProtocol,
     onClick: () -> Unit
 ) {
     Card(
@@ -165,21 +117,20 @@ private fun PlatformTypeCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(20.dp),
+                .padding(start = 20.dp, top = 12.dp, end = 20.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Platform info
-            Column(modifier = Modifier.weight(1f)) {
+            // The protocol explanation sits behind the help icon instead of a subtitle on every card.
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Text(
-                    text = stringResource(platformTypeInfo.titleResId),
-                    style = MaterialTheme.typography.titleMedium
+                    text = protocol.displayName,
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f, fill = false)
                 )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = stringResource(platformTypeInfo.descriptionResId),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                SettingsHelpTooltipIcon(helpText = stringResource(protocol.descriptionRes()))
             }
 
             Spacer(modifier = Modifier.width(16.dp))
