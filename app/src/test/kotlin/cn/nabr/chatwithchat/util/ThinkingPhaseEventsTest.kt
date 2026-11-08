@@ -72,17 +72,60 @@ class ThinkingPhaseEventsTest {
     }
 
     @Test
-    fun `a tool call ends a thinking segment and a later round can think again`() = runBlocking {
+    fun `tool calls between reasoning rounds keep one thinking phase`() = runBlocking {
         val edges = flowOf(
             ApiState.Thinking("I should search."),
             ApiState.ToolStarted("web_search", "query"),
             ApiState.ToolFinished("web_search", "query"),
             ApiState.Thinking("The results say"),
+            ApiState.ToolStarted("fetch", "page"),
+            ApiState.ToolFailed("fetch", "page"),
+            ApiState.Thinking("Fall back to the snippets"),
+            ApiState.Success("Final answer"),
+            ApiState.Done
+        ).thinkingEdges()
+
+        assertEquals(listOf(true, false), edges)
+    }
+
+    @Test
+    fun `text written before a tool call does not end the agent run`() = runBlocking {
+        val edges = flowOf(
+            ApiState.Thinking("Plan the steps."),
+            ApiState.Success("Let me look that up."),
+            ApiState.ToolStarted("web_search", "query"),
+            ApiState.ToolFinished("web_search", "query"),
             ApiState.Success("Final answer"),
             ApiState.Done
         ).thinkingEdges()
 
         assertEquals(listOf(true, false, true, false), edges)
+    }
+
+    @Test
+    fun `a reconnect rollback does not end thinking`() = runBlocking {
+        val edges = flowOf(
+            ApiState.StreamCheckpoint("r1"),
+            ApiState.Thinking("partial"),
+            ApiState.StreamRollback("r1"),
+            ApiState.Thinking("partial again"),
+            ApiState.Success("Answer"),
+            ApiState.Done
+        ).thinkingEdges()
+
+        assertEquals(listOf(true, false), edges)
+    }
+
+    @Test
+    fun `tool calls without any reasoning never report thinking`() = runBlocking {
+        val edges = flowOf(
+            ApiState.ToolStarted("web_search", "query"),
+            ApiState.ToolFinished("web_search", "query"),
+            ApiState.Success("Answer"),
+            ApiState.Done
+        ).thinkingEdges()
+
+        assertEquals(emptyList<Boolean>(), edges)
     }
 
     @Test
