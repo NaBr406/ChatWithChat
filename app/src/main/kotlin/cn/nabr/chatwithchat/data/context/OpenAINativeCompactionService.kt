@@ -6,8 +6,8 @@ import cn.nabr.chatwithchat.data.dto.openai.request.ResponseInputItem
 import cn.nabr.chatwithchat.data.dto.openai.request.ResponsesCompactRequest
 import cn.nabr.chatwithchat.data.model.ClientType
 import cn.nabr.chatwithchat.data.network.OpenAIAPI
-import cn.nabr.chatwithchat.data.network.providerEndpoint
 import cn.nabr.chatwithchat.data.network.OpenAICompactionException
+import cn.nabr.chatwithchat.data.network.providerEndpoint
 import kotlinx.coroutines.CancellationException
 
 /** Why native compaction could not be used for a request. */
@@ -64,7 +64,7 @@ class OpenAINativeCompactionService(
 ) {
 
     fun supports(platform: PlatformV2): Boolean =
-        NativeCompactionModelGate.supportsServerSideCompaction(platform.compatibleType, platform.model)
+        NativeCompactionModelGate.supportsServerSideCompaction(platform)
 
     /**
      * The `context_management` array for an ordinary `/v1/responses` request, or null when this

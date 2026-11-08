@@ -57,7 +57,7 @@ class AttachmentUploadCoordinator @Inject constructor(
         if (message.attachments.isEmpty()) return message
         // 只有图片才走 provider 的文件上传：把 docx/PDF POST 到 files 端点会拿回一个
         // 谁也不认的 file id，然后拼出非法的 image/file content block。文档靠内联文本投递。
-        val updatedAttachments = when (platform.compatibleType) {
+        val updatedAttachments = when (platform.requestClientType) {
             ClientType.OPENAI -> message.attachments.map { attachment ->
                 if (isImageAttachment(attachment)) ensureOpenAIRef(attachment, platform) else attachment
             }

@@ -4,7 +4,9 @@ import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import cn.nabr.chatwithchat.data.model.ApiProtocol
 import cn.nabr.chatwithchat.data.model.ClientType
+import cn.nabr.chatwithchat.data.model.ToolCallStrategy
 import java.util.*
 
 @Entity(
@@ -78,8 +80,39 @@ data class PlatformV2(
     val isFullApiUrl: Boolean = false,
 
     @ColumnInfo(name = "custom_headers", defaultValue = "")
-    val customHeaders: String = ""
-)
+    val customHeaders: String = "",
+
+    @ColumnInfo(name = "api_protocol")
+    val apiProtocol: ApiProtocol? = null,
+
+    @ColumnInfo(name = "tool_call_strategy", defaultValue = "AUTO")
+    val toolCallStrategy: ToolCallStrategy = ToolCallStrategy.AUTO
+) {
+    @get:androidx.room.Ignore
+    val resolvedApiProtocol: ApiProtocol
+        get() = apiProtocol ?: ApiProtocol.fromLegacy(compatibleType)
+
+    /** Preserve service-specific behavior only when it matches the selected wire protocol. */
+    @get:androidx.room.Ignore
+    val requestClientType: ClientType
+        get() = when (resolvedApiProtocol) {
+            ApiProtocol.OPENAI_CHAT_COMPLETIONS -> compatibleType.takeIf {
+                it in setOf(ClientType.GLM, ClientType.GROQ, ClientType.OLLAMA, ClientType.OPENROUTER)
+            } ?: if (isGlmEndpoint()) ClientType.GLM else ClientType.CUSTOM
+            ApiProtocol.OPENAI_RESPONSES -> ClientType.OPENAI
+            ApiProtocol.ANTHROPIC_MESSAGES -> ClientType.ANTHROPIC
+            ApiProtocol.GOOGLE_GENERATIVE_AI -> ClientType.GOOGLE
+        }
+
+    private fun isGlmEndpoint(): Boolean = runCatching {
+        val uri = java.net.URI(apiUrl.trim())
+        uri.host.equals("open.bigmodel.cn", ignoreCase = true) && uri.path.orEmpty().contains("/api/")
+    }.getOrDefault(false)
+
+    @get:androidx.room.Ignore
+    val acceptsOptionalApiKey: Boolean
+        get() = resolvedApiProtocol == ApiProtocol.OPENAI_CHAT_COMPLETIONS
+}
 
 object PlatformModelRefreshStatus {
     const val NOT_LOADED = "not_loaded"

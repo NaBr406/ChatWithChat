@@ -1,6 +1,8 @@
 package cn.nabr.chatwithchat.data.context
 
+import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.model.ClientType
+import java.net.URI
 
 /**
  * Whether a model may use OpenAI's server-side compaction (`context_management` on `/v1/responses`).
@@ -35,6 +37,10 @@ object NativeCompactionModelGate {
      * True only for the official OpenAI client type. Third-party OpenAI-compatible gateways reached
      * through `CUSTOM` must never receive `context_management`, whatever the model name says.
      */
+    fun supportsServerSideCompaction(platform: PlatformV2): Boolean =
+        supportsServerSideCompaction(platform.requestClientType, platform.model) &&
+            runCatching { URI(platform.apiUrl.trim()).host.equals("api.openai.com", ignoreCase = true) }.getOrDefault(false)
+
     fun supportsServerSideCompaction(clientType: ClientType, model: String): Boolean {
         if (clientType != ClientType.OPENAI) return false
 

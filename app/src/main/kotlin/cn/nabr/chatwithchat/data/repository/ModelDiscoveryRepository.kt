@@ -7,6 +7,7 @@ interface ModelDiscoveryRepository {
     suspend fun fetchModels(
         clientType: ClientType,
         apiUrl: String,
-        token: String?
+        token: String?,
+        customHeaders: String = ""
     ): List<APIModel>
 }

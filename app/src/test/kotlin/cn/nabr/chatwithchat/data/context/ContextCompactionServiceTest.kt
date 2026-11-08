@@ -52,7 +52,7 @@ class ContextCompactionServiceTest {
     fun `a natively compacting model is never sent the app side prompt`() = runBlocking {
         val client = RecordingClient()
         val outcome = ContextCompactionService(client).compact(
-            platform = platform(clientType = ClientType.OPENAI, model = "gpt-5.3"),
+            platform = platform(clientType = ClientType.OPENAI, model = "gpt-5.3", apiUrl = "https://api.openai.com/"),
             previousCheckpointBody = null,
             turns = turns(3),
             budget = BUDGET
@@ -70,8 +70,8 @@ class ContextCompactionServiceTest {
         val service = ContextCompactionService(client)
 
         listOf(
-            platform(token = null),
-            platform(token = "  "),
+            platform(clientType = ClientType.ANTHROPIC, token = null),
+            platform(clientType = ClientType.ANTHROPIC, token = "  "),
             platform(model = ""),
             platform(apiUrl = "")
         ).forEach { platform ->

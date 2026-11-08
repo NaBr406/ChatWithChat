@@ -12,6 +12,14 @@ import org.junit.Test
 
 class MemoryModelResolverTest {
     @Test
+    fun `custom local chat model may be used without an api key`() = runBlocking {
+        val local = platform(uid = "local", compatibleType = ClientType.CUSTOM, token = null)
+            .copy(apiUrl = "http://localhost:11434/", apiProtocol = cn.nabr.chatwithchat.data.model.ApiProtocol.OPENAI_CHAT_COMPLETIONS)
+        val resolver = resolver(listOf(local), listOf(model(local.uid, local.model)))
+        assertEquals(local, resolver.resolveAuto().resolvedPlatform())
+    }
+
+    @Test
     fun `fixed memory model rereads corrected provider settings`() = runBlocking {
         val original = platform(uid = "opencode", model = "deepseek-v4.1-flash", compatibleType = ClientType.CUSTOM)
             .copy(apiUrl = "https://opencode.ai/zen/go/v1/responses", isFullApiUrl = true)

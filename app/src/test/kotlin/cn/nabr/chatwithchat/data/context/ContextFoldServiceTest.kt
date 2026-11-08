@@ -256,7 +256,7 @@ class ContextFoldServiceTest {
 
     @Test
     fun `a job for a natively compacting model is dismissed`() = runBlocking {
-        val fixture = Fixture(platform = platform(clientType = ClientType.OPENAI, model = "gpt-5.3"))
+        val fixture = Fixture(platform = platform(clientType = ClientType.OPENAI, model = "gpt-5.3").copy(apiUrl = "https://api.openai.com/"))
 
         val result = fixture.process(fixture.enqueueFold())
 
@@ -270,7 +270,7 @@ class ContextFoldServiceTest {
 
     @Test
     fun `an ineligible provider blocks the job on its dependency`() = runBlocking {
-        val fixture = Fixture(platform = platform(token = null))
+        val fixture = Fixture(platform = platform(clientType = ClientType.ANTHROPIC, token = null))
 
         val result = fixture.process(fixture.enqueueFold())
 

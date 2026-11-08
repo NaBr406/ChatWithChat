@@ -111,9 +111,9 @@ import cn.nabr.chatwithchat.data.model.ChatAttachment
 import cn.nabr.chatwithchat.data.model.ChatPlatformConfig
 import cn.nabr.chatwithchat.data.model.ClientType
 import cn.nabr.chatwithchat.data.model.ReasoningMode
+import cn.nabr.chatwithchat.data.model.ToolCallStrategy
 import cn.nabr.chatwithchat.data.model.defaultReasoningMode
 import cn.nabr.chatwithchat.data.model.isGptOssModel
-import cn.nabr.chatwithchat.data.model.usesOfficialDeepSeekApi
 import cn.nabr.chatwithchat.data.network.AnthropicAPI
 import cn.nabr.chatwithchat.data.network.GoogleAPI
 import cn.nabr.chatwithchat.data.network.GroqAPI
@@ -303,7 +303,7 @@ class ChatRepositoryImpl @Inject constructor(
             userMessageId = latestUserMessage?.id?.takeIf { it > 0 },
             platformUid = platform.uid,
             platformName = platform.name,
-            clientType = platform.compatibleType,
+            clientType = platform.requestClientType,
             model = platform.model
         )
     }
@@ -362,87 +362,52 @@ class ChatRepositoryImpl @Inject constructor(
                 )
             }
             .orEmpty()
-        return if (activeToolDefinitions.isNotEmpty()) {
-            when (platform.compatibleType) {
-                ClientType.OPENAI -> completeChatWithOpenAIResponsesNativeToolLoop(
-                    userMessages = userMessages,
-                    assistantMessages = assistantMessages,
-                    platform = platform,
-                    memoryPrompt = providerContextPrompt,
-                    reasoningMode = reasoningMode,
-                    activeToolDefinitions = activeToolDefinitions
-                )
-                ClientType.OPENROUTER -> completeChatWithOpenAIChatCompletionsNativeToolLoop(
-                    userMessages = userMessages,
-                    assistantMessages = assistantMessages,
-                    platform = platform,
-                    memoryPrompt = providerContextPrompt,
-                    reasoningMode = reasoningMode,
-                    activeToolDefinitions = activeToolDefinitions
-                )
-                ClientType.GLM -> completeChatWithOpenAIChatCompletionsNativeToolLoop(
-                    userMessages = userMessages,
-                    assistantMessages = assistantMessages,
-                    platform = platform,
-                    memoryPrompt = providerContextPrompt,
-                    reasoningMode = reasoningMode,
-                    activeToolDefinitions = activeToolDefinitions
-                )
-                ClientType.CUSTOM -> {
-                    if (platform.usesOfficialDeepSeekApi()) {
-                        completeChatWithOpenAIChatCompletionsNativeToolLoop(
-                            userMessages = userMessages,
-                            assistantMessages = assistantMessages,
-                            platform = platform,
-                            memoryPrompt = providerContextPrompt,
-                            reasoningMode = reasoningMode,
-                            activeToolDefinitions = activeToolDefinitions,
-                            fallbackToJsonToolLoop = true
-                        )
-                    } else {
-                        completeChatWithToolLoopFallback(
-                            userMessages = userMessages,
-                            assistantMessages = assistantMessages,
-                            platform = platform,
-                            memoryPrompt = providerContextPrompt,
-                            reasoningMode = reasoningMode,
-                            activeToolDefinitions = activeToolDefinitions
-                        )
-                    }
-                }
-                ClientType.ANTHROPIC -> completeChatWithAnthropicNativeToolLoop(
-                    userMessages = userMessages,
-                    assistantMessages = assistantMessages,
-                    platform = platform,
-                    memoryPrompt = providerContextPrompt,
-                    reasoningMode = reasoningMode,
-                    activeToolDefinitions = activeToolDefinitions
-                )
-                ClientType.GOOGLE -> completeChatWithGoogleNativeToolLoop(
-                    userMessages = userMessages,
-                    assistantMessages = assistantMessages,
-                    platform = platform,
-                    memoryPrompt = providerContextPrompt,
-                    reasoningMode = reasoningMode,
-                    activeToolDefinitions = activeToolDefinitions
-                )
-                else -> completeChatWithToolLoopFallback(
-                    userMessages = userMessages,
-                    assistantMessages = assistantMessages,
-                    platform = platform,
-                    memoryPrompt = providerContextPrompt,
-                    reasoningMode = reasoningMode,
-                    activeToolDefinitions = activeToolDefinitions
-                )
-            }
-        } else {
-            completeChatByProvider(
+        return if (activeToolDefinitions.isEmpty()) {
+            completeChatByProvider(userMessages, assistantMessages, platform, providerContextPrompt, reasoningMode)
+        } else if (platform.toolCallStrategy == ToolCallStrategy.JSON) {
+            completeChatWithToolLoopFallback(
                 userMessages,
                 assistantMessages,
                 platform,
                 providerContextPrompt,
-                reasoningMode
+                reasoningMode,
+                activeToolDefinitions
             )
+        } else {
+            when (platform.requestClientType) {
+                ClientType.OPENAI -> completeChatWithOpenAIResponsesNativeToolLoop(
+                    userMessages,
+                    assistantMessages,
+                    platform,
+                    providerContextPrompt,
+                    reasoningMode,
+                    activeToolDefinitions
+                )
+                ClientType.ANTHROPIC -> completeChatWithAnthropicNativeToolLoop(
+                    userMessages,
+                    assistantMessages,
+                    platform,
+                    providerContextPrompt,
+                    reasoningMode,
+                    activeToolDefinitions
+                )
+                ClientType.GOOGLE -> completeChatWithGoogleNativeToolLoop(
+                    userMessages,
+                    assistantMessages,
+                    platform,
+                    providerContextPrompt,
+                    reasoningMode,
+                    activeToolDefinitions
+                )
+                else -> completeChatWithOpenAIChatCompletionsNativeToolLoop(
+                    userMessages,
+                    assistantMessages,
+                    platform,
+                    providerContextPrompt,
+                    reasoningMode,
+                    activeToolDefinitions
+                )
+            }
         }
     }
 
@@ -490,7 +455,7 @@ class ChatRepositoryImpl @Inject constructor(
         emitEstimatedUsageWithoutOutput: Boolean = false,
         conversationSnapshot: ProviderConversationSnapshot? = null,
         includeRichContentPrompt: Boolean = true
-    ): Flow<ApiState> = when (platform.compatibleType) {
+    ): Flow<ApiState> = when (platform.requestClientType) {
         ClientType.OPENAI -> {
             // Use Responses API for OpenAI (supports reasoning/thinking)
             completeChatWithOpenAIResponses(
@@ -602,7 +567,7 @@ class ChatRepositoryImpl @Inject constructor(
         }
 
         val config = toolLoopOrchestrator.configuration
-        val toolCallingAdapter = toolCallingAdapterFor(platform.compatibleType)
+        val toolCallingAdapter = toolCallingAdapterFor(platform.requestClientType)
         val toolScope = toolLoopOrchestrator.createToolScope(
             activeToolDefinitions = activeToolDefinitions,
             initialIntent = userMessages.latestToolIntent(),
@@ -1239,20 +1204,22 @@ class ChatRepositoryImpl @Inject constructor(
             hasToolInteraction = hasToolInteraction || openAIResponsesToolAdapter.hasToolCallIntent(round.events)
             if (round.errorMessage != null) {
                 nativeExchange.abandon()
-                if (!hasToolInteraction && !round.networkFailure) {
-                    val fallback = completeChatWithOpenAIResponses(
-                        userMessages,
-                        assistantMessages,
-                        platform,
-                        memoryPrompt,
-                        reasoningMode,
-                        conversationSnapshot = conversationSnapshot
+                if (platform.toolCallStrategy == ToolCallStrategy.AUTO &&
+                    !hasToolInteraction &&
+                    !round.networkFailure &&
+                    round.errorMessage.isNativeToolRequestRejected()
+                ) {
+                    val fallback = completeChatWithToolLoopFallback(
+                        userMessages = userMessages,
+                        assistantMessages = assistantMessages,
+                        platform = platform,
+                        memoryPrompt = memoryPrompt,
+                        reasoningMode = reasoningMode,
+                        activeToolDefinitions = activeToolDefinitions,
+                        conversationSnapshot = conversationSnapshot,
+                        priorSearchDecisionExecution = searchDecisionExecution
                     )
-                    if (searchDecisionExecution?.usage != null) {
-                        emitToolAggregatedProviderStates(fallback, toolUsageRecords)
-                    } else {
-                        emitProviderStatesSkippingLoading(fallback)
-                    }
+                    emitToolAggregatedProviderStates(fallback, toolUsageRecords)
                 } else {
                     emit(ApiState.Error(round.errorMessage))
                     aggregateToolUsage(currentAnswerUsage = null, toolUsages = toolUsageRecords)?.let { usage ->
@@ -1514,8 +1481,7 @@ class ChatRepositoryImpl @Inject constructor(
         platform: PlatformV2,
         memoryPrompt: String?,
         reasoningMode: ReasoningMode,
-        activeToolDefinitions: List<ToolDefinition>,
-        fallbackToJsonToolLoop: Boolean = false
+        activeToolDefinitions: List<ToolDefinition>
     ): Flow<ApiState> = flow {
         emit(ApiState.Loading)
         val traceContext = promptTraceContext(userMessages, platform)
@@ -1654,36 +1620,22 @@ class ChatRepositoryImpl @Inject constructor(
             round.usage?.let { toolUsageRecords += it }
             hasToolInteraction = hasToolInteraction || openAIChatCompletionsToolAdapter.hasToolCallIntent(round.chunks)
             if (round.errorMessage != null) {
-                if (!hasToolInteraction && !round.networkFailure) {
-                    val fallback = if (
-                        fallbackToJsonToolLoop &&
-                        round.errorMessage.isNativeToolRequestRejected()
-                    ) {
-                        completeChatWithToolLoopFallback(
-                            userMessages = userMessages,
-                            assistantMessages = assistantMessages,
-                            platform = platform,
-                            memoryPrompt = memoryPrompt,
-                            reasoningMode = reasoningMode,
-                            activeToolDefinitions = activeToolDefinitions,
-                            conversationSnapshot = conversationSnapshot,
-                            priorSearchDecisionExecution = searchDecisionExecution
-                        )
-                    } else {
-                        completeChatWithOpenAIChatCompletions(
-                            userMessages,
-                            assistantMessages,
-                            platform,
-                            memoryPrompt,
-                            reasoningMode,
-                            conversationSnapshot = conversationSnapshot
-                        )
-                    }
-                    if (searchDecisionExecution?.usage != null) {
-                        emitToolAggregatedProviderStates(fallback, toolUsageRecords)
-                    } else {
-                        emitProviderStatesSkippingLoading(fallback)
-                    }
+                if (platform.toolCallStrategy == ToolCallStrategy.AUTO &&
+                    !hasToolInteraction &&
+                    !round.networkFailure &&
+                    round.errorMessage.isNativeToolRequestRejected()
+                ) {
+                    val fallback = completeChatWithToolLoopFallback(
+                        userMessages = userMessages,
+                        assistantMessages = assistantMessages,
+                        platform = platform,
+                        memoryPrompt = memoryPrompt,
+                        reasoningMode = reasoningMode,
+                        activeToolDefinitions = activeToolDefinitions,
+                        conversationSnapshot = conversationSnapshot,
+                        priorSearchDecisionExecution = searchDecisionExecution
+                    )
+                    emitToolAggregatedProviderStates(fallback, toolUsageRecords)
                 } else {
                     emit(ApiState.Error(round.errorMessage))
                     aggregateToolUsage(currentAnswerUsage = null, toolUsages = toolUsageRecords)?.let { usage ->
@@ -1749,7 +1701,7 @@ class ChatRepositoryImpl @Inject constructor(
                 results = results,
                 config = config,
                 reasoningContent = round.reasoningContent.takeIf {
-                    platform.usesOfficialDeepSeekApi() || platform.compatibleType == ClientType.GLM
+                    platform.model.contains("deepseek", ignoreCase = true) || platform.requestClientType == ClientType.GLM
                 }
             )
             roundStateMachine.onToolResults(results)
@@ -1786,10 +1738,10 @@ class ChatRepositoryImpl @Inject constructor(
             request = prepared.user.toRequest(
                 continuationMessages = continuationMessages,
                 tools = finalToolDefinitions
-                    .takeIf { platform.compatibleType != ClientType.GLM && it.isNotEmpty() }
+                    .takeIf { platform.requestClientType != ClientType.GLM && it.isNotEmpty() }
                     ?.let { definitions -> openAIChatCompletionsToolAdapter.toChatCompletionTools(definitions) },
                 toolChoice = ChatCompletionToolChoice.None.takeIf {
-                    platform.compatibleType != ClientType.GLM && finalToolDefinitions.isNotEmpty()
+                    platform.requestClientType != ClientType.GLM && finalToolDefinitions.isNotEmpty()
                 },
                 extraInstruction = nativeFinalToolInstruction(allResults)
             ),
@@ -2110,20 +2062,22 @@ class ChatRepositoryImpl @Inject constructor(
             round.usage?.let { toolUsageRecords += it }
             hasToolInteraction = hasToolInteraction || anthropicNativeToolAdapter.hasToolCallIntent(round.chunks)
             if (round.errorMessage != null) {
-                if (!hasToolInteraction && !round.networkFailure) {
-                    val fallback = completeChatWithAnthropic(
-                        userMessages,
-                        assistantMessages,
-                        platform,
-                        memoryPrompt,
-                        reasoningMode,
-                        conversationSnapshot = conversationSnapshot
+                if (platform.toolCallStrategy == ToolCallStrategy.AUTO &&
+                    !hasToolInteraction &&
+                    !round.networkFailure &&
+                    round.errorMessage.isNativeToolRequestRejected()
+                ) {
+                    val fallback = completeChatWithToolLoopFallback(
+                        userMessages = userMessages,
+                        assistantMessages = assistantMessages,
+                        platform = platform,
+                        memoryPrompt = memoryPrompt,
+                        reasoningMode = reasoningMode,
+                        activeToolDefinitions = activeToolDefinitions,
+                        conversationSnapshot = conversationSnapshot,
+                        priorSearchDecisionExecution = searchDecisionExecution
                     )
-                    if (searchDecisionExecution?.usage != null) {
-                        emitToolAggregatedProviderStates(fallback, toolUsageRecords)
-                    } else {
-                        emitProviderStatesSkippingLoading(fallback)
-                    }
+                    emitToolAggregatedProviderStates(fallback, toolUsageRecords)
                 } else {
                     emit(ApiState.Error(round.errorMessage))
                     aggregateToolUsage(currentAnswerUsage = null, toolUsages = toolUsageRecords)?.let { usage ->
@@ -2498,20 +2452,22 @@ class ChatRepositoryImpl @Inject constructor(
             round.usage?.let { toolUsageRecords += it }
             hasToolInteraction = hasToolInteraction || googleNativeToolAdapter.hasToolCallIntent(round.responses)
             if (round.errorMessage != null) {
-                if (!hasToolInteraction && !round.networkFailure) {
-                    val fallback = completeChatWithGoogle(
-                        userMessages,
-                        assistantMessages,
-                        platform,
-                        memoryPrompt,
-                        reasoningMode,
-                        conversationSnapshot = conversationSnapshot
+                if (platform.toolCallStrategy == ToolCallStrategy.AUTO &&
+                    !hasToolInteraction &&
+                    !round.networkFailure &&
+                    round.errorMessage.isNativeToolRequestRejected()
+                ) {
+                    val fallback = completeChatWithToolLoopFallback(
+                        userMessages = userMessages,
+                        assistantMessages = assistantMessages,
+                        platform = platform,
+                        memoryPrompt = memoryPrompt,
+                        reasoningMode = reasoningMode,
+                        activeToolDefinitions = activeToolDefinitions,
+                        conversationSnapshot = conversationSnapshot,
+                        priorSearchDecisionExecution = searchDecisionExecution
                     )
-                    if (searchDecisionExecution?.usage != null) {
-                        emitToolAggregatedProviderStates(fallback, toolUsageRecords)
-                    } else {
-                        emitProviderStatesSkippingLoading(fallback)
-                    }
+                    emitToolAggregatedProviderStates(fallback, toolUsageRecords)
                 } else {
                     emit(ApiState.Error(round.errorMessage))
                     aggregateToolUsage(currentAnswerUsage = null, toolUsages = toolUsageRecords)?.let { usage ->
@@ -3091,7 +3047,7 @@ class ChatRepositoryImpl @Inject constructor(
         platform: PlatformV2,
         managed: ContextBuildResult?
     ): ConversationContext {
-        val policy = ProviderContextPolicy.forClientType(platform.compatibleType)
+        val policy = ProviderContextPolicy.forClientType(platform.requestClientType)
         val conversationContext = managed?.toConversationContext()
             ?: contextBuilder.buildContext(userMessages, assistantMessages, platform, policy)
         // No-op on the managed path, where `omittedTurns` is always empty and the memory trigger has
@@ -3169,7 +3125,7 @@ class ChatRepositoryImpl @Inject constructor(
         val chatRoomId = userMessages.lastOrNull()?.chatId ?: return null
         if (chatRoomId <= 0) return null
 
-        val policy = ProviderContextPolicy.forClientType(platform.compatibleType)
+        val policy = ProviderContextPolicy.forClientType(platform.requestClientType)
         val modelContextWindow = contextWindowResolver
             ?.let { resolver -> runCatching { resolver.resolve(platform) }.getOrNull() }
             ?: policy.fallbackModelContextWindow
@@ -3331,7 +3287,7 @@ class ChatRepositoryImpl @Inject constructor(
         contextTurns: List<ConversationTurn>,
         platform: PlatformV2
     ) {
-        val maxInlineBytes = ProviderContextPolicy.forClientType(platform.compatibleType).maxInlineAttachmentBytes ?: return
+        val maxInlineBytes = ProviderContextPolicy.forClientType(platform.requestClientType).maxInlineAttachmentBytes ?: return
         attachmentUploadCoordinator.validateInlineAttachmentBudget(contextTurns, maxInlineBytes)
     }
 
@@ -4472,13 +4428,13 @@ private const val OPENAI_FINISH_REASON_LENGTH = "length"
 
 private fun String.isNativeToolRequestRejected(): Boolean {
     val normalized = lowercase()
+    // Malformed tool definitions are configuration errors, not missing native tool support.
+    if (normalized.contains("schema") || normalized.contains("invalid value") || normalized.contains("invalid parameter")) return false
     val namesNativeToolField = normalized.contains("tool") ||
         normalized.contains("function_call") ||
         normalized.contains("function call")
     val indicatesUnsupportedField = normalized.contains("unsupported") ||
         normalized.contains("unknown parameter") ||
-        normalized.contains("invalid parameter") ||
-        normalized.contains("invalid value") ||
         normalized.contains("not support") ||
         normalized.contains("not supported") ||
         normalized.contains("not allowed")
@@ -4817,7 +4773,7 @@ private const val VISUAL_ASSET_CATALOG_LIMIT = 200
 
 internal fun PlatformV2.supportsVisualAssetInput(): Boolean {
     val normalizedModel = model.trim().lowercase()
-    return when (compatibleType) {
+    return when (requestClientType) {
         ClientType.OPENAI,
         ClientType.ANTHROPIC,
         ClientType.GOOGLE -> true
@@ -4836,6 +4792,7 @@ private val VISION_MODEL_MARKERS = listOf(
     "claude",
     "gpt-4o",
     "gpt-4.1",
+    "gpt-5",
     "o3",
     "o4",
     "llama-4",
@@ -5110,7 +5067,7 @@ private fun aggregateToolUsage(
     return answerUsage?.withToolAggregate(toolUsages)
 }
 
-private fun chatCompletionStreamOptionsFor(platform: PlatformV2): ChatCompletionStreamOptions? = when (platform.compatibleType) {
+private fun chatCompletionStreamOptionsFor(platform: PlatformV2): ChatCompletionStreamOptions? = when (platform.requestClientType) {
     ClientType.OPENAI,
     ClientType.OPENROUTER -> ChatCompletionStreamOptions()
     ClientType.GLM,

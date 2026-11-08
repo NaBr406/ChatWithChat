@@ -48,7 +48,7 @@ data class ProviderEndpoint(
 fun PlatformV2.providerEndpoint(chatId: Int? = null): ProviderEndpoint = ProviderEndpoint(
     token = token,
     apiUrl = apiUrl,
-    apiPathPrefix = "v1".takeUnless { compatibleType == ClientType.GLM }.orEmpty(),
+    apiPathPrefix = "v1".takeUnless { requestClientType == ClientType.GLM }.orEmpty(),
     isFullApiUrl = isFullApiUrl,
     customHeaders = customHeaders,
     // Platform UUIDs already survive restarts and isolate independently configured installations.

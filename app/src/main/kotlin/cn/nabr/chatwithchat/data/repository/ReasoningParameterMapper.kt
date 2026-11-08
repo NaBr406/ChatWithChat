@@ -20,7 +20,7 @@ internal fun mapReasoningMode(
     val mode = platform.coerceReasoningModeForModel(requestedMode)
     val effort = mode.toEffort()
 
-    return when (platform.compatibleType) {
+    return when (platform.requestClientType) {
         ClientType.OPENAI -> ReasoningRequestParameters(
             mode = mode,
             openAIEffort = effort.takeIf { capability.capability == ReasoningCapability.EFFORT }

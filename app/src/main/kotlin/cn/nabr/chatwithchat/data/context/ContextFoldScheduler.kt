@@ -59,7 +59,7 @@ class ContextFoldScheduler(
 
         // The native path folds server-side inside the ordinary request. Queuing an app-side fold for
         // it would produce a second, competing summary of the same turns.
-        if (NativeCompactionModelGate.supportsServerSideCompaction(platform.compatibleType, platform.model)) {
+        if (NativeCompactionModelGate.supportsServerSideCompaction(platform)) {
             return null
         }
 

@@ -6,16 +6,23 @@ import cn.nabr.chatwithchat.data.database.entity.ACTIVE_REVISION_LATEST
 import cn.nabr.chatwithchat.data.database.entity.AssistantRevision
 import cn.nabr.chatwithchat.data.database.entity.AssistantRevisionListConverter
 import cn.nabr.chatwithchat.data.database.entity.ChatAttachmentListConverter
-import cn.nabr.chatwithchat.data.model.ChatAttachment
-import cn.nabr.chatwithchat.data.model.ReasoningMode
 import cn.nabr.chatwithchat.data.history.CURRENT_PROJECTION_VERSION
 import cn.nabr.chatwithchat.data.history.HISTORY_BACKFILL_CHECKPOINT_ID
 import cn.nabr.chatwithchat.data.history.HISTORY_INDEX_STATE_ID
 import cn.nabr.chatwithchat.data.history.HistoryBackfillStatus
 import cn.nabr.chatwithchat.data.history.HistoryVectorStatus
+import cn.nabr.chatwithchat.data.model.ChatAttachment
+import cn.nabr.chatwithchat.data.model.ReasoningMode
 import java.io.File
 
 object ChatDatabaseV2Migrations {
+
+    val MIGRATION_29_30 = object : Migration(29, 30) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE platform_v2 ADD COLUMN api_protocol TEXT")
+            db.execSQL("ALTER TABLE platform_v2 ADD COLUMN tool_call_strategy TEXT NOT NULL DEFAULT 'AUTO'")
+        }
+    }
 
     val MIGRATION_28_29 = object : Migration(28, 29) {
         override fun migrate(db: SupportSQLiteDatabase) {

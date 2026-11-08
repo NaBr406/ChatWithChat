@@ -1,15 +1,17 @@
 package cn.nabr.chatwithchat.data.repository
 
+import cn.nabr.chatwithchat.data.ModelConstants
+import cn.nabr.chatwithchat.data.dto.APIModel
+import cn.nabr.chatwithchat.data.model.ClientType
+import cn.nabr.chatwithchat.data.network.NetworkClient
+import cn.nabr.chatwithchat.data.network.ProviderEndpoint
+import cn.nabr.chatwithchat.data.network.applyEndpointHeaders
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
 import io.ktor.client.request.prepareGet
 import io.ktor.http.isSuccess
-import cn.nabr.chatwithchat.data.ModelConstants
-import cn.nabr.chatwithchat.data.dto.APIModel
-import cn.nabr.chatwithchat.data.model.ClientType
-import cn.nabr.chatwithchat.data.network.NetworkClient
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
@@ -26,13 +28,14 @@ class ModelDiscoveryRepositoryImpl @Inject constructor(
     override suspend fun fetchModels(
         clientType: ClientType,
         apiUrl: String,
-        token: String?
+        token: String?,
+        customHeaders: String
     ): List<APIModel> = withContext(Dispatchers.IO) {
         val resolvedApiUrl = resolveApiUrl(clientType, apiUrl)
         require(resolvedApiUrl.isNotBlank()) { "api_url_required" }
 
         try {
-            fetchModelsForClient(clientType, resolvedApiUrl, token)
+            fetchModelsForClient(clientType, resolvedApiUrl, token, customHeaders)
                 .distinctBy { it.aliasValue }
                 .filter { it.aliasValue.isNotBlank() }
         } catch (e: Exception) {
@@ -43,21 +46,24 @@ class ModelDiscoveryRepositoryImpl @Inject constructor(
     private suspend fun fetchModelsForClient(
         clientType: ClientType,
         apiUrl: String,
-        token: String?
+        token: String?,
+        customHeaders: String
     ): List<APIModel> = when (clientType) {
-        ClientType.OPENAI, ClientType.GROQ, ClientType.OPENROUTER, ClientType.CUSTOM -> fetchOpenAICompatibleModels(apiUrl, token)
-        ClientType.GLM -> fetchOpenAICompatibleModels(apiUrl, token, pathPrefix = "")
-        ClientType.OLLAMA -> fetchOllamaModels(apiUrl, token)
-        ClientType.GOOGLE -> fetchGoogleModels(apiUrl, token)
-        ClientType.ANTHROPIC -> fetchAnthropicModels(apiUrl, token)
+        ClientType.OPENAI, ClientType.GROQ, ClientType.OPENROUTER, ClientType.CUSTOM -> fetchOpenAICompatibleModels(apiUrl, token, customHeaders = customHeaders)
+        ClientType.GLM -> fetchOpenAICompatibleModels(apiUrl, token, pathPrefix = "", customHeaders = customHeaders)
+        ClientType.OLLAMA -> fetchOllamaModels(apiUrl, token, customHeaders)
+        ClientType.GOOGLE -> fetchGoogleModels(apiUrl, token, customHeaders)
+        ClientType.ANTHROPIC -> fetchAnthropicModels(apiUrl, token, customHeaders)
     }
 
     private suspend fun fetchOpenAICompatibleModels(
         apiUrl: String,
         token: String?,
-        pathPrefix: String = "v1"
+        pathPrefix: String = "v1",
+        customHeaders: String
     ): List<APIModel> {
         val responseBody = networkClient().prepareGet(joinEndpoint(apiUrl, listOf(pathPrefix, "models").filter { it.isNotBlank() }.joinToString("/"))) {
+            applyEndpointHeaders(ProviderEndpoint(token = token, apiUrl = apiUrl, customHeaders = customHeaders))
             token?.takeIf { it.isNotBlank() }?.let { bearerAuth(it) }
             parameter("limit", MODEL_LIMIT)
         }.execute { response ->
@@ -77,19 +83,20 @@ class ModelDiscoveryRepositoryImpl @Inject constructor(
         }
     }
 
-    private suspend fun fetchOllamaModels(apiUrl: String, token: String?): List<APIModel> {
-        val tagsModels = runCatching { fetchOllamaTags(apiUrl, token) }.getOrDefault(emptyList())
+    private suspend fun fetchOllamaModels(apiUrl: String, token: String?, customHeaders: String): List<APIModel> {
+        val tagsModels = runCatching { fetchOllamaTags(apiUrl, token, customHeaders) }.getOrDefault(emptyList())
         if (tagsModels.isNotEmpty()) return tagsModels
 
         // Ollama reports the model's architectural limit, not the num_ctx the server actually
         // allocates (default 4096). The OpenAI-compatible endpoint cannot pass num_ctx, so any
         // window we read here would make us confidently overflow and be silently truncated
         // server-side. Discard it and let ContextWindowResolver use the conservative fallback.
-        return fetchOpenAICompatibleModels(apiUrl, token).map { it.copy(contextWindow = null) }
+        return fetchOpenAICompatibleModels(apiUrl, token, customHeaders = customHeaders).map { it.copy(contextWindow = null) }
     }
 
-    private suspend fun fetchOllamaTags(apiUrl: String, token: String?): List<APIModel> {
+    private suspend fun fetchOllamaTags(apiUrl: String, token: String?, customHeaders: String): List<APIModel> {
         val responseBody = networkClient().prepareGet(joinEndpoint(apiUrl, "api/tags")) {
+            applyEndpointHeaders(ProviderEndpoint(token = token, apiUrl = apiUrl, customHeaders = customHeaders))
             token?.takeIf { it.isNotBlank() }?.let { bearerAuth(it) }
         }.execute { response ->
             if (!response.status.isSuccess()) {
@@ -107,8 +114,9 @@ class ModelDiscoveryRepositoryImpl @Inject constructor(
         }
     }
 
-    private suspend fun fetchGoogleModels(apiUrl: String, token: String?): List<APIModel> {
+    private suspend fun fetchGoogleModels(apiUrl: String, token: String?, customHeaders: String): List<APIModel> {
         val responseBody = networkClient().prepareGet(joinEndpoint(apiUrl, "v1beta/models")) {
+            applyEndpointHeaders(ProviderEndpoint(token = token, apiUrl = apiUrl, customHeaders = customHeaders))
             token?.takeIf { it.isNotBlank() }?.let { parameter("key", it) }
         }.execute { response ->
             if (!response.status.isSuccess()) {
@@ -130,9 +138,10 @@ class ModelDiscoveryRepositoryImpl @Inject constructor(
             }
     }
 
-    private suspend fun fetchAnthropicModels(apiUrl: String, token: String?): List<APIModel> {
+    private suspend fun fetchAnthropicModels(apiUrl: String, token: String?, customHeaders: String): List<APIModel> {
         val responseBody = networkClient().prepareGet(joinEndpoint(apiUrl, "v1/models")) {
             header(ANTHROPIC_VERSION_HEADER, ANTHROPIC_VERSION)
+            applyEndpointHeaders(ProviderEndpoint(token = token, apiUrl = apiUrl, customHeaders = customHeaders))
             token?.takeIf { it.isNotBlank() }?.let { header(ANTHROPIC_API_KEY_HEADER, it) }
             parameter("limit", MODEL_LIMIT)
         }.execute { response ->

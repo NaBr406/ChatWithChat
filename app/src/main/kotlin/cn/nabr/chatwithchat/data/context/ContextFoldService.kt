@@ -98,7 +98,7 @@ class ContextFoldService(
 
         // A model that folds server-side must never receive the app-side prompt. Reaching this with
         // one queued means the gate changed under us — a stale job, not a condition to retry.
-        if (NativeCompactionModelGate.supportsServerSideCompaction(platform.compatibleType, platform.model)) {
+        if (NativeCompactionModelGate.supportsServerSideCompaction(platform)) {
             return dismiss(job, "context_fold_native_path_required", payload)
         }
 
@@ -122,7 +122,7 @@ class ContextFoldService(
 
         val budget = ContextBudget.of(
             modelContextWindow = contextWindowResolver.resolve(platform),
-            policy = ProviderContextPolicy.forClientType(platform.compatibleType)
+            policy = ProviderContextPolicy.forClientType(platform.requestClientType)
         )
         val outcome = try {
             compactionService.compact(

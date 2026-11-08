@@ -62,15 +62,15 @@ class ChatTitleGenerationServiceTest {
         val service = ChatTitleGenerationService(client)
 
         listOf(
-            platform(token = null),
-            platform(token = "  "),
+            platform(clientType = ClientType.ANTHROPIC, token = null),
+            platform(clientType = ClientType.ANTHROPIC, token = "  "),
             platform(model = ""),
             platform(apiUrl = "")
         ).forEach { unusable ->
             assertNull(service.generateTitle(unusable, turns()))
         }
 
-        // Ollama, the one provider that legitimately has no token, is covered above.
+        // Tokenless Chat Completions services are covered separately.
         assertEquals(0, client.calls.size)
     }
 

@@ -426,7 +426,7 @@ class LlmMemoryIntelligence @Inject constructor(
         }
 
         val effectiveSystemPrompt = memorySystemPrompt(systemPrompt)
-        return when (platform.compatibleType) {
+        return when (platform.requestClientType) {
             ClientType.OPENAI -> requestResponsesJson(operation, platform, effectiveSystemPrompt, userJson)
             ClientType.ANTHROPIC -> requestAnthropicJson(operation, platform, effectiveSystemPrompt, userJson)
             ClientType.GOOGLE -> requestGoogleJson(operation, platform, effectiveSystemPrompt, userJson)
@@ -463,7 +463,7 @@ class LlmMemoryIntelligence @Inject constructor(
         userJson: String
     ): MemoryModelCallResponse {
         val timeoutSeconds = platform.memoryTimeoutSeconds(operation)
-        val useOpenAiReasoningParameters = platform.reasoning && platform.compatibleType == ClientType.OPENAI
+        val useOpenAiReasoningParameters = platform.reasoning && platform.requestClientType == ClientType.OPENAI
         val thinking = ChatCompletionThinkingConfig(type = "disabled")
             .takeIf { platform.usesOfficialDeepSeekApi() }
         // OpenCode accepts reasoning_effort=none; its gateway can ignore DeepSeek's thinking field.
@@ -823,10 +823,10 @@ class LlmMemoryIntelligence @Inject constructor(
         }
     }
 
-    private fun PlatformV2.requiresToken(): Boolean = compatibleType != ClientType.OLLAMA
+    private fun PlatformV2.requiresToken(): Boolean = !acceptsOptionalApiKey
 
     private fun PlatformV2.usesOpenCodeDeepSeekV4Api(): Boolean {
-        if (compatibleType != ClientType.CUSTOM || !model.startsWith("deepseek-v4", ignoreCase = true)) return false
+        if (requestClientType != ClientType.CUSTOM || !model.startsWith("deepseek-v4", ignoreCase = true)) return false
         return runCatching { URI(apiUrl.trim()).host.equals("opencode.ai", ignoreCase = true) }
             .getOrDefault(false)
     }
@@ -922,7 +922,7 @@ class LlmMemoryIntelligence @Inject constructor(
         uid.isNotBlank() &&
         model.isNotBlank() &&
         apiUrl.isNotBlank() &&
-        compatibleType in setOf(
+        requestClientType in setOf(
             ClientType.OPENAI,
             ClientType.ANTHROPIC,
             ClientType.GOOGLE,
