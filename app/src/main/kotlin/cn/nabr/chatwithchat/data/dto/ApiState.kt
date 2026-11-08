@@ -14,6 +14,9 @@ sealed class ApiState {
     data class SourcesUpdated(val sources: List<MessageSourceMetadata>) : ApiState()
     data class StickerAdded(val sticker: MessageStickerRef) : ApiState()
     data class UsageUpdated(val usage: TokenUsageRecord) : ApiState()
+
+    /** Internal signal consumed by the request continuation loop, never a successful completion. */
+    data object OutputTruncated : ApiState()
     data class ToolStarted(val toolName: String, val label: String) : ApiState()
     data class ToolFinished(val toolName: String, val label: String) : ApiState()
     data class ToolFailed(

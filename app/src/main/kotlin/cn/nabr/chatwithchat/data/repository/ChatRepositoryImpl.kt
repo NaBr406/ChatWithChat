@@ -102,6 +102,7 @@ import cn.nabr.chatwithchat.data.dto.openai.response.ReasoningSummaryTextDeltaEv
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponseCompletedEvent
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponseErrorEvent
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponseFailedEvent
+import cn.nabr.chatwithchat.data.dto.openai.response.ResponseIncompleteEvent
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponsesStreamEvent
 import cn.nabr.chatwithchat.data.history.ChatHistoryIndexCoordinator
 import cn.nabr.chatwithchat.data.memory.MemoryTurnBatchScheduler
@@ -1371,8 +1372,24 @@ class ChatRepositoryImpl @Inject constructor(
         traceContext: PromptTraceContext,
         traceStage: String,
         config: ToolLoopConfig
-    ): OpenAIResponsesNativeRound = withChatNetworkReconnect { isFinalAttempt ->
-        collectOpenAIResponsesNativeRoundAttempt(request, timeoutSeconds, platform, label, traceContext, traceStage, config, isFinalAttempt)
+    ): OpenAIResponsesNativeRound {
+        val continued = withOutputContinuation(
+            initialRequest = request,
+            nextRequest = { initial, text, _ -> initial.continueOutput(text) }
+        ) { currentRequest ->
+            val round = withChatNetworkReconnect { isFinalAttempt ->
+                collectOpenAIResponsesNativeRoundAttempt(currentRequest, timeoutSeconds, platform, label, traceContext, traceStage, config, isFinalAttempt)
+            }
+            OutputContinuationRound(
+                value = round,
+                truncated = round.lostToolCallEvidence.outputTruncated,
+                usage = round.usage,
+                errorMessage = round.errorMessage,
+                hasToolCalls = openAIResponsesToolAdapter.hasToolCallIntent(round.events) ||
+                    round.lostToolCallEvidence.leakedMarkup
+            )
+        }
+        return continued.value.copy(usage = continued.usage, errorMessage = continued.errorMessage)
     }
 
     private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.collectOpenAIResponsesNativeRoundAttempt(
@@ -1428,6 +1445,12 @@ class ChatRepositoryImpl @Inject constructor(
                                 markupFilter = markupFilter,
                                 outputText = outputText
                             )
+                        }
+                    }
+
+                    is ResponseIncompleteEvent -> {
+                        if (event.response.incompleteDetails?.reason != "max_output_tokens") {
+                            errorMessage = "响应未完成：${event.response.incompleteDetails?.reason ?: "unknown"}"
                         }
                     }
 
@@ -1775,8 +1798,24 @@ class ChatRepositoryImpl @Inject constructor(
         traceContext: PromptTraceContext,
         traceStage: String,
         config: ToolLoopConfig
-    ): OpenAIChatCompletionsNativeRound = withChatNetworkReconnect { isFinalAttempt ->
-        collectOpenAIChatCompletionsNativeRoundAttempt(request, timeoutSeconds, platform, label, traceContext, traceStage, config, isFinalAttempt)
+    ): OpenAIChatCompletionsNativeRound {
+        val continued = withOutputContinuation(
+            initialRequest = request,
+            nextRequest = { initial, text, thoughts -> initial.continueOutput(text, thoughts) }
+        ) { currentRequest ->
+            val round = withChatNetworkReconnect { isFinalAttempt ->
+                collectOpenAIChatCompletionsNativeRoundAttempt(currentRequest, timeoutSeconds, platform, label, traceContext, traceStage, config, isFinalAttempt)
+            }
+            OutputContinuationRound(
+                value = round,
+                truncated = round.lostToolCallEvidence.outputTruncated,
+                usage = round.usage,
+                errorMessage = round.errorMessage,
+                hasToolCalls = openAIChatCompletionsToolAdapter.hasToolCallIntent(round.chunks) ||
+                    round.lostToolCallEvidence.leakedMarkup
+            )
+        }
+        return continued.value.copy(usage = continued.usage, errorMessage = continued.errorMessage)
     }
 
     private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.collectOpenAIChatCompletionsNativeRoundAttempt(
@@ -2208,8 +2247,24 @@ class ChatRepositoryImpl @Inject constructor(
         traceContext: PromptTraceContext,
         traceStage: String,
         config: ToolLoopConfig
-    ): AnthropicNativeRound = withChatNetworkReconnect { isFinalAttempt ->
-        collectAnthropicNativeRoundAttempt(request, timeoutSeconds, platform, label, traceContext, traceStage, config, isFinalAttempt)
+    ): AnthropicNativeRound {
+        val continued = withOutputContinuation(
+            initialRequest = request,
+            nextRequest = { initial, text, _ -> initial.continueOutput(text) }
+        ) { currentRequest ->
+            val round = withChatNetworkReconnect { isFinalAttempt ->
+                collectAnthropicNativeRoundAttempt(currentRequest, timeoutSeconds, platform, label, traceContext, traceStage, config, isFinalAttempt)
+            }
+            OutputContinuationRound(
+                value = round,
+                truncated = round.lostToolCallEvidence.outputTruncated,
+                usage = round.usage,
+                errorMessage = round.errorMessage,
+                hasToolCalls = anthropicNativeToolAdapter.hasToolCallIntent(round.chunks) ||
+                    round.lostToolCallEvidence.leakedMarkup
+            )
+        }
+        return continued.value.copy(usage = continued.usage, errorMessage = continued.errorMessage)
     }
 
     private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.collectAnthropicNativeRoundAttempt(
@@ -2600,8 +2655,24 @@ class ChatRepositoryImpl @Inject constructor(
         traceContext: PromptTraceContext,
         traceStage: String,
         config: ToolLoopConfig
-    ): GoogleNativeRound = withChatNetworkReconnect { isFinalAttempt ->
-        collectGoogleNativeRoundAttempt(request, model, timeoutSeconds, platform, label, traceContext, traceStage, config, isFinalAttempt)
+    ): GoogleNativeRound {
+        val continued = withOutputContinuation(
+            initialRequest = request,
+            nextRequest = { initial, text, _ -> initial.continueOutput(text) }
+        ) { currentRequest ->
+            val round = withChatNetworkReconnect { isFinalAttempt ->
+                collectGoogleNativeRoundAttempt(currentRequest, model, timeoutSeconds, platform, label, traceContext, traceStage, config, isFinalAttempt)
+            }
+            OutputContinuationRound(
+                value = round,
+                truncated = round.lostToolCallEvidence.outputTruncated,
+                usage = round.usage,
+                errorMessage = round.errorMessage,
+                hasToolCalls = googleNativeToolAdapter.hasToolCallIntent(round.responses) ||
+                    round.lostToolCallEvidence.leakedMarkup
+            )
+        }
+        return continued.value.copy(usage = continued.usage, errorMessage = continued.errorMessage)
     }
 
     private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.collectGoogleNativeRoundAttempt(
@@ -2780,6 +2851,13 @@ class ChatRepositoryImpl @Inject constructor(
                                 }
                             }
 
+                            is ResponseIncompleteEvent -> {
+                                if (event.response.incompleteDetails?.reason != "max_output_tokens") {
+                                    streamFailed = true
+                                    emit(ApiState.Error("响应未完成：${event.response.incompleteDetails?.reason ?: "unknown"}"))
+                                }
+                            }
+
                             is ResponseFailedEvent -> {
                                 streamFailed = true
                                 val errorMessage = event.response.error?.message ?: "响应失败"
@@ -2794,6 +2872,7 @@ class ChatRepositoryImpl @Inject constructor(
                             else -> {}
                         }
                     }
+                    if (events.hasIncompleteResponseStatus()) emit(ApiState.OutputTruncated)
                     val usage = openAIResponsesUsageFromEvents(
                         events = events,
                         request = prepared.request,
@@ -2806,12 +2885,15 @@ class ChatRepositoryImpl @Inject constructor(
                     // failed would describe a context the model never actually answered from.
                     nativeExchange?.let { exchange ->
                         exchange.recordRound(events)
-                        if (streamFailed) exchange.abandon() else exchange.commit()
+                        if (streamFailed || events.hasIncompleteResponseStatus()) exchange.abandon() else exchange.commit()
                     }
                     if (outputText.isNotBlank() || !usage.isEstimated || emitEstimatedUsageWithoutOutput) {
                         emit(ApiState.UsageUpdated(usage))
                     }
                 }
+            },
+            continueRequest = { initial, text, _ ->
+                initial.copy(request = initial.request.continueOutput(text))
             },
             sourceMetadata = { it.sources }
         ).catch { e ->
@@ -2901,6 +2983,7 @@ class ChatRepositoryImpl @Inject constructor(
                         }
                         emit(state)
                     }
+                    if (chunks.any { chunk -> chunk.choices.orEmpty().any { it.finishReason == "length" } }) emit(ApiState.OutputTruncated)
                     val usage = groqUsageFromChunks(
                         chunks = chunks,
                         request = prepared.request,
@@ -2912,6 +2995,9 @@ class ChatRepositoryImpl @Inject constructor(
                         emit(ApiState.UsageUpdated(usage))
                     }
                 }
+            },
+            continueRequest = { initial, text, thoughts ->
+                initial.copy(request = initial.request.continueOutput(text, thoughts))
             },
             sourceMetadata = { it.sources }
         ).catch { e ->
@@ -3018,6 +3104,7 @@ class ChatRepositoryImpl @Inject constructor(
                         }
                         emit(state)
                     }
+                    if (chunks.hasFinishReason(OPENAI_FINISH_REASON_LENGTH)) emit(ApiState.OutputTruncated)
                     val usage = openAIChatUsageFromChunks(
                         chunks = chunks,
                         request = prepared.request,
@@ -3029,6 +3116,9 @@ class ChatRepositoryImpl @Inject constructor(
                         emit(ApiState.UsageUpdated(usage))
                     }
                 }
+            },
+            continueRequest = { initial, text, thoughts ->
+                initial.copy(request = initial.request.continueOutput(text, thoughts))
             },
             sourceMetadata = { it.sources }
         ).catch { e ->
@@ -3561,6 +3651,7 @@ class ChatRepositoryImpl @Inject constructor(
                             else -> {}
                         }
                     }
+                    if (chunks.hasStopReason(StopReason.MAX_TOKENS)) emit(ApiState.OutputTruncated)
                     val usage = anthropicUsageFromChunks(
                         chunks = chunks,
                         request = prepared.request,
@@ -3572,6 +3663,9 @@ class ChatRepositoryImpl @Inject constructor(
                         emit(ApiState.UsageUpdated(usage))
                     }
                 }
+            },
+            continueRequest = { initial, text, _ ->
+                initial.copy(request = initial.request.continueOutput(text))
             },
             sourceMetadata = { it.sources }
         ).catch { e ->
@@ -3707,6 +3801,7 @@ class ChatRepositoryImpl @Inject constructor(
                             }
                         }
                     }
+                    if (responses.hasCandidateFinishReason(GOOGLE_FINISH_REASON_MAX_TOKENS)) emit(ApiState.OutputTruncated)
                     val usage = googleUsageFromResponses(
                         responses = responses,
                         request = prepared.request,
@@ -3718,6 +3813,9 @@ class ChatRepositoryImpl @Inject constructor(
                         emit(ApiState.UsageUpdated(usage))
                     }
                 }
+            },
+            continueRequest = { initial, text, _ ->
+                initial.copy(request = initial.request.continueOutput(text))
             },
             sourceMetadata = { it.sources }
         ).catch { e ->
@@ -4353,18 +4451,15 @@ private fun List<ResponsesStreamEvent>.hasFunctionCallOutputItem(): Boolean = an
     event is OutputItemDoneEvent && event.item.type == OPENAI_FUNCTION_CALL_TYPE
 }
 
-/**
- * Whether the response finished in any state other than `completed` — which is how a truncated response
- * reports itself, when it reports at all. `response.incomplete` is not modelled as its own event, so this is
- * best-effort: the leaked-markup signal is what carries this case for providers that stay silent.
- */
+/** Only an explicit output-token limit is eligible for automatic continuation. */
 private fun List<ResponsesStreamEvent>.hasIncompleteResponseStatus(): Boolean = any { event ->
-    event is ResponseCompletedEvent &&
-        !event.response.status.isNullOrBlank() &&
-        !event.response.status.equals(OPENAI_RESPONSE_STATUS_COMPLETED, ignoreCase = true)
+    val response = when (event) {
+        is ResponseIncompleteEvent -> event.response
+        is ResponseCompletedEvent -> event.response
+        else -> null
+    }
+    response?.incompleteDetails?.reason == "max_output_tokens"
 }
-
-private const val OPENAI_RESPONSE_STATUS_COMPLETED = "completed"
 
 private data class OpenAIChatCompletionsNativeToolRequest(
     val model: String,
@@ -4863,15 +4958,40 @@ internal fun validateResponseInputPartsOrThrow(messageContent: String, partCount
 internal fun <T> streamPreparedApiState(
     prepare: suspend () -> T,
     stream: suspend (T) -> Flow<ApiState>,
-    sourceMetadata: (T) -> List<MessageSourceMetadata> = { emptyList() }
+    sourceMetadata: (T) -> List<MessageSourceMetadata> = { emptyList() },
+    continueRequest: ((T, String, String) -> T)? = null
 ): Flow<ApiState> = flow {
     emit(ApiState.Loading)
     val preparedRequest = withContext(Dispatchers.Default) { prepare() }
     sourceMetadata(preparedRequest).dedupeMessageSources().takeIf { it.isNotEmpty() }?.let { sources ->
         emit(ApiState.SourcesUpdated(sources))
     }
-    withChatNetworkReconnect {
-        emitAll(stream(preparedRequest))
+    if (continueRequest == null) {
+        withChatNetworkReconnect { emitAll(stream(preparedRequest)) }
+    } else {
+        var providerErrorEmitted = false
+        val result = withOutputContinuation(preparedRequest, continueRequest) { request ->
+            withChatNetworkReconnect {
+                var truncated = false
+                var usage: TokenUsageRecord? = null
+                var error: String? = null
+                stream(request).collect { state ->
+                    when (state) {
+                        ApiState.OutputTruncated -> truncated = true
+                        is ApiState.UsageUpdated -> usage = state.usage
+                        is ApiState.Error -> {
+                            error = state.message
+                            providerErrorEmitted = true
+                            emit(state)
+                        }
+                        else -> emit(state)
+                    }
+                }
+                OutputContinuationRound(Unit, truncated, usage, error)
+            }
+        }
+        result.usage?.let { emit(ApiState.UsageUpdated(it)) }
+        if (!providerErrorEmitted) result.errorMessage?.let { emit(ApiState.Error(it)) }
     }
 }
 
@@ -4904,6 +5024,7 @@ private fun openAIResponsesUsageFromEvents(
         when (event) {
             is ResponseCompletedEvent -> event.response.usage
             is ResponseFailedEvent -> event.response.usage
+            is ResponseIncompleteEvent -> event.response.usage
             else -> null
         }
     },
