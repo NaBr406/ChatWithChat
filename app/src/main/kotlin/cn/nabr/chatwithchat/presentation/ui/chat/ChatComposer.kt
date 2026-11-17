@@ -429,7 +429,7 @@ fun ChatComposer(
                             modifier = Modifier
                                 .matchParentSize()
                                 .graphicsLayer { alpha = 1f - composerExpansion.value.coerceIn(0f, 1f) }
-                                .composerGlass(backdrop, CircleShape)
+                                .composerGlass(backdrop?.let { LocalChatCompactGlassBackdrop.current ?: it }, CircleShape)
                         )
                         Box(
                             modifier = Modifier

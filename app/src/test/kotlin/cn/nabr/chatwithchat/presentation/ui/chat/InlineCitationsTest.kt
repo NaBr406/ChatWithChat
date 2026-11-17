@@ -127,6 +127,9 @@ class InlineCitationsTest {
         assertEquals("Growth was 5% ", "Growth was 5% [Reuters]".withoutTrailingPartialLink())
         assertEquals("Done [Reuters](https://reuters.com).", "Done [Reuters](https://reuters.com).".withoutTrailingPartialLink())
         assertEquals("an array [i", "an array [i".withoutTrailingPartialLink())
+        assertEquals("Line one\nSee ", "Line one\nSee [Reuters](https://reu".withoutTrailingPartialLink())
+        assertEquals("See ", "See [Reuters]\n".withoutTrailingPartialLink())
+        assertEquals("val x = arr[0]\nval y = 1", "val x = arr[0]\nval y = 1".withoutTrailingPartialLink())
     }
 
     @Test

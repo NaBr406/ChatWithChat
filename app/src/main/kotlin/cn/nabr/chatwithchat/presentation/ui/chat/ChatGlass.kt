@@ -16,6 +16,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -50,6 +51,14 @@ internal data class ChatGlassContext(
 )
 
 internal val LocalChatGlass = staticCompositionLocalOf<ChatGlassContext?> { null }
+
+/**
+ * What the small round glass buttons sample. Each one is its own offscreen layer that replays the whole
+ * recorded chat subtree whenever it changes, so during generation, when the list changes on every frame,
+ * three 40dp circles cost the render thread more than the composer bar does. A dynamic local, so
+ * switching it at the start and end of a generation recomposes only these buttons.
+ */
+internal val LocalChatCompactGlassBackdrop = compositionLocalOf<Backdrop?> { null }
 
 @Composable
 internal fun Modifier.chatTopBarBackground(): Modifier {
@@ -95,10 +104,12 @@ internal fun ChatGlassScope(
     backdrop: LayerBackdrop = rememberLayerBackdrop(),
     enabled: Boolean = true,
     captureLiveContent: Boolean = true,
+    liveCompactSurfaces: Boolean = true,
     content: @Composable () -> Unit
 ) {
     val glassActive = enabled && rememberDeviceSupportsChatGlass()
-    val ambientBackdrop = if (captureLiveContent) null else rememberAmbientChatBackdrop()
+    val ambient = rememberAmbientChatBackdrop()
+    val ambientBackdrop = if (captureLiveContent) null else ambient
     var windowOrigin by remember { mutableStateOf(Offset.Zero) }
     Box(
         modifier = Modifier.onGloballyPositioned {
@@ -114,7 +125,10 @@ internal fun ChatGlassScope(
         } else {
             null
         }
-        CompositionLocalProvider(LocalChatGlass provides context) {
+        CompositionLocalProvider(
+            LocalChatGlass provides context,
+            LocalChatCompactGlassBackdrop provides context?.let { if (liveCompactSurfaces) it.backdrop else ambient }
+        ) {
             content()
         }
     }
@@ -131,6 +145,17 @@ internal fun Modifier.chatSelectionGlass(shape: Shape): Modifier {
                 backdrop
             }
         }
+    }
+    return composerGlass(backdrop, shape)
+}
+
+/** Glass for small round buttons: samples [LocalChatCompactGlassBackdrop] instead of the live chat. */
+@Composable
+internal fun Modifier.chatCompactGlass(shape: Shape): Modifier {
+    val windowOrigin = LocalChatGlass.current?.windowOrigin ?: Offset.Zero
+    val source = LocalChatCompactGlassBackdrop.current
+    val backdrop = remember(source, windowOrigin) {
+        source?.let { if (it.isCoordinatesDependent) WindowAlignedBackdrop(it, windowOrigin) else it }
     }
     return composerGlass(backdrop, shape)
 }
@@ -210,7 +235,7 @@ internal fun ChatGlassIconButton(
     content: @Composable () -> Unit
 ) {
     Box(modifier = Modifier.size(48.dp), contentAlignment = Alignment.Center) {
-        Box(modifier = Modifier.size(40.dp).chatSelectionGlass(CircleShape))
+        Box(modifier = Modifier.size(40.dp).chatCompactGlass(CircleShape))
         IconButton(onClick = onClick, modifier = Modifier.size(48.dp), content = content)
     }
 }

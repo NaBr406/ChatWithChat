@@ -204,7 +204,9 @@ fun ChatScreen(
     // Resolve before composing any child WebView, including one in an older turn. A false result
     // switches the sampling source to the ambient canvas; it does not disable the glass surfaces.
     val captureLiveGlass = glassPolicy.shouldCaptureLiveContent(groupedMessages.assistantMessages, indexStates)
-    ChatGlassScope(captureLiveContent = captureLiveGlass) {
+    // While generating, the list changes on every frame and each glass surface re-renders the whole chat
+    // behind it. The small round buttons then sample the ambient canvas; the composer bar stays live.
+    ChatGlassScope(captureLiveContent = captureLiveGlass, liveCompactSurfaces = isIdle) {
         ChatContent(
             title = chatRoom.title,
             currentModelLabel = currentModelLabel,
