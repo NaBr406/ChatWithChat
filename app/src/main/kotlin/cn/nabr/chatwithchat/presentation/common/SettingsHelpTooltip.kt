@@ -13,6 +13,9 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -35,6 +38,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.layout.boundsInWindow
@@ -227,3 +231,36 @@ private val HELP_BUBBLE_MAX_HEIGHT = 260.dp
 private val HELP_BUBBLE_MIN_COMFORTABLE_HEIGHT = 120.dp
 private val HELP_BUBBLE_WINDOW_MARGIN = 12.dp
 private val HELP_BUBBLE_GAP = 4.dp
+
+/**
+ * Title shown above a settings field in place of a floating label. When [helpText] is set, a help
+ * icon sits right after the title and shows the explanation in a bubble instead of a subtitle.
+ */
+@Composable
+fun SettingsFieldTitle(
+    title: String,
+    modifier: Modifier = Modifier,
+    helpText: String? = null,
+    trailing: (@Composable () -> Unit)? = null
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 32.dp)
+            .padding(start = 4.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelLarge,
+            color = settingsMaterialColors().secondaryLabel
+        )
+        if (helpText != null) {
+            SettingsHelpTooltipIcon(helpText = helpText)
+        }
+        if (trailing != null) {
+            Spacer(modifier = Modifier.weight(1f))
+            trailing()
+        }
+    }
+}

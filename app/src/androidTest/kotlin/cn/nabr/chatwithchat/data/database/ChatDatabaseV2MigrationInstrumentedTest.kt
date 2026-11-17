@@ -170,7 +170,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 ChatDatabaseV2Migrations.MIGRATION_25_26,
                 ChatDatabaseV2Migrations.MIGRATION_26_27,
                 ChatDatabaseV2Migrations.MIGRATION_27_28,
-                ChatDatabaseV2Migrations.MIGRATION_28_29
+                ChatDatabaseV2Migrations.MIGRATION_28_29,
+                ChatDatabaseV2Migrations.MIGRATION_29_30
             )
             .addCallback(ChatHistoryDatabaseCallback())
             .build()
@@ -297,7 +298,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 ChatDatabaseV2Migrations.MIGRATION_25_26,
                 ChatDatabaseV2Migrations.MIGRATION_26_27,
                 ChatDatabaseV2Migrations.MIGRATION_27_28,
-                ChatDatabaseV2Migrations.MIGRATION_28_29
+                ChatDatabaseV2Migrations.MIGRATION_28_29,
+                ChatDatabaseV2Migrations.MIGRATION_29_30
             )
             .addCallback(ChatHistoryDatabaseCallback())
             .build()
@@ -497,7 +499,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 ChatDatabaseV2Migrations.MIGRATION_25_26,
                 ChatDatabaseV2Migrations.MIGRATION_26_27,
                 ChatDatabaseV2Migrations.MIGRATION_27_28,
-                ChatDatabaseV2Migrations.MIGRATION_28_29
+                ChatDatabaseV2Migrations.MIGRATION_28_29,
+                ChatDatabaseV2Migrations.MIGRATION_29_30
             )
             .addCallback(ChatHistoryDatabaseCallback())
             .build()
@@ -782,7 +785,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 ChatDatabaseV2Migrations.MIGRATION_25_26,
                 ChatDatabaseV2Migrations.MIGRATION_26_27,
                 ChatDatabaseV2Migrations.MIGRATION_27_28,
-                ChatDatabaseV2Migrations.MIGRATION_28_29
+                ChatDatabaseV2Migrations.MIGRATION_28_29,
+                ChatDatabaseV2Migrations.MIGRATION_29_30
             )
             .build()
         try {
@@ -937,7 +941,8 @@ class ChatDatabaseV2MigrationInstrumentedTest {
                 ChatDatabaseV2Migrations.MIGRATION_25_26,
                 ChatDatabaseV2Migrations.MIGRATION_26_27,
                 ChatDatabaseV2Migrations.MIGRATION_27_28,
-                ChatDatabaseV2Migrations.MIGRATION_28_29
+                ChatDatabaseV2Migrations.MIGRATION_28_29,
+                ChatDatabaseV2Migrations.MIGRATION_29_30
             )
             .addCallback(ChatHistoryDatabaseCallback())
             .build()
@@ -1166,6 +1171,55 @@ class ChatDatabaseV2MigrationInstrumentedTest {
     }
 
     @Test
+    fun migration29To30_preservesProviderIdentityAndUsesLegacyProtocol() {
+        migrationHelper.createDatabase(TEST_DATABASE, 29).apply {
+            execSQL(
+                """
+                INSERT INTO platform_v2 (
+                    platform_id, uid, name, compatible_type, enabled, api_url, token, model,
+                    stream, reasoning, timeout, model_refresh_status, is_full_api_url, custom_headers
+                ) VALUES (
+                    42, 'legacy-custom', 'My gateway', 'CUSTOM', 1,
+                    'https://opencode.ai/zen/go/v1', 'key', 'deepseek-v4-pro',
+                    1, 0, 30, 'success', 0, 'x-custom: retained'
+                )
+                """.trimIndent()
+            )
+            close()
+        }
+        migrationHelper.runMigrationsAndValidate(
+            TEST_DATABASE,
+            30,
+            true,
+            ChatDatabaseV2Migrations.MIGRATION_29_30
+        ).use { database ->
+            assertEquals(42L, database.singleLong("SELECT platform_id FROM platform_v2"))
+            assertEquals("legacy-custom", database.singleString("SELECT uid FROM platform_v2"))
+            assertEquals("CUSTOM", database.singleString("SELECT compatible_type FROM platform_v2"))
+            assertEquals("AUTO", database.singleString("SELECT tool_call_strategy FROM platform_v2"))
+            assertEquals(1L, database.singleLong("SELECT api_protocol IS NULL FROM platform_v2"))
+            assertEquals("x-custom: retained", database.singleString("SELECT custom_headers FROM platform_v2"))
+            assertEquals("ok", database.singleString("PRAGMA integrity_check"))
+        }
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val database = Room.databaseBuilder(context, ChatDatabaseV2::class.java, TEST_DATABASE).build()
+        try {
+            runBlocking {
+                val platform = database.platformDao().getPlatforms().single()
+                assertEquals(cn.nabr.chatwithchat.data.model.ApiProtocol.OPENAI_CHAT_COMPLETIONS, platform.resolvedApiProtocol)
+                val updated = platform.copy(
+                    apiProtocol = cn.nabr.chatwithchat.data.model.ApiProtocol.OPENAI_RESPONSES,
+                    toolCallStrategy = cn.nabr.chatwithchat.data.model.ToolCallStrategy.NATIVE
+                )
+                database.platformDao().editPlatform(updated)
+                assertEquals(updated, database.platformDao().getPlatforms().single())
+            }
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
     fun migration27To28_preservesPlatformsAndDefaultsToBaseUrl() {
         migrationHelper.createDatabase(TEST_DATABASE, 27).apply {
             execSQL(
@@ -1183,10 +1237,11 @@ class ChatDatabaseV2MigrationInstrumentedTest {
         }
         migrationHelper.runMigrationsAndValidate(
             TEST_DATABASE,
-            29,
+            30,
             true,
             ChatDatabaseV2Migrations.MIGRATION_27_28,
-            ChatDatabaseV2Migrations.MIGRATION_28_29
+            ChatDatabaseV2Migrations.MIGRATION_28_29,
+            ChatDatabaseV2Migrations.MIGRATION_29_30
         ).use { database ->
             assertEquals(0L, database.singleLong("SELECT is_full_api_url FROM platform_v2 WHERE uid = 'provider-full-url'"))
             assertEquals("", database.singleString("SELECT custom_headers FROM platform_v2 WHERE uid = 'provider-full-url'"))

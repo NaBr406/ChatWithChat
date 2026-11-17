@@ -132,7 +132,7 @@ internal class ContextTokenCounter private constructor(
         }.getOrNull()
 
         private fun fallbackEncoding(platform: PlatformV2): Encoding? {
-            val encodingType = if (platform.compatibleType == ClientType.OPENAI || platform.model.prefersO200k()) {
+            val encodingType = if (platform.requestClientType == ClientType.OPENAI || platform.model.prefersO200k()) {
                 EncodingType.O200K_BASE
             } else {
                 EncodingType.CL100K_BASE

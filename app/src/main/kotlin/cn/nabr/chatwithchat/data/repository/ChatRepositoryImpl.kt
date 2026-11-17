@@ -102,6 +102,7 @@ import cn.nabr.chatwithchat.data.dto.openai.response.ReasoningSummaryTextDeltaEv
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponseCompletedEvent
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponseErrorEvent
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponseFailedEvent
+import cn.nabr.chatwithchat.data.dto.openai.response.ResponseIncompleteEvent
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponsesStreamEvent
 import cn.nabr.chatwithchat.data.history.ChatHistoryIndexCoordinator
 import cn.nabr.chatwithchat.data.memory.MemoryTurnBatchScheduler
@@ -111,9 +112,9 @@ import cn.nabr.chatwithchat.data.model.ChatAttachment
 import cn.nabr.chatwithchat.data.model.ChatPlatformConfig
 import cn.nabr.chatwithchat.data.model.ClientType
 import cn.nabr.chatwithchat.data.model.ReasoningMode
+import cn.nabr.chatwithchat.data.model.ToolCallStrategy
 import cn.nabr.chatwithchat.data.model.defaultReasoningMode
 import cn.nabr.chatwithchat.data.model.isGptOssModel
-import cn.nabr.chatwithchat.data.model.usesOfficialDeepSeekApi
 import cn.nabr.chatwithchat.data.network.AnthropicAPI
 import cn.nabr.chatwithchat.data.network.GoogleAPI
 import cn.nabr.chatwithchat.data.network.GroqAPI
@@ -303,7 +304,7 @@ class ChatRepositoryImpl @Inject constructor(
             userMessageId = latestUserMessage?.id?.takeIf { it > 0 },
             platformUid = platform.uid,
             platformName = platform.name,
-            clientType = platform.compatibleType,
+            clientType = platform.requestClientType,
             model = platform.model
         )
     }
@@ -362,87 +363,52 @@ class ChatRepositoryImpl @Inject constructor(
                 )
             }
             .orEmpty()
-        return if (activeToolDefinitions.isNotEmpty()) {
-            when (platform.compatibleType) {
-                ClientType.OPENAI -> completeChatWithOpenAIResponsesNativeToolLoop(
-                    userMessages = userMessages,
-                    assistantMessages = assistantMessages,
-                    platform = platform,
-                    memoryPrompt = providerContextPrompt,
-                    reasoningMode = reasoningMode,
-                    activeToolDefinitions = activeToolDefinitions
-                )
-                ClientType.OPENROUTER -> completeChatWithOpenAIChatCompletionsNativeToolLoop(
-                    userMessages = userMessages,
-                    assistantMessages = assistantMessages,
-                    platform = platform,
-                    memoryPrompt = providerContextPrompt,
-                    reasoningMode = reasoningMode,
-                    activeToolDefinitions = activeToolDefinitions
-                )
-                ClientType.GLM -> completeChatWithOpenAIChatCompletionsNativeToolLoop(
-                    userMessages = userMessages,
-                    assistantMessages = assistantMessages,
-                    platform = platform,
-                    memoryPrompt = providerContextPrompt,
-                    reasoningMode = reasoningMode,
-                    activeToolDefinitions = activeToolDefinitions
-                )
-                ClientType.CUSTOM -> {
-                    if (platform.usesOfficialDeepSeekApi()) {
-                        completeChatWithOpenAIChatCompletionsNativeToolLoop(
-                            userMessages = userMessages,
-                            assistantMessages = assistantMessages,
-                            platform = platform,
-                            memoryPrompt = providerContextPrompt,
-                            reasoningMode = reasoningMode,
-                            activeToolDefinitions = activeToolDefinitions,
-                            fallbackToJsonToolLoop = true
-                        )
-                    } else {
-                        completeChatWithToolLoopFallback(
-                            userMessages = userMessages,
-                            assistantMessages = assistantMessages,
-                            platform = platform,
-                            memoryPrompt = providerContextPrompt,
-                            reasoningMode = reasoningMode,
-                            activeToolDefinitions = activeToolDefinitions
-                        )
-                    }
-                }
-                ClientType.ANTHROPIC -> completeChatWithAnthropicNativeToolLoop(
-                    userMessages = userMessages,
-                    assistantMessages = assistantMessages,
-                    platform = platform,
-                    memoryPrompt = providerContextPrompt,
-                    reasoningMode = reasoningMode,
-                    activeToolDefinitions = activeToolDefinitions
-                )
-                ClientType.GOOGLE -> completeChatWithGoogleNativeToolLoop(
-                    userMessages = userMessages,
-                    assistantMessages = assistantMessages,
-                    platform = platform,
-                    memoryPrompt = providerContextPrompt,
-                    reasoningMode = reasoningMode,
-                    activeToolDefinitions = activeToolDefinitions
-                )
-                else -> completeChatWithToolLoopFallback(
-                    userMessages = userMessages,
-                    assistantMessages = assistantMessages,
-                    platform = platform,
-                    memoryPrompt = providerContextPrompt,
-                    reasoningMode = reasoningMode,
-                    activeToolDefinitions = activeToolDefinitions
-                )
-            }
-        } else {
-            completeChatByProvider(
+        return if (activeToolDefinitions.isEmpty()) {
+            completeChatByProvider(userMessages, assistantMessages, platform, providerContextPrompt, reasoningMode)
+        } else if (platform.toolCallStrategy == ToolCallStrategy.JSON) {
+            completeChatWithToolLoopFallback(
                 userMessages,
                 assistantMessages,
                 platform,
                 providerContextPrompt,
-                reasoningMode
+                reasoningMode,
+                activeToolDefinitions
             )
+        } else {
+            when (platform.requestClientType) {
+                ClientType.OPENAI -> completeChatWithOpenAIResponsesNativeToolLoop(
+                    userMessages,
+                    assistantMessages,
+                    platform,
+                    providerContextPrompt,
+                    reasoningMode,
+                    activeToolDefinitions
+                )
+                ClientType.ANTHROPIC -> completeChatWithAnthropicNativeToolLoop(
+                    userMessages,
+                    assistantMessages,
+                    platform,
+                    providerContextPrompt,
+                    reasoningMode,
+                    activeToolDefinitions
+                )
+                ClientType.GOOGLE -> completeChatWithGoogleNativeToolLoop(
+                    userMessages,
+                    assistantMessages,
+                    platform,
+                    providerContextPrompt,
+                    reasoningMode,
+                    activeToolDefinitions
+                )
+                else -> completeChatWithOpenAIChatCompletionsNativeToolLoop(
+                    userMessages,
+                    assistantMessages,
+                    platform,
+                    providerContextPrompt,
+                    reasoningMode,
+                    activeToolDefinitions
+                )
+            }
         }
     }
 
@@ -490,7 +456,7 @@ class ChatRepositoryImpl @Inject constructor(
         emitEstimatedUsageWithoutOutput: Boolean = false,
         conversationSnapshot: ProviderConversationSnapshot? = null,
         includeRichContentPrompt: Boolean = true
-    ): Flow<ApiState> = when (platform.compatibleType) {
+    ): Flow<ApiState> = when (platform.requestClientType) {
         ClientType.OPENAI -> {
             // Use Responses API for OpenAI (supports reasoning/thinking)
             completeChatWithOpenAIResponses(
@@ -602,7 +568,7 @@ class ChatRepositoryImpl @Inject constructor(
         }
 
         val config = toolLoopOrchestrator.configuration
-        val toolCallingAdapter = toolCallingAdapterFor(platform.compatibleType)
+        val toolCallingAdapter = toolCallingAdapterFor(platform.requestClientType)
         val toolScope = toolLoopOrchestrator.createToolScope(
             activeToolDefinitions = activeToolDefinitions,
             initialIntent = userMessages.latestToolIntent(),
@@ -1239,20 +1205,22 @@ class ChatRepositoryImpl @Inject constructor(
             hasToolInteraction = hasToolInteraction || openAIResponsesToolAdapter.hasToolCallIntent(round.events)
             if (round.errorMessage != null) {
                 nativeExchange.abandon()
-                if (!hasToolInteraction && !round.networkFailure) {
-                    val fallback = completeChatWithOpenAIResponses(
-                        userMessages,
-                        assistantMessages,
-                        platform,
-                        memoryPrompt,
-                        reasoningMode,
-                        conversationSnapshot = conversationSnapshot
+                if (platform.toolCallStrategy == ToolCallStrategy.AUTO &&
+                    !hasToolInteraction &&
+                    !round.networkFailure &&
+                    round.errorMessage.isNativeToolRequestRejected()
+                ) {
+                    val fallback = completeChatWithToolLoopFallback(
+                        userMessages = userMessages,
+                        assistantMessages = assistantMessages,
+                        platform = platform,
+                        memoryPrompt = memoryPrompt,
+                        reasoningMode = reasoningMode,
+                        activeToolDefinitions = activeToolDefinitions,
+                        conversationSnapshot = conversationSnapshot,
+                        priorSearchDecisionExecution = searchDecisionExecution
                     )
-                    if (searchDecisionExecution?.usage != null) {
-                        emitToolAggregatedProviderStates(fallback, toolUsageRecords)
-                    } else {
-                        emitProviderStatesSkippingLoading(fallback)
-                    }
+                    emitToolAggregatedProviderStates(fallback, toolUsageRecords)
                 } else {
                     emit(ApiState.Error(round.errorMessage))
                     aggregateToolUsage(currentAnswerUsage = null, toolUsages = toolUsageRecords)?.let { usage ->
@@ -1404,8 +1372,24 @@ class ChatRepositoryImpl @Inject constructor(
         traceContext: PromptTraceContext,
         traceStage: String,
         config: ToolLoopConfig
-    ): OpenAIResponsesNativeRound = withChatNetworkReconnect { isFinalAttempt ->
-        collectOpenAIResponsesNativeRoundAttempt(request, timeoutSeconds, platform, label, traceContext, traceStage, config, isFinalAttempt)
+    ): OpenAIResponsesNativeRound {
+        val continued = withOutputContinuation(
+            initialRequest = request,
+            nextRequest = { initial, text, _ -> initial.continueOutput(text) }
+        ) { currentRequest ->
+            val round = withChatNetworkReconnect { isFinalAttempt ->
+                collectOpenAIResponsesNativeRoundAttempt(currentRequest, timeoutSeconds, platform, label, traceContext, traceStage, config, isFinalAttempt)
+            }
+            OutputContinuationRound(
+                value = round,
+                truncated = round.lostToolCallEvidence.outputTruncated,
+                usage = round.usage,
+                errorMessage = round.errorMessage,
+                hasToolCalls = openAIResponsesToolAdapter.hasToolCallIntent(round.events) ||
+                    round.lostToolCallEvidence.leakedMarkup
+            )
+        }
+        return continued.value.copy(usage = continued.usage, errorMessage = continued.errorMessage)
     }
 
     private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.collectOpenAIResponsesNativeRoundAttempt(
@@ -1464,6 +1448,12 @@ class ChatRepositoryImpl @Inject constructor(
                         }
                     }
 
+                    is ResponseIncompleteEvent -> {
+                        if (event.response.incompleteDetails?.reason != "max_output_tokens") {
+                            errorMessage = "响应未完成：${event.response.incompleteDetails?.reason ?: "unknown"}"
+                        }
+                    }
+
                     is ResponseFailedEvent -> {
                         errorMessage = event.response.error?.message ?: event.response.status ?: "响应失败"
                     }
@@ -1514,8 +1504,7 @@ class ChatRepositoryImpl @Inject constructor(
         platform: PlatformV2,
         memoryPrompt: String?,
         reasoningMode: ReasoningMode,
-        activeToolDefinitions: List<ToolDefinition>,
-        fallbackToJsonToolLoop: Boolean = false
+        activeToolDefinitions: List<ToolDefinition>
     ): Flow<ApiState> = flow {
         emit(ApiState.Loading)
         val traceContext = promptTraceContext(userMessages, platform)
@@ -1654,36 +1643,22 @@ class ChatRepositoryImpl @Inject constructor(
             round.usage?.let { toolUsageRecords += it }
             hasToolInteraction = hasToolInteraction || openAIChatCompletionsToolAdapter.hasToolCallIntent(round.chunks)
             if (round.errorMessage != null) {
-                if (!hasToolInteraction && !round.networkFailure) {
-                    val fallback = if (
-                        fallbackToJsonToolLoop &&
-                        round.errorMessage.isNativeToolRequestRejected()
-                    ) {
-                        completeChatWithToolLoopFallback(
-                            userMessages = userMessages,
-                            assistantMessages = assistantMessages,
-                            platform = platform,
-                            memoryPrompt = memoryPrompt,
-                            reasoningMode = reasoningMode,
-                            activeToolDefinitions = activeToolDefinitions,
-                            conversationSnapshot = conversationSnapshot,
-                            priorSearchDecisionExecution = searchDecisionExecution
-                        )
-                    } else {
-                        completeChatWithOpenAIChatCompletions(
-                            userMessages,
-                            assistantMessages,
-                            platform,
-                            memoryPrompt,
-                            reasoningMode,
-                            conversationSnapshot = conversationSnapshot
-                        )
-                    }
-                    if (searchDecisionExecution?.usage != null) {
-                        emitToolAggregatedProviderStates(fallback, toolUsageRecords)
-                    } else {
-                        emitProviderStatesSkippingLoading(fallback)
-                    }
+                if (platform.toolCallStrategy == ToolCallStrategy.AUTO &&
+                    !hasToolInteraction &&
+                    !round.networkFailure &&
+                    round.errorMessage.isNativeToolRequestRejected()
+                ) {
+                    val fallback = completeChatWithToolLoopFallback(
+                        userMessages = userMessages,
+                        assistantMessages = assistantMessages,
+                        platform = platform,
+                        memoryPrompt = memoryPrompt,
+                        reasoningMode = reasoningMode,
+                        activeToolDefinitions = activeToolDefinitions,
+                        conversationSnapshot = conversationSnapshot,
+                        priorSearchDecisionExecution = searchDecisionExecution
+                    )
+                    emitToolAggregatedProviderStates(fallback, toolUsageRecords)
                 } else {
                     emit(ApiState.Error(round.errorMessage))
                     aggregateToolUsage(currentAnswerUsage = null, toolUsages = toolUsageRecords)?.let { usage ->
@@ -1749,7 +1724,7 @@ class ChatRepositoryImpl @Inject constructor(
                 results = results,
                 config = config,
                 reasoningContent = round.reasoningContent.takeIf {
-                    platform.usesOfficialDeepSeekApi() || platform.compatibleType == ClientType.GLM
+                    platform.model.contains("deepseek", ignoreCase = true) || platform.requestClientType == ClientType.GLM
                 }
             )
             roundStateMachine.onToolResults(results)
@@ -1786,10 +1761,10 @@ class ChatRepositoryImpl @Inject constructor(
             request = prepared.user.toRequest(
                 continuationMessages = continuationMessages,
                 tools = finalToolDefinitions
-                    .takeIf { platform.compatibleType != ClientType.GLM && it.isNotEmpty() }
+                    .takeIf { platform.requestClientType != ClientType.GLM && it.isNotEmpty() }
                     ?.let { definitions -> openAIChatCompletionsToolAdapter.toChatCompletionTools(definitions) },
                 toolChoice = ChatCompletionToolChoice.None.takeIf {
-                    platform.compatibleType != ClientType.GLM && finalToolDefinitions.isNotEmpty()
+                    platform.requestClientType != ClientType.GLM && finalToolDefinitions.isNotEmpty()
                 },
                 extraInstruction = nativeFinalToolInstruction(allResults)
             ),
@@ -1823,8 +1798,24 @@ class ChatRepositoryImpl @Inject constructor(
         traceContext: PromptTraceContext,
         traceStage: String,
         config: ToolLoopConfig
-    ): OpenAIChatCompletionsNativeRound = withChatNetworkReconnect { isFinalAttempt ->
-        collectOpenAIChatCompletionsNativeRoundAttempt(request, timeoutSeconds, platform, label, traceContext, traceStage, config, isFinalAttempt)
+    ): OpenAIChatCompletionsNativeRound {
+        val continued = withOutputContinuation(
+            initialRequest = request,
+            nextRequest = { initial, text, thoughts -> initial.continueOutput(text, thoughts) }
+        ) { currentRequest ->
+            val round = withChatNetworkReconnect { isFinalAttempt ->
+                collectOpenAIChatCompletionsNativeRoundAttempt(currentRequest, timeoutSeconds, platform, label, traceContext, traceStage, config, isFinalAttempt)
+            }
+            OutputContinuationRound(
+                value = round,
+                truncated = round.lostToolCallEvidence.outputTruncated,
+                usage = round.usage,
+                errorMessage = round.errorMessage,
+                hasToolCalls = openAIChatCompletionsToolAdapter.hasToolCallIntent(round.chunks) ||
+                    round.lostToolCallEvidence.leakedMarkup
+            )
+        }
+        return continued.value.copy(usage = continued.usage, errorMessage = continued.errorMessage)
     }
 
     private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.collectOpenAIChatCompletionsNativeRoundAttempt(
@@ -2110,20 +2101,22 @@ class ChatRepositoryImpl @Inject constructor(
             round.usage?.let { toolUsageRecords += it }
             hasToolInteraction = hasToolInteraction || anthropicNativeToolAdapter.hasToolCallIntent(round.chunks)
             if (round.errorMessage != null) {
-                if (!hasToolInteraction && !round.networkFailure) {
-                    val fallback = completeChatWithAnthropic(
-                        userMessages,
-                        assistantMessages,
-                        platform,
-                        memoryPrompt,
-                        reasoningMode,
-                        conversationSnapshot = conversationSnapshot
+                if (platform.toolCallStrategy == ToolCallStrategy.AUTO &&
+                    !hasToolInteraction &&
+                    !round.networkFailure &&
+                    round.errorMessage.isNativeToolRequestRejected()
+                ) {
+                    val fallback = completeChatWithToolLoopFallback(
+                        userMessages = userMessages,
+                        assistantMessages = assistantMessages,
+                        platform = platform,
+                        memoryPrompt = memoryPrompt,
+                        reasoningMode = reasoningMode,
+                        activeToolDefinitions = activeToolDefinitions,
+                        conversationSnapshot = conversationSnapshot,
+                        priorSearchDecisionExecution = searchDecisionExecution
                     )
-                    if (searchDecisionExecution?.usage != null) {
-                        emitToolAggregatedProviderStates(fallback, toolUsageRecords)
-                    } else {
-                        emitProviderStatesSkippingLoading(fallback)
-                    }
+                    emitToolAggregatedProviderStates(fallback, toolUsageRecords)
                 } else {
                     emit(ApiState.Error(round.errorMessage))
                     aggregateToolUsage(currentAnswerUsage = null, toolUsages = toolUsageRecords)?.let { usage ->
@@ -2254,8 +2247,24 @@ class ChatRepositoryImpl @Inject constructor(
         traceContext: PromptTraceContext,
         traceStage: String,
         config: ToolLoopConfig
-    ): AnthropicNativeRound = withChatNetworkReconnect { isFinalAttempt ->
-        collectAnthropicNativeRoundAttempt(request, timeoutSeconds, platform, label, traceContext, traceStage, config, isFinalAttempt)
+    ): AnthropicNativeRound {
+        val continued = withOutputContinuation(
+            initialRequest = request,
+            nextRequest = { initial, text, _ -> initial.continueOutput(text) }
+        ) { currentRequest ->
+            val round = withChatNetworkReconnect { isFinalAttempt ->
+                collectAnthropicNativeRoundAttempt(currentRequest, timeoutSeconds, platform, label, traceContext, traceStage, config, isFinalAttempt)
+            }
+            OutputContinuationRound(
+                value = round,
+                truncated = round.lostToolCallEvidence.outputTruncated,
+                usage = round.usage,
+                errorMessage = round.errorMessage,
+                hasToolCalls = anthropicNativeToolAdapter.hasToolCallIntent(round.chunks) ||
+                    round.lostToolCallEvidence.leakedMarkup
+            )
+        }
+        return continued.value.copy(usage = continued.usage, errorMessage = continued.errorMessage)
     }
 
     private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.collectAnthropicNativeRoundAttempt(
@@ -2498,20 +2507,22 @@ class ChatRepositoryImpl @Inject constructor(
             round.usage?.let { toolUsageRecords += it }
             hasToolInteraction = hasToolInteraction || googleNativeToolAdapter.hasToolCallIntent(round.responses)
             if (round.errorMessage != null) {
-                if (!hasToolInteraction && !round.networkFailure) {
-                    val fallback = completeChatWithGoogle(
-                        userMessages,
-                        assistantMessages,
-                        platform,
-                        memoryPrompt,
-                        reasoningMode,
-                        conversationSnapshot = conversationSnapshot
+                if (platform.toolCallStrategy == ToolCallStrategy.AUTO &&
+                    !hasToolInteraction &&
+                    !round.networkFailure &&
+                    round.errorMessage.isNativeToolRequestRejected()
+                ) {
+                    val fallback = completeChatWithToolLoopFallback(
+                        userMessages = userMessages,
+                        assistantMessages = assistantMessages,
+                        platform = platform,
+                        memoryPrompt = memoryPrompt,
+                        reasoningMode = reasoningMode,
+                        activeToolDefinitions = activeToolDefinitions,
+                        conversationSnapshot = conversationSnapshot,
+                        priorSearchDecisionExecution = searchDecisionExecution
                     )
-                    if (searchDecisionExecution?.usage != null) {
-                        emitToolAggregatedProviderStates(fallback, toolUsageRecords)
-                    } else {
-                        emitProviderStatesSkippingLoading(fallback)
-                    }
+                    emitToolAggregatedProviderStates(fallback, toolUsageRecords)
                 } else {
                     emit(ApiState.Error(round.errorMessage))
                     aggregateToolUsage(currentAnswerUsage = null, toolUsages = toolUsageRecords)?.let { usage ->
@@ -2644,8 +2655,24 @@ class ChatRepositoryImpl @Inject constructor(
         traceContext: PromptTraceContext,
         traceStage: String,
         config: ToolLoopConfig
-    ): GoogleNativeRound = withChatNetworkReconnect { isFinalAttempt ->
-        collectGoogleNativeRoundAttempt(request, model, timeoutSeconds, platform, label, traceContext, traceStage, config, isFinalAttempt)
+    ): GoogleNativeRound {
+        val continued = withOutputContinuation(
+            initialRequest = request,
+            nextRequest = { initial, text, _ -> initial.continueOutput(text) }
+        ) { currentRequest ->
+            val round = withChatNetworkReconnect { isFinalAttempt ->
+                collectGoogleNativeRoundAttempt(currentRequest, model, timeoutSeconds, platform, label, traceContext, traceStage, config, isFinalAttempt)
+            }
+            OutputContinuationRound(
+                value = round,
+                truncated = round.lostToolCallEvidence.outputTruncated,
+                usage = round.usage,
+                errorMessage = round.errorMessage,
+                hasToolCalls = googleNativeToolAdapter.hasToolCallIntent(round.responses) ||
+                    round.lostToolCallEvidence.leakedMarkup
+            )
+        }
+        return continued.value.copy(usage = continued.usage, errorMessage = continued.errorMessage)
     }
 
     private suspend fun kotlinx.coroutines.flow.FlowCollector<ApiState>.collectGoogleNativeRoundAttempt(
@@ -2824,6 +2851,13 @@ class ChatRepositoryImpl @Inject constructor(
                                 }
                             }
 
+                            is ResponseIncompleteEvent -> {
+                                if (event.response.incompleteDetails?.reason != "max_output_tokens") {
+                                    streamFailed = true
+                                    emit(ApiState.Error("响应未完成：${event.response.incompleteDetails?.reason ?: "unknown"}"))
+                                }
+                            }
+
                             is ResponseFailedEvent -> {
                                 streamFailed = true
                                 val errorMessage = event.response.error?.message ?: "响应失败"
@@ -2838,6 +2872,7 @@ class ChatRepositoryImpl @Inject constructor(
                             else -> {}
                         }
                     }
+                    if (events.hasIncompleteResponseStatus()) emit(ApiState.OutputTruncated)
                     val usage = openAIResponsesUsageFromEvents(
                         events = events,
                         request = prepared.request,
@@ -2850,12 +2885,15 @@ class ChatRepositoryImpl @Inject constructor(
                     // failed would describe a context the model never actually answered from.
                     nativeExchange?.let { exchange ->
                         exchange.recordRound(events)
-                        if (streamFailed) exchange.abandon() else exchange.commit()
+                        if (streamFailed || events.hasIncompleteResponseStatus()) exchange.abandon() else exchange.commit()
                     }
                     if (outputText.isNotBlank() || !usage.isEstimated || emitEstimatedUsageWithoutOutput) {
                         emit(ApiState.UsageUpdated(usage))
                     }
                 }
+            },
+            continueRequest = { initial, text, _ ->
+                initial.copy(request = initial.request.continueOutput(text))
             },
             sourceMetadata = { it.sources }
         ).catch { e ->
@@ -2945,6 +2983,7 @@ class ChatRepositoryImpl @Inject constructor(
                         }
                         emit(state)
                     }
+                    if (chunks.any { chunk -> chunk.choices.orEmpty().any { it.finishReason == "length" } }) emit(ApiState.OutputTruncated)
                     val usage = groqUsageFromChunks(
                         chunks = chunks,
                         request = prepared.request,
@@ -2956,6 +2995,9 @@ class ChatRepositoryImpl @Inject constructor(
                         emit(ApiState.UsageUpdated(usage))
                     }
                 }
+            },
+            continueRequest = { initial, text, thoughts ->
+                initial.copy(request = initial.request.continueOutput(text, thoughts))
             },
             sourceMetadata = { it.sources }
         ).catch { e ->
@@ -3062,6 +3104,7 @@ class ChatRepositoryImpl @Inject constructor(
                         }
                         emit(state)
                     }
+                    if (chunks.hasFinishReason(OPENAI_FINISH_REASON_LENGTH)) emit(ApiState.OutputTruncated)
                     val usage = openAIChatUsageFromChunks(
                         chunks = chunks,
                         request = prepared.request,
@@ -3073,6 +3116,9 @@ class ChatRepositoryImpl @Inject constructor(
                         emit(ApiState.UsageUpdated(usage))
                     }
                 }
+            },
+            continueRequest = { initial, text, thoughts ->
+                initial.copy(request = initial.request.continueOutput(text, thoughts))
             },
             sourceMetadata = { it.sources }
         ).catch { e ->
@@ -3091,7 +3137,7 @@ class ChatRepositoryImpl @Inject constructor(
         platform: PlatformV2,
         managed: ContextBuildResult?
     ): ConversationContext {
-        val policy = ProviderContextPolicy.forClientType(platform.compatibleType)
+        val policy = ProviderContextPolicy.forClientType(platform.requestClientType)
         val conversationContext = managed?.toConversationContext()
             ?: contextBuilder.buildContext(userMessages, assistantMessages, platform, policy)
         // No-op on the managed path, where `omittedTurns` is always empty and the memory trigger has
@@ -3169,7 +3215,7 @@ class ChatRepositoryImpl @Inject constructor(
         val chatRoomId = userMessages.lastOrNull()?.chatId ?: return null
         if (chatRoomId <= 0) return null
 
-        val policy = ProviderContextPolicy.forClientType(platform.compatibleType)
+        val policy = ProviderContextPolicy.forClientType(platform.requestClientType)
         val modelContextWindow = contextWindowResolver
             ?.let { resolver -> runCatching { resolver.resolve(platform) }.getOrNull() }
             ?: policy.fallbackModelContextWindow
@@ -3331,7 +3377,7 @@ class ChatRepositoryImpl @Inject constructor(
         contextTurns: List<ConversationTurn>,
         platform: PlatformV2
     ) {
-        val maxInlineBytes = ProviderContextPolicy.forClientType(platform.compatibleType).maxInlineAttachmentBytes ?: return
+        val maxInlineBytes = ProviderContextPolicy.forClientType(platform.requestClientType).maxInlineAttachmentBytes ?: return
         attachmentUploadCoordinator.validateInlineAttachmentBudget(contextTurns, maxInlineBytes)
     }
 
@@ -3605,6 +3651,7 @@ class ChatRepositoryImpl @Inject constructor(
                             else -> {}
                         }
                     }
+                    if (chunks.hasStopReason(StopReason.MAX_TOKENS)) emit(ApiState.OutputTruncated)
                     val usage = anthropicUsageFromChunks(
                         chunks = chunks,
                         request = prepared.request,
@@ -3616,6 +3663,9 @@ class ChatRepositoryImpl @Inject constructor(
                         emit(ApiState.UsageUpdated(usage))
                     }
                 }
+            },
+            continueRequest = { initial, text, _ ->
+                initial.copy(request = initial.request.continueOutput(text))
             },
             sourceMetadata = { it.sources }
         ).catch { e ->
@@ -3751,6 +3801,7 @@ class ChatRepositoryImpl @Inject constructor(
                             }
                         }
                     }
+                    if (responses.hasCandidateFinishReason(GOOGLE_FINISH_REASON_MAX_TOKENS)) emit(ApiState.OutputTruncated)
                     val usage = googleUsageFromResponses(
                         responses = responses,
                         request = prepared.request,
@@ -3762,6 +3813,9 @@ class ChatRepositoryImpl @Inject constructor(
                         emit(ApiState.UsageUpdated(usage))
                     }
                 }
+            },
+            continueRequest = { initial, text, _ ->
+                initial.copy(request = initial.request.continueOutput(text))
             },
             sourceMetadata = { it.sources }
         ).catch { e ->
@@ -4397,18 +4451,15 @@ private fun List<ResponsesStreamEvent>.hasFunctionCallOutputItem(): Boolean = an
     event is OutputItemDoneEvent && event.item.type == OPENAI_FUNCTION_CALL_TYPE
 }
 
-/**
- * Whether the response finished in any state other than `completed` — which is how a truncated response
- * reports itself, when it reports at all. `response.incomplete` is not modelled as its own event, so this is
- * best-effort: the leaked-markup signal is what carries this case for providers that stay silent.
- */
+/** Only an explicit output-token limit is eligible for automatic continuation. */
 private fun List<ResponsesStreamEvent>.hasIncompleteResponseStatus(): Boolean = any { event ->
-    event is ResponseCompletedEvent &&
-        !event.response.status.isNullOrBlank() &&
-        !event.response.status.equals(OPENAI_RESPONSE_STATUS_COMPLETED, ignoreCase = true)
+    val response = when (event) {
+        is ResponseIncompleteEvent -> event.response
+        is ResponseCompletedEvent -> event.response
+        else -> null
+    }
+    response?.incompleteDetails?.reason == "max_output_tokens"
 }
-
-private const val OPENAI_RESPONSE_STATUS_COMPLETED = "completed"
 
 private data class OpenAIChatCompletionsNativeToolRequest(
     val model: String,
@@ -4472,13 +4523,13 @@ private const val OPENAI_FINISH_REASON_LENGTH = "length"
 
 private fun String.isNativeToolRequestRejected(): Boolean {
     val normalized = lowercase()
+    // Malformed tool definitions are configuration errors, not missing native tool support.
+    if (normalized.contains("schema") || normalized.contains("invalid value") || normalized.contains("invalid parameter")) return false
     val namesNativeToolField = normalized.contains("tool") ||
         normalized.contains("function_call") ||
         normalized.contains("function call")
     val indicatesUnsupportedField = normalized.contains("unsupported") ||
         normalized.contains("unknown parameter") ||
-        normalized.contains("invalid parameter") ||
-        normalized.contains("invalid value") ||
         normalized.contains("not support") ||
         normalized.contains("not supported") ||
         normalized.contains("not allowed")
@@ -4817,7 +4868,7 @@ private const val VISUAL_ASSET_CATALOG_LIMIT = 200
 
 internal fun PlatformV2.supportsVisualAssetInput(): Boolean {
     val normalizedModel = model.trim().lowercase()
-    return when (compatibleType) {
+    return when (requestClientType) {
         ClientType.OPENAI,
         ClientType.ANTHROPIC,
         ClientType.GOOGLE -> true
@@ -4836,6 +4887,7 @@ private val VISION_MODEL_MARKERS = listOf(
     "claude",
     "gpt-4o",
     "gpt-4.1",
+    "gpt-5",
     "o3",
     "o4",
     "llama-4",
@@ -4906,15 +4958,40 @@ internal fun validateResponseInputPartsOrThrow(messageContent: String, partCount
 internal fun <T> streamPreparedApiState(
     prepare: suspend () -> T,
     stream: suspend (T) -> Flow<ApiState>,
-    sourceMetadata: (T) -> List<MessageSourceMetadata> = { emptyList() }
+    sourceMetadata: (T) -> List<MessageSourceMetadata> = { emptyList() },
+    continueRequest: ((T, String, String) -> T)? = null
 ): Flow<ApiState> = flow {
     emit(ApiState.Loading)
     val preparedRequest = withContext(Dispatchers.Default) { prepare() }
     sourceMetadata(preparedRequest).dedupeMessageSources().takeIf { it.isNotEmpty() }?.let { sources ->
         emit(ApiState.SourcesUpdated(sources))
     }
-    withChatNetworkReconnect {
-        emitAll(stream(preparedRequest))
+    if (continueRequest == null) {
+        withChatNetworkReconnect { emitAll(stream(preparedRequest)) }
+    } else {
+        var providerErrorEmitted = false
+        val result = withOutputContinuation(preparedRequest, continueRequest) { request ->
+            withChatNetworkReconnect {
+                var truncated = false
+                var usage: TokenUsageRecord? = null
+                var error: String? = null
+                stream(request).collect { state ->
+                    when (state) {
+                        ApiState.OutputTruncated -> truncated = true
+                        is ApiState.UsageUpdated -> usage = state.usage
+                        is ApiState.Error -> {
+                            error = state.message
+                            providerErrorEmitted = true
+                            emit(state)
+                        }
+                        else -> emit(state)
+                    }
+                }
+                OutputContinuationRound(Unit, truncated, usage, error)
+            }
+        }
+        result.usage?.let { emit(ApiState.UsageUpdated(it)) }
+        if (!providerErrorEmitted) result.errorMessage?.let { emit(ApiState.Error(it)) }
     }
 }
 
@@ -4947,6 +5024,7 @@ private fun openAIResponsesUsageFromEvents(
         when (event) {
             is ResponseCompletedEvent -> event.response.usage
             is ResponseFailedEvent -> event.response.usage
+            is ResponseIncompleteEvent -> event.response.usage
             else -> null
         }
     },
@@ -5110,7 +5188,7 @@ private fun aggregateToolUsage(
     return answerUsage?.withToolAggregate(toolUsages)
 }
 
-private fun chatCompletionStreamOptionsFor(platform: PlatformV2): ChatCompletionStreamOptions? = when (platform.compatibleType) {
+private fun chatCompletionStreamOptionsFor(platform: PlatformV2): ChatCompletionStreamOptions? = when (platform.requestClientType) {
     ClientType.OPENAI,
     ClientType.OPENROUTER -> ChatCompletionStreamOptions()
     ClientType.GLM,

@@ -3,6 +3,7 @@ package cn.nabr.chatwithchat.presentation.ui.setting
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -48,6 +49,8 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.context.ContextStrategy
+import cn.nabr.chatwithchat.presentation.common.ProviderProtocolSelector
+import cn.nabr.chatwithchat.presentation.common.ProviderToolStrategySelector
 import cn.nabr.chatwithchat.presentation.common.SettingItem
 import cn.nabr.chatwithchat.presentation.common.SettingsMaterialGroup
 import cn.nabr.chatwithchat.presentation.common.SettingsTopAppBar
@@ -103,6 +106,16 @@ fun PlatformSettingScreen(
                 SettingsMaterialGroup(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
                 ) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                        ProviderProtocolSelector(
+                            protocol = platformData.resolvedApiProtocol,
+                            onChange = { settingViewModel.updatePlatform(platformData.copy(apiProtocol = it)) }
+                        )
+                        ProviderToolStrategySelector(
+                            strategy = platformData.toolCallStrategy,
+                            onChange = { settingViewModel.updatePlatform(platformData.copy(toolCallStrategy = it)) }
+                        )
+                    }
                     SettingItem(
                         modifier = Modifier.height(64.dp),
                         title = stringResource(R.string.platform_name),

@@ -127,7 +127,7 @@ class ProviderSearchDecisionModelClient(
         platform: PlatformV2,
         prompt: String
     ): Result<SearchDecisionModelResponse> = runCatching {
-        when (platform.compatibleType) {
+        when (platform.requestClientType) {
             ClientType.OPENAI -> requestOpenAIResponsesDecision(platform, prompt)
             ClientType.GROQ -> requestGroqDecision(platform, prompt)
             ClientType.OLLAMA,
@@ -309,7 +309,7 @@ internal fun createOpenAICompatibleSearchDecisionRequest(
         topP = 1f.takeIf { thinking == null },
         maxTokens = DECISION_MAX_OUTPUT_TOKENS,
         thinking = thinking,
-        streamOptions = searchDecisionStreamOptionsFor(platform.compatibleType)
+        streamOptions = searchDecisionStreamOptionsFor(platform.requestClientType)
     )
 }
 

@@ -43,7 +43,7 @@ class ContextWindowResolver @Inject constructor(
         val userOverride = runCatching {
             contextWindowOverrideStore.getContextWindowOverride(platform.uid)
         }.getOrNull()?.takeIf { it > 0 }
-        val persisted = if (platform.compatibleType == ClientType.OLLAMA) {
+        val persisted = if (platform.requestClientType == ClientType.OLLAMA) {
             null
         } else {
             runCatching {
@@ -54,7 +54,7 @@ class ContextWindowResolver @Inject constructor(
         return resolveContextWindow(
             userOverride = userOverride,
             persistedWindow = persisted,
-            clientType = platform.compatibleType,
+            clientType = platform.requestClientType,
             model = model
         )
     }

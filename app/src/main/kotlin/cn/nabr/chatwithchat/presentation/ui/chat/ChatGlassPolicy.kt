@@ -5,14 +5,22 @@ import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.effectiveContent
 import cn.nabr.chatwithchat.data.richcontent.openui.OpenUiEnvelope
 
-/** WebViews cannot safely participate in the chat's recorded backdrop layer on all devices. */
+/**
+ * WebViews cannot safely participate in the chat's recorded backdrop layer on all devices.
+ *
+ * Returning false means the screen must switch to an ambient backdrop; it does not mean the glass
+ * surfaces should fall back to opaque colours.
+ */
 internal class ChatGlassPolicy(
     private val containsOpenUi: (String) -> Boolean = OpenUiEnvelope::containsOpenUi
 ) {
     private val checkedContentByTurn = mutableMapOf<Int, String>()
     private var disabled = false
 
-    fun isEnabled(assistantMessages: List<List<MessageV2>>, selectedPlatformIndices: List<Int>): Boolean {
+    fun shouldCaptureLiveContent(
+        assistantMessages: List<List<MessageV2>>,
+        selectedPlatformIndices: List<Int>
+    ): Boolean {
         if (disabled) return false
         assistantMessages.forEachIndexed { turnIndex, messages ->
             val message = messages.getOrNull(selectedPlatformIndices.getOrElse(turnIndex) { 0 })

@@ -103,6 +103,9 @@ extensions.configure<ApplicationExtension> {
         versionCode = 24
         versionName = "1.2.0"
 
+        resValue("string", "xiaomi_super_island_app_id", providers.gradleProperty("xiaomiSuperIslandAppId").orElse("").get())
+        manifestPlaceholders["xiaomiSuperIslandDebug"] = "false"
+
         testInstrumentationRunner = memoryTestInstrumentationRunner
         vectorDrawables {
             useSupportLibrary = true
@@ -119,6 +122,9 @@ extensions.configure<ApplicationExtension> {
     }
 
     buildTypes {
+        debug {
+            manifestPlaceholders["xiaomiSuperIslandDebug"] = "true"
+        }
         release {
             isMinifyEnabled = true
             vcsInfo.include = false
@@ -142,6 +148,7 @@ extensions.configure<ApplicationExtension> {
     }
     buildFeatures {
         buildConfig = true
+        resValues = true
         compose = true
     }
     packaging {

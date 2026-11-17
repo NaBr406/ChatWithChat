@@ -16,6 +16,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -27,19 +28,37 @@ import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.layout.positionOnScreen
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import cn.nabr.chatwithchat.presentation.common.isSettingsDarkTheme
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
+import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 
-internal data class ChatGlassContext(val backdrop: LayerBackdrop, val windowOrigin: Offset)
+internal data class ChatGlassContext(
+    val backdrop: Backdrop,
+    val captureBackdrop: LayerBackdrop?,
+    val windowOrigin: Offset
+)
 
 internal val LocalChatGlass = staticCompositionLocalOf<ChatGlassContext?> { null }
+
+/**
+ * What the small round glass buttons sample. Each one is its own offscreen layer that replays the whole
+ * recorded chat subtree whenever it changes, so during generation, when the list changes on every frame,
+ * three 40dp circles cost the render thread more than the composer bar does. A dynamic local, so
+ * switching it at the start and end of a generation recomposes only these buttons.
+ */
+internal val LocalChatCompactGlassBackdrop = compositionLocalOf<Backdrop?> { null }
 
 @Composable
 internal fun Modifier.chatTopBarBackground(): Modifier {
@@ -84,16 +103,32 @@ internal fun rememberDeviceSupportsChatGlass(): Boolean {
 internal fun ChatGlassScope(
     backdrop: LayerBackdrop = rememberLayerBackdrop(),
     enabled: Boolean = true,
+    captureLiveContent: Boolean = true,
+    liveCompactSurfaces: Boolean = true,
     content: @Composable () -> Unit
 ) {
     val glassActive = enabled && rememberDeviceSupportsChatGlass()
+    val ambient = rememberAmbientChatBackdrop()
+    val ambientBackdrop = if (captureLiveContent) null else ambient
     var windowOrigin by remember { mutableStateOf(Offset.Zero) }
     Box(
         modifier = Modifier.onGloballyPositioned {
             windowOrigin = it.positionOnScreen() - it.positionInWindow()
         }
     ) {
-        CompositionLocalProvider(LocalChatGlass provides if (glassActive) ChatGlassContext(backdrop, windowOrigin) else null) {
+        val context = if (glassActive) {
+            ChatGlassContext(
+                backdrop = ambientBackdrop ?: backdrop,
+                captureBackdrop = backdrop.takeIf { captureLiveContent },
+                windowOrigin = windowOrigin
+            )
+        } else {
+            null
+        }
+        CompositionLocalProvider(
+            LocalChatGlass provides context,
+            LocalChatCompactGlassBackdrop provides context?.let { if (liveCompactSurfaces) it.backdrop else ambient }
+        ) {
             content()
         }
     }
@@ -103,9 +138,95 @@ internal fun ChatGlassScope(
 internal fun Modifier.chatSelectionGlass(shape: Shape): Modifier {
     val context = LocalChatGlass.current
     val backdrop = remember(context) {
-        context?.let { WindowAlignedBackdrop(it.backdrop, it.windowOrigin) }
+        context?.backdrop?.let { backdrop ->
+            if (backdrop.isCoordinatesDependent) {
+                WindowAlignedBackdrop(backdrop, context.windowOrigin)
+            } else {
+                backdrop
+            }
+        }
     }
     return composerGlass(backdrop, shape)
+}
+
+/** Glass for small round buttons: samples [LocalChatCompactGlassBackdrop] instead of the live chat. */
+@Composable
+internal fun Modifier.chatCompactGlass(shape: Shape): Modifier {
+    val windowOrigin = LocalChatGlass.current?.windowOrigin ?: Offset.Zero
+    val source = LocalChatCompactGlassBackdrop.current
+    val backdrop = remember(source, windowOrigin) {
+        source?.let { if (it.isCoordinatesDependent) WindowAlignedBackdrop(it, windowOrigin) else it }
+    }
+    return composerGlass(backdrop, shape)
+}
+
+@Composable
+private fun rememberAmbientChatBackdrop(): Backdrop {
+    val colors = settingsMaterialColors()
+    val isDark = isSettingsDarkTheme()
+    return remember(colors, isDark) { AmbientChatBackdrop(colors.canvas, isDark) }
+}
+
+/**
+ * A backdrop that cannot contain a WebView. The glass still receives the same blur, refraction and
+ * vibrancy pipeline, but samples a generated ambient field instead of the recorded chat subtree.
+ */
+private class AmbientChatBackdrop(
+    private val canvas: Color,
+    private val isDark: Boolean
+) : Backdrop {
+    override val isCoordinatesDependent: Boolean = false
+
+    override fun DrawScope.drawBackdrop(
+        density: Density,
+        coordinates: LayoutCoordinates?,
+        layerBlock: (GraphicsLayerScope.() -> Unit)?
+    ) {
+        drawRect(canvas)
+        val radius = size.minDimension.coerceAtLeast(1f)
+        val glowAlpha = if (isDark) 1f else 0.42f
+
+        fun bloom(center: Offset, color: Color, alpha: Float, scale: Float) {
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colorStops = arrayOf(
+                        0f to color.copy(alpha = alpha * glowAlpha),
+                        0.48f to color.copy(alpha = alpha * 0.32f * glowAlpha),
+                        1f to Color.Transparent
+                    ),
+                    center = center,
+                    radius = radius * scale
+                ),
+                center = center,
+                radius = radius * scale
+            )
+        }
+
+        bloom(
+            center = Offset(size.width * 0.08f, size.height * 0.12f),
+            color = AMBIENT_BLUE,
+            alpha = if (isDark) 0.26f else 0.12f,
+            scale = 1.15f
+        )
+        bloom(
+            center = Offset(size.width * 0.92f, size.height * 0.78f),
+            color = AMBIENT_WARM,
+            alpha = if (isDark) 0.13f else 0.08f,
+            scale = 0.78f
+        )
+        bloom(
+            center = Offset(size.width * 0.56f, size.height * 0.38f),
+            color = AMBIENT_MINT,
+            alpha = if (isDark) 0.11f else 0.055f,
+            scale = 0.9f
+        )
+    }
+
+    private companion object {
+        val AMBIENT_BLUE = Color(0xFF2E6BFF)
+        val AMBIENT_WARM = Color(0xFFFFA45B)
+        val AMBIENT_MINT = Color(0xFF4DAA98)
+    }
 }
 
 @Composable
@@ -114,7 +235,7 @@ internal fun ChatGlassIconButton(
     content: @Composable () -> Unit
 ) {
     Box(modifier = Modifier.size(48.dp), contentAlignment = Alignment.Center) {
-        Box(modifier = Modifier.size(40.dp).chatSelectionGlass(CircleShape))
+        Box(modifier = Modifier.size(40.dp).chatCompactGlass(CircleShape))
         IconButton(onClick = onClick, modifier = Modifier.size(48.dp), content = content)
     }
 }

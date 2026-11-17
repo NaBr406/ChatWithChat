@@ -1,10 +1,10 @@
 package cn.nabr.chatwithchat.data.token
 
+import cn.nabr.chatwithchat.data.database.entity.PlatformV2
+import cn.nabr.chatwithchat.data.model.ClientType
 import com.knuddels.jtokkit.Encodings
 import com.knuddels.jtokkit.api.Encoding
 import com.knuddels.jtokkit.api.EncodingType
-import cn.nabr.chatwithchat.data.database.entity.PlatformV2
-import cn.nabr.chatwithchat.data.model.ClientType
 import kotlin.math.ceil
 
 object TokenUsageEstimator {
@@ -13,7 +13,7 @@ object TokenUsageEstimator {
     fun estimateText(
         text: String,
         platform: PlatformV2
-    ): Int = estimateText(text, platform.model, platform.compatibleType)
+    ): Int = estimateText(text, platform.model, platform.requestClientType)
 
     fun estimateText(
         text: String,

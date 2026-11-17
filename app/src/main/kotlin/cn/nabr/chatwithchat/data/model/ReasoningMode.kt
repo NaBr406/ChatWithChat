@@ -43,7 +43,7 @@ data class ReasoningCapabilityProfile(
 
 fun PlatformV2.defaultReasoningMode(): ReasoningMode = ReasoningMode.AUTO
 
-fun PlatformV2.reasoningCapabilityForModel(modelId: String = model): ReasoningCapabilityProfile = when (compatibleType) {
+fun PlatformV2.reasoningCapabilityForModel(modelId: String = model): ReasoningCapabilityProfile = when (requestClientType) {
     ClientType.OPENAI -> when {
         isOpenAIResponsesReasoningModel(modelId) -> effortCapability()
         isDefaultOnlyReasoningModel(modelId) -> defaultOnlyCapability()
@@ -241,7 +241,7 @@ private fun isDeepSeekModel(modelId: String): Boolean =
     modelId.contains("deepseek", ignoreCase = true)
 
 internal fun PlatformV2.usesOfficialDeepSeekApi(modelId: String = model): Boolean {
-    if (compatibleType != ClientType.CUSTOM || !isDeepSeekModel(modelId)) return false
+    if (requestClientType != ClientType.CUSTOM || !isDeepSeekModel(modelId)) return false
     val host = runCatching { URI(apiUrl.trim()).host }.getOrNull()
     return host.equals("api.deepseek.com", ignoreCase = true)
 }

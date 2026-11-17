@@ -3,17 +3,17 @@ package cn.nabr.chatwithchat.data.database
 import androidx.room.Database
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
-import cn.nabr.chatwithchat.data.database.dao.ChatPlatformModelV2Dao
 import cn.nabr.chatwithchat.data.database.dao.ChatHistoryDao
+import cn.nabr.chatwithchat.data.database.dao.ChatPlatformModelV2Dao
 import cn.nabr.chatwithchat.data.database.dao.ChatRoomV2Dao
 import cn.nabr.chatwithchat.data.database.dao.ContextManagementDao
+import cn.nabr.chatwithchat.data.database.dao.McpDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryActivityLogDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryLongTermConsolidationDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryMaintenanceJobDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryProposalDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryRecoveryDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryTurnBatchDao
-import cn.nabr.chatwithchat.data.database.dao.McpDao
 import cn.nabr.chatwithchat.data.database.dao.MessageV2Dao
 import cn.nabr.chatwithchat.data.database.dao.PlatformModelV2Dao
 import cn.nabr.chatwithchat.data.database.dao.PlatformV2Dao
@@ -22,7 +22,6 @@ import cn.nabr.chatwithchat.data.database.dao.TextSkillDao
 import cn.nabr.chatwithchat.data.database.dao.VisualAssetDao
 import cn.nabr.chatwithchat.data.database.entity.AssistantRevisionListConverter
 import cn.nabr.chatwithchat.data.database.entity.ChatAttachmentListConverter
-import cn.nabr.chatwithchat.data.database.entity.ChatPlatformModelV2
 import cn.nabr.chatwithchat.data.database.entity.ChatHistoryBackfillCheckpointEntity
 import cn.nabr.chatwithchat.data.database.entity.ChatHistoryEmbeddingCacheEntity
 import cn.nabr.chatwithchat.data.database.entity.ChatHistoryIndexQueueEntity
@@ -30,10 +29,13 @@ import cn.nabr.chatwithchat.data.database.entity.ChatHistoryIndexStateEntity
 import cn.nabr.chatwithchat.data.database.entity.ChatHistoryProjectionEntity
 import cn.nabr.chatwithchat.data.database.entity.ChatHistoryVectorEntryEntity
 import cn.nabr.chatwithchat.data.database.entity.ChatHistoryVectorSnapshotEntity
+import cn.nabr.chatwithchat.data.database.entity.ChatPlatformModelV2
 import cn.nabr.chatwithchat.data.database.entity.ChatRoomV2
 import cn.nabr.chatwithchat.data.database.entity.ContextCheckpointSegment
 import cn.nabr.chatwithchat.data.database.entity.ContextNativeCompactionState
 import cn.nabr.chatwithchat.data.database.entity.ContextRangeState
+import cn.nabr.chatwithchat.data.database.entity.McpServerEntity
+import cn.nabr.chatwithchat.data.database.entity.McpToolEntity
 import cn.nabr.chatwithchat.data.database.entity.MemoryActivityLog
 import cn.nabr.chatwithchat.data.database.entity.MemoryChatCheckpoint
 import cn.nabr.chatwithchat.data.database.entity.MemoryCorpusState
@@ -45,21 +47,19 @@ import cn.nabr.chatwithchat.data.database.entity.MemoryMutationGroup
 import cn.nabr.chatwithchat.data.database.entity.MemoryMutationReceipt
 import cn.nabr.chatwithchat.data.database.entity.MemoryPendingTurn
 import cn.nabr.chatwithchat.data.database.entity.MemoryProposal
-import cn.nabr.chatwithchat.data.database.entity.McpServerEntity
-import cn.nabr.chatwithchat.data.database.entity.McpToolEntity
 import cn.nabr.chatwithchat.data.database.entity.MessageSourceMetadataListConverter
 import cn.nabr.chatwithchat.data.database.entity.MessageStickerRefListConverter
+import cn.nabr.chatwithchat.data.database.entity.MessageTextSkillInvocation
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
+import cn.nabr.chatwithchat.data.database.entity.MessageVisualRefEntity
 import cn.nabr.chatwithchat.data.database.entity.PlatformModelV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
+import cn.nabr.chatwithchat.data.database.entity.SessionTextSkillBinding
 import cn.nabr.chatwithchat.data.database.entity.StickerAssetEntity
 import cn.nabr.chatwithchat.data.database.entity.StickerItemEntity
 import cn.nabr.chatwithchat.data.database.entity.StickerPackEntity
-import cn.nabr.chatwithchat.data.database.entity.SessionTextSkillBinding
-import cn.nabr.chatwithchat.data.database.entity.MessageTextSkillInvocation
 import cn.nabr.chatwithchat.data.database.entity.StringListConverter
 import cn.nabr.chatwithchat.data.database.entity.TokenUsageRecordConverter
-import cn.nabr.chatwithchat.data.database.entity.MessageVisualRefEntity
 import cn.nabr.chatwithchat.data.database.entity.VisualAssetCatalogEntity
 import cn.nabr.chatwithchat.data.database.entity.VisualAssetEntity
 import cn.nabr.chatwithchat.data.database.entity.VisualAssetProviderRefEntity
@@ -104,7 +104,7 @@ import cn.nabr.chatwithchat.data.database.entity.VisualAssetProviderRefEntity
         MessageVisualRefEntity::class,
         VisualAssetProviderRefEntity::class
     ],
-    version = 29,
+    version = 30,
     exportSchema = true
 )
 @TypeConverters(

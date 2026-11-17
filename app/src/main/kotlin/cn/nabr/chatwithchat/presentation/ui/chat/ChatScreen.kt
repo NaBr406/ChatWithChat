@@ -73,10 +73,12 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.ClipEntry
@@ -118,12 +120,19 @@ import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import com.kyant.backdrop.backdrops.layerBackdrop
 import java.io.File
 import kotlin.math.abs
+import kotlin.math.exp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 
 @OptIn(ExperimentalMaterial3Api::class)
+/** Time constant (1 / angular frequency) of the critically damped streaming follow scroll. */
+private const val STREAMING_FOLLOW_TIME_CONSTANT_MILLIS = 60f
+/** How long the follow keeps running after the stream ends with nothing left to follow. */
+private const val STREAMING_FOLLOW_SETTLE_MILLIS = 600f
+
 @Composable
 fun ChatScreen(
     chatViewModel: ChatViewModel = hiltViewModel(),
@@ -192,9 +201,12 @@ fun ChatScreen(
     }
 
     val glassPolicy = remember(chatViewModel) { ChatGlassPolicy() }
-    // Resolve before composing any child WebView, including one in an older turn.
-    val glassEnabled = glassPolicy.isEnabled(groupedMessages.assistantMessages, indexStates)
-    ChatGlassScope(enabled = glassEnabled) {
+    // Resolve before composing any child WebView, including one in an older turn. A false result
+    // switches the sampling source to the ambient canvas; it does not disable the glass surfaces.
+    val captureLiveGlass = glassPolicy.shouldCaptureLiveContent(groupedMessages.assistantMessages, indexStates)
+    // While generating, the list changes on every frame and each glass surface re-renders the whole chat
+    // behind it. The small round buttons then sample the ambient canvas; the composer bar stays live.
+    ChatGlassScope(captureLiveContent = captureLiveGlass, liveCompactSurfaces = isIdle) {
         ChatContent(
             title = chatRoom.title,
             currentModelLabel = currentModelLabel,
@@ -422,7 +434,9 @@ internal fun ChatContent(
     val maximumUserChatBubbleWidth = ((screenWidthDp - systemChatMargin) * 0.78F).coerceAtMost(560.dp)
     val maximumOpponentChatBubbleWidth = screenWidthDp - systemChatMargin
     val listState = rememberLazyListState()
-    val composerBackdrop = LocalChatGlass.current?.backdrop
+    val glassContext = LocalChatGlass.current
+    val composerBackdrop = glassContext?.backdrop
+    val capturedContentBackdrop = glassContext?.captureBackdrop
     val composerDensity = LocalDensity.current
     var composerHeight by remember { mutableStateOf(68.dp) }
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
@@ -466,32 +480,6 @@ internal fun ChatContent(
         }
     }
     val roundNavigatorMaxHeight = (screenHeightDp * 0.62f).coerceAtMost(520.dp)
-    val latestStreamingContentVersion = remember(groupedMessages, toolProgressStates) {
-        buildString {
-            append(groupedMessages.userMessages.size)
-            append('|')
-            groupedMessages.assistantMessages.lastOrNull().orEmpty().forEach { message ->
-                append(message.effectiveContent().length)
-                append(':')
-                append(message.effectiveThoughts().length)
-                append(':')
-                append(message.attachments.size)
-                append(':')
-                append(message.sourceMetadata.size)
-                append(':')
-                append(message.effectiveTokenUsage()?.totalTokens ?: 0)
-                append('|')
-            }
-            toolProgressStates.entries.sortedBy { it.key }.forEach { (key, states) ->
-                append('|')
-                append(key)
-                append(':')
-                append(states.size)
-                append(':')
-                append(states.lastOrNull()?.status?.name.orEmpty())
-            }
-        }
-    }
     val activeMetadataPlatformIndex = if (lastMessageIndex >= 0) {
         indexStates.getOrElse(lastMessageIndex) { 0 }
     } else {
@@ -533,6 +521,7 @@ internal fun ChatContent(
         mutableStateOf<ChatScrollIntent>(ChatScrollIntent.FollowingLatest)
     }
     var programmaticScrollInProgress by remember { mutableStateOf(false) }
+    var isStreamingFollowActive by remember { mutableStateOf(false) }
     var previousBottomItemIndex by remember { mutableStateOf(bottomItemIndex) }
     var hasHandledInitialLoad by rememberSaveable { mutableStateOf(false) }
     BackHandler(enabled = isRoundNavigatorOpen) {
@@ -579,15 +568,16 @@ internal fun ChatContent(
         listState.requestScrollToItem(currentBottomItemIndex)
     }
 
-    // Remembered so the active turn gets the same callback instance on every token.
-    val followStreamingContent: () -> Unit = remember { { requestScrollToLatestMessage() } }
+    // The collectors below start once, so they must read the latest value, not the first.
+    val currentIsIdle by rememberUpdatedState(isIdle)
+
+    // Remembered so the active turn gets the same callback instance on every token. While streaming,
+    // the per-frame follow below already tracks the bottom; a jump here would fight it.
+    val followStreamingContent: () -> Unit = remember { { if (currentIsIdle) requestScrollToLatestMessage() } }
 
     fun requestFollowLatest() {
         scrollIntent = reduceChatScrollIntent(scrollIntent, ChatScrollEvent.FollowLatestRequested)
     }
-
-    // The collector below starts once per list state, so it must read the latest value, not the first.
-    val currentIsIdle by rememberUpdatedState(isIdle)
     LaunchedEffect(listState) {
         snapshotFlow {
             val firstVisibleTurn = listState.layoutInfo.visibleItemsInfo
@@ -613,6 +603,7 @@ internal fun ChatContent(
                 )
             } else if (
                 currentIsIdle &&
+                !isStreamingFollowActive &&
                 scrollIntent.shouldRestoreFollowingViewport(
                     isScrollInProgress = viewport.isScrollInProgress,
                     canScrollForward = viewport.canScrollForward,
@@ -639,9 +630,69 @@ internal fun ChatContent(
         }
     }
 
-    LaunchedEffect(latestStreamingContentVersion) {
-        if (scrollIntent.shouldFollowStreaming(isStreaming = !isIdle)) {
-            requestScrollToLatestMessage()
+    // Follows the bottom once per display frame while streaming. Jumping to the bottom item on each
+    // publish moved the list a whole line at a time, 20 times a second, under text that fades in
+    // smoothly, and missed height changes that come from no publish (blocks expanding, formulas
+    // resizing) until the next one. `dispatchRawDelta` does not set `isScrollInProgress`, so the
+    // viewport collector above never mistakes this for the user scrolling.
+    //
+    // A critically damped spring rather than a plain exponential approach: text still grows a whole
+    // line at a time when it wraps, and an exponential approach starts each line at full speed. The
+    // spring keeps the velocity continuous, so a steady run of lines becomes a steady scroll.
+    //
+    // It keeps running briefly after the stream ends, while the pacer drains the last characters, and
+    // the idle "restore to bottom" jump in the collector above stays off until it stops.
+    LaunchedEffect(listState) {
+        while (true) {
+            snapshotFlow { currentIsIdle }.first { idle -> !idle }
+            isStreamingFollowActive = true
+            try {
+                var velocity = 0f // px per ms, positive towards the bottom
+                var settledMillis = 0f
+                var previousFrameNanos = withFrameNanos { it }
+                while (!currentIsIdle || settledMillis < STREAMING_FOLLOW_SETTLE_MILLIS) {
+                    val frameNanos = withFrameNanos { it }
+                    val frameMillis = ((frameNanos - previousFrameNanos) / 1_000_000f).coerceIn(1f, 100f)
+                    previousFrameNanos = frameNanos
+                    settledMillis += frameMillis
+                    if (
+                        !scrollIntent.shouldFollowStreaming(isStreaming = true) ||
+                        programmaticScrollInProgress ||
+                        listState.isScrollInProgress
+                    ) {
+                        velocity = 0f
+                        continue
+                    }
+                    val layoutInfo = listState.layoutInfo
+                    val lastIndex = layoutInfo.totalItemsCount - 1
+                    val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull() ?: continue
+                    if (lastVisible.index != lastIndex) {
+                        // The bottom is more than a screen away (a new turn, or a large block at once).
+                        listState.requestScrollToItem(lastIndex)
+                        velocity = 0f
+                        settledMillis = 0f
+                        continue
+                    }
+                    val contentEnd = layoutInfo.viewportEndOffset - layoutInfo.afterContentPadding
+                    val gap = (lastVisible.offset + lastVisible.size - contentEnd).toFloat()
+                    if (gap <= 0.5f) {
+                        velocity = 0f
+                        if (gap > 0f) listState.dispatchRawDelta(gap)
+                        continue
+                    }
+                    settledMillis = 0f
+                    // Closed-form critically damped step, stable for any frame length.
+                    val omega = 1f / STREAMING_FOLLOW_TIME_CONSTANT_MILLIS
+                    val gapRate = -velocity
+                    val decay = exp(-omega * frameMillis)
+                    val nextGap = (gap + (gapRate + omega * gap) * frameMillis) * decay
+                    val nextGapRate = (gapRate - omega * (gapRate + omega * gap) * frameMillis) * decay
+                    velocity = (-nextGapRate).coerceAtLeast(0f)
+                    listState.dispatchRawDelta((gap - nextGap).coerceIn(0f, gap))
+                }
+            } finally {
+                isStreamingFollowActive = false
+            }
         }
     }
 
@@ -734,7 +785,7 @@ internal fun ChatContent(
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
-                        .then(if (composerBackdrop != null) Modifier.layerBackdrop(composerBackdrop) else Modifier)
+                        .then(if (capturedContentBackdrop != null) Modifier.layerBackdrop(capturedContentBackdrop) else Modifier)
                         .settingsCanvasBackground(),
                     state = listState,
                     contentPadding = PaddingValues(
@@ -953,8 +1004,13 @@ private fun ChatMessagePair(
 ) {
     val selectedAssistantMessage = assistantMessages.getOrNull(platformIndexState)
     val selectedAssistantRevisionIndex = selectedAssistantMessage?.activeRevisionIndex ?: ACTIVE_REVISION_LATEST
-    val assistantContent = selectedAssistantMessage?.effectiveContent()?.stripInternalStickerMarkers() ?: ""
-    val assistantThoughts = selectedAssistantMessage?.effectiveThoughts()?.stripInternalStickerMarkers() ?: ""
+    // Keyed on the raw text so recompositions that do not change it (tool progress, loading flags)
+    // skip the cleanup. While streaming the raw text changes on every publish, so the cleanup itself
+    // has a fast path for text that needs no rewriting.
+    val rawAssistantContent = selectedAssistantMessage?.effectiveContent().orEmpty()
+    val rawAssistantThoughts = selectedAssistantMessage?.effectiveThoughts().orEmpty()
+    val assistantContent = remember(rawAssistantContent) { rawAssistantContent.stripInternalStickerMarkers() }
+    val assistantThoughts = remember(rawAssistantThoughts) { rawAssistantThoughts.stripInternalStickerMarkers() }
     val assistantStickerRefs = selectedAssistantMessage?.effectiveStickerRefs().orEmpty()
     val selectedTokenUsage = selectedAssistantMessage?.effectiveTokenUsage()
     // Gated on `canSubmitOrEdit` for the same reason editing is: switching revisions rewrites the
@@ -976,6 +1032,12 @@ private fun ChatMessagePair(
             } ?: false
             )
     val selectedPlatformUid = selectedAssistantMessage?.platformType.orEmpty()
+    // One instance per identity. The bubble passes this down as `Any`, which strong skipping compares by
+    // reference: a fresh string on every publish kept every committed Markdown block of the active turn,
+    // including long-finished thinking paragraphs, recomposing 20 times a second.
+    val bubbleContentIdentity = remember(messageIndex, selectedPlatformUid, selectedAssistantRevisionIndex) {
+        "$messageIndex:$selectedPlatformUid:$selectedAssistantRevisionIndex"
+    }
     val selectedToolProgressStates = toolProgressStates[ChatViewModel.toolProgressKey(messageIndex, platformIndexState)].orEmpty()
     val isSelectedPlatformThinking = ChatViewModel.toolProgressKey(messageIndex, platformIndexState) in thinkingSlots
     val isCurrentPlatformLoading =
@@ -995,7 +1057,9 @@ private fun ChatMessagePair(
     }
     var isDropDownMenuExpanded by remember { mutableStateOf(false) }
 
-    Column(modifier = Modifier.fillMaxWidth()) {
+    // A layer per turn: the per-frame follow scroll then moves recorded turns instead of walking their
+    // whole node tree to redraw it.
+    Column(modifier = Modifier.fillMaxWidth().graphicsLayer()) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1084,7 +1148,7 @@ private fun ChatMessagePair(
                 } else {
                     emptyList()
                 },
-                contentIdentity = "$messageIndex:$selectedPlatformUid:$selectedAssistantRevisionIndex",
+                contentIdentity = bubbleContentIdentity,
                 renderRichContent = !isInterruptedInitialRequest && displayedAssistantContent.contains("<ui-"),
                 interactionBinding = if (!isInterruptedInitialRequest && displayedAssistantContent.contains("<ui-")) {
                     bindRichInteraction(messageIndex, platformIndexState)

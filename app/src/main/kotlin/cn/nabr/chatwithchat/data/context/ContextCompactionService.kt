@@ -1,7 +1,6 @@
 package cn.nabr.chatwithchat.data.context
 
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
-import cn.nabr.chatwithchat.data.model.ClientType
 import cn.nabr.chatwithchat.data.token.TokenUsageEstimator
 import cn.nabr.chatwithchat.data.token.TokenUsageRecord
 import kotlinx.coroutines.TimeoutCancellationException
@@ -101,7 +100,7 @@ class ContextCompactionService(
         if (turns.isEmpty()) {
             return ContextCompactionOutcome.Failed(ContextCompactionFailure.NOTHING_TO_COMPACT, null)
         }
-        if (NativeCompactionModelGate.supportsServerSideCompaction(platform.compatibleType, platform.model)) {
+        if (NativeCompactionModelGate.supportsServerSideCompaction(platform)) {
             return ContextCompactionOutcome.Failed(
                 reason = ContextCompactionFailure.NATIVE_PATH_REQUIRED,
                 fallbackSummary = fallback()
@@ -222,7 +221,7 @@ class ContextCompactionService(
         uid.isNotBlank() &&
             model.isNotBlank() &&
             apiUrl.isNotBlank() &&
-            (compatibleType == ClientType.OLLAMA || !token.isNullOrBlank())
+            (acceptsOptionalApiKey || !token.isNullOrBlank())
 
     private companion object {
         const val COMPACTION_USAGE_LABEL = "上下文压缩"

@@ -65,19 +65,23 @@ import cn.nabr.chatwithchat.data.dto.openai.response.Choice
 import cn.nabr.chatwithchat.data.dto.openai.response.Delta
 import cn.nabr.chatwithchat.data.dto.openai.response.ErrorDetail
 import cn.nabr.chatwithchat.data.dto.openai.response.FunctionCallArgumentsDoneEvent
+import cn.nabr.chatwithchat.data.dto.openai.response.IncompleteDetails
 import cn.nabr.chatwithchat.data.dto.openai.response.OutputTextDeltaEvent
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponseCompletedEvent
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponseError
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponseFailedEvent
+import cn.nabr.chatwithchat.data.dto.openai.response.ResponseIncompleteEvent
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponseObject
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponsesCompactResult
 import cn.nabr.chatwithchat.data.dto.openai.response.ResponsesStreamEvent
 import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceScheduler
 import cn.nabr.chatwithchat.data.memory.MemoryMaintenanceWorkEnqueuer
 import cn.nabr.chatwithchat.data.memory.MemoryTurnBatchScheduler
+import cn.nabr.chatwithchat.data.model.ApiProtocol
 import cn.nabr.chatwithchat.data.model.ChatAttachment
 import cn.nabr.chatwithchat.data.model.ClientType
 import cn.nabr.chatwithchat.data.model.ReasoningMode
+import cn.nabr.chatwithchat.data.model.ToolCallStrategy
 import cn.nabr.chatwithchat.data.network.AnthropicAPI
 import cn.nabr.chatwithchat.data.network.GoogleAPI
 import cn.nabr.chatwithchat.data.network.GroqAPI
@@ -152,6 +156,255 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ChatRepositoryImplTest {
+
+    @Test
+    fun `continuation retains tool results without executing the tool again`() = runBlocking {
+        val search = RecordingWebSearchRepository(Result.success(listOf(webSearchResult())))
+        val api = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatToolCallFlow("search_1", ToolDefinition.WebSearch.name, """{"query":"svg"}"""),
+                flowOf(ChatCompletionChunk(choices = listOf(Choice(0, Delta(content = "<sv"), "length")))),
+                chatCompletionFlow("g/>")
+            )
+        )
+        val states = createRepository(
+            openAIAPI = api,
+            webSearchRepository = search,
+            settingRepository = settingRepository(WebSearchMode.Auto, ToolCallingMode.Auto)
+        ).completeChat(
+            listOf(MessageV2(content = "Draw SVG", platformType = null)),
+            emptyList(),
+            customPlatform().copy(toolCallStrategy = ToolCallStrategy.NATIVE)
+        ).toList()
+        assertEquals(listOf("svg"), search.queries)
+        assertEquals("<svg/>", states.visibleBodyAfterStreamControls())
+        assertEquals(3, api.chatCompletionRequests.size)
+        val continuation = api.chatCompletionRequests.last()
+        assertTrue(continuation.messages.any { it.role == OpenAIRole.TOOL && it.toolCallId == "search_1" })
+        assertNull(continuation.tools)
+        assertFalse(states.any { it is ApiState.Error })
+    }
+
+    @Test
+    fun `output cap with a partial tool call fails without executing or retrying it`() = runBlocking {
+        val search = RecordingWebSearchRepository()
+        val api = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                flowOf(
+                    ChatCompletionChunk(
+                        choices = listOf(
+                            Choice(
+                                index = 0,
+                                delta = Delta(
+                                    toolCalls = listOf(
+                                        ChatCompletionToolCallDelta(
+                                            index = 0,
+                                            id = "search_1",
+                                            type = "function",
+                                            function = ChatCompletionFunctionCallDelta(ToolDefinition.WebSearch.name, "{\"query\":")
+                                        )
+                                    )
+                                ),
+                                finishReason = "length"
+                            )
+                        )
+                    )
+                )
+            )
+        )
+        val states = createRepository(
+            openAIAPI = api,
+            webSearchRepository = search,
+            settingRepository = settingRepository(WebSearchMode.Auto, ToolCallingMode.Auto)
+        ).completeChat(
+            listOf(MessageV2(content = "search", platformType = null)),
+            emptyList(),
+            customPlatform().copy(toolCallStrategy = ToolCallStrategy.NATIVE)
+        ).toList()
+        assertTrue(search.queries.isEmpty())
+        assertEquals(1, api.chatCompletionRequests.size)
+        assertTrue(states.filterIsInstance<ApiState.Error>().any { it.message.contains("工具调用参数") })
+    }
+
+    @Test
+    fun `chat output length continues in plain and native tool modes`() = runBlocking {
+        for (mode in listOf(ToolCallingMode.Off, ToolCallingMode.Auto)) {
+            val api = RecordingOpenAIAPI(
+                chatCompletionResponses = mutableListOf(
+                    flowOf(
+                        ChatCompletionChunk(
+                            choices = listOf(Choice(0, Delta(content = "<sv", reasoningContent = "plan"), "length")),
+                            usage = ProviderUsage(promptTokens = 10, completionTokens = 5)
+                        )
+                    ),
+                    chatCompletionFlow("g/>", ProviderUsage(promptTokens = 20, completionTokens = 3))
+                )
+            )
+            val states = createRepository(
+                openAIAPI = api,
+                settingRepository = settingRepository(WebSearchMode.Off, mode)
+            ).completeChat(
+                listOf(MessageV2(content = "Draw SVG", platformType = null)),
+                emptyList(),
+                customPlatform().copy(toolCallStrategy = ToolCallStrategy.NATIVE)
+            ).toList()
+            assertEquals("<svg/>", states.visibleBodyAfterStreamControls())
+            assertEquals(2, api.chatCompletionRequests.size)
+            val next = api.chatCompletionRequests[1]
+            assertEquals("<sv", next.messages[next.messages.lastIndex - 1].contentText)
+            assertEquals("plan", next.messages[next.messages.lastIndex - 1].reasoningContent)
+            assertEquals(OUTPUT_CONTINUATION_INSTRUCTION, next.messages.last().contentText)
+            assertNull(next.tools)
+            assertEquals(38, states.filterIsInstance<ApiState.UsageUpdated>().last().usage.totalTokens)
+            assertEquals(1, states.count { it == ApiState.Done })
+            assertFalse(states.any { it is ApiState.Error || it == ApiState.OutputTruncated })
+        }
+    }
+
+    @Test
+    fun `responses incomplete token limit continues in plain and native tool modes`() = runBlocking {
+        for (mode in listOf(ToolCallingMode.Off, ToolCallingMode.Auto)) {
+            val api = RecordingOpenAIAPI(
+                responsesResponses = mutableListOf(
+                    flowOf(
+                        OutputTextDeltaEvent("item", 0, 0, "<sv"),
+                        ResponseIncompleteEvent(
+                            ResponseObject(
+                                id = "first",
+                                status = "incomplete",
+                                incompleteDetails = IncompleteDetails("max_output_tokens"),
+                                usage = ProviderUsage(inputTokens = 10, outputTokens = 5)
+                            )
+                        )
+                    ),
+                    responseTextFlow("g/>", ProviderUsage(inputTokens = 20, outputTokens = 3))
+                )
+            )
+            val states = createRepository(
+                openAIAPI = api,
+                settingRepository = settingRepository(WebSearchMode.Off, mode)
+            ).completeChat(
+                listOf(MessageV2(content = "Draw SVG", platformType = null)),
+                emptyList(),
+                openAIPlatform()
+            ).toList()
+            assertEquals("<svg/>", states.visibleBodyAfterStreamControls())
+            assertEquals(2, api.responsesRequests.size)
+            val next = api.responsesRequests[1]
+            val assistant = next.input[next.input.lastIndex - 1] as ResponseInputMessage
+            assertEquals("assistant", assistant.role)
+            assertEquals(ResponseInputContent.text("<sv"), assistant.content)
+            assertNull(next.tools)
+            assertEquals(38, states.filterIsInstance<ApiState.UsageUpdated>().last().usage.totalTokens)
+            assertEquals(1, states.count { it == ApiState.Done })
+            assertFalse(states.any { it is ApiState.Error || it == ApiState.OutputTruncated })
+        }
+    }
+
+    @Test
+    fun `anthropic output cap continues in plain and native tool modes`() = runBlocking {
+        for (mode in listOf(ToolCallingMode.Off, ToolCallingMode.Auto)) {
+            val api = RecordingAnthropicAPI(
+                mutableListOf(
+                    flowOf(
+                        anthropicMessageStart(10, 0, 0),
+                        ContentDeltaResponseChunk(0, ContentBlock(type = ContentBlockType.DELTA, text = "<sv")),
+                        anthropicMessageDelta(5, StopReason.MAX_TOKENS)
+                    ),
+                    anthropicTextFlow("g/>", 20, 0, 0, 3, true)
+                )
+            )
+            val states = createRepository(
+                anthropicAPI = api,
+                settingRepository = settingRepository(WebSearchMode.Off, mode)
+            ).completeChat(
+                listOf(MessageV2(content = "Draw SVG", platformType = null)),
+                emptyList(),
+                anthropicPlatform()
+            ).toList()
+            assertEquals("<svg/>", states.visibleBodyAfterStreamControls())
+            assertEquals(2, api.requests.size)
+            val next = api.requests[1]
+            assertEquals(listOf(AnthropicTextContent("<sv")), next.messages[next.messages.lastIndex - 1].content)
+            assertNull(next.tools)
+            assertEquals(38, states.filterIsInstance<ApiState.UsageUpdated>().last().usage.totalTokens)
+            assertFalse(states.any { it is ApiState.Error })
+        }
+    }
+
+    @Test
+    fun `google output cap continues in plain and native tool modes`() = runBlocking {
+        for (mode in listOf(ToolCallingMode.Off, ToolCallingMode.Auto)) {
+            val api = RecordingGoogleAPI(
+                mutableListOf(
+                    flowOf(
+                        GenerateContentResponse(
+                            candidates = listOf(Candidate(Content(GoogleRole.MODEL, listOf(Part.text("<sv"))), "MAX_TOKENS")),
+                            usageMetadata = UsageMetadata(promptTokenCount = 10, candidatesTokenCount = 5)
+                        )
+                    ),
+                    googleTextFlow("g/>", UsageMetadata(promptTokenCount = 20, candidatesTokenCount = 3))
+                )
+            )
+            val states = createRepository(
+                googleAPI = api,
+                settingRepository = settingRepository(WebSearchMode.Off, mode)
+            ).completeChat(
+                listOf(MessageV2(content = "Draw SVG", platformType = null)),
+                emptyList(),
+                googlePlatform()
+            ).toList()
+            assertEquals("<svg/>", states.visibleBodyAfterStreamControls())
+            assertEquals(2, api.requests.size)
+            val next = api.requests[1]
+            assertEquals(listOf(Part.text("<sv")), next.contents[next.contents.lastIndex - 1].parts)
+            assertNull(next.tools)
+            assertEquals(38, states.filterIsInstance<ApiState.UsageUpdated>().last().usage.totalTokens)
+            assertFalse(states.any { it is ApiState.Error })
+        }
+    }
+
+    @Test
+    fun `groq output cap continues without replacing the first segment`() = runBlocking {
+        val api = FakeGroqAPI(
+            responses = mutableListOf(
+                flowOf(
+                    GroqChatCompletionChunk(
+                        choices = listOf(GroqChoice(0, GroqDelta(content = "<sv"), finishReason = "length")),
+                        usage = ProviderUsage(promptTokens = 10, completionTokens = 5)
+                    )
+                ),
+                groqCompletionFlow("g/>", ProviderUsage(promptTokens = 20, completionTokens = 3))
+            )
+        )
+        val states = createRepository(groqAPI = api).completeChat(
+            listOf(MessageV2(content = "Draw SVG", platformType = null)),
+            emptyList(),
+            groqPlatform(false, "test")
+        ).toList()
+        assertEquals("<svg/>", states.visibleBodyAfterStreamControls())
+        assertEquals(2, api.requests.size)
+        assertEquals(38, states.filterIsInstance<ApiState.UsageUpdated>().last().usage.totalTokens)
+    }
+
+    @Test
+    fun `responses content filter is not continued`() = runBlocking {
+        val api = RecordingOpenAIAPI(
+            responsesResponses = mutableListOf(
+                flowOf(
+                    OutputTextDeltaEvent("item", 0, 0, "partial"),
+                    ResponseIncompleteEvent(ResponseObject("first", "incomplete", incompleteDetails = IncompleteDetails("content_filter")))
+                )
+            )
+        )
+        val states = createRepository(openAIAPI = api).completeChat(
+            listOf(MessageV2(content = "Draw SVG", platformType = null)),
+            emptyList(),
+            openAIPlatform()
+        ).toList()
+        assertEquals(1, api.responsesRequests.size)
+        assertTrue(states.any { it is ApiState.Error })
+    }
 
     @Test
     fun `chat sessions stay stable across turns and isolate other chats for both openai protocols`() = runBlocking {
@@ -458,6 +711,7 @@ class ChatRepositoryImplTest {
             assistantMessages = emptyList(),
             platform = customPlatform().copy(
                 apiUrl = "https://api.deepseek.com/v1",
+                toolCallStrategy = ToolCallStrategy.AUTO,
                 model = "deepseek-v4-pro"
             )
         ).toList()
@@ -510,6 +764,7 @@ class ChatRepositoryImplTest {
             assistantMessages = emptyList(),
             platform = customPlatform().copy(
                 apiUrl = "https://api.deepseek.com/v1",
+                toolCallStrategy = ToolCallStrategy.AUTO,
                 model = "deepseek-v4-pro"
             )
         ).toList()
@@ -578,6 +833,7 @@ class ChatRepositoryImplTest {
             assistantMessages = emptyList(),
             platform = customPlatform().copy(
                 apiUrl = "https://api.deepseek.com/v1",
+                toolCallStrategy = ToolCallStrategy.AUTO,
                 model = "deepseek-v4-pro"
             )
         ).toList()
@@ -638,6 +894,7 @@ class ChatRepositoryImplTest {
             assistantMessages = emptyList(),
             platform = customPlatform().copy(
                 apiUrl = "https://api.deepseek.com/v1",
+                toolCallStrategy = ToolCallStrategy.AUTO,
                 model = "deepseek-v4-pro"
             )
         ).toList()
@@ -692,6 +949,7 @@ class ChatRepositoryImplTest {
             assistantMessages = emptyList(),
             platform = customPlatform().copy(
                 apiUrl = "https://api.deepseek.com/v1",
+                toolCallStrategy = ToolCallStrategy.AUTO,
                 model = "deepseek-v4-pro"
             )
         ).toList()
@@ -730,6 +988,7 @@ class ChatRepositoryImplTest {
             assistantMessages = emptyList(),
             platform = customPlatform().copy(
                 apiUrl = "https://api.deepseek.com/v1",
+                toolCallStrategy = ToolCallStrategy.AUTO,
                 model = "deepseek-v4-pro"
             )
         ).toList()
@@ -766,6 +1025,7 @@ class ChatRepositoryImplTest {
             assistantMessages = emptyList(),
             platform = customPlatform().copy(
                 apiUrl = "https://api.deepseek.com/v1",
+                toolCallStrategy = ToolCallStrategy.AUTO,
                 model = "deepseek-v4-pro"
             )
         ).toList()
@@ -806,6 +1066,7 @@ class ChatRepositoryImplTest {
             assistantMessages = emptyList(),
             platform = customPlatform().copy(
                 apiUrl = "https://api.deepseek.com/v1",
+                toolCallStrategy = ToolCallStrategy.AUTO,
                 model = "deepseek-v4-pro"
             )
         ).toList()
@@ -832,6 +1093,7 @@ class ChatRepositoryImplTest {
             assistantMessages = emptyList(),
             platform = customPlatform().copy(
                 apiUrl = "https://api.deepseek.com/v1",
+                toolCallStrategy = ToolCallStrategy.AUTO,
                 model = "deepseek-v4-pro"
             )
         ).toList()
@@ -903,6 +1165,7 @@ class ChatRepositoryImplTest {
             assistantMessages = emptyList(),
             platform = customPlatform().copy(
                 apiUrl = "https://api.deepseek.com/v1",
+                toolCallStrategy = ToolCallStrategy.AUTO,
                 model = "deepseek-v4-pro"
             )
         ).toList()
@@ -927,6 +1190,143 @@ class ChatRepositoryImplTest {
     }
 
     @Test
+    fun `opencode deepseek auto uses native tools and preserves reasoning on continuation`() = runBlocking {
+        val api = RecordingOpenAIAPI(
+            chatCompletionResponses = mutableListOf(
+                chatToolCallFlow("call_1", ToolDefinition.CurrentDateTime.name, "{}", reasoningContent = "Plan"),
+                chatCompletionFlow("Finished")
+            )
+        )
+        val repository = createRepository(
+            openAIAPI = api,
+            settingRepository = settingRepository(webSearchMode = WebSearchMode.Off, toolCallingMode = ToolCallingMode.Auto)
+        )
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "What time is it?", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform().copy(
+                apiUrl = "https://opencode.ai/zen/go/v1",
+                model = "deepseek-v4-pro",
+                apiProtocol = ApiProtocol.OPENAI_CHAT_COMPLETIONS,
+                toolCallStrategy = ToolCallStrategy.AUTO
+            )
+        ).toList()
+        assertTrue(states.any { it == ApiState.Success("Finished") })
+        assertEquals(2, api.chatCompletionRequests.size)
+        assertTrue(api.chatCompletionRequests.first().tools.orEmpty().isNotEmpty())
+        assertTrue(api.chatCompletionRequests[1].messages.any { it.reasoningContent == "Plan" })
+        assertTrue(api.chatCompletionRequests.all { it.thinking == null })
+    }
+
+    @Test
+    fun `responses strategy uses the configured transport on a custom provider`() = runBlocking {
+        ToolCallStrategy.entries.forEach { strategy ->
+            val api = RecordingOpenAIAPI(
+                responsesResponses = mutableListOf<Flow<ResponsesStreamEvent>>().apply {
+                    if (strategy != ToolCallStrategy.JSON) {
+                        add(flowOf(cn.nabr.chatwithchat.data.dto.openai.response.ResponseErrorEvent(message = "Unsupported parameter: tools")))
+                    }
+                    add(flowOf(OutputTextDeltaEvent(itemId = "answer", outputIndex = 0, contentIndex = 0, delta = "{\"type\":\"final_answer\",\"content\":\"Finished\"}")))
+                }
+            )
+            val repository = createRepository(
+                openAIAPI = api,
+                settingRepository = settingRepository(webSearchMode = WebSearchMode.Off, toolCallingMode = ToolCallingMode.Auto)
+            )
+            val states = repository.completeChat(
+                userMessages = listOf(MessageV2(content = "Hello", platformType = null)),
+                assistantMessages = emptyList(),
+                platform = customPlatform().copy(apiProtocol = ApiProtocol.OPENAI_RESPONSES, toolCallStrategy = strategy)
+            ).toList()
+            assertEquals(if (strategy == ToolCallStrategy.AUTO) 2 else 1, api.streamResponsesCalls)
+            assertEquals(0, api.streamChatCompletionCalls)
+            if (strategy == ToolCallStrategy.NATIVE) {
+                assertTrue(states.any { it is ApiState.Error })
+            } else {
+                assertTrue(states.any { it == ApiState.Success("Finished") })
+                assertTrue(api.responsesRequests.last().tools.isNullOrEmpty())
+            }
+        }
+    }
+
+    @Test
+    fun `anthropic strategy uses the configured transport on a custom provider`() = runBlocking {
+        ToolCallStrategy.entries.forEach { strategy ->
+            val api = RecordingAnthropicAPI(
+                responses = mutableListOf<Flow<MessageResponseChunk>>().apply {
+                    if (strategy != ToolCallStrategy.JSON) {
+                        add(
+                            flowOf(
+                                cn.nabr.chatwithchat.data.dto.anthropic.response.ErrorResponseChunk(
+                                    error = cn.nabr.chatwithchat.data.dto.anthropic.response.ErrorDetail(type = "invalid_request_error", message = "tools are not supported")
+                                )
+                            )
+                        )
+                    }
+                    add(anthropicTextFlow("{\"type\":\"final_answer\",\"content\":\"Finished\"}", 0, 0, 0, 0, false))
+                }
+            )
+            val repository = createRepository(
+                anthropicAPI = api,
+                settingRepository = settingRepository(webSearchMode = WebSearchMode.Off, toolCallingMode = ToolCallingMode.Auto)
+            )
+            val states = repository.completeChat(
+                userMessages = listOf(MessageV2(content = "Hello", platformType = null)),
+                assistantMessages = emptyList(),
+                platform = customPlatform().copy(apiProtocol = ApiProtocol.ANTHROPIC_MESSAGES, toolCallStrategy = strategy)
+            ).toList()
+            assertEquals(if (strategy == ToolCallStrategy.AUTO) 2 else 1, api.streamCalls)
+            if (strategy == ToolCallStrategy.NATIVE) {
+                assertTrue(states.any { it is ApiState.Error })
+            } else {
+                assertTrue(states.any { it == ApiState.Success("Finished") })
+                assertTrue(api.requests.last().tools.isNullOrEmpty())
+            }
+        }
+    }
+
+    @Test
+    fun `native strategy and unrelated errors never downgrade to json`() = runBlocking {
+        listOf(
+            ToolCallStrategy.NATIVE to "Unsupported parameter: tools",
+            ToolCallStrategy.AUTO to "Invalid value in tools function schema",
+            ToolCallStrategy.AUTO to "Unsupported schema keyword in tools parameters",
+            ToolCallStrategy.AUTO to "provider unavailable"
+        ).forEach { (strategy, error) ->
+            val api = RecordingOpenAIAPI(chatCompletionResponses = mutableListOf(flowOf(ChatCompletionChunk(error = ErrorDetail(message = error)))))
+            val repository = createRepository(
+                openAIAPI = api,
+                settingRepository = settingRepository(webSearchMode = WebSearchMode.Off, toolCallingMode = ToolCallingMode.Auto)
+            )
+            val states = repository.completeChat(
+                userMessages = listOf(MessageV2(content = "Hello", platformType = null)),
+                assistantMessages = emptyList(),
+                platform = customPlatform().copy(toolCallStrategy = strategy)
+            ).toList()
+            assertEquals(1, api.streamChatCompletionCalls)
+            assertTrue(states.any { it == ApiState.Error(error) })
+            assertTrue(api.chatCompletionRequests.single().tools.orEmpty().isNotEmpty())
+        }
+    }
+
+    @Test
+    fun `auto network error before tools never downgrades to json`() = runBlocking {
+        val api = RecordingOpenAIAPI(chatCompletionResponses = MutableList(6) { flow { throw IOException("Unsupported parameter: tools") } })
+        val repository = createRepository(
+            openAIAPI = api,
+            settingRepository = settingRepository(webSearchMode = WebSearchMode.Off, toolCallingMode = ToolCallingMode.Auto)
+        )
+        val states = repository.completeChat(
+            userMessages = listOf(MessageV2(content = "Hello", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = customPlatform().copy(toolCallStrategy = ToolCallStrategy.AUTO)
+        ).toList()
+        assertTrue(states.any { it is ApiState.Error })
+        assertTrue(api.chatCompletionRequests.all { it.tools.orEmpty().isNotEmpty() })
+        assertTrue(api.chatCompletionRequests.none { it.systemText().contains("Enabled tool signatures:") })
+    }
+
+    @Test
     fun `official deepseek falls back to json tools after a native tools rejection without losing reasoning`() = runBlocking {
         val openAIAPI = RecordingOpenAIAPI(
             chatCompletionResponses = mutableListOf(
@@ -940,7 +1340,7 @@ class ChatRepositoryImplTest {
                         )
                     ),
                     ChatCompletionChunk(
-                        error = ErrorDetail(message = "Invalid value for parameter tools")
+                        error = ErrorDetail(message = "Unsupported parameter: tools")
                     )
                 ),
                 chatCompletionFlow(
@@ -981,6 +1381,7 @@ class ChatRepositoryImplTest {
             assistantMessages = emptyList(),
             platform = customPlatform().copy(
                 apiUrl = "https://api.deepseek.com/v1",
+                toolCallStrategy = ToolCallStrategy.AUTO,
                 model = "deepseek-v4-pro"
             )
         ).toList()
@@ -1045,6 +1446,7 @@ class ChatRepositoryImplTest {
             assistantMessages = emptyList(),
             platform = customPlatform().copy(
                 apiUrl = "https://api.deepseek.com/v1",
+                toolCallStrategy = ToolCallStrategy.AUTO,
                 model = "deepseek-v4-pro"
             )
         ).toList()
@@ -1052,18 +1454,14 @@ class ChatRepositoryImplTest {
         assertEquals(
             listOf(
                 ApiState.Loading,
-                ApiState.Success("Direct recovery"),
+                ApiState.Error("provider unavailable"),
                 ApiState.Done
             ),
             states.withoutUsageUpdates()
         )
-        assertEquals(2, openAIAPI.streamChatCompletionCalls)
+        assertEquals(1, openAIAPI.streamChatCompletionCalls)
         val nativeRequest = openAIAPI.chatCompletionRequests[0]
-        val directRequest = openAIAPI.chatCompletionRequests[1]
         assertTrue(nativeRequest.tools.orEmpty().isNotEmpty())
-        assertNull(directRequest.toolChoice)
-        assertNull(directRequest.tools)
-        assertFalse(directRequest.systemText().contains("Enabled tool signatures:"))
     }
 
     @Test
@@ -1091,6 +1489,7 @@ class ChatRepositoryImplTest {
             assistantMessages = emptyList(),
             platform = customPlatform().copy(
                 apiUrl = "https://api.deepseek.com/v1",
+                toolCallStrategy = ToolCallStrategy.AUTO,
                 model = "deepseek-v4-pro"
             )
         ).toList()
@@ -1147,6 +1546,7 @@ class ChatRepositoryImplTest {
             assistantMessages = emptyList(),
             platform = customPlatform().copy(
                 apiUrl = "https://api.deepseek.com/v1",
+                toolCallStrategy = ToolCallStrategy.AUTO,
                 model = "deepseek-v4-pro"
             )
         ).toList()
@@ -2218,6 +2618,7 @@ class ChatRepositoryImplTest {
             assistantMessages = emptyList(),
             platform = customPlatform().copy(
                 apiUrl = "https://api.deepseek.com/v1",
+                toolCallStrategy = ToolCallStrategy.AUTO,
                 model = "deepseek-v4-pro"
             )
         ).toList()
@@ -2282,6 +2683,7 @@ class ChatRepositoryImplTest {
             assistantMessages = emptyList(),
             platform = customPlatform().copy(
                 apiUrl = "https://api.deepseek.com/v1",
+                toolCallStrategy = ToolCallStrategy.AUTO,
                 model = "deepseek-v4-pro"
             )
         ).toList()
@@ -5091,6 +5493,7 @@ class ChatRepositoryImplTest {
         uid = "groq-platform",
         name = "Groq",
         compatibleType = ClientType.GROQ,
+        toolCallStrategy = ToolCallStrategy.JSON,
         apiUrl = "https://api.groq.com/openai/",
         model = model,
         reasoning = reasoning
@@ -5100,6 +5503,7 @@ class ChatRepositoryImplTest {
         uid = "custom-platform",
         name = "Custom",
         compatibleType = ClientType.CUSTOM,
+        toolCallStrategy = ToolCallStrategy.JSON,
         apiUrl = "https://example.com",
         model = "custom-model",
         systemPrompt = systemPrompt,
@@ -5154,6 +5558,7 @@ class ChatRepositoryImplTest {
         uid = "ollama-platform",
         name = "Ollama",
         compatibleType = ClientType.OLLAMA,
+        toolCallStrategy = ToolCallStrategy.JSON,
         apiUrl = "http://localhost:11434/",
         model = "llama3.2",
         systemPrompt = systemPrompt,

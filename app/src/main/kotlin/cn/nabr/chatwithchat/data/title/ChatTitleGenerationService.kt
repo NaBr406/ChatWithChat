@@ -2,7 +2,6 @@ package cn.nabr.chatwithchat.data.title
 
 import cn.nabr.chatwithchat.data.context.ContextCompactionModelClient
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
-import cn.nabr.chatwithchat.data.model.ClientType
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
 
@@ -71,7 +70,7 @@ class ChatTitleGenerationService(
     private fun PlatformV2.isEligibleForTitleGeneration(): Boolean =
         model.isNotBlank() &&
             apiUrl.isNotBlank() &&
-            (compatibleType == ClientType.OLLAMA || !token.isNullOrBlank())
+            (acceptsOptionalApiKey || !token.isNullOrBlank())
 
     private companion object {
         /**

@@ -3,11 +3,13 @@ package cn.nabr.chatwithchat.presentation.ui.setup
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import dagger.hilt.android.lifecycle.HiltViewModel
 import cn.nabr.chatwithchat.data.ModelConstants
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
+import cn.nabr.chatwithchat.data.model.ApiProtocol
 import cn.nabr.chatwithchat.data.model.ClientType
+import cn.nabr.chatwithchat.data.model.ToolCallStrategy
 import cn.nabr.chatwithchat.data.repository.SettingRepository
+import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -37,6 +39,33 @@ class SetupViewModelV2 @Inject constructor(
 
     private val _selectedClientType = MutableStateFlow<ClientType?>(null)
     val selectedClientType: StateFlow<ClientType?> = _selectedClientType.asStateFlow()
+
+    private val _selectedProtocol = MutableStateFlow(ApiProtocol.OPENAI_CHAT_COMPLETIONS)
+    val selectedProtocol = _selectedProtocol.asStateFlow()
+    private val _toolCallStrategy = MutableStateFlow(ToolCallStrategy.AUTO)
+    val toolCallStrategy = _toolCallStrategy.asStateFlow()
+
+    fun selectProtocol(protocol: ApiProtocol) {
+        _selectedProtocol.value = protocol
+        _selectedClientType.value = protocol.legacyClientType
+        _apiUrl.value = protocol.defaultApiUrl
+        _platformName.value = ""
+        _toolCallStrategy.value = ToolCallStrategy.AUTO
+        _isFullApiUrl.value = false
+        _customHeaders.value = ""
+        _apiKey.value = ""
+        _wizardStep.value = 0
+    }
+
+    fun updateProtocol(protocol: ApiProtocol) {
+        if (_apiUrl.value == _selectedProtocol.value.defaultApiUrl) _apiUrl.value = protocol.defaultApiUrl
+        _selectedProtocol.value = protocol
+        _selectedClientType.value = protocol.legacyClientType
+    }
+
+    fun updateToolCallStrategy(strategy: ToolCallStrategy) {
+        _toolCallStrategy.value = strategy
+    }
 
     private val _platformName = MutableStateFlow("")
     val platformName: StateFlow<String> = _platformName.asStateFlow()
@@ -74,6 +103,8 @@ class SetupViewModelV2 @Inject constructor(
 
     fun selectClientType(clientType: ClientType) {
         _selectedClientType.value = clientType
+        _selectedProtocol.value = ApiProtocol.fromLegacy(clientType)
+        _toolCallStrategy.value = ToolCallStrategy.AUTO
         _platformName.value = getDefaultPlatformName(clientType)
         _apiUrl.value = getDefaultApiUrl(clientType)
         _isFullApiUrl.value = false
@@ -113,6 +144,8 @@ class SetupViewModelV2 @Inject constructor(
     fun resetWizard() {
         _wizardStep.value = 0
         _selectedClientType.value = null
+        _selectedProtocol.value = ApiProtocol.OPENAI_CHAT_COMPLETIONS
+        _toolCallStrategy.value = ToolCallStrategy.AUTO
         _platformName.value = ""
         _apiUrl.value = ""
         _isFullApiUrl.value = false
@@ -130,6 +163,8 @@ class SetupViewModelV2 @Inject constructor(
                 val platform = PlatformV2(
                     name = _platformName.value.trim(),
                     compatibleType = clientType,
+                    apiProtocol = _selectedProtocol.value,
+                    toolCallStrategy = _toolCallStrategy.value,
                     enabled = true,
                     apiUrl = _apiUrl.value.trim(),
                     isFullApiUrl = _isFullApiUrl.value,

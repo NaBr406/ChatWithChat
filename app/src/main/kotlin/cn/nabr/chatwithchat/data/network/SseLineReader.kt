@@ -32,7 +32,9 @@ suspend fun ByteReadChannel.readSseLineOrNull(): String? {
     }
 }
 
-internal const val MAX_SSE_LINE_CHARS = 128 * 1024
+// Responses completion events can repeat the whole answer or reasoning summary in one JSON line.
+// This is a transport memory bound, unrelated to the provider's output token limit.
+internal const val MAX_SSE_LINE_CHARS = 8 * 1024 * 1024
 
 private const val MAX_SSE_LINE_BYTES = MAX_SSE_LINE_CHARS * 4
 private const val NEWLINE_BYTE: Byte = 10
@@ -61,7 +63,7 @@ private fun ByteArrayOutputStream.throwTooLongLine(): Nothing {
         .take(SAMPLE_CHARS)
         .replace(WHITESPACE_RUN, " ")
         .trim()
-    throw TooLongLineException("响应不是有效的 SSE 流：单行超过 $MAX_SSE_LINE_CHARS 字符上限。开头内容：$sample")
+    throw TooLongLineException("响应单行超过本地 SSE 读取上限（$MAX_SSE_LINE_CHARS 字符）。开头内容：$sample")
 }
 
 private val WHITESPACE_RUN = Regex("\\s+")

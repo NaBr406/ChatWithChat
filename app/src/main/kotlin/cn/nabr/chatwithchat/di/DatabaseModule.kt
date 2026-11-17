@@ -6,8 +6,8 @@ import cn.nabr.chatwithchat.data.database.ChatDatabase
 import cn.nabr.chatwithchat.data.database.ChatDatabaseV2
 import cn.nabr.chatwithchat.data.database.ChatDatabaseV2Migrations
 import cn.nabr.chatwithchat.data.database.ChatHistoryDatabaseCallback
-import cn.nabr.chatwithchat.data.database.dao.ChatPlatformModelV2Dao
 import cn.nabr.chatwithchat.data.database.dao.ChatHistoryDao
+import cn.nabr.chatwithchat.data.database.dao.ChatPlatformModelV2Dao
 import cn.nabr.chatwithchat.data.database.dao.ChatRoomDao
 import cn.nabr.chatwithchat.data.database.dao.ChatRoomV2Dao
 import cn.nabr.chatwithchat.data.database.dao.ContextManagementDao
@@ -15,9 +15,9 @@ import cn.nabr.chatwithchat.data.database.dao.McpDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryActivityLogDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryLongTermConsolidationDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryMaintenanceJobDao
+import cn.nabr.chatwithchat.data.database.dao.MemoryProposalDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryRecoveryDao
 import cn.nabr.chatwithchat.data.database.dao.MemoryTurnBatchDao
-import cn.nabr.chatwithchat.data.database.dao.MemoryProposalDao
 import cn.nabr.chatwithchat.data.database.dao.MessageDao
 import cn.nabr.chatwithchat.data.database.dao.MessageV2Dao
 import cn.nabr.chatwithchat.data.database.dao.PlatformModelV2Dao
@@ -140,6 +140,7 @@ object DatabaseModule {
         ChatDatabaseV2Migrations.MIGRATION_25_26,
         ChatDatabaseV2Migrations.MIGRATION_26_27,
         ChatDatabaseV2Migrations.MIGRATION_27_28,
-        ChatDatabaseV2Migrations.MIGRATION_28_29
+        ChatDatabaseV2Migrations.MIGRATION_28_29,
+        ChatDatabaseV2Migrations.MIGRATION_29_30
     ).addCallback(ChatHistoryDatabaseCallback()).build()
 }

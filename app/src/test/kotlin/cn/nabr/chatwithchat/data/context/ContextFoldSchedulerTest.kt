@@ -175,7 +175,7 @@ class ContextFoldSchedulerTest {
         val fixture = Fixture()
 
         val job = fixture.enqueue(
-            platform = platform(clientType = ClientType.OPENAI, model = "gpt-5.3"),
+            platform = platform(clientType = ClientType.OPENAI, model = "gpt-5.3").copy(apiUrl = "https://api.openai.com/"),
             result = foldableResult()
         )
 

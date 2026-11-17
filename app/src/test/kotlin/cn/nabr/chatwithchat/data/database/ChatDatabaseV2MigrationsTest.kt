@@ -11,6 +11,19 @@ import org.junit.Test
 
 class ChatDatabaseV2MigrationsTest {
     @Test
+    fun `migration 29 to 30 preserves legacy identity and defaults strategy to auto`() {
+        val sql = mutableListOf<String>()
+        ChatDatabaseV2Migrations.MIGRATION_29_30.migrate(recordingDatabase(sql))
+        assertEquals(
+            listOf(
+                "ALTER TABLE platform_v2 ADD COLUMN api_protocol TEXT",
+                "ALTER TABLE platform_v2 ADD COLUMN tool_call_strategy TEXT NOT NULL DEFAULT 'AUTO'"
+            ),
+            sql
+        )
+    }
+
+    @Test
     fun `legacy file list migrates to attachment json`() {
         val json = ChatDatabaseV2Migrations.legacyFilesToAttachmentsJson("/tmp/first.png,/tmp/second.webp")
 

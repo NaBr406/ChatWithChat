@@ -740,7 +740,7 @@ class LlmMemoryIntelligenceTest {
 
         val result = intelligence.consolidateLongTermMemory(
             request = longTermRequest(),
-            resolvedPlatform = platform(ClientType.CUSTOM, "frozen-model").copy(token = null)
+            resolvedPlatform = platform(ClientType.ANTHROPIC, "frozen-model").copy(token = null)
         )
 
         assertNull(result)

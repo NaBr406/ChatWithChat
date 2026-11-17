@@ -34,15 +34,17 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalDensity
@@ -60,6 +62,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -99,6 +102,7 @@ import dev.snipme.highlights.model.SyntaxLanguage
 import dev.snipme.highlights.model.SyntaxThemes
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.intellij.markdown.IElementType
@@ -443,6 +447,83 @@ private fun CodeBlockWithCopy(
     }
 }
 
+/** Lines per separately laid-out piece of a code block. */
+internal const val CODE_CHUNK_LINES = 24
+
+/**
+ * Ranges of [code] covering [linesPerChunk] lines each. Ranges exclude the line break that separates two
+ * pieces, so stacking the pieces reproduces the block line for line.
+ */
+internal fun codeChunkRanges(code: String, linesPerChunk: Int = CODE_CHUNK_LINES): List<IntRange> {
+    val ranges = mutableListOf<IntRange>()
+    var chunkStart = 0
+    var lines = 0
+    var index = code.indexOf('\n')
+    while (index >= 0) {
+        lines++
+        if (lines == linesPerChunk) {
+            ranges += chunkStart until index
+            chunkStart = index + 1
+            lines = 0
+        }
+        index = code.indexOf('\n', index + 1)
+    }
+    ranges += chunkStart until code.length
+    return ranges
+}
+
+/**
+ * [code] with the colours of the newest finished highlight. While a stream outruns the highlighter, the
+ * part it has not reached yet stays plain instead of showing the older text of the last highlight.
+ */
+internal fun highlightedCodeCoverage(code: String, highlighted: AnnotatedString?): Int = when {
+    highlighted == null -> 0
+    highlighted.text.length <= code.length && code.startsWith(highlighted.text) -> highlighted.text.length
+    else -> 0
+}
+
+/** Hands out the same piece instance while its text and colours are unchanged, so its `Text` skips. */
+private class CodeChunkCache {
+    class Entry(val range: IntRange, val source: AnnotatedString?, val text: AnnotatedString)
+
+    private var observedCode = ""
+    private val entries = mutableListOf<Entry?>()
+
+    fun chunks(code: String, highlighted: AnnotatedString?): List<Entry> {
+        if (!code.startsWith(observedCode)) entries.clear()
+        observedCode = code
+        val coverage = highlightedCodeCoverage(code, highlighted)
+        val ranges = codeChunkRanges(code)
+        while (entries.size > ranges.size) entries.removeAt(entries.lastIndex)
+        return ranges.mapIndexed { index, range ->
+            val end = range.last + 1
+            // A piece fully coloured depends on that highlight; a piece fully past it depends only on the code.
+            val source = when {
+                end <= coverage -> highlighted
+                range.first >= coverage -> null
+                else -> MIXED_SOURCE
+            }
+            val cached = entries.getOrNull(index)
+            if (cached != null && source !== MIXED_SOURCE && cached.range == range && cached.source === source) {
+                cached
+            } else {
+                val text = when {
+                    source === MIXED_SOURCE -> highlighted!!.subSequence(range.first, coverage) + AnnotatedString(code.substring(coverage, end))
+                    source != null -> source.subSequence(range.first, end)
+                    else -> AnnotatedString(code.substring(range.first, end))
+                }
+                val entry = Entry(range, source, text)
+                if (index < entries.size) entries[index] = entry else entries += entry
+                entry
+            }
+        }
+    }
+
+    private companion object {
+        val MIXED_SOURCE = AnnotatedString("")
+    }
+}
+
 @Composable
 private fun HighlightedCodeContent(
     code: String,
@@ -452,29 +533,72 @@ private fun HighlightedCodeContent(
     revealKey: Any,
     sourceStart: Int
 ) {
-    val highlightedCode by produceState(
-        initialValue = AnnotatedString(code),
-        key1 = code,
-        key2 = language,
-        key3 = highlightsBuilder
-    ) {
-        value = withContext(Dispatchers.Default) {
-            buildHighlightedAnnotatedString(code, language, highlightsBuilder)
+    val currentCode by rememberUpdatedState(code)
+    var highlighted by remember(language, highlightsBuilder) { mutableStateOf<AnnotatedString?>(null) }
+    LaunchedEffect(language, highlightsBuilder) {
+        // One worker always finishing on the newest code. Restarting the highlight for every revealed frame
+        // meant a long streaming block rarely finished one, and froze on its last result.
+        snapshotFlow { currentCode }.conflate().collect { latest ->
+            highlighted = withContext(Dispatchers.Default) {
+                buildHighlightedAnnotatedString(latest, language, highlightsBuilder)
+            }
         }
     }
+    val cache = remember(language, highlightsBuilder) { CodeChunkCache() }
+    val chunks = cache.chunks(code, highlighted)
+    val textStyle = style.copy(
+        color = LocalContentColor.current,
+        letterSpacing = 0.sp
+    )
+    val lineHeightStyle = textStyle.lineHeightStyle ?: LineHeightStyle.Default
+    val trimsTop = lineHeightStyle.trim == LineHeightStyle.Trim.Both || lineHeightStyle.trim == LineHeightStyle.Trim.FirstLineTop
+    val trimsBottom = lineHeightStyle.trim == LineHeightStyle.Trim.Both || lineHeightStyle.trim == LineHeightStyle.Trim.LastLineBottom
+    val codeSourceStart = LocalStreamingSourceOffset.current + sourceStart
 
-    val revealDrawing = rememberStreamingRevealDrawing(code, revealKey, LocalStreamingSourceOffset.current + sourceStart)
-    Text(
-        text = highlightedCode,
-        onTextLayout = revealDrawing.onTextLayout,
-        style = style.copy(
-            color = LocalContentColor.current,
-            letterSpacing = 0.sp
-        ),
-        softWrap = false,
+    // A streaming block grows by hundreds of lines while it stays the unfinished tail. As one `Text` it was
+    // laid out and drawn whole on every revealed frame; in pieces only the last one changes.
+    Column(
         modifier = Modifier
             .horizontalScroll(rememberScrollState())
             .padding(horizontal = 14.dp, vertical = 12.dp)
+    ) {
+        chunks.forEachIndexed { index, chunk ->
+            val top = index == 0 && trimsTop
+            val bottom = index == chunks.lastIndex && trimsBottom
+            val trim = when {
+                top && bottom -> LineHeightStyle.Trim.Both
+                top -> LineHeightStyle.Trim.FirstLineTop
+                bottom -> LineHeightStyle.Trim.LastLineBottom
+                else -> LineHeightStyle.Trim.None
+            }
+            key(index) {
+                CodeChunkText(
+                    text = chunk.text,
+                    style = textStyle.copy(lineHeightStyle = lineHeightStyle.copy(trim = trim)),
+                    revealKey = if (index == 0) revealKey else revealKey to index,
+                    sourceStart = codeSourceStart + chunk.range.first
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CodeChunkText(
+    text: AnnotatedString,
+    style: TextStyle,
+    revealKey: Any,
+    sourceStart: Int
+) {
+    val revealDrawing = rememberStreamingRevealDrawing(text.text, revealKey, sourceStart)
+    Text(
+        text = text,
+        onTextLayout = revealDrawing.onTextLayout,
+        style = style,
+        softWrap = false,
+        // Own layer: the growing last piece redraws on every revealed frame without re-recording the rest.
+        modifier = Modifier
+            .graphicsLayer()
             .then(revealDrawing.modifier)
     )
 }

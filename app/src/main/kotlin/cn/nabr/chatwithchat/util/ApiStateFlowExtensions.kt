@@ -59,15 +59,16 @@ suspend fun Flow<ApiState>.handleStates(
      * Reports whether the model is reasoning right now, from the provider's own events rather than from
      * what happens to be on screen.
      *
-     * True on the first non-empty reasoning chunk of a segment. False as soon as anything shows that
-     * the segment is over: the first visible answer text, a tool call starting (a later round may
-     * reason again and flips it back), a rollback, or the stream ending for any reason. Only edges are
-     * reported, so callers never see the same value twice in a row.
+     * True from the first non-empty reasoning chunk. An agent run that reasons, calls tools and reasons
+     * again is one thinking phase, so tool events keep it going (and resume it if the model wrote some
+     * text before calling a tool). False on visible answer text or when the stream ends for any reason.
+     * Only edges are reported, so callers never see the same value twice in a row.
      */
     onThinkingChanged: (Boolean) -> Unit = {}
 ) = coroutineScope {
     val buffer = StreamingMessageBuffer()
     var isThinking = false
+    var hasReasoned = false
     fun setThinking(value: Boolean) {
         if (isThinking == value) return
         isThinking = value
@@ -90,7 +91,7 @@ suspend fun Flow<ApiState>.handleStates(
             when (chunk) {
                 is ApiState.StreamCheckpoint -> buffer.checkpoint(chunk.requestId)
                 is ApiState.StreamRollback -> {
-                    setThinking(false)
+                    // A reconnect replays the request; the phase it was in carries on.
                     buffer.rollback(chunk.requestId)
                     buffer.publishPending(messageFlow, turnIndex, platformIdx)
                 }
@@ -101,7 +102,10 @@ suspend fun Flow<ApiState>.handleStates(
                         AppendResult.PENDING -> publishSignals.trySend(Unit)
                         AppendResult.EMPTY -> {}
                     }
-                    if (chunk.thinkingChunk.isNotBlank()) setThinking(true)
+                    if (chunk.thinkingChunk.isNotBlank()) {
+                        hasReasoned = true
+                        setThinking(true)
+                    }
                 }
 
                 is ApiState.Success -> {
@@ -143,7 +147,8 @@ suspend fun Flow<ApiState>.handleStates(
                 is ApiState.ToolFailed -> {
                     // 工具调用夹在两轮模型请求之间，是唯一可靠的轮次边界信号：
                     // 下一轮再吐正文/推理时要另起一段。
-                    setThinking(false)
+                    // 分步执行的 agent 在工具轮次之间仍处于同一思考阶段，不在这里判定思考完成。
+                    if (hasReasoned) setThinking(true)
                     buffer.onRoundBoundary()
                     onToolProgress(chunk)
                 }

@@ -21,9 +21,9 @@ import cn.nabr.chatwithchat.data.model.LastSelectedModel
 import cn.nabr.chatwithchat.data.model.ModelRefreshResult
 import cn.nabr.chatwithchat.data.model.ReasoningMode
 import cn.nabr.chatwithchat.data.model.ThemeMode
+import cn.nabr.chatwithchat.data.model.defaultReasoningMode
 import cn.nabr.chatwithchat.data.network.baseApiUrl
 import cn.nabr.chatwithchat.data.network.providerEndpoint
-import cn.nabr.chatwithchat.data.model.defaultReasoningMode
 import cn.nabr.chatwithchat.data.tool.ToolCallingMode
 import cn.nabr.chatwithchat.data.tool.ToolEnablementOverrides
 import cn.nabr.chatwithchat.data.websearch.WebSearchBackend
@@ -307,9 +307,10 @@ class SettingRepositoryImpl @Inject constructor(
         val refreshedAt = System.currentTimeMillis() / 1000
         val result = runCatching {
             val fetchedModels = modelDiscoveryRepository.fetchModels(
-                clientType = platform.compatibleType,
+                clientType = platform.requestClientType,
                 apiUrl = platform.providerEndpoint().baseApiUrl(),
-                token = platform.token
+                token = platform.token,
+                customHeaders = platform.customHeaders
             )
             val savedModels = mergeFetchedModels(
                 platform = platform,

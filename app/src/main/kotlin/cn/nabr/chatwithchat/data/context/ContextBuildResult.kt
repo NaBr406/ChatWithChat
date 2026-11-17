@@ -20,7 +20,7 @@ data class ContextAssemblyRequest(
     val range: ContextRange,
     val chain: CheckpointChainView = CheckpointChainView(),
     val nativeState: OpenAINativeCompactionState? = null,
-    val policy: ProviderContextPolicy = ProviderContextPolicy.forClientType(platform.compatibleType),
+    val policy: ProviderContextPolicy = ProviderContextPolicy.forClientType(platform.requestClientType),
     val visualAssets: List<VisualAssetCatalogItem> = emptyList()
 )
 

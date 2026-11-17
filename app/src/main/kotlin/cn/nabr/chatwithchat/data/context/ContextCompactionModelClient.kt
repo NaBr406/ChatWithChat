@@ -99,7 +99,7 @@ class ProviderContextCompactionModelClient(
         timeoutSeconds: Int
     ): Result<ContextCompactionModelResponse> = try {
         Result.success(
-            when (platform.compatibleType) {
+            when (platform.requestClientType) {
                 ClientType.OPENAI ->
                     openAIResponses(platform, systemPrompt, userPayload, maxOutputTokens, timeoutSeconds)
 
@@ -193,7 +193,7 @@ class ProviderContextCompactionModelClient(
                 maxTokens = maxOutputTokens,
                 thinking = thinking,
                 streamOptions = ChatCompletionStreamOptions()
-                    .takeIf { platform.compatibleType == ClientType.OPENROUTER }
+                    .takeIf { platform.requestClientType == ClientType.OPENROUTER }
             ),
             timeoutSeconds = timeoutSeconds,
             endpoint = platform.providerEndpoint()

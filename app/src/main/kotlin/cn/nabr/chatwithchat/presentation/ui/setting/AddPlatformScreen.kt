@@ -1,30 +1,19 @@
 package cn.nabr.chatwithchat.presentation.ui.setting
 
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuAnchorType
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -43,15 +32,14 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.nabr.chatwithchat.R
-import cn.nabr.chatwithchat.data.ModelConstants
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
-import cn.nabr.chatwithchat.data.model.ClientType
-import cn.nabr.chatwithchat.presentation.common.FullApiUrlCheckbox
-import cn.nabr.chatwithchat.presentation.common.SettingsHelpTooltipIcon
-import cn.nabr.chatwithchat.presentation.common.SettingsMaterialGroup
+import cn.nabr.chatwithchat.data.model.ApiProtocol
+import cn.nabr.chatwithchat.data.model.ToolCallStrategy
+import cn.nabr.chatwithchat.presentation.common.ProviderConnectionFields
+import cn.nabr.chatwithchat.presentation.common.ProviderFieldShape
+import cn.nabr.chatwithchat.presentation.common.SettingsFieldTitle
 import cn.nabr.chatwithchat.presentation.common.SettingsTopAppBar
 import cn.nabr.chatwithchat.presentation.common.settingsCanvasBackground
-import cn.nabr.chatwithchat.presentation.common.settingsDropdownMenuItemColors
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.common.settingsTextFieldColors
 
@@ -63,9 +51,9 @@ fun AddPlatformScreen(
     onNavigationClick: () -> Unit
 ) {
     var platformName by remember { mutableStateOf("") }
-    var selectedClientType by remember { mutableStateOf(ClientType.OPENAI) }
-    var clientTypeExpanded by remember { mutableStateOf(false) }
-    var apiUrl by remember { mutableStateOf("") }
+    var selectedProtocol by remember { mutableStateOf(ApiProtocol.OPENAI_CHAT_COMPLETIONS) }
+    var toolCallStrategy by remember { mutableStateOf(ToolCallStrategy.AUTO) }
+    var apiUrl by remember { mutableStateOf(ApiProtocol.OPENAI_CHAT_COMPLETIONS.defaultApiUrl) }
     var isFullApiUrl by remember { mutableStateOf(false) }
     var customHeaders by remember { mutableStateOf("") }
     var apiKey by remember { mutableStateOf("") }
@@ -102,157 +90,40 @@ fun AddPlatformScreen(
         ) {
             Spacer(modifier = Modifier.height(12.dp))
 
-            SettingsMaterialGroup {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    // Titles sit above the fields rather than floating inside them, so a help icon can
-                    // stand beside the title of the field it explains.
-                    AddPlatformFieldTitle(title = stringResource(R.string.platform_name))
-                    OutlinedTextField(
-                        value = platformName,
-                        onValueChange = { platformName = it },
-                        placeholder = { Text(stringResource(R.string.platform_name_hint)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = !isBusy && !platformSaved,
-                        singleLine = true,
-                        shape = RoundedCornerShape(10.dp),
-                        colors = settingsTextFieldColors()
-                    )
-
-                    Spacer(modifier = Modifier.height(ADD_PLATFORM_FIELD_SPACING))
-
-                    AddPlatformFieldTitle(title = stringResource(R.string.api_type))
-                    ExposedDropdownMenuBox(
-                        expanded = clientTypeExpanded,
-                        onExpandedChange = { if (!isBusy && !platformSaved) clientTypeExpanded = it }
-                    ) {
+            ProviderConnectionFields(
+                protocol = selectedProtocol,
+                onProtocolChange = { protocol ->
+                    if (apiUrl == selectedProtocol.defaultApiUrl) apiUrl = protocol.defaultApiUrl
+                    selectedProtocol = protocol
+                },
+                name = platformName,
+                onNameChange = { platformName = it },
+                apiUrl = apiUrl,
+                onApiUrlChange = { apiUrl = it },
+                isFullApiUrl = isFullApiUrl,
+                onFullApiUrlChange = { isFullApiUrl = it },
+                customHeaders = customHeaders,
+                onCustomHeadersChange = { customHeaders = it },
+                toolCallStrategy = toolCallStrategy,
+                onToolCallStrategyChange = { toolCallStrategy = it },
+                enabled = !isBusy && !platformSaved,
+                credentialField = {
+                    Column {
+                        SettingsFieldTitle(title = stringResource(R.string.api_key))
                         OutlinedTextField(
-                            value = getClientTypeName(selectedClientType),
-                            onValueChange = {},
-                            readOnly = true,
+                            value = apiKey,
+                            onValueChange = { apiKey = it },
+                            placeholder = { Text(stringResource(R.string.api_key_hint)) },
+                            modifier = Modifier.fillMaxWidth(),
                             enabled = !isBusy && !platformSaved,
-                            shape = RoundedCornerShape(10.dp),
+                            singleLine = true,
+                            shape = ProviderFieldShape,
                             colors = settingsTextFieldColors(),
-                            trailingIcon = {
-                                ExposedDropdownMenuDefaults.TrailingIcon(expanded = clientTypeExpanded)
-                            },
-                            modifier = Modifier
-                                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable, true)
-                                .fillMaxWidth()
+                            visualTransformation = PasswordVisualTransformation()
                         )
-
-                        ExposedDropdownMenu(
-                            expanded = clientTypeExpanded,
-                            onDismissRequest = { clientTypeExpanded = false },
-                            shape = RoundedCornerShape(12.dp),
-                            containerColor = materialColors.canvas,
-                            tonalElevation = 0.dp,
-                            shadowElevation = 3.dp,
-                            border = BorderStroke(0.5.dp, materialColors.separator)
-                        ) {
-                            ClientType.entries.forEach { clientType ->
-                                val isSelected = clientType == selectedClientType
-                                DropdownMenuItem(
-                                    colors = settingsDropdownMenuItemColors(),
-                                    modifier = Modifier
-                                        .padding(horizontal = 4.dp)
-                                        .background(
-                                            color = if (isSelected) settingsMaterialColors().primaryLabel.copy(alpha = 0.08f) else Color.Transparent,
-                                            shape = RoundedCornerShape(8.dp)
-                                        ),
-                                    text = {
-                                        Text(
-                                            text = getClientTypeName(clientType),
-                                            style = MaterialTheme.typography.bodyLarge,
-                                            color = materialColors.primaryLabel
-                                        )
-                                    },
-                                    trailingIcon = if (isSelected) {
-                                        {
-                                            Icon(
-                                                imageVector = Icons.Outlined.Check,
-                                                contentDescription = null,
-                                                tint = settingsMaterialColors().primaryLabel
-                                            )
-                                        }
-                                    } else {
-                                        null
-                                    },
-                                    onClick = {
-                                        selectedClientType = clientType
-                                        isFullApiUrl = false
-                                        // Set default API URL based on client type
-                                        apiUrl = when (clientType) {
-                                            ClientType.OPENAI -> ModelConstants.OPENAI_API_URL
-                                            ClientType.GLM -> ModelConstants.GLM_API_URL
-                                            ClientType.ANTHROPIC -> ModelConstants.ANTHROPIC_API_URL
-                                            ClientType.GOOGLE -> ModelConstants.GOOGLE_API_URL
-                                            ClientType.GROQ -> ModelConstants.GROQ_API_URL
-                                            ClientType.OLLAMA -> ModelConstants.OLLAMA_API_URL
-                                            ClientType.OPENROUTER -> ModelConstants.OPENROUTER_API_URL
-                                            ClientType.CUSTOM -> ""
-                                        }
-                                        clientTypeExpanded = false
-                                    }
-                                )
-                            }
-                        }
                     }
-
-                    Spacer(modifier = Modifier.height(ADD_PLATFORM_FIELD_SPACING))
-
-                    AddPlatformFieldTitle(title = stringResource(R.string.api_url))
-                    OutlinedTextField(
-                        value = apiUrl,
-                        onValueChange = { apiUrl = it },
-                        placeholder = { Text(stringResource(R.string.api_url_hint)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = !isBusy && !platformSaved,
-                        singleLine = true,
-                        shape = RoundedCornerShape(10.dp),
-                        colors = settingsTextFieldColors()
-                    )
-
-                    FullApiUrlCheckbox(
-                        checked = isFullApiUrl,
-                        onCheckedChange = { isFullApiUrl = it },
-                        enabled = !isBusy && !platformSaved,
-                        helpInTooltip = true
-                    )
-
-                    Spacer(modifier = Modifier.height(ADD_PLATFORM_FIELD_SPACING - 4.dp))
-
-                    AddPlatformFieldTitle(
-                        title = stringResource(R.string.simulated_request_headers),
-                        helpText = stringResource(R.string.simulated_request_headers_supporting)
-                    )
-                    OutlinedTextField(
-                        value = customHeaders,
-                        onValueChange = { customHeaders = it },
-                        placeholder = { Text(stringResource(R.string.simulated_request_headers_hint)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = !isBusy && !platformSaved,
-                        minLines = 3,
-                        maxLines = 6,
-                        shape = RoundedCornerShape(10.dp),
-                        colors = settingsTextFieldColors()
-                    )
-
-                    Spacer(modifier = Modifier.height(ADD_PLATFORM_FIELD_SPACING))
-
-                    AddPlatformFieldTitle(title = stringResource(R.string.api_key))
-                    OutlinedTextField(
-                        value = apiKey,
-                        onValueChange = { apiKey = it },
-                        placeholder = { Text(stringResource(R.string.api_key_hint)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = !isBusy && !platformSaved,
-                        singleLine = true,
-                        shape = RoundedCornerShape(10.dp),
-                        colors = settingsTextFieldColors(),
-                        visualTransformation = PasswordVisualTransformation()
-                    )
                 }
-            }
+            )
 
             Spacer(modifier = Modifier.height(24.dp))
 
@@ -306,7 +177,8 @@ fun AddPlatformScreen(
                             apiUrl = apiUrl,
                             isFullApiUrl = isFullApiUrl,
                             customHeaders = customHeaders,
-                            selectedClientType = selectedClientType,
+                            selectedProtocol = selectedProtocol,
+                            toolCallStrategy = toolCallStrategy,
                             apiKey = apiKey,
                             enabled = !isBusy,
                             onSave = settingViewModel::addPlatformAndRefreshModels,
@@ -322,7 +194,8 @@ fun AddPlatformScreen(
                         apiUrl = apiUrl,
                         isFullApiUrl = isFullApiUrl,
                         customHeaders = customHeaders,
-                        selectedClientType = selectedClientType,
+                        selectedProtocol = selectedProtocol,
+                        toolCallStrategy = toolCallStrategy,
                         apiKey = apiKey,
                         enabled = false,
                         onSave = settingViewModel::addPlatformAndRefreshModels,
@@ -336,7 +209,8 @@ fun AddPlatformScreen(
                         apiUrl = apiUrl,
                         isFullApiUrl = isFullApiUrl,
                         customHeaders = customHeaders,
-                        selectedClientType = selectedClientType,
+                        selectedProtocol = selectedProtocol,
+                        toolCallStrategy = toolCallStrategy,
                         apiKey = apiKey,
                         enabled = true,
                         onSave = settingViewModel::addPlatformAndRefreshModels,
@@ -356,7 +230,8 @@ private fun AddPlatformActionButtons(
     apiUrl: String,
     isFullApiUrl: Boolean,
     customHeaders: String,
-    selectedClientType: ClientType,
+    selectedProtocol: ApiProtocol,
+    toolCallStrategy: ToolCallStrategy,
     apiKey: String,
     enabled: Boolean,
     onSave: (PlatformV2) -> Unit,
@@ -366,7 +241,9 @@ private fun AddPlatformActionButtons(
         onClick = {
             val platform = PlatformV2(
                 name = platformName.trim(),
-                compatibleType = selectedClientType,
+                compatibleType = selectedProtocol.legacyClientType,
+                apiProtocol = selectedProtocol,
+                toolCallStrategy = toolCallStrategy,
                 enabled = true,
                 apiUrl = apiUrl.trim(),
                 isFullApiUrl = isFullApiUrl,
@@ -450,40 +327,3 @@ private fun SavingStatusText(text: String) {
         )
     }
 }
-
-@Composable
-private fun getClientTypeName(clientType: ClientType): String = when (clientType) {
-    ClientType.OPENAI -> "OpenAI"
-    ClientType.GLM -> "GLM"
-    ClientType.ANTHROPIC -> "Anthropic"
-    ClientType.GOOGLE -> "Google"
-    ClientType.GROQ -> "Groq"
-    ClientType.OLLAMA -> "Ollama"
-    ClientType.OPENROUTER -> "OpenRouter"
-    ClientType.CUSTOM -> stringResource(R.string.custom)
-}
-
-@Composable
-private fun AddPlatformFieldTitle(
-    title: String,
-    helpText: String? = null
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 32.dp)
-            .padding(start = 4.dp, bottom = 2.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.labelLarge,
-            color = settingsMaterialColors().secondaryLabel
-        )
-        if (helpText != null) {
-            SettingsHelpTooltipIcon(helpText = helpText)
-        }
-    }
-}
-
-private val ADD_PLATFORM_FIELD_SPACING = 16.dp

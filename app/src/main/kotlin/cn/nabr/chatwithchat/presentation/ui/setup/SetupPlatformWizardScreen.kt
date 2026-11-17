@@ -47,7 +47,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.model.ClientType
-import cn.nabr.chatwithchat.presentation.common.FullApiUrlCheckbox
+import cn.nabr.chatwithchat.presentation.common.ProviderConnectionFields
 import cn.nabr.chatwithchat.presentation.ui.setup.SetupViewModelV2.Companion.WIZARD_STEP_API_KEY
 import cn.nabr.chatwithchat.presentation.ui.setup.SetupViewModelV2.Companion.WIZARD_STEP_BASICS
 import cn.nabr.chatwithchat.presentation.ui.setup.SetupViewModelV2.Companion.WIZARD_TOTAL_STEPS
@@ -164,17 +164,27 @@ fun SetupPlatformWizardScreen(
                         val currentApiUrl by setupViewModel.apiUrl.collectAsStateWithLifecycle()
                         val isFullApiUrl by setupViewModel.isFullApiUrl.collectAsStateWithLifecycle()
                         val customHeaders by setupViewModel.customHeaders.collectAsStateWithLifecycle()
-                        BasicsStep(
-                            clientType = selectedClientType,
-                            platformName = currentPlatformName,
-                            onPlatformNameChange = setupViewModel::updatePlatformName,
-                            apiUrl = currentApiUrl,
-                            onApiUrlChange = setupViewModel::updateApiUrl,
-                            isFullApiUrl = isFullApiUrl,
-                            onIsFullApiUrlChange = setupViewModel::updateIsFullApiUrl,
-                            customHeaders = customHeaders,
-                            onCustomHeadersChange = setupViewModel::updateCustomHeaders
-                        )
+                        val protocol by setupViewModel.selectedProtocol.collectAsStateWithLifecycle()
+                        val strategy by setupViewModel.toolCallStrategy.collectAsStateWithLifecycle()
+                        Column(
+                            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp)
+                        ) {
+                            ProviderConnectionFields(
+                                protocol = protocol,
+                                onProtocolChange = setupViewModel::updateProtocol,
+                                name = currentPlatformName,
+                                onNameChange = setupViewModel::updatePlatformName,
+                                apiUrl = currentApiUrl,
+                                onApiUrlChange = setupViewModel::updateApiUrl,
+                                isFullApiUrl = isFullApiUrl,
+                                onFullApiUrlChange = setupViewModel::updateIsFullApiUrl,
+                                customHeaders = customHeaders,
+                                onCustomHeadersChange = setupViewModel::updateCustomHeaders,
+                                toolCallStrategy = strategy,
+                                onToolCallStrategyChange = setupViewModel::updateToolCallStrategy,
+                                enabled = !isSaving && !saveFinished
+                            )
+                        }
                     }
 
                     WIZARD_STEP_API_KEY -> {
@@ -306,91 +316,6 @@ private fun StepLabel(
 }
 
 @Composable
-private fun BasicsStep(
-    clientType: ClientType?,
-    platformName: String,
-    onPlatformNameChange: (String) -> Unit,
-    apiUrl: String,
-    onApiUrlChange: (String) -> Unit,
-    isFullApiUrl: Boolean,
-    onIsFullApiUrlChange: (Boolean) -> Unit,
-    customHeaders: String,
-    onCustomHeadersChange: (String) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp)
-    ) {
-        Text(
-            modifier = Modifier.semantics { heading() },
-            text = stringResource(R.string.step_basics),
-            style = MaterialTheme.typography.headlineSmall
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Text(
-            text = stringResource(R.string.platform_basics_description),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        // Platform Name
-        OutlinedTextField(
-            value = platformName,
-            onValueChange = onPlatformNameChange,
-            label = { Text(stringResource(R.string.platform_name)) },
-            placeholder = { Text(stringResource(R.string.platform_name_hint)) },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            supportingText = {
-                Text(stringResource(R.string.platform_name_supporting))
-            }
-        )
-
-        Spacer(modifier = Modifier.height(20.dp))
-
-        // API URL
-        OutlinedTextField(
-            value = apiUrl,
-            onValueChange = onApiUrlChange,
-            label = { Text(stringResource(R.string.api_url)) },
-            placeholder = { Text(stringResource(R.string.api_url_hint)) },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            enabled = clientType != ClientType.GOOGLE || isFullApiUrl,
-            supportingText = {
-                if (!isFullApiUrl && clientType == ClientType.GOOGLE) {
-                    Text(stringResource(R.string.client_type_google_desc))
-                } else if (!isFullApiUrl) {
-                    Text(stringResource(R.string.api_url_cautions))
-                }
-            }
-        )
-        FullApiUrlCheckbox(
-            checked = isFullApiUrl,
-            onCheckedChange = onIsFullApiUrlChange
-        )
-        Spacer(modifier = Modifier.height(16.dp))
-        OutlinedTextField(
-            value = customHeaders,
-            onValueChange = onCustomHeadersChange,
-            label = { Text(stringResource(R.string.simulated_request_headers)) },
-            placeholder = { Text(stringResource(R.string.simulated_request_headers_hint)) },
-            modifier = Modifier.fillMaxWidth(),
-            minLines = 3,
-            maxLines = 6,
-            supportingText = { Text(stringResource(R.string.simulated_request_headers_supporting)) }
-        )
-    }
-}
-
-@Composable
 private fun ApiKeyStep(
     clientType: ClientType?,
     apiKey: String,
@@ -417,7 +342,7 @@ private fun ApiKeyStep(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
-        if (clientType == ClientType.OLLAMA) {
+        if (clientType == ClientType.OLLAMA || clientType == ClientType.CUSTOM) {
             Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = stringResource(R.string.api_key_optional_note),

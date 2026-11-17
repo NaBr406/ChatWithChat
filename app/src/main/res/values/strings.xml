@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <string name="openui_webview_unavailable">Interactive content requires an updated Android System WebView.</string>
     <string name="app_name">ChatWithChat</string>
     <string name="chat_with_chat_introduction_logo">ChatWithChat 介绍图标</string>
@@ -398,6 +398,7 @@
     <string name="ollama_api_key">Ollama API 密钥</string>
     <string name="api_url_cautions">URL 必须以 / 结尾。</string>
     <string name="use_full_api_url">Use full URL (optional)</string>
+    <string name="use_full_api_url_compact">Use exact URL</string>
     <string name="use_full_api_url_supporting">Use the exact endpoint URL without appending a path. Match the selected provider protocol: /v1/responses for OpenAI, /v1/chat/completions for compatible providers.</string>
     <string name="header_presets">Header presets</string>
     <string name="header_preset_codex">Codex</string>
@@ -561,8 +562,8 @@ Referer: https://example.com</string>
     <string name="no_platforms_yet">尚未添加平台</string>
     <string name="add_your_first_platform">添加第一个 AI 平台即可开始</string>
     <string name="add_another_platform">继续添加平台</string>
-    <string name="choose_platform_type">选择平台类型</string>
-    <string name="choose_platform_type_description">选择要添加的 AI 提供商</string>
+    <string name="choose_platform_type">选择接口协议</string>
+    <string name="choose_platform_type_description">按服务支持的接口协议选择，名称和地址可以自定义。</string>
     <string name="configure_platform">配置平台</string>
     <string name="step_basics">基本信息</string>
     <string name="step_api_key">API 密钥</string>
@@ -901,4 +902,24 @@ Referer: https://example.com</string>
     <string name="field_help">查看说明</string>
     <string name="citation_sheet_title">引用来源</string>
     <string name="sources_count">%1$d 个来源</string>
+    <string name="api_protocol">接口协议</string>
+    <string name="provider_advanced">高级连接设置</string>
+    <string name="tool_call_strategy">工具调用方式</string>
+    <string name="tool_strategy_auto">自动</string>
+    <string name="tool_strategy_native">原生</string>
+    <string name="tool_strategy_json">JSON</string>
+    <string name="tool_call_strategy_help">自动优先使用原生工具调用，仅在服务明确不支持且尚未发生工具交互时改用 JSON。原生模式遇错直接报告，JSON 模式通过提示词调用工具。工具是否启用仍由全局设置决定。</string>
+    <string name="protocol_chat_completions_help">使用 /chat/completions，适用于 OpenAI 兼容中转站和本地服务。</string>
+    <string name="protocol_responses_help">使用 /responses，请确认服务支持 OpenAI Responses API。</string>
+    <string name="protocol_anthropic_help">使用 /messages 和 Anthropic 消息格式。</string>
+    <string name="protocol_google_help">已有的 Google Generative AI 连接。</string>
+    <string name="notification_channel_chat_generation">回答生成</string>
+    <string name="chat_generation_title">正在生成回答</string>
+    <string name="chat_generation_saving">正在保存回答</string>
+    <!-- Compact island labels currently support Chinese and English; other locales use the default. -->
+    <string name="chat_generation_island_generating" tools:ignore="MissingTranslation">生成中</string>
+    <string name="chat_generation_island_saving" tools:ignore="MissingTranslation">保存中</string>
+    <string name="chat_generation_active_count">正在处理 %1$d 个会话，点按返回应用</string>
+    <string name="chat_generation_stop">停止生成</string>
+    <string name="chat_generation_background_unavailable">无法启用后台运行保护，请保持应用在前台直到回答完成。</string>
 </resources>

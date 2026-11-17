@@ -18,7 +18,7 @@ class ContextBuilder @Inject constructor() {
         userMessages: List<MessageV2>,
         assistantMessages: List<List<MessageV2>>,
         platform: PlatformV2,
-        policy: ProviderContextPolicy = ProviderContextPolicy.forClientType(platform.compatibleType)
+        policy: ProviderContextPolicy = ProviderContextPolicy.forClientType(platform.requestClientType)
     ): List<ConversationTurn> = buildContext(
         userMessages = userMessages,
         assistantMessages = assistantMessages,
@@ -30,7 +30,7 @@ class ContextBuilder @Inject constructor() {
         userMessages: List<MessageV2>,
         assistantMessages: List<List<MessageV2>>,
         platform: PlatformV2,
-        policy: ProviderContextPolicy = ProviderContextPolicy.forClientType(platform.compatibleType)
+        policy: ProviderContextPolicy = ProviderContextPolicy.forClientType(platform.requestClientType)
     ): ConversationContext {
         if (userMessages.isEmpty()) return ConversationContext()
 
@@ -147,7 +147,7 @@ class ContextBuilder @Inject constructor() {
      * authoritative from then on.
      */
     private fun ContextAssemblyRequest.usesNativeCompaction(): Boolean =
-        NativeCompactionModelGate.supportsServerSideCompaction(platform.compatibleType, platform.model) &&
+        NativeCompactionModelGate.supportsServerSideCompaction(platform) &&
             nativeState?.nativeUnsupported != true
 
     private fun buildAppSideManagedContext(

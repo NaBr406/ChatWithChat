@@ -60,8 +60,8 @@ class MemoryModelResolver(
         uid.isNotBlank() &&
         model.isNotBlank() &&
         apiUrl.isNotBlank() &&
-        compatibleType in SUPPORTED_CLIENT_TYPES &&
-        (compatibleType == ClientType.OLLAMA || !token.isNullOrBlank())
+        requestClientType in SUPPORTED_CLIENT_TYPES &&
+        (acceptsOptionalApiKey || !token.isNullOrBlank())
 
     private companion object {
         val SUPPORTED_CLIENT_TYPES = setOf(

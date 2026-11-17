@@ -350,7 +350,11 @@ internal fun scanCitationGroupIds(markdown: String, sources: CitationSources): S
 
 /** Hides a link still being streamed (`[Reuters](https://reu`) so its raw syntax never flashes. */
 internal fun String.withoutTrailingPartialLink(): String {
-    val match = TRAILING_PARTIAL_LINK.find(this) ?: return this
+    // The pattern cannot cross a line break, so only the last line can match. Searching the whole tail
+    // tried a match at every `[` of a streaming code block on every frame.
+    // `$` also matches before one final line break, so that break does not end the searched line.
+    val lastLineStart = lastIndexOf('\n', lastIndex - 1) + 1
+    val match = TRAILING_PARTIAL_LINK.find(this, lastLineStart) ?: return this
     return substring(0, match.range.first)
 }
 
