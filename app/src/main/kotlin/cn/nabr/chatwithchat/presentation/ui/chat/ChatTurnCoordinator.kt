@@ -7,6 +7,8 @@ import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.database.entity.ChatRoomV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.database.entity.effectiveContent
+import cn.nabr.chatwithchat.data.generation.ChatGenerationKeepAlive
+import cn.nabr.chatwithchat.data.generation.ChatGenerationState
 import cn.nabr.chatwithchat.data.memory.MemoryAliasBinding
 import cn.nabr.chatwithchat.data.memory.MemoryCompletedTurnInput
 import cn.nabr.chatwithchat.data.model.ChatPlatformConfig
@@ -27,7 +29,9 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -37,7 +41,10 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -68,7 +75,8 @@ class ChatTurnCoordinator @Inject constructor(
     private val chatRepository: ChatRepository,
     private val memoryRepository: MemoryRepository,
     private val chatTitleGenerationService: ChatTitleGenerationService,
-    @param:ApplicationScope private val applicationScope: CoroutineScope
+    @param:ApplicationScope private val applicationScope: CoroutineScope,
+    private val generationKeepAlive: ChatGenerationKeepAlive
 ) {
 
     /**
@@ -182,6 +190,37 @@ class ChatTurnCoordinator @Inject constructor(
 
     private val turns = MutableStateFlow<Map<String, LiveTurn>>(emptyMap())
 
+    @OptIn(ExperimentalCoroutinesApi::class)
+    internal val generationState: Flow<ChatGenerationState> = turns.flatMapLatest { live ->
+        val snapshot = live.values.toList()
+        if (snapshot.isEmpty()) {
+            flowOf(ChatGenerationState())
+        } else {
+            combine(snapshot.map { it.isPersisting }) { saving ->
+                ChatGenerationState(
+                    activeAttemptIds = snapshot.map { it.attemptId },
+                    generatingAttemptIds = snapshot.filterIndexed { index, _ -> !saving[index] }.map { it.attemptId }
+                )
+            }
+        }
+    }.distinctUntilChanged()
+
+    internal fun currentGenerationState(): ChatGenerationState {
+        val snapshot = turns.value.values.toList()
+        return ChatGenerationState(
+            activeAttemptIds = snapshot.map { it.attemptId },
+            generatingAttemptIds = snapshot.filterNot { it.isPersisting.value }.map { it.attemptId }
+        )
+    }
+
+    /** A stale notification cannot stop a newer turn, or interrupt an answer already being saved. */
+    internal fun stopGenerationAttempts(attemptIds: Collection<String>) {
+        turns.value.values.filter { it.attemptId in attemptIds && !it.isPersisting.value }.forEach { turn ->
+            turn.stopRequested = true
+            turn.job?.cancel(CancellationException("stopped_by_user"))
+        }
+    }
+
     private val _completions = MutableSharedFlow<TurnCompletion>(extraBufferCapacity = 8)
     val completions: SharedFlow<TurnCompletion> = _completions.asSharedFlow()
 
@@ -228,7 +267,7 @@ class ChatTurnCoordinator @Inject constructor(
             ).also { created -> turns.update { current -> current + (key to created) } }
         }
 
-        turn.job = applicationScope.launch {
+        val job = applicationScope.launch(start = CoroutineStart.LAZY) {
             try {
                 block(turn)
                 // Persistence is part of the turn, not a reaction to it. The old code waited for the
@@ -243,11 +282,16 @@ class ChatTurnCoordinator @Inject constructor(
                     withContext(kotlinx.coroutines.NonCancellable) { persistTurn(turn) }
                 }
                 throw cancellation
-            } finally {
-                turn.persistingFlow.value = false
-                turns.update { current -> if (current[key] === turn) current - key else current }
             }
         }
+        turn.job = job
+        // Completion handlers also run if a stop arrives before a lazy job enters its body.
+        job.invokeOnCompletion {
+            turn.persistingFlow.value = false
+            turns.update { current -> if (current[key] === turn) current - key else current }
+        }
+        generationKeepAlive.start()
+        if (turn.stopRequested) job.cancel() else job.start()
         return turn
     }
 

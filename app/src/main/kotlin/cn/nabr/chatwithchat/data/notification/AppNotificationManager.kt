@@ -11,12 +11,12 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
-import dagger.hilt.android.qualifiers.ApplicationContext
 import cn.nabr.chatwithchat.R
 import cn.nabr.chatwithchat.data.database.entity.MemoryMaintenanceJob
 import cn.nabr.chatwithchat.presentation.common.Route
 import cn.nabr.chatwithchat.presentation.ui.main.MainActivity
 import cn.nabr.chatwithchat.receiver.MemoryMaintenanceRetryReceiver
+import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 
 class AppNotificationManager @Inject constructor(
@@ -28,6 +28,11 @@ class AppNotificationManager @Inject constructor(
         val notificationManager = context.getSystemService(NotificationManager::class.java)
         notificationManager.createNotificationChannels(
             listOf(
+                NotificationChannel(
+                    AppNotificationChannels.CHAT_GENERATION,
+                    context.getString(R.string.notification_channel_chat_generation),
+                    NotificationManager.IMPORTANCE_LOW
+                ),
                 NotificationChannel(
                     AppNotificationChannels.MEMORY_MAINTENANCE,
                     context.getString(R.string.notification_channel_memory_maintenance),

@@ -24,7 +24,10 @@ import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
 import cn.nabr.chatwithchat.data.tool.ToolRegistry
@@ -39,6 +42,7 @@ import cn.nabr.chatwithchat.presentation.common.ThemeSettingProvider
 import cn.nabr.chatwithchat.presentation.common.ToolPermissionRequester
 import cn.nabr.chatwithchat.presentation.common.settingsMaterialColors
 import cn.nabr.chatwithchat.presentation.theme.ChatWithChatTheme
+import cn.nabr.chatwithchat.presentation.ui.chat.ChatTurnCoordinator
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.channels.Channel
@@ -51,11 +55,15 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var toolRegistry: ToolRegistry
 
+    @Inject
+    lateinit var chatTurnCoordinator: ChatTurnCoordinator
+
     private val mainViewModel: MainViewModel by viewModels()
     private lateinit var toolPermissionLauncher: ActivityResultLauncher<Array<String>>
     private lateinit var notificationPermissionLauncher: ActivityResultLauncher<String>
     private val navigationRequests = createNavigationRequestChannel()
     private var pendingToolPermissionRequest: PendingToolPermissionRequest? = null
+    private var notificationPermissionInFlight = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         intent.startRoute()?.let(::enqueueNavigationRequest)
@@ -75,7 +83,17 @@ class MainActivity : ComponentActivity() {
         notificationPermissionLauncher = registerForActivityResult(
             ActivityResultContracts.RequestPermission()
         ) {
-            // Permission denial leaves maintenance work unaffected.
+            notificationPermissionInFlight = false
+            // Denial leaves generation and maintenance work unaffected.
+        }
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                chatTurnCoordinator.generationState.collect { state ->
+                    if (state.activeCount > 0 && !getPreferences(MODE_PRIVATE).getBoolean(NOTIFICATIONS_REQUESTED, false)) {
+                        requestPostNotificationsPermission()
+                    }
+                }
+            }
         }
 
         // Prevent keyboard from pushing the entire view up - composable handles insets via imePadding()
@@ -202,7 +220,9 @@ class MainActivity : ComponentActivity() {
     private fun requestPostNotificationsPermission() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
-
+        if (notificationPermissionInFlight) return
+        getPreferences(MODE_PRIVATE).edit().putBoolean(NOTIFICATIONS_REQUESTED, true).apply()
+        notificationPermissionInFlight = true
         notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
@@ -229,6 +249,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_START_ROUTE = "cn.nabr.chatwithchat.extra.START_ROUTE"
+        private const val NOTIFICATIONS_REQUESTED = "generation_notifications_requested"
     }
 
     private data class PendingToolPermissionRequest(

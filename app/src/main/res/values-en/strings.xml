@@ -32,4 +32,12 @@
     <string name="protocol_responses_help">Uses /responses. Select this when your service supports the OpenAI Responses API.</string>
     <string name="protocol_anthropic_help">Uses /messages with the Anthropic message format.</string>
     <string name="protocol_google_help">Existing Google Generative AI connection.</string>
+    <string name="notification_channel_chat_generation">Answer generation</string>
+    <string name="chat_generation_title">Generating answers</string>
+    <string name="chat_generation_saving">Saving answers</string>
+    <string name="chat_generation_island_generating">Generating</string>
+    <string name="chat_generation_island_saving">Saving</string>
+    <string name="chat_generation_active_count">Working on %1$d chats. Tap to return to the app.</string>
+    <string name="chat_generation_stop">Stop generation</string>
+    <string name="chat_generation_background_unavailable">Background execution protection is unavailable. Keep the app open until the answer finishes.</string>
 </resources>

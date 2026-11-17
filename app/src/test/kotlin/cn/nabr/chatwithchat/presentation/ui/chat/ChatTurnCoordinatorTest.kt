@@ -9,6 +9,7 @@ import cn.nabr.chatwithchat.data.database.entity.Message
 import cn.nabr.chatwithchat.data.database.entity.MessageV2
 import cn.nabr.chatwithchat.data.database.entity.PlatformV2
 import cn.nabr.chatwithchat.data.dto.ApiState
+import cn.nabr.chatwithchat.data.generation.ChatGenerationKeepAlive
 import cn.nabr.chatwithchat.data.memory.MemoryCompletedTurnInput
 import cn.nabr.chatwithchat.data.memory.MemoryTurnRecordingResult
 import cn.nabr.chatwithchat.data.memory.PreparedMemoryContext
@@ -52,6 +53,127 @@ import org.junit.Test
  * mid-turn.
  */
 class ChatTurnCoordinatorTest {
+
+    @Test
+    fun `keep alive starts before generation and duplicate starts do not start another service`() = runBlocking {
+        var starts = 0
+        val coordinator = coordinator(RecordingChatRepository(), keepAlive = ChatGenerationKeepAlive { starts++ })
+        val entered = CompletableDeferred<Unit>()
+        val turn = coordinator.start("chat:7", request()) {
+            assertEquals(1, starts)
+            entered.complete(Unit)
+            awaitCancellation()
+        }!!
+        entered.await()
+        assertNull(coordinator.start("chat:7", request()) { error("duplicate") })
+        assertEquals(1, starts)
+        assertEquals(listOf(turn.attemptId), coordinator.currentGenerationState().generatingAttemptIds)
+        coordinator.stopGenerationAttempts(listOf(turn.attemptId))
+        turn.awaitFinished()
+        assertEquals(0, coordinator.currentGenerationState().activeCount)
+    }
+
+    @Test
+    fun `service state stays active until all chats finish saving`() = runBlocking {
+        val saving = CompletableDeferred<Unit>()
+        val releaseSave = CompletableDeferred<Unit>()
+        val repository = RecordingChatRepository(beforeSave = {
+            saving.complete(Unit)
+            releaseSave.await()
+        })
+        val coordinator = coordinator(repository)
+        val first = coordinator.start("chat:7", request()) { it.messagesFlow.value = oneTurn("answer") }!!
+        saving.await()
+        val secondStarted = CompletableDeferred<Unit>()
+        val second = coordinator.start("chat:9", request(chatId = 9)) {
+            secondStarted.complete(Unit)
+            awaitCancellation()
+        }!!
+        secondStarted.await()
+        val state = withTimeout(RUNNING_CHAT_IDS_TIMEOUT_MILLIS) {
+            coordinator.generationState.first { it.activeCount == 2 }
+        }
+        assertEquals(setOf(first.attemptId, second.attemptId), state.activeAttemptIds.toSet())
+        assertEquals(listOf(second.attemptId), state.generatingAttemptIds)
+        // A notification captured during streaming must not cancel the same turn's database save.
+        coordinator.stopGenerationAttempts(listOf(first.attemptId))
+        assertFalse(first.stopRequested)
+        assertTrue(first.job!!.isActive)
+        releaseSave.complete(Unit)
+        first.awaitFinished()
+        assertEquals(listOf(second.attemptId), coordinator.currentGenerationState().activeAttemptIds)
+        coordinator.stopGenerationAttempts(listOf(second.attemptId))
+        second.awaitFinished()
+        assertEquals(0, coordinator.currentGenerationState().activeCount)
+        assertEquals(2, repository.savedChats.size)
+    }
+
+    @Test
+    fun `stale stop action cannot cancel a later turn in the same chat`() = runBlocking {
+        val coordinator = coordinator(RecordingChatRepository())
+        val first = coordinator.start("chat:7", request()) { it.messagesFlow.value = oneTurn("first") }!!
+        first.awaitFinished()
+        val entered = CompletableDeferred<Unit>()
+        val second = coordinator.start("chat:7", request()) {
+            entered.complete(Unit)
+            awaitCancellation()
+        }!!
+        entered.await()
+        coordinator.stopGenerationAttempts(listOf(first.attemptId))
+        assertFalse(second.stopRequested)
+        assertTrue(second.job!!.isActive)
+        coordinator.stopGenerationAttempts(listOf(second.attemptId))
+        second.awaitFinished()
+    }
+
+    @Test
+    fun `notification stop saves the partial answer with no screen attached`() = runBlocking {
+        val repository = RecordingChatRepository()
+        val coordinator = coordinator(repository)
+        val entered = CompletableDeferred<Unit>()
+        val turn = coordinator.start("chat:7", request()) {
+            it.messagesFlow.value = oneTurn("partial answer")
+            entered.complete(Unit)
+            awaitCancellation()
+        }!!
+        entered.await()
+        coordinator.stopGenerationAttempts(listOf(turn.attemptId))
+        turn.awaitFinished()
+        assertTrue(turn.stopRequested)
+        assertEquals("partial answer", repository.savedChats.single().second.last().content)
+        assertEquals(0, coordinator.currentGenerationState().activeCount)
+    }
+
+    @Test
+    fun `stopping before dispatch removes the turn without leaking a running service state`() = runBlocking {
+        lateinit var coordinator: ChatTurnCoordinator
+        coordinator = coordinator(
+            RecordingChatRepository(),
+            keepAlive = ChatGenerationKeepAlive {
+                coordinator.stopGenerationAttempts(coordinator.currentGenerationState().generatingAttemptIds)
+            }
+        )
+        var executed = false
+        val turn = coordinator.start("chat:7", request()) { executed = true }!!
+        turn.awaitFinished()
+        assertFalse(executed)
+        assertEquals(0, coordinator.currentGenerationState().activeCount)
+    }
+
+    @Test
+    fun `completed or deleted turns leave no foreground service state`() = runBlocking {
+        val coordinator = coordinator(RecordingChatRepository())
+        val entered = CompletableDeferred<Unit>()
+        val turn = coordinator.start("chat:7", request()) {
+            entered.complete(Unit)
+            awaitCancellation()
+        }!!
+        entered.await()
+        coordinator.cancelForChats(setOf(7))
+        turn.awaitFinished()
+        assertEquals(0, coordinator.currentGenerationState().activeCount)
+        assertEquals(0, coordinator.generationState.first().activeCount)
+    }
 
     @Test
     fun `a turn is persisted with no subscribers at all`() = runBlocking {
@@ -373,7 +495,8 @@ class ChatTurnCoordinatorTest {
 
     private fun coordinator(
         repository: ChatRepository,
-        memory: MemoryRepository = RecordingMemoryRepository()
+        memory: MemoryRepository = RecordingMemoryRepository(),
+        keepAlive: ChatGenerationKeepAlive = ChatGenerationKeepAlive {}
     ) = ChatTurnCoordinator(
         context = ContextWrapper(null),
         chatRepository = repository,
@@ -381,7 +504,8 @@ class ChatTurnCoordinatorTest {
         chatTitleGenerationService = ChatTitleGenerationService(
             ContextCompactionModelClient { _, _, _, _, _ -> Result.success(ContextCompactionModelResponse("")) }
         ),
-        applicationScope = coordinatorScope
+        applicationScope = coordinatorScope,
+        generationKeepAlive = keepAlive
     )
 
     private fun request(
@@ -406,7 +530,8 @@ class ChatTurnCoordinatorTest {
     )
 
     private class RecordingChatRepository(
-        private val existingChatIds: Set<Int> = setOf(7, 9)
+        private val existingChatIds: Set<Int> = setOf(7, 9),
+        private val beforeSave: suspend () -> Unit = {}
     ) : ChatRepository {
         val savedChats = mutableListOf<Pair<ChatRoomV2, List<MessageV2>>>()
 
@@ -415,6 +540,7 @@ class ChatTurnCoordinatorTest {
             messages: List<MessageV2>,
             chatPlatformModels: Map<String, ChatPlatformConfig>
         ): ChatRoomV2 {
+            beforeSave()
             savedChats += chatRoom to messages
             return chatRoom.copy(id = if (chatRoom.id == 0) 42 else chatRoom.id, updatedAt = 999)
         }

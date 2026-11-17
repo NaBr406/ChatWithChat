@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <string name="openui_webview_unavailable">Interactive content requires an updated Android System WebView.</string>
     <string name="app_name">ChatWithChat</string>
     <string name="chat_with_chat_introduction_logo">ChatWithChat 介绍图标</string>
@@ -913,4 +913,13 @@ Referer: https://example.com</string>
     <string name="protocol_responses_help">使用 /responses，请确认服务支持 OpenAI Responses API。</string>
     <string name="protocol_anthropic_help">使用 /messages 和 Anthropic 消息格式。</string>
     <string name="protocol_google_help">已有的 Google Generative AI 连接。</string>
+    <string name="notification_channel_chat_generation">回答生成</string>
+    <string name="chat_generation_title">正在生成回答</string>
+    <string name="chat_generation_saving">正在保存回答</string>
+    <!-- Compact island labels currently support Chinese and English; other locales use the default. -->
+    <string name="chat_generation_island_generating" tools:ignore="MissingTranslation">生成中</string>
+    <string name="chat_generation_island_saving" tools:ignore="MissingTranslation">保存中</string>
+    <string name="chat_generation_active_count">正在处理 %1$d 个会话，点按返回应用</string>
+    <string name="chat_generation_stop">停止生成</string>
+    <string name="chat_generation_background_unavailable">无法启用后台运行保护，请保持应用在前台直到回答完成。</string>
 </resources>
